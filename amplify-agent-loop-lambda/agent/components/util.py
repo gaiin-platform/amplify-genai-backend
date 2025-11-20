@@ -1,7 +1,6 @@
 import json
 from typing import Dict, Any
-from pycommon.logger import getLogger
-logger = getLogger("utils")
+
 
 def event_printer(event_id: str, event: Dict[str, Any]):
     context_id_prefix = event.get("context_id", "na")
@@ -11,33 +10,33 @@ def event_printer(event_id: str, event: Dict[str, Any]):
         context_id_prefix = f"{context_id_prefix}/{correlation_id}"
 
     if event_id == "agent/prompt/action/raw_result":
-        logger.info("Raw Agent Response:")
-        logger.debug("%s", event["response"])
+        print("Raw Agent Response:")
+        print(event["response"])
     elif event_id == "tools/code_exec/execute/error":
-        logger.error("Code Execution Error:")
-        logger.error("%s", event["error"])
-        logger.error("  Traceback:")
-        logger.error("%s", event["traceback"])
+        print("Code Execution Error:")
+        print(event["error"])
+        print("  Traceback:")
+        print(event["traceback"])
     elif event_id == "tools/code_exec/execute/end":
-        logger.info("Code Execution Result:")
+        print("Code Execution Result:")
         # Truncate result to first 1000 characters
         result_str = str(event["result"])
-        logger.debug("%s", result_str[:1000])
+        print(result_str[:1000])
     elif event_id == "tools/code_exec/execute/start":
-        logger.info("Code Execution Start:")
-        logger.debug("%s", event["code"])
+        print("Code Execution Start:")
+        print(event["code"])
     # check if the event starts with tools/
     elif event_id.startswith("tools/"):
         if event_id.endswith("/start"):
-            logger.info("Tool Event:")
-            logger.debug("%s", json.dumps(event, indent=2))
+            print("Tool Event:")
+            print(json.dumps(event, indent=2))
         if event_id.endswith("/end"):
-            logger.info("Result:")
-            logger.debug("%s", json.dumps(event["result"], indent=2))
+            print("Result:")
+            print(json.dumps(event["result"], indent=2))
         if event_id.endswith("/error"):
-            logger.error("Error:")
-            logger.error("%s", event["exception"])
-            logger.error("%s", event["traceback"])
+            print("Error!!!!!:")
+            print(event["exception"])
+            print(event["traceback"])
 
 
 def resolve_dict_references(args, results):

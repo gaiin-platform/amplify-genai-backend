@@ -4,29 +4,24 @@
 import boto3
 import json
 import os
+import logging
 from shared_functions import get_original_creator
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    SQSOperation
-)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from pycommon.const import APIAccessType
 from schemata.permissions import get_permission_checker
-from pycommon.logger import getLogger
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
-logger = getLogger("embedding_sqs")
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 sqs = boto3.client("sqs")
 
 embedding_chunks_index_queue = os.environ["EMBEDDING_CHUNKS_INDEX_QUEUE"]
 
 
-@required_env_vars({
-    "EMBEDDING_CHUNKS_INDEX_QUEUE": [SQSOperation.RECEIVE_MESSAGE, SQSOperation.DELETE_MESSAGE],
-})
 @validated(op="get")
 def get_in_flight_messages(event, context, current_user, name, data):
     try:
@@ -42,7 +37,7 @@ def get_in_flight_messages(event, context, current_user, name, data):
 
             # If no messages are in the queue, break the loop
             if "Messages" not in response:
-                logger.debug("no messages")
+                print("no messages")
                 break
 
             for message in response["Messages"]:
@@ -55,7 +50,7 @@ def get_in_flight_messages(event, context, current_user, name, data):
                 s3_object = message_body.get("s3", {}).get("object", {})
                 text_location_key = s3_object.get("key", None)
                 if not text_location_key:
-                    logger.warning("No key in this message.")
+                    print("No key in this message.")
                     continue
 
                 key_details = get_original_creator(text_location_key)
@@ -73,13 +68,13 @@ def get_in_flight_messages(event, context, current_user, name, data):
                     },
                 }
 
-        logger.info(f"Total messages in flight: {len(messages)}")
+        print(f"Total messages in flight: {len(messages)}")
         return {
             "statusCode": 200,
             "body": json.dumps({"success": True, "messages": list(messages.values())}),
         }
     except Exception as e:
-        logger.error(f"Error occurred: {e}")
+        print(f"Error occurred: {e}")
         return {
             "statusCode": 500,
             "body": json.dumps({"success": False, "error": f"An error occurred {e}"}),

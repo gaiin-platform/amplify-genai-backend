@@ -6,8 +6,6 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_drive"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 def get_drive_service(current_user, access_token):
     user_credentials = get_user_credentials(
@@ -111,7 +109,7 @@ def get_download_link(
                 mime_type.startswith("application/vnd.google-apps")
                 and mime_type != "application/vnd.google-apps.folder"
             ):
-                logger.info("No webContentLink found for file %s, converting file...", file_id)
+                print(f"No webContentLink found for file {file_id}, converting file...")
                 # Map of Google Workspace types to export formats
                 export_formats = {
                     "application/vnd.google-apps.document": "application/pdf",  # Docs to PDF
@@ -137,9 +135,11 @@ def get_download_link(
                     if converted_file and converted_file.get("downloadLink"):
                         return converted_file
                 except Exception as e:
-                    logger.error("Error converting file: %s", e)
+                    print(f"Error converting file: {e}")
         else:
-            logger.info("No webContentLink found for file %s, no conversion attempted", file_id)
+            print(
+                f"No webContentLink found for file {file_id}, no conversion attempted"
+            )
     return None
 
 
@@ -228,7 +228,7 @@ def convert_file(
                 "downloadLink": converted_file.get("webContentLink"),
             }
         except Exception as e:
-            logger.error("Error exporting file: %s", e)
+            print(f"Error exporting file: {e}")
             return None
     else:
         # For non-Google Workspace files, use the copy method (though this likely won't change the format)

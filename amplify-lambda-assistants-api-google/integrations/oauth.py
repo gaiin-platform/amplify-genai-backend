@@ -6,18 +6,11 @@ from .integrationsList import integrations_list
 from auth.oauth_encryption import decrypt_oauth_data
 from auth.oauth import refresh_integration_token, get_user_integrations
 from pycommon.api.secrets import get_secret_parameter
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, SSMOperation
-)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
-
-from pycommon.logger import getLogger
-logger = getLogger("google_oauth")
 
 PROVIDER = "google"
 MAX_RETRIES = 2
@@ -44,12 +37,12 @@ def get_user_credentials(
     if not available_integrations:
         available_integrations = get_user_integrations(access_token)
         if not available_integrations:
-            logger.error("Failed to retrieve supported integrations for user %s", current_user)
+            print(f"Failed to retrieve supported integrations for user {current_user}")
             raise Exception(
                 f"Failed to retrieve supported integrations for user {current_user}"
             )
         elif integration not in available_integrations:
-            logger.warning("Integration %s is not currently available", integration)
+            print(f"Integration {integration} is not currently available")
             raise Exception(f"Integration {integration} is not currently available")
 
     dynamodb = boto3.resource("dynamodb")
@@ -57,7 +50,9 @@ def get_user_credentials(
 
     item_key = f"{current_user}/{PROVIDER}"
 
-    logger.debug("Retrieving credentials for user %s and integration %s using key %s", current_user, integration, item_key)
+    print(
+        f"Retrieving credentials for user {current_user} and integration {integration} using key {item_key}"
+    )
     try:
         response = oauth_user_table.get_item(Key={"user_integration": item_key})
         record = response.get("Item")
@@ -68,7 +63,9 @@ def get_user_credentials(
                 credentials = decrypt_oauth_data(credentials)
 
                 if check_credentials_expired(credentials.get("expires_at")):
-                    logger.info("Credentials for user %s and integration %s are expired", current_user, integration)
+                    print(
+                        f"Credentials for user {current_user} and integration {integration} are expired"
+                    )
                     result = refresh_integration_token(access_token, integration)
                     if not result:
                         raise Exception(
@@ -88,7 +85,7 @@ def get_user_credentials(
             f"No credentials found for user {current_user} and integration {integration}"
         )
     except Exception as e:
-        logger.error("Error retrieving credentials from DynamoDB: %s", str(e))
+        print(f"Error retrieving credentials from DynamoDB: {str(e)}")
         raise e
 
 
@@ -105,9 +102,6 @@ def check_credentials_expired(expires_at: int) -> bool:
     return current_ts >= expires_at
 
 
-@required_env_vars({
-    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-})
 @validated("get")
 def get_integrations(event, context, current_user, name, data):
     stage = os.environ.get("INTEGRATION_STAGE")
@@ -117,8 +111,8 @@ def get_integrations(event, context, current_user, name, data):
     try:
         secrets_value = get_secret_parameter(secret_param, "/oauth")
     except Exception as e:
-        logger.error("Error retrieving secrets: %s", str(e))
-        logger.warning("Setting secrets to empty values")
+        print(f"Error retrieving secrets: {str(e)}")
+        print(f"Setting secrets to empty values")
 
     secrets = {"client_id": "", "client_secret": "", "tenant_id": ""}
     if secrets_value:

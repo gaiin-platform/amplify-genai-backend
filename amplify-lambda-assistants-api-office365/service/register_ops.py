@@ -1,8 +1,6 @@
 
 from pycommon.api.tools_ops import api_tools_register_handler
 
-from pycommon.logger import getLogger
-logger = getLogger("office365_register_ops")
 
 def integration_config_trigger(event, context):
     """
@@ -10,7 +8,7 @@ def integration_config_trigger(event, context):
     For the 'integrations' record, on MODIFY events: if the specified provider key
     (PROVIDER) is newly added to the data field, call register_ops.
     """
-    logger.info("Admin Config Trigger invoked")
+    print("Admin Config Trigger invoked")
     PROVIDER = "microsoft"
     for record in event.get("Records", []):
         if record.get("eventName") != "MODIFY":
@@ -34,17 +32,17 @@ def integration_config_trigger(event, context):
 
         old_keys = extract_keys(old_data)
         new_keys = extract_keys(new_data)
-        logger.debug("Old keys: %s", old_keys)
-        logger.debug("New keys: %s", new_keys)
+        print(f"Old keys: {old_keys}")
+        print(f"New keys: {new_keys}")
 
         # If the provider key was absent before and is now present, register ops.
         if PROVIDER not in old_keys and PROVIDER in new_keys:
-            logger.info("Registering %s ops (provider key added)", PROVIDER)
+            print(f"Registering {PROVIDER} ops (provider key added)")
             result = register_ops()
             if not result.get("success"):
-                logger.error("Failed to register %s ops", PROVIDER)
+                print(f"Failed to register {PROVIDER} ops")
         else:
-            logger.debug("Provider %s ops already exists, skipping op registration", PROVIDER)
+            print(f"Provider {PROVIDER} ops already exists, skipping op registration")
 
 
 def register_ops() -> dict:

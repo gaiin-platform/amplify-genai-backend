@@ -11,8 +11,6 @@ from rag.handlers.shared_functions import (
     format_visual_chunk_data,
 )
 
-from pycommon.logger import getLogger
-logger = getLogger("rag_word")
 
 PNG = "image/png"
 
@@ -187,9 +185,8 @@ class DOCXHandler(TextExtractionHandler):
                     visuals.update(footer_visuals)
 
             except Exception as e:
-                logger.error(
-                    "Error processing header/footer for section %d: %s",
-                    section_idx + 1, e
+                print(
+                    f"[DEBUG] Error processing header/footer for section {section_idx + 1}: {e}"
                 )
                 continue
 
@@ -242,7 +239,7 @@ class DOCXHandler(TextExtractionHandler):
                     break
 
         except Exception as e:
-            logger.error("Error in _find_document_part_from_element: %s", e)
+            print(f"Error in _find_document_part_from_element: {e}")
 
         return None
 
@@ -270,7 +267,7 @@ class DOCXHandler(TextExtractionHandler):
                 current = current.getparent()
 
         except Exception as e:
-            logger.error("Error in _find_rels_through_parent_chain: %s", e)
+            print(f"Error in _find_rels_through_parent_chain: {e}")
 
         return None
 
@@ -331,7 +328,7 @@ class DOCXHandler(TextExtractionHandler):
                                 visuals[marker] = visual_data
 
             # Method 2: Look for images directly in the header/footer XML structure
-            logger.debug("Checking %s XML structure for images...", location_type)
+            print(f"[DEBUG] Checking {location_type} XML structure for images...")
             try:
                 # Get the XML element of the header/footer
                 header_footer_element = header_footer._element
@@ -376,12 +373,12 @@ class DOCXHandler(TextExtractionHandler):
                         visuals[marker] = visual_data
 
             except Exception as e:
-                logger.error("Error in Method 2 for %s: %s", location_type, e)
+                print(f"[DEBUG] Error in Method 2 for {location_type}: {e}")
 
-            logger.debug("%s extraction complete. Found %d unique visuals", location_type, len(visuals))
+            print(f"[DEBUG] {location_type} extraction complete. Found {len(visuals)} unique visuals")
 
         except Exception as e:
-            logger.error("Error extracting %s visuals: %s", location_type, e)
+            print(f"Error extracting {location_type} visuals: {e}")
 
         return visuals
 
@@ -406,7 +403,7 @@ class DOCXHandler(TextExtractionHandler):
                 metadata["title"] = name_elements[0]
 
         except Exception as e:
-            logger.error("Error extracting pic metadata: %s", e)
+            print(f"Error extracting pic metadata: {e}")
 
         return metadata
 
@@ -425,7 +422,7 @@ class DOCXHandler(TextExtractionHandler):
                     while doc_part is not None and not hasattr(doc_part, "rels"):
                         doc_part = doc_part.getparent()
         except Exception as e:
-            logger.debug("%s approach 1 failed: %s", context_name, e)
+            print(f"{context_name} approach 1 failed: {e}")
             doc_part = None
 
         # Approach 2: Try to find it through the element's namespace
@@ -433,7 +430,7 @@ class DOCXHandler(TextExtractionHandler):
             try:
                 doc_part = self._find_document_part_from_element(element)
             except Exception as e:
-                logger.debug("%s approach 2 failed: %s", context_name, e)
+                print(f"{context_name} approach 2 failed: {e}")
                 doc_part = None
 
         # Approach 3: Try to find relationships through the element's direct parent chain
@@ -441,7 +438,7 @@ class DOCXHandler(TextExtractionHandler):
             try:
                 doc_part = self._find_rels_through_parent_chain(element)
             except Exception as e:
-                logger.debug("%s approach 3 failed: %s", context_name, e)
+                print(f"{context_name} approach 3 failed: {e}")
                 doc_part = None
 
         # Approach 4: Use the document object directly (most reliable)
@@ -454,7 +451,7 @@ class DOCXHandler(TextExtractionHandler):
                 if hasattr(doc, "part") and hasattr(doc.part, "rels"):
                     doc_part = doc.part
             except Exception as e:
-                logger.debug("%s approach 4 failed: %s", context_name, e)
+                print(f"{context_name} approach 4 failed: {e}")
                 doc_part = None
 
         return doc_part
@@ -465,7 +462,7 @@ class DOCXHandler(TextExtractionHandler):
             # Get the relationship ID for the image
             blip_elements = pic_element.xpath(".//a:blip/@r:embed")
             if not blip_elements:
-                logger.debug("No image relationship found in %s", context_name)
+                print(f"No image relationship found in {context_name}")
                 return None
 
             rId = blip_elements[0]
@@ -500,11 +497,11 @@ class DOCXHandler(TextExtractionHandler):
                     "original_format": original_format,
                 }
             else:
-                logger.warning("Could not find image relationship %s in %s", rId, context_name)
+                print(f"Could not find image relationship {rId} in {context_name}")
                 return None
 
         except Exception as e:
-            logger.error("Image extraction failed in %s: %s", context_name, e)
+            print(f"Image extraction failed in {context_name}: {e}")
             return None
 
     def _create_visual_data_structure(
@@ -622,15 +619,15 @@ class DOCXHandler(TextExtractionHandler):
                                             visuals[marker] = visual_data
 
                             except Exception as e:
-                                logger.error("Error processing comment %d: %s", comment_idx + 1, e)
+                                print( f"[DEBUG] Error processing comment {comment_idx + 1}: {e}" )
                                 continue
 
                     except Exception as e:
-                        logger.error("Error processing comments part: %s", e)
+                        print(f"[DEBUG] Error processing comments part: {e}")
                         continue
 
         except Exception as e:
-            logger.error("Error extracting comment visuals: %s", e)
+            print(f"[DEBUG] Error extracting comment visuals: {e}")
 
         return visuals
 
@@ -681,7 +678,7 @@ class DOCXHandler(TextExtractionHandler):
                     for paragraph in section.footer.paragraphs:
                         self._replace_images_with_markers_in_paragraph(paragraph, footer_markers)
         
-        logger.debug("Finished injecting visual markers for %d visuals", len(visual_map))
+        print(f"[DEBUG] Finished injecting visual markers for {len(visual_map)} visuals")
 
     def _replace_images_with_markers_in_paragraph(self, paragraph, markers):
         """

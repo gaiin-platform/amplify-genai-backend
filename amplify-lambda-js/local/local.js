@@ -7,11 +7,8 @@ import {chat} from "../azure/openai.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
-import {getInternalLLM} from "../llm/InternalLLM.js";
+import {LLM} from "../common/llm.js";
 import {workflowSchema} from "../workflow/workflow.js";
-import {getLogger} from "../common/logging.js";
-
-const logger = getLogger("local");
 
 
 async function main() {
@@ -62,7 +59,7 @@ async function main() {
                 modelId = process.argv[++i];
                 model = {id: modelId}; // most likely missing data attributes since eliminating Models 
                 if(!model){
-                    logger.error("Invalid model: "+modelId);
+                    console.log("Invalid model: "+modelId);
                     return;
                 }
                 break;
@@ -116,21 +113,19 @@ async function main() {
 
     dataSources = dataSources.map((s) => ({id:s}));
 
-    // ✅ ELIMINATED: No longer need chatFn - InternalLLM handles this internally
-    // const chatFn = async (body, writable, context, options) => {
-    //     return await chat(getLLMConfig, body, writable, context);
-    // }
+    const chatFn = async (body, writable, context, options) => {
+        return await chat(getLLMConfig, body, writable, context);
+    }
 
-    // 🚀 BREAKTHROUGH: Use InternalLLM for local testing
-    const account = {user: "console"};
-    const responseStream = new ConsoleWritableStream(true);
-    const llm = getInternalLLM(model, account, responseStream);
+    const llm = new LLM(
+            chatFn,
+            {account: {user: "console"}, model: model},
+            new ConsoleWritableStream(true));
 
     let response;
 
     if(promptForBoolean){
-        // Note: promptForBoolean not implemented in InternalLLM - use promptForString
-        response = await llm.promptForString(chatRequest, dataSources, "Answer with true or false only");
+        response = await llm.promptForBoolean(chatRequest, dataSources);
     }
     else if(promptForWorkflow){
         response = await llm.promptForJson(chatRequest, workflowSchema, dataSources);
@@ -139,15 +134,14 @@ async function main() {
         response = await llm.promptForJson(chatRequest, jsonschema, dataSources);
     }
     else if(choices.length > 0){
-        // Note: promptForChoice not implemented in InternalLLM - use promptForString
-        response = await llm.promptForString(chatRequest, dataSources, `Choose from: ${choices.join(', ')}`);
+        response = await llm.promptForChoice(chatRequest, choices, dataSources);
     }
     else {
-        response = await llm.promptForString(chatRequest, dataSources);
+        response = await llm.prompt(chatRequest, dataSources);
     }
 
     if(response){
-        logger.info(response);
+        console.log(response);
     }
 }
 

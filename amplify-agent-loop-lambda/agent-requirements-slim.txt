@@ -1,4 +1,4 @@
-git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.0
 numpy==1.26.4
 pandas==2.2.3
 aws-xray-sdk

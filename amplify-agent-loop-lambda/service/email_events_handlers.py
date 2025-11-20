@@ -1,10 +1,6 @@
 import traceback
 
 from pycommon.api.ops import api_tool
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, SQSOperation
-)
 from events.email_sender_controls import (
     add_allowed_sender,
     remove_allowed_sender,
@@ -20,12 +16,8 @@ from events.event_templates import (
 )
 from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
-from pycommon.logger import getLogger
-logger = getLogger("email_event_handlers")
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.PUT_ITEM],
-})
+
 @api_tool(
     path="/vu-agent/add-event-template",
     tags=["events", "default"],
@@ -83,16 +75,13 @@ def handle_add_event_template(
             current_user, access_token, tag, prompt, account, description, assistant_id
         )
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "message": "Server error: Unable to add event template. Please try again later.",
         }
 
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.DELETE_ITEM],
-})
 @api_tool(
     path="/vu-agent/remove-event-template",
     tags=["events", "default"],
@@ -119,16 +108,13 @@ def handle_remove_event_template(current_user, access_token, tag):
     try:
         return remove_event_template(current_user, tag, access_token)
     except Exception:
-        logger.error("Error removing event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "message": "Server error: Unable to remove event template. Please try again later.",
         }
 
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @api_tool(
     path="/vu-agent/get-event-template",
     tags=["events", "default"],
@@ -200,7 +186,7 @@ def handle_get_event_template(current_user, access_token, tag):
 
         return response
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": None,
@@ -208,9 +194,6 @@ def handle_get_event_template(current_user, access_token, tag):
         }
 
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
-})
 @api_tool(
     path="/vu-agent/list-event-templates",
     tags=["events", "default"],
@@ -270,7 +253,7 @@ def handle_list_event_templates_for_user(current_user, access_token):
     try:
         return list_event_templates_for_user(current_user)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": None,
@@ -278,9 +261,6 @@ def handle_list_event_templates_for_user(current_user, access_token):
         }
 
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
-})
 @api_tool(
     path="/vu-agent/list-event-template-tags",
     tags=["events", "default"],
@@ -308,7 +288,7 @@ def handle_list_event_template_tags(current_user, access_token):
     try:
         return list_event_templates_tags_for_user(current_user)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": None,
@@ -316,9 +296,6 @@ def handle_list_event_template_tags(current_user, access_token):
         }
 
 
-@required_env_vars({
-    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.PUT_ITEM],
-})
 @api_tool(
     path="/vu-agent/add-allowed-sender",
     tags=["email", "default"],
@@ -351,16 +328,13 @@ def handle_add_allowed_sender(current_user, access_token, tag, sender):
     try:
         return add_allowed_sender(current_user, tag, sender)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "message": "Server error: Unable to add allowed sender. Please try again later.",
         }
 
 
-@required_env_vars({
-    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.DELETE_ITEM],
-})
 @api_tool(
     path="/vu-agent/remove-allowed-sender",
     tags=["email", "default"],
@@ -393,16 +367,13 @@ def handle_remove_allowed_sender(current_user, access_token, tag, sender):
     try:
         return remove_allowed_sender(current_user, tag, sender)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "message": "Server error: Unable to remove allowed sender. Please try again later.",
         }
 
 
-@required_env_vars({
-    "AGENT_QUEUE": [SQSOperation.SEND_MESSAGE],
-})
 @api_tool(
     path="/vu-agent/test-send-email-notification",
     tags=["email", "default"],
@@ -465,7 +436,7 @@ def test_send_email_notification(
         }
 
     except Exception as e:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": None,
@@ -473,9 +444,6 @@ def test_send_email_notification(
         }
 
 
-@required_env_vars({
-    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.SCAN],
-})
 @api_tool(
     path="/vu-agent/list-allowed-senders",
     tags=["email", "default"],
@@ -506,7 +474,7 @@ def handle_list_allowed_senders(current_user, access_token, tag):
     try:
         return list_allowed_senders(current_user, tag)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": [],
@@ -514,9 +482,6 @@ def handle_list_allowed_senders(current_user, access_token, tag):
         }
 
 
-@required_env_vars({
-    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @api_tool(
     path="/vu-agent/is-event-template-tag-available",
     tags=["events", "default"],
@@ -561,7 +526,7 @@ def handle_is_event_template_tag_available(
     try:
         return is_event_template_tag_available(current_user, tag, assistant_id)
     except Exception:
-        logger.error("Error adding event template", exc_info=True)
+        traceback.print_exc()
         return {
             "success": False,
             "data": None,

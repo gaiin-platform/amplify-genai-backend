@@ -1,11 +1,8 @@
 import os
 import psycopg2
+import logging
 import boto3
 from boto3.dynamodb.conditions import Key
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation
-)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -13,8 +10,11 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
-from pycommon.logger import getLogger
-logger = getLogger("embedding_delete")
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("embedding_delete")
 
 # Get environment variables
 pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
@@ -23,7 +23,7 @@ pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ.get(
     "RAG_POSTGRES_DB_ENV", os.environ["RAG_POSTGRES_DB_SECRET"]
 )
-object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
+object_access_table = os.environ["OBJECT_ACCESS_TABLE"]
 
 # Define the permission levels that grant delete access
 permission_levels = ["write", "owner"]
@@ -71,7 +71,7 @@ def delete_embeddings_from_db(src_id, child_chunks=None):
     ) as conn:
         with conn.cursor() as cur:
             try:
-                logger.info(f"Connecting to database at {pg_host}")
+                print(f"Connecting to database at {pg_host}")
                 
                 if child_chunks is None:
                     # Delete all embeddings for the source (original behavior)
@@ -127,42 +127,6 @@ def delete_progress_entry(src_id):
         return False
 
 
-def delete_progress_entry(src_id):
-    """Delete progress table entry for a given source."""
-    try:
-        dynamodb = boto3.resource("dynamodb")
-        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
-        
-        if not progress_table:
-            logger.warning("EMBEDDING_PROGRESS_TABLE not configured, skipping progress cleanup")
-            return True
-            
-        table = dynamodb.Table(progress_table)
-        
-        # First check if item exists
-        try:
-            response = table.get_item(Key={"object_id": src_id})
-            if "Item" not in response:
-                logger.info(f"No progress entry found for {src_id}")
-                return True
-        except Exception as e:
-            logger.warning(f"Could not check progress entry for {src_id}: {e}")
-            return True
-        
-        # Delete the progress entry
-        table.delete_item(Key={"object_id": src_id})
-        logger.info(f"Successfully deleted progress entry for {src_id}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error deleting progress entry for {src_id}: {e}")
-        return False
-
-
-@required_env_vars({
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.DELETE_ITEM, DynamoDBOperation.GET_ITEM],
-})
 @validated("embedding-delete")
 def delete_embeddings(event, context, current_user, name, data):
     data = data["data"]

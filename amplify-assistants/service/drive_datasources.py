@@ -13,14 +13,10 @@ s3 = boto3.client("s3")
 
 
 from pycommon.api.ops import api_tool
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
-from pycommon.logger import getLogger
-logger = getLogger("assistants_drive_files")
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value])
@@ -33,7 +29,7 @@ def process_assistant_drive_sources(assistant_data, access_token):
     try:
         drive_data = assistant_data.get("integrationDriveData", {})
         if not drive_data or not has_drive_data(drive_data):
-            logger.info("No integration drive data to process for this assistant")
+            print("No integration drive data to process for this assistant")
             return {
                 "success": True,
                 "message": "No integration drive data to process for this assistant",
@@ -51,7 +47,7 @@ def process_assistant_drive_sources(assistant_data, access_token):
                 }
     
     except Exception as e:
-        logger.error("Error processing assistant drive data: %s", e)
+        print(f"Error processing assistant drive data: {e}")
         return {"success": False, "message": f"Failed to process assistant integration drive data: {str(e)}"}
 
 
@@ -96,7 +92,7 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         dict: Response containing success status and updated payload data,
               or error information if unsuccessful
     """
-    logger.info("Initiate upload integration files to datasources call")
+    print("Initiate upload integration files to datasources call")
 
     upload_endpoint = os.environ["API_BASE_URL"] + "/integrations/user/files/upload"
 
@@ -111,16 +107,16 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
             upload_endpoint, headers=headers, data=json.dumps(data)
         )
         response_content = response.json()
-        logger.debug("Response: %s", response_content)
+        print("Response: ", response_content)
 
         if response.status_code == 200 and response_content.get("success", False):
-            logger.info("Integration Drive files uploaded successfully")
+            print("Integration Drive files uploaded successfully")
             return {
                 "success": True,
                 "data": response_content.get("data"),
                 "message": "Integration Drive files uploaded successfully"
             }
-        logger.warning("Failed to upload integration drive files")
+        print("Failed to upload integration drive files")
         return {
             "success": False,
             "error": response_content.get("error", "Unknown error occurred"),
@@ -128,7 +124,7 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         }
 
     except Exception as e:
-        logger.error("Error uploading integration files: %s", e)
+        print(f"Error uploading integration files: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -236,9 +232,6 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         "required": ["success", "message"],
     },
 )
-@required_env_vars({
-    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-})
 @validated(op="process_drive_sources")
 def process_drive_sources(event, context, current_user, name, data=None):
     """
@@ -300,7 +293,7 @@ def process_drive_sources(event, context, current_user, name, data=None):
         }
         
     except Exception as e:
-        logger.error("Error processing drive sources: %s", e)
+        print(f"Error processing drive sources: {e}")
         return {"success": False, "message": f"Failed to process drive sources: {str(e)}"}
     
 
@@ -321,5 +314,5 @@ def has_drive_data(payload):
             files = provider_data.get('files', {})
             if isinstance(files, dict) and len(files) > 0:
                 return True
-    logger.debug("No drive files found")
+    print(f"No drive files found")
     return False

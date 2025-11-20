@@ -14,13 +14,6 @@ from pycommon.const import APIAccessType
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
-from pycommon.logger import getLogger
-logger = getLogger("assistants_group_ast")
-
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, S3Operation
-)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -34,14 +27,10 @@ from service.core import get_most_recent_assistant_version
 
 # used for system users who have access to a group. Group assistants are based on group permissions
 # currently the data returned is best for our amplify wordpress plugin
-@required_env_vars({
-    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated(op="get")
 def retrieve_astg_for_system_use(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    logger.debug("Query params: %s", query_params)
+    print("Query params: ", query_params)
     assistantId = query_params.get("assistantId", "")
     pattern = r"^[a-zA-Z0-9-]+-\d{6}$"
     # must be in system user format
@@ -58,7 +47,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
                 },
             }
         )
-    logger.info("retrieving astgp data")
+    print("retrieving astgp data")
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
@@ -82,9 +71,9 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
             }
         )
 
-    logger.debug("checking perms from group table")
+    print("checking perms from group table")
     # check system user has access to group assistant
-    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    groups_table = dynamodb.Table(os.environ["GROUPS_DYNAMO_TABLE"])
 
     try:
         response = groups_table.get_item(Key={"group_id": groupId})
@@ -109,7 +98,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
             )
 
     except Exception as e:
-        logger.error("Error getting group from dynamo: %s", e)
+        print(f"Error getting group from dynamo: {e}")
         return json.dumps(
             {
                 "statusCode": 400,
@@ -144,9 +133,6 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
 
 # queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
 # to see all conversations of a specific group assistant. assistantId must be provided in the data field.
-@required_env_vars({
-    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
-})
 @validated(op="get_group_assistant_conversations")
 def get_group_assistant_conversations(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -184,10 +170,10 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        logger.error("DynamoDB ClientError: %s", str(e))
+        print(f"DynamoDB ClientError: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        logger.error("Unexpected error: %s", str(e))
+        print(f"Unexpected error: {str(e)}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),
@@ -195,10 +181,6 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 
 
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion - legacy fallback
-})
 @validated(op="get_group_conversations_data")
 def get_group_conversations_data(event, context, current_user, name, data):
     if (
@@ -217,33 +199,13 @@ def get_group_conversations_data(event, context, current_user, name, data):
     assistant_id = data["data"]["assistantId"]
 
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
-    
-    # For this function, we need to find the conversation record to check its migration status
-    # We'll first try the consolidation bucket format, then fallback to legacy
-    
-    # Try consolidation bucket first (migrated records)
-    consolidation_key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
+    bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+    key = f"{assistant_id}/{conversation_id}.txt"
+
     try:
-        response = s3.get_object(Bucket=consolidation_bucket, Key=consolidation_key)
+        response = s3.get_object(Bucket=bucket_name, Key=key)
         content = response["Body"].read().decode("utf-8")
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"content": content}),
-        }
-    except ClientError as e:
-        if e.response["Error"]["Code"] != "NoSuchKey":
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": "Error retrieving conversation content"}),
-            }
-    
-    # Fallback to legacy bucket
-    legacy_key = f"{assistant_id}/{conversation_id}.txt"
-    try:
-        response = s3.get_object(Bucket=legacy_bucket, Key=legacy_key)
-        content = response["Body"].read().decode("utf-8")
+
         return {
             "statusCode": 200,
             "body": json.dumps({"content": content}),
@@ -268,11 +230,6 @@ def get_group_conversations_data(event, context, current_user, name, data):
 # - specify date range: startDate-endDate (default null, meaning provide all data regardless of date)
 # - include conversation data: true/false (default false, meaning provide only dashboard data, NOT conversation statistics in CSV format)
 # - include conversation content: true/false (default false, meaning content of conversations is not provided)
-@required_env_vars({
-    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], #Marked for deletion - legacy fallback
-})
 @validated(op="get_group_assistant_dashboards")
 def get_group_assistant_dashboards(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -359,7 +316,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                     total_user_rating += float(user_rating)
                     user_rating_count += 1
                 except ValueError:
-                    logger.warning("Invalid user rating value: %s", user_rating)
+                    print(f"Invalid user rating value: {user_rating}")
 
             # Calculate system rating
             system_rating = conv.get("systemRating")
@@ -368,7 +325,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                     total_system_rating += float(system_rating)
                     system_rating_count += 1
                 except ValueError:
-                    logger.warning("Invalid system rating value: %s", system_rating)
+                    print(f"Invalid system rating value: {system_rating}")
 
         average_user_rating = (
             float(total_user_rating) / float(user_rating_count)
@@ -402,63 +359,37 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
         if include_conversation_data or include_conversation_content:
             s3 = boto3.client("s3")
-            consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-            legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
+            bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
 
             for conv in conversations:
                 if include_conversation_content:
                     conversation_id = conv.get("conversationId")
-                    s3_location = conv.get("s3Location", "")
-                    
                     if conversation_id:
-                        # Determine bucket and key based on migration status
-                        if s3_location.startswith("s3://"):
-                            # Legacy record - use legacy bucket and extract key from s3Location
-                            import re
-                            match = re.search(r's3://[^/]+/(.+)', s3_location)
-                            if match:
-                                key = match.group(1)  # Extract "astgp/..." from s3Location
-                                bucket_to_use = legacy_bucket
-                            else:
-                                # Fallback to constructed key if s3Location parsing fails
-                                key = f"{assistant_id}/{conversation_id}.txt"
-                                bucket_to_use = legacy_bucket
-                        else:
-                            # Migrated record - use consolidation bucket
-                            # s3Location should be like "agentConversations/astgp/..." 
-                            if s3_location.startswith("agentConversations/"):
-                                key = s3_location
-                            else:
-                                # Fallback construction for migrated records
-                                key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
-                            bucket_to_use = consolidation_bucket
-                        
+                        key = f"{assistant_id}/{conversation_id}.txt"
                         try:
-                            obj = s3.get_object(Bucket=bucket_to_use, Key=key)
+                            obj = s3.get_object(Bucket=bucket_name, Key=key)
                             conv["conversationContent"] = (
                                 obj["Body"].read().decode("utf-8")
                             )
                         except ClientError as e:
                             if e.response["Error"]["Code"] == "NoSuchKey":
-                                logger.warning(
-                                    "Conversation content not found for %s at %s/%s",
-                                    conversation_id, bucket_to_use, key
+                                print(
+                                    f"Conversation content not found for {conversation_id}"
                                 )
                             else:
-                                logger.error(
-                                    "Error retrieving S3 content for conversation %s: %s",
-                                    conversation_id, str(e)
+                                print(
+                                    f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}"
                                 )
 
             # response_data["conversationData"] = conversations
 
             # Generate a unique filename
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            filename = f"agentConversations/exports/conversation_data_{assistant_id}_{timestamp}.json"
+            filename = f"conversation_data_{assistant_id}_{timestamp}.json"
 
-            # Upload conversation data to consolidation S3 bucket
+            # Upload conversation data to S3
             s3.put_object(
-                Bucket=consolidation_bucket,
+                Bucket=bucket_name,
                 Key=filename,
                 Body=json.dumps(conversations, cls=CustomPydanticJSONEncoder),
                 ContentType="application/json",
@@ -467,7 +398,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             # Generate a pre-signed URL that's valid for 1 hour
             presigned_url = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": consolidation_bucket, "Key": filename},
+                Params={"Bucket": bucket_name, "Key": filename},
                 ExpiresIn=3600,
             )
 
@@ -479,10 +410,10 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        logger.error("DynamoDB ClientError: %s", str(e))
+        print(f"DynamoDB ClientError: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        logger.error("Unexpected error: %s", str(e))
+        print(f"Unexpected error: {str(e)}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),
@@ -490,9 +421,6 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
 
 
-@required_env_vars({
-    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM],
-})
 @validated(op="save_user_rating")
 def save_user_rating(event, context, current_user, name, data):
     if (
@@ -544,10 +472,10 @@ def save_user_rating(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        logger.error("DynamoDB ClientError: %s", str(e))
+        print(f"DynamoDB ClientError: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        logger.error("Unexpected error: %s", str(e))
+        print(f"Unexpected error: {str(e)}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),

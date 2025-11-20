@@ -15,8 +15,6 @@ from pycommon.api.assistants import share_assistant
 import boto3
 
 from pycommon.api.ops import api_tool
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation, S3Operation
 
 dynamodb = boto3.resource("dynamodb")
 from pycommon.api.amplify_users import are_valid_amplify_users
@@ -27,56 +25,20 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.SHARE.value])
 
-from pycommon.logger import getLogger
-logger = getLogger("shares")
 
-# Import user_data functions for USER_STORAGE_TABLE
-from state.user_data import handle_put_item, handle_query_by_type
-
-
-def get_s3_data(s3_key):
-    """Fetch data from S3 with backward compatibility for legacy and consolidation buckets"""
+def get_s3_data(bucket_name, s3_key):
+    print("Fetching data from S3: {}/{}".format(bucket_name, s3_key))
     s3 = boto3.resource("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    shares_bucket = os.environ.get("S3_SHARE_BUCKET_NAME")  # Legacy bucket
-    
-    # Handle new format (key already includes shares/ prefix) and old format (key without prefix)
-    if s3_key.startswith("shares/"):
-        # New format: key already includes shares/ prefix
-        consolidation_key = s3_key
-        legacy_key = s3_key[7:]  # Remove shares/ prefix for legacy bucket
-    else:
-        # Old format: key without shares/ prefix (backward compatibility)
-        consolidation_key = f"shares/{s3_key}"
-        legacy_key = s3_key
-    
-    # Try consolidation bucket first (new format)  
-    try:
-        logger.debug("Fetching data from consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
-        obj = s3.Object(consolidation_bucket, consolidation_key)
-        data = obj.get()["Body"].read().decode("utf-8")
-        return data
-    except Exception as e:
-        logger.debug("Not found in consolidation bucket: %s", str(e))
-    
-    # Fallback to legacy bucket if available
-    if shares_bucket:
-        try:
-            logger.debug("Fetching data from legacy bucket: %s/%s", shares_bucket, legacy_key)
-            obj = s3.Object(shares_bucket, legacy_key) 
-            data = obj.get()["Body"].read().decode("utf-8")
-            return data
-        except Exception as e:
-            logger.debug("Not found in legacy bucket either: %s", str(e))
-            
-    raise Exception(f"Data not found in either bucket for key: {s3_key}")
+    obj = s3.Object(bucket_name, s3_key)
+    data = obj.get()["Body"].read().decode("utf-8")
+    return data
 
 
 def get_data_from_dynamodb(user, name):
     dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
 
-    logger.debug("Querying DynamoDB for user: %s and name: %s", user, name)
+    print("Querying DynamoDB for user: {} and name: {}".format(user, name))
 
     response = table.query(
         IndexName="UserNameIndex",
@@ -129,110 +91,61 @@ def get_data_from_dynamodb(user, name):
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "USER_STORAGE_TABLE": [DynamoDBOperation.QUERY],
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    # "S3_SHARE_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion
-})
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
     access = data["allowed_access"]
     if APIAccessType.SHARE.value not in access and APIAccessType.FULL_ACCESS.value not in access:
-        logger.warning("User does not have access to the share functionality")
+        print("User does not have access to the share functionality")
         return {
             "success": False,
             "message": "User does not have access to the share functionality",
         }
 
     s3_key = data["data"]["key"]
-    logger.info("Loading data from S3: %s", s3_key)
+    print("Loading data from S3: {}".format(s3_key))
 
-    # Use backward compatibility - check both USER_STORAGE_TABLE and legacy table
-    key_found = False
+    user_data = get_data_from_dynamodb(current_user, "/state/share")
 
-    try:
-        # NEW: Check shares in USER_STORAGE_TABLE
-        try:
-            new_shares = handle_query_by_type(
-                current_user=current_user,
-                app_id="amplify-shares", 
-                entity_type="received"
-            )
-            
-            # Check if s3_key exists in USER_STORAGE_TABLE shares
-            for share in new_shares:
-                share_data = share.get("data", {})
-                if share_data.get("key") == s3_key:
-                    key_found = True
-                    logger.debug("Found key in USER_STORAGE_TABLE")
-                    break
-                    
-        except Exception as e:
-            logger.error("Error querying USER_STORAGE_TABLE: %s", e)
-            # Continue to check legacy table
-            
-        # OLD: Check shares in SHARES_DYNAMODB_TABLE (backward compatibility)
-        if not key_found:
-            try:
-                user_data = get_data_from_dynamodb(current_user, "/state/share")
-                
-                # Check if the given s3_key exists in the legacy user's data
-                if any(
-                    s3_key == data_dict.get("key")
-                    for item in user_data
-                    for data_dict in item.get("data", [])
-                ):
-                    key_found = True
-                    logger.debug("Found key in SHARES_DYNAMODB_TABLE")
-                    
-            except Exception as e:
-                logger.error("Error querying SHARES_DYNAMODB_TABLE: %s", e)
+    # Check if the given s3_key exists in the user's data
+    if any(
+        s3_key == data_dict.get("key")
+        for item in user_data
+        for data_dict in item.get("data", [])
+    ):
+        # If s3_key found, fetch data from S3 and return
+        print("Loading data from S3: {}".format(s3_key))
+        return {
+            "success": True,
+            "item": get_s3_data(os.environ["S3_BUCKET_NAME"], s3_key),
+        }
 
-        if key_found:
-            # If s3_key found in either table, fetch data from S3 and return
-            logger.info("Loading data from S3: %s", s3_key)
-            return {
-                "success": True,
-                "item": get_s3_data(s3_key),
-            }
-        else:
-            return {"success": False, "message": "Data not found"}
-            
-    except Exception as e:
-        logger.error("Error in load_data_from_s3: %s", e)
-        return {"success": False, "message": "Error loading shared data"}
+    else:
+        return {"success": False, "message": "Data not found"}
 
 
-def put_s3_data(filename, data):
-    """Put data in consolidation bucket with shares/ prefix"""
+def put_s3_data(bucket_name, filename, data):
     s3_client = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    
-    # Use consolidation bucket format for new shares
-    consolidation_key = f"shares/{filename}"
 
     # Check if bucket exists
     try:
-        s3_client.head_bucket(Bucket=consolidation_bucket)
+        s3_client.head_bucket(Bucket=bucket_name)
     except boto3.exceptions.botocore.exceptions.ClientError:
         # If bucket does not exist, create it
-        s3_client.create_bucket(Bucket=consolidation_bucket)
+        s3_client.create_bucket(Bucket=bucket_name)
 
     # Now put the object (file)
-    # print(f"Putting data: {data} in the consolidation S3 bucket")
+    # print(f"Putting data: {data} in the share S3 bucket")
     s3_client.put_object(
-        Body=json.dumps(data).encode(), Bucket=consolidation_bucket, Key=consolidation_key
+        Body=json.dumps(data).encode(), Bucket=bucket_name, Key=filename
     )
-    
-    logger.info("Successfully uploaded share to consolidation bucket: %s", consolidation_key)
-    return consolidation_key  # Return full S3 key WITH shares/ prefix for DynamoDB storage
+
+    return filename
 
 
 def handle_conversation_datasource_permissions(
     access_token, recipient_users, conversations
 ):
-    logger.debug("Enter handle shared datasources in conversations")
+    print("Enter handle shared datasources in conversations")
     total_data_sources_keys = []
     for conversation in conversations:
         for message in conversation["messages"]:
@@ -245,7 +158,7 @@ def handle_conversation_datasource_permissions(
                 data_sources_keys = get_data_source_keys(message["data"]["dataSources"])
                 total_data_sources_keys.extend(data_sources_keys)
 
-    logger.debug("All Datasource Keys: %s", total_data_sources_keys)
+    print("All Datasource Keys: ", total_data_sources_keys)
 
     if len(total_data_sources_keys) != 0 and not update_object_permissions(
         access_token=access_token,
@@ -256,10 +169,10 @@ def handle_conversation_datasource_permissions(
         permission_level="read",
         policy="",
     ):
-        logger.error("Error adding permissions for shared files in conversations")
+        print(f"Error adding permissions for shared files in conversations")
         return {"success": False, "error": "Error updating datasource permissions"}
 
-    logger.debug("object permissions for datasources success")
+    print("object permissions for datasources success")
     return {"success": True, "message": "Updated object access permissions"}
 
 
@@ -279,19 +192,19 @@ def handle_share_assistant(access_token, prompts, recipient_users):
                 }
 
                 if not share_assistant(access_token, data):
-                    logger.error(
-                        "Error making share assistant calls for assistant: %s",
-                        prompt["id"]
+                    print(
+                        "Error making share assistant calls for assistant: ",
+                        prompt["id"],
                     )
                     return {
                         "success": False,
                         "error": "Could not successfully make the call to share assistants",
                     }
         except Exception as e:
-            logger.error("Error sharing assistant: %s", e)
+            print("Error sharing assistant: ", e)
             return {"success": False, "error": "Error sharing assistant"}
 
-    logger.debug("Share assistant call was a success")
+    print("Share assistant call was a success")
     return {
         "success": True,
         "message": "Successfully made the calls to share assistants",
@@ -352,11 +265,6 @@ def handle_share_assistant(access_token, prompts, recipient_users):
         "required": ["success", "items"],
     },
 )
-@required_env_vars({
-    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    # "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
-})
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
     access_token = data["access_token"]
@@ -392,9 +300,9 @@ def share_with_users(event, context, current_user, name, data):
             shared_assistants = handle_share_assistant(access_token, prompts, valid_users)
             if not shared_assistants["success"]:
                 # We need to continue because workspaces still need to be saved
-                logger.warning("Error sharing assistants: %s", shared_assistants["error"])
+                print("Error sharing assistants: ", shared_assistants["error"])
         except Exception as e:
-            logger.error("Error sharing assistants: %s", e)
+            print("Error sharing assistants: ", e)
 
     succesful_shares = []
 
@@ -406,31 +314,65 @@ def share_with_users(event, context, current_user, name, data):
                 user, current_user, dt_string, str(uuid.uuid4())
             )
 
-            stored_key = put_s3_data(s3_key, new_data)
+            put_s3_data(os.environ["S3_BUCKET_NAME"], s3_key, new_data)
+
+            dynamodb = boto3.resource("dynamodb")
+            table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+
+            # Step 1: Query using the secondary index to get the primary key
+            response = table.query(
+                IndexName="UserNameIndex",
+                KeyConditionExpression=Key("user").eq(user) & Key("name").eq(name),
+            )
+
+            items = response.get("Items")
             timestamp = int(time.time() * 1000)
 
-            # Store in USER_STORAGE_TABLE using new schema
-            # PK: "{user_id}#amplify-shares#received"  
-            # SK: "{sharer_id}#{date}#{uuid}"
-            share_id = f"{current_user}#{dt_string}#{str(uuid.uuid4())}"
-            
-            share_data = {
-                "sharedBy": current_user,
-                "note": note,
-                "sharedAt": timestamp,
-                "key": stored_key,
-            }
+            if not items:
+                # No item found with user and name, create a new item
+                id_key = "{}/{}".format(
+                    user, str(uuid.uuid4())
+                )  # add the user's name to the key in DynamoDB
+                new_item = {
+                    "id": id_key,
+                    "user": user,
+                    "name": name,
+                    "data": [
+                        {
+                            "sharedBy": current_user,
+                            "note": note,
+                            "sharedAt": timestamp,
+                            "key": s3_key,
+                        }
+                    ],
+                    "createdAt": timestamp,
+                    "updatedAt": timestamp,
+                }
+                table.put_item(Item=new_item)
+                succesful_shares.append(user)
 
-            # Use handle_put_item from user_data.py (same service)
-            result = handle_put_item(
-                current_user=user,
-                app_id="amplify-shares", 
-                entity_type="received",
-                item_id=share_id,
-                data=share_data
-            )
-            
-            if result.get("uuid"):
+            else:
+                # Otherwise, update the existing item
+                item = items[0]
+
+                result = table.update_item(
+                    Key={"id": item["id"]},
+                    ExpressionAttributeNames={"#data": "data"},
+                    ExpressionAttributeValues={
+                        ":data": [
+                            {
+                                "sharedBy": current_user,
+                                "note": note,
+                                "sharedAt": timestamp,
+                                "key": s3_key,
+                            }
+                        ],
+                        ":updatedAt": timestamp,
+                    },
+                    UpdateExpression="SET #data = list_append(#data, :data), updatedAt = :updatedAt",
+                    ReturnValues="ALL_NEW",
+                )
+
                 succesful_shares.append(user)
 
         except Exception as e:
@@ -452,10 +394,8 @@ def remove_code_interpreter_details(conversations):
                 ):
                     del message["data"]["state"]["codeInterpreter"]
     return conversations
-@required_env_vars({
-    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "USER_STORAGE_TABLE": [DynamoDBOperation.QUERY],
-})
+
+
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -465,60 +405,21 @@ def get_share_data_for_user(event, context, current_user, name, data):
             "message": "API key does not have access to share functionality",
         }
 
-    all_shares = []
+    tableName = os.environ["DYNAMODB_TABLE"]
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(tableName)
 
     try:
-        # NEW: Get shares from USER_STORAGE_TABLE
-        try:
-            new_shares = handle_query_by_type(
-                current_user=current_user,
-                app_id="amplify-shares", 
-                entity_type="received"
-            )
-            
-            # Transform USER_STORAGE_TABLE format to legacy format
-            for share in new_shares:
-                share_data = share.get("data", {})
-                formatted_share = {
-                    "sharedBy": share_data.get("sharedBy", ""),
-                    "note": share_data.get("note", ""),
-                    "sharedAt": share_data.get("sharedAt", 0),
-                    "key": share_data.get("key", ""),
-                }
-                all_shares.append(formatted_share)
-                
-            logger.info("Found %d shares in USER_STORAGE_TABLE", len(new_shares))
-            
-        except Exception as e:
-            logger.error("Error querying USER_STORAGE_TABLE: %s", e)
-            # Continue to check legacy table even if new table fails
-            
-        # OLD: Get shares from SHARES_DYNAMODB_TABLE (backward compatibility)
-        try:
-            tableName = os.environ["SHARES_DYNAMODB_TABLE"]
-            dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(tableName)
+        # Step 1: Query using the secondary index to get the primary key
+        response = table.query(
+            IndexName="UserNameIndex",
+            KeyConditionExpression=Key("user").eq(current_user) & Key("name").eq(name),
+        )
 
-            response = table.query(
-                IndexName="UserNameIndex",
-                KeyConditionExpression=Key("user").eq(current_user) & Key("name").eq(name),
-            )
+        items = response.get("Items")
 
-            items = response.get("Items", [])
-            
-            if items:
-                # Extract legacy share data
-                item = items[0]
-                if "data" in item and isinstance(item["data"], list):
-                    all_shares.extend(item["data"])
-                    
-            logger.info("Found %d legacy share records in SHARES_DYNAMODB_TABLE", len(items))
-            
-        except Exception as e:
-            logger.error("Error querying SHARES_DYNAMODB_TABLE: %s", e)
-            # Continue even if legacy table fails
-
-        if not all_shares:
+        if not items:
+            # No item found with user and name, return message
             logging.info(
                 "No shared data found for current user: {} and name: {}".format(
                     current_user, name
@@ -526,14 +427,11 @@ def get_share_data_for_user(event, context, current_user, name, data):
             )
             return {"success": True, "items": []}
         else:
-            # Sort by sharedAt timestamp (newest first)
-            try:
-                all_shares.sort(key=lambda x: x.get("sharedAt", 0), reverse=True)
-            except:
-                pass  # If sorting fails, return unsorted
-                
-            logger.info("Total shares found: %d", len(all_shares))
-            return {"success": True, "items": all_shares}
+            # Otherwise, retrieve the shared data
+            item = items[0]
+            if "data" in item:
+                share_data = item["data"]
+                return {"success": True, "items": share_data}
 
     except Exception as e:
         logging.error(e)

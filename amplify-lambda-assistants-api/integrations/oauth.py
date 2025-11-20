@@ -19,10 +19,6 @@ from integrations.oauth_encryption import (
 )
 from pycommon.api.auth_admin import verify_user_as_admin
 
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, SSMOperation
-)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -32,8 +28,6 @@ from pycommon.api.ops import api_tool, set_permissions_by_state
 
 set_permissions_by_state(permissions)
 
-from pycommon.logger import getLogger
-logger = getLogger("oauth")
 
 # Define a custom error for missing credentials
 class MissingCredentialsError(Exception):
@@ -55,16 +49,11 @@ def provider_case(integration):
     raise ValueError(f"Unsupported integration type: {integration}")
 
 
-def create_oauth_client(integration, client_config, scopes, origin=None):
+def create_oauth_client(integration, client_config, scopes):
     """
     Creates an OAuth client for either Google or Microsoft integrations.
     Returns a tuple of (client, is_google_flow) where is_google_flow is used to determine
     how to handle the client in other functions.
-    Args:
-        integration: The integration type
-        client_config: OAuth client configuration
-        scopes: OAuth scopes
-        origin: Request origin for dynamic redirect URI selection
     """
     match provider_case(integration):
         case IntegrationType.GOOGLE:
@@ -73,7 +62,7 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
             if len(redirect_uris) == 1:
                 flow.redirect_uri = redirect_uris[0]
             else:
-                flow.redirect_uri = build_redirect_uri(origin)
+                flow.redirect_uri = build_redirect_uri()
             return flow, scopes
         case IntegrationType.MICROSOFT:
             client_config = client_config.get("web")
@@ -82,12 +71,6 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
             authority = (
                 f"{client_config.get('auth_uri')}{client_config.get('tenant_id')}"
             )
-            
-            # Log the redirect URI that will be used
-            redirect_uri = build_redirect_uri(origin)
-            print(f"Microsoft OAuth - Redirect URI being used: {redirect_uri}")
-            print(f"Microsoft OAuth - Client config redirect_uris: {client_config.get('redirect_uris', [])}")
-            
             app = ConfidentialClientApplication(
                 client_id=client_id,
                 client_credential=client_secret,
@@ -97,32 +80,18 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
     raise ValueError(f"Unsupported integration type: {integration}")
 
 
-def get_authorization_url_and_state(integration, client, scopes=None, retry_with_consent=False):
+def get_authorization_url_and_state(integration, client, scopes=None):
     """
     Gets authorization URL and state for either Google or Microsoft clients.
-    Args:
-        integration: The integration type
-        client: OAuth client
-        scopes: OAuth scopes
-        retry_with_consent: If True, forces prompt=consent for Microsoft OAuth
     """
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             authorization_url, state = client.authorization_url(prompt="consent")
         case IntegrationType.MICROSOFT:
             state = str(uuid.uuid4())  # Generate a random state
-            # Only use prompt=consent if explicitly requested (for retry scenarios)
-            auth_params = {"scopes": scopes, "state": state}
-            if retry_with_consent:
-                auth_params["prompt"] = "consent"
-                
-            # For Microsoft, we need to explicitly pass the redirect_uri
-            # The redirect_uri should be determined from the current environment
-            redirect_uri = build_redirect_uri()
-            auth_params["redirect_uri"] = redirect_uri
-            
-            print(f"Microsoft OAuth authorization URL params: {auth_params}")
-            authorization_url = client.get_authorization_request_url(**auth_params)
+            authorization_url = client.get_authorization_request_url(
+                scopes=scopes, state=state, prompt="consent"
+            )
 
     return authorization_url, state
 
@@ -143,11 +112,8 @@ def acquire_token_from_code(integration, client, scopes, authorization_code):
             client.fetch_token(code=authorization_code)
             return client.credentials
         case IntegrationType.MICROSOFT:
-            # For Microsoft, we need to pass the redirect_uri that was used in authorization
-            redirect_uri = build_redirect_uri()
-            print(f"Microsoft token acquisition - using redirect_uri: {redirect_uri}")
             result = client.acquire_token_by_authorization_code(
-                code=authorization_code, scopes=scopes, redirect_uri=redirect_uri
+                code=authorization_code, scopes=scopes
             )
             return result
     raise ValueError(f"Unsupported integration type: {integration}")
@@ -157,7 +123,6 @@ def serialize_credentials(integration, credentials):
     """
     Serializes and encrypts the credentials returning a consistent JSON that includes an 'expires_at' timestamp.
     """
-
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             credentials_dict = json.loads(credentials.to_json())
@@ -169,15 +134,11 @@ def serialize_credentials(integration, credentials):
                     dt = datetime.fromisoformat(expiry_str)
                     credentials_dict["expires_at"] = int(dt.timestamp())
                 except Exception as e:
-                    logger.error("Error parsing Google expiry date: %s", e)
+                    print("Error parsing Google expiry date:", e)
                     raise e
             else:
-                raise Exception("Google credentials missing required fields:", credentials_dict)
+                raise Exception("Google credentials missing 'expiry' field")
         case IntegrationType.MICROSOFT:
-            if ("error" in credentials or "error_description" in credentials):
-                logger.error("Error serializing Microsoft credentials: %s", credentials)
-                raise Exception(f"Error serializing Microsoft credentials: {credentials}")
-                
             credentials_dict = {
                 "token": credentials.get("access_token"),
                 "expires_in": credentials.get("expires_in"),
@@ -224,8 +185,8 @@ def get_user_credentials(current_user, integration):
     integration_provider = provider_case(integration).value
     item_key = f"{current_user}/{integration_provider}"
 
-    logger.info(
-        "Retrieving credentials for user %s and integration %s using key %s", current_user, integration, item_key
+    print(
+        f"Retrieving credentials for user {current_user} and integration {integration} using key {item_key}"
     )
     try:
         response = oauth_user_table.get_item(Key={"user_integration": item_key})
@@ -240,7 +201,7 @@ def get_user_credentials(current_user, integration):
             f"No credentials found for user {current_user} and integration {integration}"
         )
     except Exception as e:
-        logger.error("Error retrieving credentials from DynamoDB: %s", str(e))
+        print(f"Error retrieving credentials from DynamoDB: {str(e)}")
         raise e
 
 
@@ -266,7 +227,7 @@ def get_oauth_integration_parameter(integration):
     integration_provider = provider_case(integration).value
     ssm = boto3.client("ssm")
     parameter_name = build_integration_parameter_name(integration_provider)
-    logger.info("Getting OAuth client for integration: /oauth/%s", parameter_name)
+    print(f"Getting OAuth client for integration: /oauth/{parameter_name}")
     try:
         response = ssm.get_parameter(
             Name=f"/oauth/{parameter_name}", WithDecryption=True
@@ -287,102 +248,39 @@ def get_oauth_integration_parameter(integration):
         )
 
 
-def get_oauth_client_for_integration(integration, origin=None):
+def get_oauth_client_for_integration(integration):
     client_config, scopes = get_oauth_integration_parameter(integration)
-    return create_oauth_client(integration, client_config, scopes, origin)
+    return create_oauth_client(integration, client_config, scopes)
 
 
-def detect_request_origin(event):
-    """
-    Detects the origin of the OAuth request from event headers.
-    Returns the origin URL or None if not detectable.
-    """
-    headers = event.get("headers", {})
-
-    # Print all headers for debugging
-    print(f"Available headers: {list(headers.keys())}")
-
-    # Check various header formats (case-insensitive)
-    origin = None
-    for key, value in headers.items():
-        key_lower = key.lower()
-        if key_lower in ["origin", "referer", "host"]:
-            print(f"Found header {key}: {value}")
-
-        if key_lower == "origin":
-            origin = value
-            break
-        elif key_lower == "referer":
-            # Extract origin from referer URL
-            import urllib.parse
-            parsed = urllib.parse.urlparse(value)
-            origin = f"{parsed.scheme}://{parsed.netloc}"
-            break
-        elif key_lower == "host" and not origin:
-            # Fallback to host header if available
-            # Determine protocol based on environment
-            protocol = "https" if "amazonaws.com" in value or "dev-amplify" in value else "http"
-            origin = f"{protocol}://{value}"
-
-    # If still no origin detected and we're in local dev, assume localhost frontend
-    if not origin:
-        # Check if API_BASE_URL suggests local development
-        api_base = os.environ.get("API_BASE_URL", "")
-        if "localhost" in api_base:
-            origin = "http://localhost:3000"  # Common frontend port
-            print(f"No origin detected, assuming local frontend: {origin}")
-
-    print(f"Detected request origin: {origin}")
-    return origin
-
-
-@required_env_vars(
-    {
-        "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
-        "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-        "API_BASE_URL": [],
-        "OAUTH_AUDIENCE": [],
-    }
-)
 @validated("start_oauth")
 def start_auth(event, context, current_user, name, data):
 
     integration = data["data"]["integration"]
-    logger.info("Starting OAuth flow for integration: %s", integration)
+    print(f"Starting OAuth flow for integration: {integration}")
 
-    # Detect request origin for dynamic callback URL selection
-    origin = detect_request_origin(event)
-    
-    auth_client, scopes = get_oauth_client_for_integration(integration, origin)
+    auth_client, scopes = get_oauth_client_for_integration(integration)
 
     print("Obtained client.")
     print("Creating client redirect url...")
-    
-    # For Microsoft, try without consent first (will retry with consent if needed)
-    retry_with_consent = False
-    logger.debug("Obtained client.")
-    logger.debug("Creating client redirect url...")
     authorization_url, state = get_authorization_url_and_state(
-        integration, auth_client, scopes, retry_with_consent
+        integration, auth_client, scopes
     )
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
 
     try:
-        current_timestamp = int(time.time())
         table.put_item(
             Item={
                 "state": state,
                 "integration": integration,
                 "user": current_user,
                 "timestamp": int(time.time()),
-                "origin": origin,  # Store origin for callback handling
-                "retry_with_consent": retry_with_consent,
             }
         )
     except ClientError as e:
-        logger.error("Error storing state in DynamoDB: %s", e)
+        print(f"Error storing state in DynamoDB: {e}")
         raise
 
     return {
@@ -398,7 +296,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
     integration_provider = provider_case(integration).value
     item_key = f"{current_user}/{integration_provider}"
 
-    logger.info("Storing token in DynamoDB under key: %s", item_key)
+    print(f"Storing token in DynamoDB under key: {item_key}")
 
     integration_map = {}
     try:
@@ -407,11 +305,11 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
         record = response.get("Item")
         if record:
             integration_map = record.get("integrations", {})
-            logger.debug("Found existing integrations map: %s", integration_map)
+            print("Found existing integrations map:", integration_map)
         else:
-            logger.debug("No record found; initializing a new integrations map.")
+            print("No record found; initializing a new integrations map.")
     except Exception as e:
-        logger.error("Error retrieving item %s from DynamoDB: %s", item_key, e)
+        print(f"Error retrieving item {item_key} from DynamoDB: {e}")
         return {
             "success": False,
             "message": f"Error retrieving existing OAuth credentials",
@@ -419,7 +317,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
 
     # Update the integrations map for this integration.
     integration_map[integration] = encrypt_oauth_data(credentials_data)
-    logger.debug("Updated integrations map: %s", integration_map)
+    print("Updated integrations map:", integration_map)
     timestamp = datetime.now(timezone.utc).isoformat()
     try:
         # Store (or update) the new record in DynamoDB.
@@ -430,108 +328,16 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
                 "last_updated": timestamp,
             }
         )
-        logger.info("Credentials successfully stored in DynamoDB under key %s", item_key)
+        print(f"Credentials successfully stored in DynamoDB under key {item_key}")
         return {"success": True}
     except Exception as e:
-        logger.error("Error storing token in DynamoDB: %s", e)
+        print(f"Error storing token in DynamoDB: {e}")
         return {"success": False, "message": f"Error storing OAuth credentials."}
 
 
-def handle_oauth_error_retry(current_user, integration, origin, error_description):
-    """
-    Handles OAuth errors by retrying with consent prompt if needed.
-    Returns a redirect URL for retry or None if retry is not appropriate.
-    """
-    # Check if this is an approval required error for Microsoft
-    if provider_case(integration) == IntegrationType.MICROSOFT:
-        if "approval" in error_description.lower() or "consent" in error_description.lower():
-            print(f"Approval required error detected, retrying with consent prompt")
-            
-            # Create new OAuth client with consent prompt
-            auth_client, scopes = get_oauth_client_for_integration(integration, origin)
-            authorization_url, state = get_authorization_url_and_state(
-                integration, auth_client, scopes, retry_with_consent=True
-            )
-            
-            # Store retry state
-            dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
-            
-            try:
-                table.put_item(
-                    Item={
-                        "state": state,
-                        "integration": integration,
-                        "user": current_user,
-                        "timestamp": int(time.time()),
-                        "origin": origin,
-                        "retry_with_consent": True,
-                        "is_retry": True,
-                    }
-                )
-                return authorization_url
-            except ClientError as e:
-                print(f"Error storing retry state in DynamoDB: {e}")
-    
-    return None
-
-
 def auth_callback(event, context):
-    try:
-        print(f"OAuth callback received - Event: {json.dumps(event, default=str, indent=2)}")
-        
-        query_params = event.get("queryStringParameters", {})
-        if not query_params:
-            print("No query parameters found in callback")
-            return return_html_failed_auth("No parameters received in OAuth callback.")
-        
-        print(f"Query parameters: {query_params}")
-        
-        # Check for OAuth errors first
-        error = query_params.get("error")
-        error_description = query_params.get("error_description", "")
-        
-        if error:
-            print(f"OAuth error received: {error} - {error_description}")
-            
-            # Try to get state to retrieve user and integration info for retry
-            state = query_params.get("state")
-            if state:
-                dynamodb = boto3.resource("dynamodb")
-                table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
-                
-                try:
-                    response = table.get_item(Key={"state": state})
-                    item = response.get("Item")
-                    
-                    if item and not item.get("is_retry", False):  # Avoid infinite retry loops
-                        current_user = item["user"]
-                        integration = item["integration"]
-                        origin = item.get("origin")
-                        
-                        # Attempt retry with consent
-                        retry_url = handle_oauth_error_retry(current_user, integration, origin, error_description)
-                        if retry_url:
-                            return {
-                                "statusCode": 302,
-                                "headers": {"Location": retry_url},
-                                "body": {"Location": retry_url},
-                            }
-                except ClientError as e:
-                    print(f"Error retrieving state for retry: {e}")
-            
-            # If retry is not possible or appropriate, return error
-            return return_html_failed_auth(f"OAuth error: {error_description or error}")
-    except Exception as e:
-        print(f"Unexpected error in auth_callback: {str(e)}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
-        return return_html_failed_auth(f"Internal server error: {str(e)}")
 
-    state = query_params.get("state")
-    if not state:
-        return return_html_failed_auth("Missing state parameter.")
-        
+    state = event["queryStringParameters"]["state"]
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
 
@@ -541,11 +347,10 @@ def auth_callback(event, context):
         if item:
             current_user = item["user"]
             integration = item["integration"]
-            origin = item.get("origin")
         else:
             raise ValueError("Invalid OAuth callback.")
     except ClientError as e:
-        logger.error("Error retrieving state from DynamoDB: %s", e)
+        print(f"Error retrieving state from DynamoDB: {e}")
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "text/html"},
@@ -571,18 +376,15 @@ def auth_callback(event, context):
 
     print("Current user:", current_user)
     print("Integration:", integration)
-    authorization_code = query_params.get("code")
-    
-    if not authorization_code:
-        return return_html_failed_auth("Missing authorization code.")
+    authorization_code = event["queryStringParameters"]["code"]
 
-    client, scopes = get_oauth_client_for_integration(integration, origin)
+    client, scopes = get_oauth_client_for_integration(integration)
     credentials = acquire_token_from_code(
         integration, client, scopes, authorization_code
     )
 
-    logger.debug("State found: %s", state is not None)
-    logger.debug("Credentials found: %s", credentials is not None)
+    print("State found:", state is not None)
+    print("Credentials found:", credentials is not None)
 
     if state is None or credentials is None:
         return return_html_failed_auth("Invalid OAuth callback, missing parameters.")
@@ -682,10 +484,6 @@ def return_html_failed_auth(message):
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated("list_integrations")
 def list_connected_integrations(event, context, current_user, name, data):
     supported_integrations = get_available_integrations()
@@ -696,7 +494,7 @@ def list_connected_integrations(event, context, current_user, name, data):
         }
 
     connected = list_user_integrations(supported_integrations, current_user)
-    logger.debug("Connected status: %s", False if connected is None else True)
+    print(False if connected is None else True)
 
     return {"success": False if connected is None else True, "data": connected}
 
@@ -725,16 +523,13 @@ def list_user_integrations(supported_integrations, current_user):
                 ]
                 connected_list.extend(filtered_ids)
         except Exception as e:
-            logger.error(
-                "Error retrieving record for integration %s for user %s: %s", provider, current_user, str(e)
+            print(
+                f"Error retrieving record for integration {provider} for user {current_user}: {str(e)}"
             )
             continue
     return connected_list
 
 
-@required_env_vars({
-    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-})
 @validated("delete_integration")
 def handle_delete_integration(event, context, current_user, name, data):
     integration = data["data"]["integration"]
@@ -757,7 +552,7 @@ def delete_integration(current_user, integration):
         if record:
             integration_map = record.get("integrations", {})
             if integration in integration_map:
-                logger.info("Integration %s found in the record %s", integration, item_key)
+                print(f"Integration {integration} found in the record {item_key}")
                 del integration_map[integration]
                 timestamp = datetime.now(timezone.utc).isoformat()
                 # Update the record with the new integrations map.
@@ -768,18 +563,18 @@ def delete_integration(current_user, integration):
                         "last_updated": timestamp,
                     }
                 )
-                logger.info(
-                    "Successfully updated record for user %s after deleting integration %s", current_user, integration
+                print(
+                    f"Successfully updated record for user {current_user} after deleting integration {integration}"
                 )
                 return True
             else:
-                logger.warning("Integration %s not found in record %s", integration, item_key)
+                print(f"Integration {integration} not found in record {item_key}")
         else:
-            logger.warning(
-                "No record found in DynamoDB for user %s and integration provider %s", current_user, integration_provider
+            print(
+                f"No record found in DynamoDB for user {current_user} and integration provider {integration_provider}"
             )
     except Exception as e:
-        logger.error("Error deleting credentials from DynamoDB: %s", str(e))
+        print(f"Error deleting credentials from DynamoDB: {str(e)}")
     return False
 
 
@@ -825,9 +620,6 @@ def delete_integration(current_user, integration):
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated("list_integrations")
 def get_supported_integrations(event, context, current_user, name, data):
     supported_integrations = get_available_integrations()
@@ -849,7 +641,7 @@ def get_available_integrations():
         response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
         data = {}
         if "Item" in response:
-            logger.debug("Integrations found in DynamoDB")
+            print("Integrations found in DynamoDB")
             integrations_map = response["Item"].get("data", {})
             # keep only available integrations
             for provider, integrations in integrations_map.items():
@@ -865,15 +657,10 @@ def get_available_integrations():
         return data
 
     except Exception as e:
-        logger.error("Error retrieving user integrations: %s", str(e))
+        print(f"Error retrieving user integrations: {str(e)}")
         return None
 
 
-@required_env_vars({
-    "INTEGRATION_STAGE": [SSMOperation.PUT_PARAMETER],
-    "API_BASE_URL": [],
-    "OAUTH_AUDIENCE": [],
-})
 @validated("register_secret")
 def regiser_secret(event, context, current_user, name, data):
     integration_provider = data["data"]["integration"]
@@ -905,32 +692,16 @@ def regiser_secret(event, context, current_user, name, data):
             param_name, json.dumps(configuration), "/oauth"
         )
         if response:
-            logger.info("Credentials stored in Parameter Store %s", param_name)
+            print(f"Credentials stored in Parameter Store {param_name}")
             return {"success": True}
     except ClientError as e:
-        logger.error("Error storing token in Parameter Store: %s", e)
+        print(f"Error storing token in Parameter Store: {e}")
     return {"success": False}
 
 
-def build_redirect_uri(origin=None):
-    """
-    Builds redirect URI based on request origin or falls back to API_BASE_URL.
-    Args:
-        origin: The origin URL from the request (e.g., https://dev-amplify.com, http://localhost:3000)
-    Returns:
-        Appropriate callback URL for the OAuth flow
-    """
-    # Always use the API_BASE_URL for the callback, not the frontend origin
-    api_base_url = os.environ.get("API_BASE_URL")
-    
-    if not api_base_url:
-        raise ValueError("API_BASE_URL environment variable is not set")
-    
-    callback_url = f"{api_base_url}/integrations/oauth/callback"
-    
-    print(f"Building redirect URI - Origin: {origin}, API_BASE_URL: {api_base_url}, Callback: {callback_url}")
-    
-    return callback_url
+def build_redirect_uri():
+    API_BASE_URL = os.environ.get("API_BASE_URL")
+    return f"{API_BASE_URL}/integrations/oauth/callback"
 
 
 def format_integration_param(
@@ -938,30 +709,11 @@ def format_integration_param(
 ):
     OAUTH_AUDIENCE = os.environ.get("OAUTH_AUDIENCE")
 
-    # Build multiple redirect URIs for different environments
-    redirect_uris = [build_redirect_uri()]  # Default/primary callback URL
-    
-    # Always add localhost callback for local development
-    localhost_callback = "http://localhost:3015/integrations/oauth/callback"
-    if localhost_callback not in redirect_uris:
-        redirect_uris.append(localhost_callback)
-    
-    # Add additional callback URLs for different environments if OAUTH_AUDIENCE is available
-    if OAUTH_AUDIENCE:
-        # Add dev environment callback if not already primary
-        if 'dev' not in OAUTH_AUDIENCE and 'localhost' not in OAUTH_AUDIENCE:
-            dev_callback = OAUTH_AUDIENCE.replace('https://', 'https://dev-')
-            dev_callback_url = f"{dev_callback}/integrations/oauth/callback"
-            if dev_callback_url not in redirect_uris:
-                redirect_uris.append(dev_callback_url)
-    
-    print(f"Configured redirect URIs for {integration_provider}: {redirect_uris}")
-
     param_data = {
         "client_id": client_id,
         "client_secret": client_secret,
-        "redirect_uris": redirect_uris,
-        "javascript_origins": [OAUTH_AUDIENCE] if OAUTH_AUDIENCE else [],
+        "redirect_uris": [build_redirect_uri()],
+        "javascript_origins": [OAUTH_AUDIENCE],
     }
 
     match integration_provider:
@@ -996,10 +748,6 @@ def get_oauth_user_table():
     return dynamodb.Table(oauth_user_table_name)
 
 
-@required_env_vars({
-    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-})
 @validated("refresh_token")
 def refresh_integration_tokens(event, context, current_user, name, data):
     integration = data["data"]["integration"]
@@ -1011,7 +759,7 @@ def refresh_integration_tokens(event, context, current_user, name, data):
 def refresh_credentials(current_user, integration, credentials):
     refresh_token = credentials.get("refresh_token")
     if not refresh_token:
-        logger.warning("No refresh token available for refreshing credentials.")
+        print("No refresh token available for refreshing credentials.")
         return {
             "success": False,
             "message": "No refresh token available for refreshing credentials.",
@@ -1026,16 +774,16 @@ def refresh_credentials(current_user, integration, credentials):
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    logger.info("Refreshing token for integration: %s", integration)
+    print("Refreshing token for integration: ", integration)
     response = requests.post(token_uri, data=data)
     if response.status_code != 200:
-        logger.error("Failed to refresh token: %s", response.text)
+        print(f"Failed to refresh token: {response.text}")
         return {
             "success": False,
             "message": f"Failed to refresh token: {response.text}",
         }
 
-    logger.debug("Extracting refresh token response")
+    print("Extracting refresh token response")
 
     updated_credentials = extract_refresh_response(
         integration, response.json(), credentials
@@ -1045,9 +793,4 @@ def refresh_credentials(current_user, integration, credentials):
 
 
 def get_expiration_time(expires_in):
-    # Handle None or invalid expires_in values by defaulting to 1 hour (3600 seconds)
-    if expires_in is None or not isinstance(expires_in, (int, float)) or expires_in <= 0:
-        logger.warning("Invalid expires_in value: %s, defaulting to 3600 seconds (1 hour)", expires_in)
-        expires_in = 3600
-    
     return int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())

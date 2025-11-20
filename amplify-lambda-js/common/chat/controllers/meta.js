@@ -1,6 +1,9 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
+import {PassThrough} from "stream";
+import {metaSource} from "../../sources.js";
+
 export const aliasContexts = (metadata, contexts) => {
     return contexts.map(context => {
         return {
@@ -20,4 +23,17 @@ export const getSourceMetadata = ({contexts}) => {
     }, {});
     metadata.sources = lookupById;
     return metadata;
+}
+
+export const sendSourceMetadata = (multiplexer, metadata) => {
+    const srcList = Array.from(Object.keys(metadata.sources)).reduce((arr, key) => ((arr[metadata.sources[key]] = key), arr), []);
+    const metadataForClient = {
+        ...metadata,
+        sources: srcList
+    }
+
+    const metadataStream = new PassThrough();
+    multiplexer.addSource(metadataStream, metaSource, null);
+    metadataStream.write("data: "+JSON.stringify({d:metadataForClient})+"\n");
+    metadataStream.end();
 }

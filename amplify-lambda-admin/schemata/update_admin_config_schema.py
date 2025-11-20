@@ -206,10 +206,7 @@ update_admin_config_schema = {
                                              "outputTokenCost": {
                                                 "type": "number"
                                             },
-                                            "inputCachedTokenCost" : {
-                                                "type": "number"
-                                            },
-                                            "inputWriteCachedTokenCost" : {
+                                             "cachedTokenCost": {
                                                 "type": "number"
                                             },
                                             "exclusiveGroupAvailability": {
@@ -222,7 +219,7 @@ update_admin_config_schema = {
                                         "required": ["id","name", "provider", "description", "isAvailable",  "isBuiltIn",
                                                      "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
                                                      "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", 
-                                                     "inputCachedTokenCost",  "inputWriteCachedTokenCost", "exclusiveGroupAvailability"],
+                                                     "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
                                 },
@@ -271,6 +268,9 @@ update_admin_config_schema = {
                                     "^.*$": {
                                         "type": "object",
                                         "properties": {
+                                            "groupName": {
+                                                "type": "string"
+                                            },
                                             "createdBy": {
                                                 "type": "string"
                                             },
@@ -291,7 +291,7 @@ update_admin_config_schema = {
                                                 "type": "boolean"
                                             }
                                         },
-                                        "required": ["createdBy", "members", "rateLimit", "isBillingGroup"],
+                                        "required": ["groupName", "createdBy", "members", "rateLimit", "isBillingGroup"],
                                         "additionalProperties": False
 
                                     }

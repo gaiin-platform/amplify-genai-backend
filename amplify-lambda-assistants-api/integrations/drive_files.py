@@ -16,10 +16,6 @@ import time
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    S3Operation
-)
 from pycommon.authz import validated, setup_validated
 from pycommon.api.files import upload_file, delete_file
 from schemata.schema_validation_rules import rules
@@ -27,8 +23,6 @@ from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
 
-from pycommon.logger import getLogger
-logger = getLogger("assistants_api_drive_files")
 
 API_URL = os.environ["API_BASE_URL"]
 
@@ -42,7 +36,7 @@ def list_integration_files(event, context, current_user, name, data):
     integration_provider = provider_case(integration)
     folder_id = data.get("folder_id")
 
-    logger.info("Listing files for integration: %s", integration_provider)
+    print(f"Listing files for integration: {integration_provider}")
     result = list_files(integration_provider, token, folder_id)
     if result:
         return {"success": True, "data": result}
@@ -64,11 +58,11 @@ def list_files(integration_provider, token, folder_id=None):
                 {"folderId": folder_id if folder_id else ""},
             )
             if result:
-                logger.debug("Google list_files result: %s", result)
+                print(f"Google list_files result: {result}")
                 
                 # If no folder_id specified, filter to show only root-level items
                 if not folder_id:
-                    logger.debug("Filtering to root-level items only")
+                    print("Filtering to root-level items only")
                     result = filter_to_root_level_items(result)
                 
                 files = []
@@ -94,13 +88,10 @@ def list_files(integration_provider, token, folder_id=None):
                 {"folder_id": folder_id if folder_id else "root", "page_size": 100},
             )
 
-    logger.warning("No result from list_files for integration: %s", integration_provider)
+    print(f"No result from list_files for integration: {integration_provider}")
     return None
 
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-})
 @validated("download_file")
 def download_integration_file(event, context, current_user, name, data):
     token = data["access_token"]
@@ -112,9 +103,9 @@ def download_integration_file(event, context, current_user, name, data):
     return prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download)
 
 def prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download=False):
-    logger.info("Starting download for integration %s, file %s", integration_provider, file_id)
+    print(f"Starting download for integration {integration_provider}, file {file_id}")
     result = request_download_link(integration_provider, file_id, token)
-    logger.debug("Download link result: %s", result)
+    print(f"Download link result: {result}")
 
     if result and "downloadLink" in result:
         try:
@@ -130,8 +121,8 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                 file_name = result.get("name", "downloaded_file")
                 file_mime_type = result.get("mimeType", "application/octet-stream")
                 file_extension = MIME_TO_EXT.get(file_mime_type, "")
-                logger.debug(
-                    "File name: %s, mime type: %s, extension: %s", file_name, file_mime_type, file_extension
+                print(
+                    f"File name: {file_name}, mime type: {file_mime_type}, extension: {file_extension}"
                 )
                 safe_file_name = re.sub(r"[^a-zA-Z0-9._-]", "", file_name)
 
@@ -141,8 +132,8 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                 safe_file_name += file_extension
 
                 credentials = get_user_credentials(current_user, integration)
-                logger.debug(
-                    "Downloading file: %s, mime type: %s, safe name: %s", file_name, file_mime_type, safe_file_name
+                print(
+                    f"Downloading file: {file_name}, mime type: {file_mime_type}, safe name: {safe_file_name}"
                 )
                 file_content = get_file_contents(
                     integration_provider, credentials, download_file_id, download_url
@@ -151,10 +142,10 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                     return {"success": False, "error": "Failed to get file contents"}
 
                 # Create an S3 key using the safe file name; no double extension.
-                key = f"tempIntegrationFiles/{current_user}/{safe_file_name}"
+                key = f"temp_integration_file/{current_user}/{safe_file_name}"
 
-                bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-                logger.debug("Saving file to S3 bucket: %s, key: %s", bucket, key)
+                bucket = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+                print(f"Saving file to S3 bucket: {bucket}, key: {key}")
 
                 try:
                     s3 = boto3.client("s3")
@@ -164,9 +155,9 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                         Body=file_content,
                         ContentType=file_mime_type,
                     )
-                    logger.info("File successfully saved to S3")
+                    print("File successfully saved to S3")
                 except Exception as s3_error:
-                    logger.error("S3 upload error details: %s", s3_error)
+                    print(f"S3 upload error details: {s3_error}")
                     raise
 
                 # Set disposition header to use the original filename for download
@@ -188,10 +179,10 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                 return {"success": True, "data": presigned_url}
 
         except Exception as e:
-            logger.error("Error saving file to S3: %s", e)
+            print(f"Error saving file to S3: {e}")
             return {"success": False, "error": f"Error saving file to S3: {str(e)}"}
     else:
-        logger.warning("No download link in result: %s", result)
+        print(f"No download link in result: {result}")
         return {"success": False, "error": "Failed to get download link for file"}
 
 
@@ -211,8 +202,8 @@ def request_download_link(integration_provider, file_id, token):
 
 
 def get_file_contents(integration_provider, credentials, file_id, download_url):
-    logger.debug(
-        "Getting file contents for integration: %s, file_id: %s", integration_provider, file_id
+    print(
+        f"Getting file contents for integration: {integration_provider}, file_id: {file_id}"
     )
     try:
         match integration_provider:
@@ -231,8 +222,8 @@ def get_file_contents(integration_provider, credentials, file_id, download_url):
                 headers = {"Authorization": f"Bearer {integration_token}"}
                 response = requests.get(download_url, headers=headers, timeout=30)
                 if not response.ok:
-                    logger.error(
-                        "Error downloading Microsoft file: HTTP %s - %s", response.status_code, response.reason
+                    print(
+                        f"Error downloading Microsoft file: HTTP {response.status_code} - {response.reason}"
                     )
                     return None
 
@@ -244,14 +235,14 @@ def get_file_contents(integration_provider, credentials, file_id, download_url):
 
                 return file_content.getvalue()
     except Exception as e:
-        logger.error(
-            "Error getting file contents for integration: %s - error: %s", integration_provider, e
+        print(
+            f"Error getting file contents for integration: {integration_provider} - error: {e}"
         )
         return None
 
 
 def execute_request(access_token, url_path, data):
-    logger.info("Executing request to %s", url_path)
+    print(f"Executing request to {url_path}")
     request = {"data": data}
 
     headers = {
@@ -269,14 +260,14 @@ def execute_request(access_token, url_path, data):
         )  # to adhere to object access return response dict
 
         if response.status_code != 200 or not response_content.get("success"):
-            logger.error("Error executing request: %s", response_content)
+            print(f"Error executing request: {response_content}")
             return None
         elif response.status_code == 200 and response_content.get("success", False):
-            logger.info("Successfully executed request: %s", url_path)
+            print(f"Successfully executed request: ", url_path)
             return response_content.get("data", None)
 
     except Exception as e:
-        logger.error("Error updating permissions: %s", e)
+        print(f"Error updating permissions: {e}")
         return None
 
 
@@ -285,18 +276,18 @@ def cleanup_after_download_file(integration_provider, download_file_id, token):
         case IntegrationType.GOOGLE:
             # Clean up converted file if it was created during this process
             try:
-                logger.info("Cleaning up converted file with ID: %s", download_file_id)
+                print(f"Cleaning up converted file with ID: {download_file_id}")
                 cleanup_result = execute_request(
                     token,
                     "/google/integrations/delete_item_permanently",
                     {"itemId": download_file_id},
                 )
                 if cleanup_result:
-                    logger.info("Successfully deleted converted file")
+                    print(f"Successfully deleted converted file")
                 else:
-                    logger.warning("Failed to delete converted file")
+                    print(f"Failed to delete converted file")
             except Exception as e:
-                logger.error("Error deleting converted file: %s, continuing...", e)
+                print(f"Error deleting converted file: {e}\n continuing...")
                 # Continue even if cleanup fails, don't fail the whole operation
         # case IntegrationType.MICROSOFT:
         # no cleanup required
@@ -319,9 +310,6 @@ MIME_TO_EXT = {
 }
 
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-})
 @validated("upload_files")
 def drive_files_to_data_sources(event, context, current_user, name, data):
     """
@@ -340,7 +328,7 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
         token = data["access_token"]
         payload = data["data"]
         
-        logger.info("Processing drive files to data sources for user: %s", current_user)
+        print(f"Processing drive files to data sources for user: {current_user}")
         start_time = time.time()
         
         # Create a deep copy of the payload to return with updates
@@ -354,7 +342,7 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
         provider_names = []
         
         for integration_provider in payload.keys():
-            logger.debug("Creating async task for provider: %s", integration_provider)
+            print(f"Creating async task for provider: {integration_provider}")
             task = _process_provider_async(
                 integration_provider, 
                 payload[integration_provider], 
@@ -366,13 +354,13 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
             provider_names.append(integration_provider)
         
         # Execute all provider tasks concurrently
-        logger.info("[ASYNC] Starting concurrent processing of %s providers", len(provider_tasks))
+        print(f"[ASYNC] Starting concurrent processing of {len(provider_tasks)} providers")
         provider_results = await asyncio.gather(*provider_tasks, return_exceptions=True)
         
         # Process results and handle any exceptions
         for i, (provider_name, result) in enumerate(zip(provider_names, provider_results)):
             if isinstance(result, Exception):
-                logger.error("Error processing provider %s: %s", provider_name, result)
+                print(f"Error processing provider {provider_name}: {result}")
                 # Keep original data for failed providers
                 continue
             else:
@@ -386,16 +374,16 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
         successful_cached = len([f for f in processed_files_cache.values() if f.get("datasource")])
         skipped_cached = len([f for f in processed_files_cache.values() if not f.get("datasource") and f.get("lastCaptured")])
         
-        logger.info("[ASYNC COMPLETE] Total processing time: %.2fs", end_time - start_time)
-        logger.info("[CACHE STATS] Total unique files processed: %s", total_cached)
-        logger.info("[CACHE STATS] Results - Uploaded: %s | Skipped (no update needed): %s", successful_cached, skipped_cached)
+        print(f"[ASYNC COMPLETE] Total processing time: {end_time - start_time:.2f}s")
+        print(f"[CACHE STATS] Total unique files processed: {total_cached}")
+        print(f"[CACHE STATS] Results - Uploaded: {successful_cached} | Skipped (no update needed): {skipped_cached}")
         if total_cached > 0:
-            logger.info("[CACHE STATS] Cache efficiency: Prevented duplicate processing for any overlapping files")
+            print(f"[CACHE STATS] Cache efficiency: Prevented duplicate processing for any overlapping files")
         
         return {"success": True, "data": updated_payload}
         
     except Exception as e:
-        logger.error("Error in async drive_files_to_data_sources: %s", e)
+        print(f"Error in async drive_files_to_data_sources: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -405,7 +393,7 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
     Returns updated provider data structure.
     """
     try:
-        logger.info("[ASYNC] Processing provider: %s", integration_provider)
+        print(f"[ASYNC] Processing provider: {integration_provider}")
         provider_start = time.time()
         
         provider_type = provider_case(integration_provider)
@@ -443,15 +431,15 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
                 
                 removed_count = len(updated_files) - len(deduplicated_files)
                 if removed_count > 0:
-                    logger.info("[DEDUP] %s: Removed %s files from files section (appear in folders)", integration_provider, removed_count)
+                    print(f"[DEDUP] {integration_provider}: Removed {removed_count} files from files section (appear in folders)")
         
         provider_end = time.time()
-        logger.info("[ASYNC] %s completed in %.2fs", integration_provider, provider_end - provider_start)
+        print(f"[ASYNC] {integration_provider} completed in {provider_end - provider_start:.2f}s")
         
         return updated_provider_data
         
     except Exception as e:
-        logger.error("[ASYNC] Error processing provider %s: %s", integration_provider, e)
+        print(f"[ASYNC] Error processing provider {integration_provider}: {e}")
         raise e  # Re-raise to be caught by gather()
 
 
@@ -466,7 +454,7 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
     error_count = 0
     cached_count = 0
     
-    logger.info("[FILES START] Processing %s files for %s", total_files, integration_provider)
+    print(f"[FILES START] Processing {total_files} files for {integration_provider}")
     
     for file_id in files_data.keys():
         file_metadata = files_data[file_id]
@@ -477,19 +465,19 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
             if file_id in processed_files_cache:
                 cached_result = processed_files_cache[file_id]
                 cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
-                logger.debug("[FILE CACHED] %s - Already %s, reusing result (saved download + upload)", file_id, cache_source)
+                print(f"[FILE CACHED] {file_id} - Already {cache_source}, reusing result (saved download + upload)")
                 updated_files[file_id] = cached_result
                 cache_updates[file_id] = cached_result  # Include cached files in updates
                 cached_count += 1
                 continue
             
-            logger.debug("[FILE CHECK] %s - %s", file_id, file_metadata.get('lastCaptured', 'Never captured'))
+            print(f"[FILE CHECK] {file_id} - {file_metadata.get('lastCaptured', 'Never captured')}")
             
             # Check if file needs to be processed
             needs_update = should_update_file(file_metadata, file_id, provider_type, token)
             
             if needs_update:
-                logger.info("[FILE %s/%s] Updating %s", processed_count, total_files, file_id)
+                print(f"[FILE {processed_count}/{total_files}] Updating {file_id}")
                 
                 # Use prepare_download_link to handle file conversion and get presigned URL
                 download_result = prepare_download_link(
@@ -498,18 +486,18 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
                 
                 if download_result and download_result.get("success") and download_result.get("data"):
                     presigned_url = download_result["data"]
-                    logger.debug("[FILE DOWNLOAD] Got presigned URL for %s", file_id)
+                    print(f"[FILE DOWNLOAD] Got presigned URL for {file_id}")
                     
                     # Download file contents from presigned URL
                     response = requests.get(presigned_url, timeout=30)
                     if response.ok:
                         file_contents = response.content
-                        logger.debug("[FILE DOWNLOAD] Downloaded %s (%s bytes)", file_id, len(file_contents))
+                        print(f"[FILE DOWNLOAD] Downloaded {file_id} ({len(file_contents)} bytes)")
                     else:
-                        logger.error("[FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
+                        print(f"[FILE ERROR] Failed to download from presigned URL: {response.status_code}")
                         file_contents = None
                 else:
-                    logger.error("[FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
+                    print(f"[FILE ERROR] Failed to prepare download link for {file_id}: {download_result}")
                     file_contents = None
                 
                 if file_contents:
@@ -525,7 +513,7 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
                         if upload_result:
                             # Delete old datasource if it exists
                             if file_metadata.get("datasource") and file_metadata["datasource"].get("id"):
-                                logger.info("[FILE CLEANUP] Deleting old datasource for %s", file_id)
+                                print(f"[FILE CLEANUP] Deleting old datasource for {file_id}")
                                 delete_old_datasource(token, file_metadata["datasource"]["id"])
                             
                             # Update metadata
@@ -536,33 +524,33 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
                             }
                             updated_files[file_id] = result_metadata
                             cache_updates[file_id] = result_metadata  # Add to cache
-                            logger.info("[FILE SUCCESS] Successfully updated %s", file_id)
+                            print(f"[FILE SUCCESS] Successfully updated {file_id}")
                             updated_count += 1
                         else:
-                            logger.error("[FILE ERROR] Upload failed for %s", file_id)
+                            print(f"[FILE ERROR] Upload failed for {file_id}")
                             updated_files[file_id] = file_metadata
                             error_count += 1
                     else:
-                        logger.error("[FILE ERROR] Could not get metadata for %s", file_id)
+                        print(f"[FILE ERROR] Could not get metadata for {file_id}")
                         updated_files[file_id] = file_metadata
                         error_count += 1
                 else:
-                    logger.error("[FILE ERROR] Could not get contents for %s", file_id)
+                    print(f"[FILE ERROR] Could not get contents for {file_id}")
                     updated_files[file_id] = file_metadata
                     error_count += 1
             else:
                 # No update needed, keep original
-                logger.debug("[FILE SKIP] %s - No update needed", file_id)
+                print(f"[FILE SKIP] {file_id} - No update needed")
                 updated_files[file_id] = file_metadata
                 cache_updates[file_id] = file_metadata  # Add to cache even if skipped
                 skipped_count += 1
                 
         except Exception as e:
-            logger.error("[FILE ERROR] Exception processing file %s: %s", file_id, e)
+            print(f"[FILE ERROR] Exception processing file {file_id}: {e}")
             updated_files[file_id] = file_metadata
             error_count += 1
     
-    logger.info("[FILES SUMMARY] Processed: %s | Updated: %s | Skipped: %s | Cached: %s | Errors: %s", processed_count, updated_count, skipped_count, cached_count, error_count)
+    print(f"[FILES SUMMARY] Processed: {processed_count} | Updated: {updated_count} | Skipped: {skipped_count} | Cached: {cached_count} | Errors: {error_count}")
     return updated_files, cache_updates
 
 
@@ -572,20 +560,20 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
     total_folders = len(folders_data)
     processed_count = 0
     
-    logger.info("[FOLDERS START] Processing %s folders", total_folders)
+    print(f"[FOLDERS START] Processing {total_folders} folders")
     
     for folder_id in folders_data.keys():
         folder_files = folders_data[folder_id]
         processed_count += 1
         
         try:
-            logger.info("[FOLDER %s/%s] Processing: %s", processed_count, total_folders, folder_id)
+            print(f"[FOLDER {processed_count}/{total_folders}] Processing: {folder_id}")
             
             # Get ALL files from folder and subfolders (flattened)
             current_folder_files = get_all_files_recursively(folder_id, provider_type, token)
             
             if current_folder_files is None:
-                logger.error("[FOLDER ERROR] Could not list files in folder %s", folder_id)
+                print(f"[FOLDER ERROR] Could not list files in folder {folder_id}")
                 updated_folders[folder_id] = folder_files
                 continue
             
@@ -598,10 +586,10 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
             new_files_count = 0
             deleted_files_count = 0
             
-            logger.debug("[FOLDER] %s - Existing: %s, Current: %s", folder_id, existing_files, current_files)
+            print(f"[FOLDER] {folder_id} - Existing: {existing_files}, Current: {current_files}")
             
             # DEBUG: Log the current folder contents
-            logger.debug("[FOLDER DEBUG] %s - Found %s files in folder tree", folder_id, len(current_folder_files))
+            print(f"[FOLDER DEBUG] {folder_id} - Found {len(current_folder_files)} files in folder tree")
             
             # Process each file currently in the folder (and subfolders)
             for provider_file in current_folder_files:
@@ -615,7 +603,7 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
                 if file_id in processed_files_cache:
                     cached_result = processed_files_cache[file_id]
                     cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
-                    logger.debug("[FOLDER CACHED] %s - Already %s globally, reusing result (saved download + upload)", file_id, cache_source)
+                    print(f"[FOLDER CACHED] {file_id} - Already {cache_source} globally, reusing result (saved download + upload)")
                     updated_folder_files[file_id] = cached_result
                     continue
                 
@@ -637,7 +625,7 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
                 else:
                     # New file (could be from nested folder) - upload it
                     new_files_count += 1
-                    logger.info("[FOLDER] New file found: %s", file_id)
+                    print(f"[FOLDER] New file found: {file_id}")
                     new_file_metadata = {
                         "type": determine_file_type(provider_file),
                         "lastCaptured": None,
@@ -651,13 +639,13 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
                     if updated_file and updated_file.get("type"):
                         updated_folder_files[file_id] = updated_file
                     else:
-                        logger.error("[FOLDER ERROR] Invalid file result for %s, skipping", file_id)
+                        print(f"[FOLDER ERROR] Invalid file result for {file_id}, skipping")
             
             # Handle files that are in our data but no longer in folder tree (deleted)
             for file_id in folder_files.keys():
                 if file_id not in visited_files:
                     deleted_files_count += 1
-                    logger.info("[FOLDER] File deleted from tree: %s", file_id)
+                    print(f"[FOLDER] File deleted from tree: {file_id}")
                     if folder_files[file_id].get("datasource") and folder_files[file_id]["datasource"].get("id"):
                         delete_old_datasource(token, folder_files[file_id]["datasource"]["id"])
                     # Don't add to updated_folder_files (effectively removes it)
@@ -665,18 +653,18 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
             # Only add folder if it contains files (to prevent schema validation errors)
             if updated_folder_files:
                 updated_folders[folder_id] = updated_folder_files
-                logger.info("[FOLDER COMPLETE] %s - Updated: %s, New: %s, Deleted: %s", folder_id, updated_files_count, new_files_count, deleted_files_count)
+                print(f"[FOLDER COMPLETE] {folder_id} - Updated: {updated_files_count}, New: {new_files_count}, Deleted: {deleted_files_count}")
             else:
-                logger.warning("[FOLDER EMPTY] %s - No files, skipping to prevent schema errors", folder_id)
-                logger.debug("[FOLDER DEBUG] %s - Original had %s files, found %s files in tree", folder_id, len(folder_files), len(current_folder_files))
+                print(f"[FOLDER EMPTY] {folder_id} - No files, skipping to prevent schema errors")
+                print(f"[FOLDER DEBUG] {folder_id} - Original had {len(folder_files)} files, found {len(current_folder_files)} files in tree")
             
         except Exception as e:
-            logger.error("[FOLDER ERROR] Failed processing folder %s: %s", folder_id, e)
+            print(f"[FOLDER ERROR] Failed processing folder {folder_id}: {e}")
             # Don't add empty folders that would fail schema validation
             if folder_files:  # Only keep non-empty folders
                 updated_folders[folder_id] = folders_data[folder_id]
     
-    logger.info("[FOLDERS SUMMARY] Processed %s/%s folders", processed_count, total_folders)
+    print(f"[FOLDERS SUMMARY] Processed {processed_count}/{total_folders} folders")
     return updated_folders
 
 
@@ -687,10 +675,10 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
         if file_id in processed_files_cache:
             cached_result = processed_files_cache[file_id]
             cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
-            logger.debug("[SINGLE CACHED] %s - Already %s, reusing result (saved download + upload)", file_id, cache_source)
+            print(f"[SINGLE CACHED] {file_id} - Already {cache_source}, reusing result (saved download + upload)")
             return cached_result
         
-        logger.info("[SINGLE FILE] Processing %s", file_id)
+        print(f"[SINGLE FILE] Processing {file_id}")
         
         # Use prepare_download_link to handle file conversion and get presigned URL
         download_result = prepare_download_link(
@@ -699,18 +687,18 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
         
         if download_result and download_result.get("success") and download_result.get("data"):
             presigned_url = download_result["data"]
-            logger.debug("[SINGLE FILE] Got presigned URL for %s", file_id)
+            print(f"[SINGLE FILE] Got presigned URL for {file_id}")
             
             # Download file contents from presigned URL
             response = requests.get(presigned_url, timeout=30)
             if response.ok:
                 file_contents = response.content
-                logger.debug("[SINGLE FILE] Downloaded %s (%s bytes)", file_id, len(file_contents))
+                print(f"[SINGLE FILE] Downloaded {file_id} ({len(file_contents)} bytes)")
             else:
-                logger.error("[SINGLE FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
+                print(f"[SINGLE FILE ERROR] Failed to download from presigned URL: {response.status_code}")
                 file_contents = None
         else:
-            logger.error("[SINGLE FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
+            print(f"[SINGLE FILE ERROR] Failed to prepare download link for {file_id}: {download_result}")
             file_contents = None
         
         if file_contents:
@@ -724,7 +712,7 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
             if upload_result:
                 # Delete old datasource if it exists
                 if file_metadata.get("datasource") and file_metadata["datasource"].get("id"):
-                    logger.info("[SINGLE FILE] Deleting old datasource for %s", file_id)
+                    print(f"[SINGLE FILE] Deleting old datasource for {file_id}")
                     delete_old_datasource(token, file_metadata["datasource"]["id"])
                 
                 result_metadata = {
@@ -733,18 +721,18 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
                     "datasource": upload_result
                 }
                 processed_files_cache[file_id] = result_metadata  # Cache the result
-                logger.info("[SINGLE FILE] Successfully processed %s", file_id)
+                print(f"[SINGLE FILE] Successfully processed {file_id}")
                 return result_metadata
             else:
-                logger.error("[SINGLE FILE] Upload failed for %s", file_id)
+                print(f"[SINGLE FILE] Upload failed for {file_id}")
         else:
-            logger.error("[SINGLE FILE] Could not get contents for %s", file_id)
+            print(f"[SINGLE FILE] Could not get contents for {file_id}")
         
         # Don't cache failed files - allow retry in different contexts
         return file_metadata
         
     except Exception as e:
-        logger.error("[SINGLE FILE] Error processing %s: %s", file_id, e)
+        print(f"[SINGLE FILE] Error processing {file_id}: {e}")
         # Don't cache failed files - allow retry in different contexts
         return file_metadata
 
@@ -752,14 +740,14 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
 def should_update_file(file_metadata, file_id, provider_type, token):
     """Check if a file needs to be updated based on lastCaptured vs lastModified."""
     if not file_metadata.get("lastCaptured"):
-        logger.debug("[FILE CHECK] %s - Never captured, needs update", file_id)
+        print(f"[FILE CHECK] {file_id} - Never captured, needs update")
         return True  # Never captured before
     
     try:
         # Get file's last modified date from provider
-        logger.debug("[TIMESTAMP DEBUG] %s - Getting metadata from %s", file_id, provider_type)
+        print(f"[TIMESTAMP DEBUG] {file_id} - Getting metadata from {provider_type}")
         provider_file_info = get_file_metadata_from_provider(file_id, provider_type, token)
-        logger.debug("[TIMESTAMP DEBUG] %s - Raw provider response: %s", file_id, provider_file_info)
+        print(f"[TIMESTAMP DEBUG] {file_id} - Raw provider response: {provider_file_info}")
         
         if provider_file_info and (provider_file_info.get("lastModified") or provider_file_info.get("modifiedTime") or provider_file_info.get("lastModifiedDateTime")):
             last_captured = datetime.fromisoformat(file_metadata["lastCaptured"].replace('Z', '+00:00'))
@@ -767,28 +755,28 @@ def should_update_file(file_metadata, file_id, provider_type, token):
             last_modified_str = provider_file_info.get("lastModified") or provider_file_info.get("modifiedTime") or provider_file_info.get("lastModifiedDateTime")
             last_modified = datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
             
-            logger.debug("[TIMESTAMP DEBUG] %s - Raw lastCaptured: %s", file_id, file_metadata['lastCaptured'])
-            logger.debug("[TIMESTAMP DEBUG] %s - Raw lastModified: %s", file_id, last_modified_str)
-            logger.debug("[TIMESTAMP DEBUG] %s - Parsed lastCaptured: %s", file_id, last_captured.isoformat())
-            logger.debug("[TIMESTAMP DEBUG] %s - Parsed lastModified: %s", file_id, last_modified.isoformat())
+            print(f"[TIMESTAMP DEBUG] {file_id} - Raw lastCaptured: {file_metadata['lastCaptured']}")
+            print(f"[TIMESTAMP DEBUG] {file_id} - Raw lastModified: {last_modified_str}")
+            print(f"[TIMESTAMP DEBUG] {file_id} - Parsed lastCaptured: {last_captured.isoformat()}")
+            print(f"[TIMESTAMP DEBUG] {file_id} - Parsed lastModified: {last_modified.isoformat()}")
             
             needs_update = last_modified > last_captured
             
             if needs_update:
-                logger.info("[FILE CHECK] %s - NEEDS UPDATE: Modified %s > Captured %s", file_id, last_modified.isoformat(), last_captured.isoformat())
+                print(f"[FILE CHECK] {file_id} - NEEDS UPDATE: Modified {last_modified.isoformat()} > Captured {last_captured.isoformat()}")
             else:
-                logger.debug("[FILE CHECK] %s - NO UPDATE NEEDED: Modified %s <= Captured %s", file_id, last_modified.isoformat(), last_captured.isoformat())
+                print(f"[FILE CHECK] {file_id} - NO UPDATE NEEDED: Modified {last_modified.isoformat()} <= Captured {last_captured.isoformat()}")
             
             return needs_update
         else:
-            logger.warning("[TIMESTAMP DEBUG] %s - No timestamp fields found in provider response", file_id)
+            print(f"[TIMESTAMP DEBUG] {file_id} - No timestamp fields found in provider response")
         
     except Exception as e:
-        logger.error("[FILE CHECK ERROR] Error checking %s: %s", file_id, e)
+        print(f"[FILE CHECK ERROR] Error checking {file_id}: {e}")
         import traceback
-        logger.debug("[FILE CHECK ERROR] Traceback: %s", traceback.format_exc())
+        print(f"[FILE CHECK ERROR] Traceback: {traceback.format_exc()}")
     
-    logger.warning("[FILE CHECK] %s - Cannot determine, skipping update", file_id)
+    print(f"[FILE CHECK] {file_id} - Cannot determine, skipping update")
     return False  # Default to no update if can't determine
 
 
@@ -801,7 +789,7 @@ def list_files_in_folder(folder_id, provider_type, token):
             return execute_request(token, "/microsoft/integrations/list_drive_items", 
                                  {"folder_id": folder_id, "page_size": 100})
     except Exception as e:
-        logger.error("Error listing files in folder %s: %s", folder_id, e)
+        print(f"Error listing files in folder {folder_id}: {e}")
     
     return None
 
@@ -849,22 +837,22 @@ def get_file_metadata_from_provider(file_id, provider_type, token):
                         else:
                             metadata["size"] = size_raw
                     
-                    logger.debug("[METADATA] Converted list to dict for %s: %s", file_id, metadata)
+                    print(f"[METADATA] Converted list to dict for {file_id}: {metadata}")
                     return metadata
                 else:
-                    logger.error("[METADATA ERROR] List too short for %s: %s", file_id, result)
+                    print(f"[METADATA ERROR] List too short for {file_id}: {result}")
                     return None
             elif isinstance(result, dict):
                 # Already in dictionary format (Microsoft or newer Google format)
-                logger.debug("[METADATA] Got dict format for %s", file_id)
+                print(f"[METADATA] Got dict format for {file_id}")
                 return result
             else:
-                logger.error("[METADATA ERROR] Unexpected format for %s: %s", file_id, type(result))
+                print(f"[METADATA ERROR] Unexpected format for {file_id}: {type(result)}")
                 return None
         
         return None
     except Exception as e:
-        logger.error("[METADATA ERROR] Exception getting metadata for file %s: %s", file_id, e)
+        print(f"[METADATA ERROR] Exception getting metadata for file {file_id}: {e}")
         return None
 
 
@@ -875,7 +863,7 @@ def upload_file_to_datasource(token, file_info, file_contents, file_type, curren
         mime_type = file_info.get("mimeType", "application/octet-stream")
         file_size = len(file_contents) if isinstance(file_contents, (str, bytes)) else "unknown"
         
-        logger.info("[UPLOAD] Starting upload: %s (%s bytes, %s)", file_name, file_size, mime_type)
+        print(f"[UPLOAD] Starting upload: {file_name} ({file_size} bytes, {mime_type})")
         
         upload_result = upload_file(
             access_token=token,
@@ -894,7 +882,7 @@ def upload_file_to_datasource(token, file_info, file_contents, file_type, curren
         )
         
         if upload_result and upload_result.get("id"):
-            logger.info("[UPLOAD SUCCESS] %s uploaded as %s", file_name, upload_result['id'])
+            print(f"[UPLOAD SUCCESS] {file_name} uploaded as {upload_result['id']}")
             datasource_obj = {
                 "id": upload_result["id"],
                 "name": upload_result["name"],
@@ -911,10 +899,10 @@ def upload_file_to_datasource(token, file_info, file_contents, file_type, curren
             
             return datasource_obj
         else:
-            logger.error("[UPLOAD FAILED] %s - No result or ID returned", file_name)
+            print(f"[UPLOAD FAILED] {file_name} - No result or ID returned")
         
     except Exception as e:
-        logger.error("[UPLOAD ERROR] Failed uploading %s: %s", file_info.get('name', 'unknown'), e)
+        print(f"[UPLOAD ERROR] Failed uploading {file_info.get('name', 'unknown')}: {e}")
     
     return None
 
@@ -923,9 +911,9 @@ def delete_old_datasource(token, datasource_id):
     """Delete old datasource file."""
     try:
         delete_file(token, datasource_id)
-        logger.info("[CLEANUP] Deleted old datasource: %s", datasource_id)
+        print(f"[CLEANUP] Deleted old datasource: {datasource_id}")
     except Exception as e:
-        logger.error("[CLEANUP ERROR] Failed deleting datasource %s: %s", datasource_id, e)
+        print(f"[CLEANUP ERROR] Failed deleting datasource {datasource_id}: {e}")
         # Don't fail the whole operation if delete fails
 
 
@@ -989,14 +977,14 @@ def get_all_files_recursively(folder_id, provider_type, token, visited_folders=N
     
     # Prevent infinite recursion
     if folder_id in visited_folders:
-        logger.debug("[FOLDER] Skipping already visited folder: %s", folder_id)
+        print(f"[FOLDER] Skipping already visited folder: {folder_id}")
         return []
     visited_folders.add(folder_id)
     
     all_files = []
     
     try:
-        logger.debug("[FOLDER] Listing contents of folder: %s", folder_id)
+        print(f"[FOLDER] Listing contents of folder: {folder_id}")
         folder_contents = list_files_in_folder(folder_id, provider_type, token)
         
         if folder_contents:
@@ -1009,23 +997,23 @@ def get_all_files_recursively(folder_id, provider_type, token, visited_folders=N
                     # Recursively get files from subfolder
                     subfolder_id = get_file_id(item)
                     if subfolder_id:
-                        logger.debug("[FOLDER] Processing nested folder: %s", subfolder_id)
+                        print(f"[FOLDER] Processing nested folder: {subfolder_id}")
                         subfolder_files = get_all_files_recursively(
                             subfolder_id, provider_type, token, visited_folders
                         )
                         all_files.extend(subfolder_files)
-                        logger.debug("[FOLDER] Found %s files in nested folder %s", len(subfolder_files), subfolder_id)
+                        print(f"[FOLDER] Found {len(subfolder_files)} files in nested folder {subfolder_id}")
                 else:
                     # Regular file - add to collection
                     files_found += 1
                     all_files.append(item)
             
-            logger.debug("[FOLDER] %s contains %s files and %s subfolders", folder_id, files_found, folders_found)
+            print(f"[FOLDER] {folder_id} contains {files_found} files and {folders_found} subfolders")
         else:
-            logger.warning("[FOLDER] %s is empty or inaccessible", folder_id)
+            print(f"[FOLDER] {folder_id} is empty or inaccessible")
         
     except Exception as e:
-        logger.error("[FOLDER ERROR] Error processing folder %s: %s", folder_id, e)
+        print(f"[FOLDER ERROR] Error processing folder {folder_id}: {e}")
     
     return all_files
 
@@ -1047,7 +1035,7 @@ def filter_to_root_level_items(file_list_result):
             folder_ids.add(folder_id)
         # Skip logging for non-folders during collection phase
     
-    logger.debug("Found %s folders in listing", len(folder_ids))
+    print(f"Found {len(folder_ids)} folders in listing")
     
     # Second pass: filter items
     root_level_items = []
@@ -1064,17 +1052,17 @@ def filter_to_root_level_items(file_list_result):
         
         # For folders, check parent logic
         if not parents:
-            logger.debug("Filtered out (empty parents): %s", item_name)
+            print(f"Filtered out (empty parents): {item_name}")
         else:
             has_folder_parent_in_listing = any(parent_id in folder_ids for parent_id in parents)
             
             if has_folder_parent_in_listing:
-                logger.debug("Filtered out (subfolder): %s", item_name)
+                print(f"Filtered out (subfolder): {item_name}")
             else:
-                logger.debug("Root-level folder: %s", item_name)
+                print(f"Root-level folder: {item_name}")
                 root_level_items.append(item)
     
-    logger.debug("Showing %s root-level items (filtered out %s)", len(root_level_items), len(file_list_result) - len(root_level_items))
+    print(f"Showing {len(root_level_items)} root-level items (filtered out {len(file_list_result) - len(root_level_items)})")
     
     return root_level_items
 

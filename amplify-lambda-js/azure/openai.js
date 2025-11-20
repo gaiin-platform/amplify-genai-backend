@@ -55,7 +55,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     let tools = options.tools;
     if(!tools && options.functions){
         tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
-        // Removed debug logging for performance
+        logger.debug(tools);
     }
 
     let tool_choice = options.tool_choice;
@@ -66,24 +66,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         else {
             tool_choice = {type: 'function', function: {name: options.function_call}};
         }
-        // Removed debug logging for performance
+        logger.debug(tool_choice);
     }
 
-    // Removed debug logging for performance
-
-    // Clean messages - remove fields that OpenAI doesn't accept
-    const cleanMessages = body.messages.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-        ...(msg.name && { name: msg.name }),
-        ...(msg.function_call && { function_call: msg.function_call }),
-        ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
-        ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id })
-    }));
+    logger.debug("Calling OpenAI API with modelId: "+modelId);
 
     let data = {
        ...body,
-       messages: cleanMessages,
        "model": modelId,
        "stream": true,
        "stream_options": {"include_usage": true}
@@ -114,13 +103,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (tools) data.tools = tools;
     if (tool_choice) data.tool_choice = tool_choice;
 
-    if (data.hasOwnProperty('imageSources')) delete data.imageSources;
+    if (data.imageSources) delete data.imageSources;
     
     const config = await endpointProvider(modelId, model.provider);
-
-    if (!config || !config.url) {
-        throw new Error('Failed to get LLM endpoint configuration');
-    }
 
     const url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
@@ -162,7 +147,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         }
     }
 
-    // Removed debug logging for performance
+    logger.debug("Calling OpenAI API with url: "+url);
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
@@ -174,7 +159,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             // If retrying, remove tools
             if (retryWithoutTools && requestData.tools) {
                 delete requestData.tools;
-                // Retrying request without tools
+                logger.debug("Retrying request without tools");
             }
             
             axios({
@@ -204,7 +189,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         response.data.on('data', chunk => {
                           jsonBuffer += chunk.toString();
                           numOfChunks++;
-                          // O1 chunks received
+                          console.log("O1 chunks recieved: ",numOfChunks)
                         });
                     
                         response.data.on('end', () => {
@@ -217,7 +202,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             finalizeSuccess();
                           } catch (err) {
                             // handle JSON parse error
-                            logger.error("O1 model error:", err);
+                            console.log("O1 model error: ", err);
                             streamError(err);
                           }
                         });
@@ -247,7 +232,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     
                     // If we have tools and haven't already retried, try again without tools
                     if (!retryWithoutTools && data.tools && data.tools.length > 0) {
-                        // Request failed with tools, retrying without tools
+                        logger.debug("Request failed with tools, retrying without tools");
                         streamAxiosResponseToWritable(url, writableStream, statusTimer, true)
                             .then(resolve)
                             .catch(reject);
@@ -256,7 +241,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
                     if (e.response && e.response.data) {
-                        logger.error("Error invoking OpenAI API:", e.response.statusText);
+                        console.log("Error invoking OpenAI API: ",e.response.statusText);
 
                         if (e.response.data.readable) {
                             // Stream the data to a variable or process it as it comes
@@ -265,19 +250,29 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                                 errorData += chunk;
                             });
                             e.response.data.on('end', () => {
-                                logger.error("Error data from OpenAI API:", errorData);
+                                console.log("Error data from OpenAI API: ", errorData);
                                 reject(errorData);
                                 return;
                             });
                         }
                     }
-                    logger.error("Error invoking OpenAI API:", e.message);
+                    console.log("Error invoking OpenAI API: "+e.message);
                     reject(e.message);
                 });
         });
     }
-    // No status timer - let the actual response be the indication
-    return streamAxiosResponseToWritable(url, writable, null);
+    let statusTimer = null;
+    const statusInterval = model.supportsReasoning ? 15000: 8000;
+    const handleSendStatusMessage = () => {
+        // console.log("Sending status message...");
+        sendStatusMessage(writable);
+        statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+        };
+
+        // Start the timer
+    statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
+
+    return streamAxiosResponseToWritable(url, writable, statusTimer);
 }
 
 const containsUrlQuery = (messages) => {
@@ -386,4 +381,28 @@ async function includeImageSources(dataSources, messages, model, responseStream,
 }
 
 
-// Status messages removed for better performance - let the actual response be the indication
+const forceFlush = (responseStream) => {
+    sendStatusEventToStream(responseStream, newStatus(
+        {
+            inProgress: false,
+            message: " ".repeat(100000)
+        }
+    ));
+
+}
+
+const sendStatusMessage = (responseStream) => {
+    const statusInfo = { id: "openai",
+                         animated: true,
+                         inProgress: true,
+                         sticky: true,
+                         summary: getThinkingMessage(),
+                         icon: "info",
+                         type: "info",
+                       };
+
+    sendStatusEventToStream(responseStream, statusInfo);
+
+    forceFlush(responseStream);
+    
+}

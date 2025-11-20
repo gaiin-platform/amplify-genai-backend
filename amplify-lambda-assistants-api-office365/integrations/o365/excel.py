@@ -6,8 +6,6 @@ from integrations.oauth import get_ms_graph_session
 integration_name = "microsoft_excel"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 class ExcelError(Exception):
     """Base exception for Excel operations"""

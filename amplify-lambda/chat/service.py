@@ -11,13 +11,9 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation, SecretsManagerOperation
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.CHAT.value])
 
-from pycommon.logger import getLogger
-logger = getLogger("chat_endpoint")
 
 @api_tool(
     path="/chat",
@@ -125,10 +121,6 @@ logger = getLogger("chat_endpoint")
         "required": ["success", "message"],
     },
 )
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.BATCH_GET_ITEM],
-    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE], 
-})
 @validated("chat")
 def chat_endpoint(event, context, current_user, name, data):
     access_token = data["access_token"]
@@ -152,7 +144,7 @@ def chat_endpoint(event, context, current_user, name, data):
         if assistant_id:
             verify_assistant_id = validate_assistant_id(assistant_id, access_token)
             if not verify_assistant_id["success"]:
-                logger.error("Invalid assistant id: %s", assistant_id)
+                print(f"Invalid assistant id: {assistant_id}")
                 return {"success": False, "message": "Invalid assistant id"}
 
         payload["dataSources"] = get_data_source_details(payload["dataSources"])
@@ -162,7 +154,7 @@ def chat_endpoint(event, context, current_user, name, data):
 
         SYSTEM_ROLE = "system"
         if messages[0]["role"] != SYSTEM_ROLE:
-            logger.debug("Adding system prompt message")
+            print("Adding system prompt message")
             user_prompt = payload_options.get("prompt", "No Prompt Provided")
             payload["messages"] = [
                 {"role": SYSTEM_ROLE, "content": user_prompt}
@@ -249,7 +241,7 @@ def get_data_source_details(data_sources):
     # Optional: track missing items
     missing_ids = set(data_source_ids) - found_ids
     if missing_ids:
-        logger.warning("The following requested IDs were not found: %s", missing_ids)
+        print(f"Warning: The following requested IDs were not found: {missing_ids}")
 
     # Convert any Decimal objects to regular Python types
     formatted_sources = convert_decimal(formatted_sources)
@@ -258,7 +250,7 @@ def get_data_source_details(data_sources):
 
 
 def validate_assistant_id(assistant_id, access_token):
-    logger.debug("Initiate call to validate assistant id: %s", assistant_id)
+    print("Initiate call to validate assistant id: ", assistant_id)
     endpoint = os.environ["API_BASE_URL"] + "/assistant/validate/assistant_id"
 
     headers = {
@@ -277,10 +269,10 @@ def validate_assistant_id(assistant_id, access_token):
         )  # to adhere to object access return response dict
 
         if response.status_code != 200:
-            logger.error("Error validating assistant id: %s", response.content)
+            print("Error validating assistant id: ", response.content)
             return {"success": False}
         return response_content
 
     except Exception as e:
-        logger.error("Error validating assistant id: %s", e)
+        print(f"Error validating assistant id: {e}")
         return {"success": False}

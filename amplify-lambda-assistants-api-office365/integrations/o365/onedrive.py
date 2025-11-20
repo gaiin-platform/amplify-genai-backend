@@ -7,8 +7,6 @@ integration_name = "microsoft_drive"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 MAX_SIMPLE_UPLOAD_SIZE = 4 * 1024 * 1024  # 4 MB
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 class DriveError(Exception):
     """Base exception for drive operations"""
@@ -375,7 +373,7 @@ def update_drive_item(
         url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}"
         response = session.patch(url, json=updates)
         if not response.ok:
-            logger.warning("Drive item update failed. Status: %s, Response: %s", response.status_code, response.text)
+            print(f"Drive item update failed. Status: {response.status_code}, Response: {response.text}")
             handle_graph_error(response)
         return format_drive_item(response.json())
     except requests.RequestException as e:

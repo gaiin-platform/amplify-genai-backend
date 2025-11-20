@@ -13,8 +13,6 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
-from pycommon.logger import getLogger
-logger = getLogger("assistants_standalone_ast")
 
 from pycommon.api.amplify_groups import (
     verify_member_of_ast_admin_group,
@@ -26,8 +24,6 @@ from pycommon.api.data_sources import (
 )
 
 from pycommon.api.ops import api_tool
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -117,10 +113,6 @@ from service.core import check_user_can_update_assistant, get_most_recent_assist
         "required": ["success", "message", "data"],
     },
 )
-@required_env_vars({
-    "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-})
 @validated(op="lookup")
 def lookup_assistant_path(event, context, current_user, name, data):
     token = data["access_token"]
@@ -128,10 +120,10 @@ def lookup_assistant_path(event, context, current_user, name, data):
         # Get the astPath from the request data
         ast_path = data.get("data", {}).get("astPath")
 
-        logger.debug("Looking up assistant with path: '%s', type: %s", ast_path, type(ast_path))
+        print(f"Looking up assistant with path: '{ast_path}', type: {type(ast_path)}")
 
         if not ast_path:
-            logger.warning("No astPath provided in the request")
+            print("No astPath provided in the request")
             return {
                 "statusCode": 400,
                 "body": json.dumps(
@@ -146,7 +138,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
 
         # Convert the path to lowercase to match frontend behavior
         ast_path = ast_path.lower() if isinstance(ast_path, str) else ast_path
-        logger.debug("Using lowercase path for lookup: '%s'", ast_path)
+        print(f"Using lowercase path for lookup: '{ast_path}'")
 
         # Get DynamoDB resource
         dynamodb = boto3.resource("dynamodb")
@@ -154,21 +146,20 @@ def lookup_assistant_path(event, context, current_user, name, data):
 
         # Print the table name for debugging
         table_name = os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
-        logger.debug("Using lookup table: %s", table_name)
+        print(f"Using lookup table: {table_name}")
 
         # Look up the assistant in the table
-        logger.debug("Querying DynamoDB with Key={'astPath': '%s'}", ast_path)
+        print(f"Querying DynamoDB with Key={{'astPath': '{ast_path}'}}")
         response = lookup_table.get_item(Key={"astPath": ast_path})
 
         # Log the raw response
-        logger.debug(
-            "DynamoDB response: %s",
-            json.dumps(response, cls=CustomPydanticJSONEncoder)
+        print(
+            f"DynamoDB response: {json.dumps(response, cls=CustomPydanticJSONEncoder)}"
         )
 
         # Check if the item exists
         if "Item" not in response:
-            logger.warning("No item found for path: '%s'", ast_path)
+            print(f"No item found for path: '{ast_path}'")
 
             return {
                 "statusCode": 404,
@@ -209,13 +200,12 @@ def lookup_assistant_path(event, context, current_user, name, data):
                 UpdateExpression="SET lastAccessed = :time",
                 ExpressionAttributeValues={":time": current_time},
             )
-            logger.debug(
-                "Updated access tracking for path '%s': lastAccessed=%s, lastAccessedBy=%s",
-                ast_path, current_time, current_user
+            print(
+                f"Updated access tracking for path '{ast_path}': lastAccessed={current_time}, lastAccessedBy={current_user}"
             )
         except Exception as update_error:
             # Log the error but continue - don't fail the lookup just because tracking failed
-            logger.error("Error updating access tracking: %s", str(update_error))
+            print(f"Error updating access tracking: {str(update_error)}")
 
         # Initialize accessTo outside the conditional block
         accessTo = item.get("accessTo", {})
@@ -251,7 +241,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
         group_id = assistant_definition.get("data", {}).get("groupId", None)
         if group_id and group_id != current_user:
             # check group membership for group ast admin group
-            logger.debug("Checking if user is a member of the ast group: %s", group_id)
+            print("Checking if user is a member of the ast group: ", group_id)
             is_member = verify_member_of_ast_admin_group(token, group_id)
             if not is_member:
                 return {
@@ -265,7 +255,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
                         cls=CustomPydanticJSONEncoder,
                     ),
                 }
-            logger.debug("User is a member of the ast group: %s", group_id)
+            print("User is a member of the ast group: ", group_id)
 
         # Create response with path information from both lookup table and assistant definition
         response_data = {
@@ -312,7 +302,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
             ),
         }
     except Exception as e:
-        logger.error("Error looking up assistant: %s", str(e))
+        print(f"Error looking up assistant: {str(e)}")
         return {
             "statusCode": 500,
             "body": json.dumps(
@@ -392,17 +382,11 @@ def lookup_assistant_path(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
-@required_env_vars({
-    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM],
-    "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-})
 @validated(op="add_assistant_path")
 def add_assistant_path(event, context, current_user, name, data):
     is_group_user = is_group_sys_user(data)
     access_token = data["access_token"]
-    logger.debug("Adding path to assistant with data: %s", data)
+    print(f"Adding path to assistant with data: {data}")
 
     # Extract the assistant ID and path from the data
     data = data["data"]
@@ -413,7 +397,7 @@ def add_assistant_path(event, context, current_user, name, data):
     amplify_groups = access_to.get("amplifyGroups", [])
     users, _ = are_valid_amplify_users(access_token, access_to.get("users", []))
 
-    logger.info("Adding path '%s' to assistant '%s'", ast_path, assistant_id)
+    print(f"Adding path '{ast_path}' to assistant '{assistant_id}'")
 
     # Get DynamoDB resources
     dynamodb = boto3.resource("dynamodb")
@@ -457,7 +441,7 @@ def add_assistant_path(event, context, current_user, name, data):
                 path_history = existing_item.get("pathHistory", [])
 
         except Exception as e:
-            logger.error("Error checking for existing path: %s", str(e))
+            print(f"Error checking for existing path: {str(e)}")
 
         if not prevAstPath:  # prevent losing path history when path is updated
             try:
@@ -474,9 +458,9 @@ def add_assistant_path(event, context, current_user, name, data):
 
                     path_history = current_path_item.get("pathHistory", [])
                     prevAstPath = current_path_item.get("astPath")
-                    logger.debug("previous AstPath %s", prevAstPath)
+                    print("previous AstPath", prevAstPath)
             except Exception as e:
-                logger.error("Error retrieving current path history: %s", str(e))
+                print(f"Error retrieving current path history: {str(e)}")
                 # Continue with empty path history if we can't find the existing one
 
         created_at = datetime.now().isoformat()
@@ -517,7 +501,7 @@ def add_assistant_path(event, context, current_user, name, data):
 
         # Add the entry to the lookup table
         lookup_table.put_item(Item=lookup_item)
-        logger.info("Added lookup entry for path '%s' to assistant '%s'", ast_path, assistant_id)
+        print(f"Added lookup entry for path '{ast_path}' to assistant '{assistant_id}'")
 
         # Now create a new version of the assistant with the path saved in its definition
         assistant_version = existing_assistant.get("version", 1)
@@ -571,18 +555,18 @@ def add_assistant_path(event, context, current_user, name, data):
                     "object_type": "assistant",  # The type of object being accessed
                 }
             )
-            logger.info("Successfully added direct permissions for %s %s on assistant version %s", principal_type, current_user, new_item['id'])
+            print(f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}")
 
             if principal_type != "group":
                 filtered_drive_ds = []
                 try:
                     from service.drive_datasources import extract_drive_datasources
                     drive_data_sources = extract_drive_datasources(assistant_data.get("integrationDriveData", {}))
-                    logger.debug("Drive data sources before translation: %s", drive_data_sources)
+                    print(f"Drive data sources before translation: {drive_data_sources}")
                     filtered_drive_ds = translate_user_data_sources_to_hash_data_sources(drive_data_sources)
-                    logger.debug("Drive Data sources after translation and extraction: %s", filtered_drive_ds)
+                    print(f"Drive Data sources after translation and extraction: {filtered_drive_ds}")
                 except Exception as e:
-                    logger.error("Error translating drive data sources to hash data sources: %s", str(e))
+                    print(f"Error translating drive data sources to hash data sources: {str(e)}")
 
                 for ds in data_sources + filtered_drive_ds:
                     ds_key = ds["id"]
@@ -595,13 +579,13 @@ def add_assistant_path(event, context, current_user, name, data):
                             "principal_type": principal_type,  # For individual users or groups
                             "object_type": "datasource",  # The type of object being accessed
                         })
-                        logger.debug("Successfully added data source direct permissions for %s on data source %s", assistant_id, ds_key)
+                        print(f"Successfully added data source direct permissions for {assistant_id} on data source {ds_key}")
                     except Exception as e:
-                        logger.error("Error adding data source direct permissions for %s on data source %s: %s", assistant_id, ds_key, str(e))
+                        print(f"Error adding data source direct permissions for {assistant_id} on data source {ds_key}: {str(e)}")
         
 
         except Exception as e:
-            logger.error("Error adding permissions for assistant version: %s", str(e))
+            print(f"Error adding permissions for assistant version: {str(e)}")
 
         # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_id, new_item["id"], new_version)
@@ -624,12 +608,11 @@ def add_assistant_path(event, context, current_user, name, data):
             for path_to_release in paths_to_release:
                 release_assistant_path(path_to_release, assistant_id, current_user)
 
-            logger.info(
-                "Removed %s previous path(s) associated with assistant %s",
-                len(paths_to_release), assistant_id
+            print(
+                f"Removed {len(paths_to_release)} previous path(s) associated with assistant {assistant_id}"
             )
         except Exception as e:
-            logger.error("Error removing previous paths: %s", str(e))
+            print(f"Error removing previous paths: {str(e)}")
             # Continue anyway - we've already saved the new path successfully
 
         return {
@@ -643,7 +626,10 @@ def add_assistant_path(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        logger.error("Error adding assistant path: %s", str(e), exc_info=True)
+        print(f"Error adding assistant path: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
         return {
             "success": False,
             "message": f"Failed to add path to assistant: {str(e)}",
@@ -652,27 +638,25 @@ def add_assistant_path(event, context, current_user, name, data):
 
 
 def release_assistant_path(ast_path, assistant_id, current_user):
-    logger.debug(
-        "Attempting to release path '%s' for %s from lookup table",
-        ast_path, assistant_id
+    print(
+        f"Attempting to release path '{ast_path}' for {assistant_id} from lookup table"
     )
     if not ast_path or not assistant_id:
-        logger.warning("No ast_path or assistant_id provided... no action taken")
+        print("No ast_path or assistant_id provided... no action taken")
         return
     dynamodb = boto3.resource("dynamodb")
     lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
 
     try:
-        logger.debug("Releasing '%s' from lookup table", ast_path)
+        print(f"Releasing '{ast_path}' from lookup table")
         existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
         if "Item" in existing_path_response:
             existing_item = existing_path_response["Item"]
 
             # verify data matches our records before releasing
             if existing_item.get("assistantId") != assistant_id:
-                logger.warning(
-                    "Path '%s' is not associated with assistant %s... no action taken",
-                    ast_path, assistant_id
+                print(
+                    f"Path '{ast_path}' is not associated with assistant {assistant_id}... no action taken"
                 )
                 return
 
@@ -694,9 +678,9 @@ def release_assistant_path(ast_path, assistant_id, current_user):
                 ExpressionAttributeValues={":history": path_history},
             )
 
-            logger.info("Path successfully released from lookup table")
+            print(f"Path successfully released from lookup table")
         else:
-            logger.warning("Path '%s' not found in lookup table... no action taken", ast_path)
+            print(f"Path '{ast_path}' not found in lookup table... no action taken")
     except Exception as e:
-        logger.error("Error removing path '%s' from lookup table: %s", ast_path, str(e))
+        print(f"Error removing path '{ast_path}' from lookup table: {str(e)}")
 

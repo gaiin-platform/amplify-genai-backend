@@ -24,6 +24,5 @@
             "envFile": "${workspaceFolder}/.env.local",
             "cwd": "${workspaceFolder}/amplify-lambda"
         }
-
     ]
 }

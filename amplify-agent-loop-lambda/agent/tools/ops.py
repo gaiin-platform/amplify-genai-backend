@@ -6,8 +6,7 @@ import requests
 
 from agent.components.tool import get_tool_metadata, register_tool
 from agent.core import ActionContext, Action, ActionRegistry
-from pycommon.logger import getLogger
-logger = getLogger("ops")
+from pycommon.encoders import SmartDecimalEncoder
 
 def register_op_actions(
     action_registry: ActionRegistry, access_token: str, current_user: str
@@ -76,7 +75,7 @@ def get_default_ops_as_tools(token):
         ops = result.get("data", [])
         return ops_to_tools(ops)
     except Exception as e:
-        logger.error("Error getting default ops: %s", e)
+        print(f"Error getting default ops: {e}")
         return []
 
 
@@ -150,11 +149,11 @@ def op_to_tool(api):
     # print("Bindings: ", bindings)
 
     def api_func_invoke(action_context: ActionContext, **kwargs) -> dict:
-        logger.info("Invoking API: %s", id)
+        print("Invoking API: ", id)
         # Ensure all manual bindings are present in kwargs
         for param_name, binding in bindings.items():
             if binding.get("mode") == "manual":
-                logger.debug("Inserting manual binding for param: %s", param_name)
+                print("Inserting manual binding for param: ", param_name)
                 value = binding["value"]
                 if isinstance(value, str) and value.lower() in ["true", "false"]:
                     value = value.lower() == "true"
@@ -175,14 +174,14 @@ def op_to_tool(api):
                 and "properties" in op_schema
                 and param_name in op_schema["properties"]
             ):
-                logger.debug("Updating description for param: %s", param_name)
+                print("Updating description for param: ", param_name)
                 op_schema["properties"][param_name]["description"] = new_description
 
     # Remove parameters from schema if they have manual bindings
     if "properties" in op_schema:
         for param_name in list(op_schema["properties"].keys()):
             if param_name in bindings and bindings[param_name].get("mode") == "manual":
-                logger.debug("Removing manually bound param from schema: %s", param_name)
+                print("Removing manually bound param from schema: ", param_name)
                 op_schema["properties"].pop(param_name)
                 if param_name in op_schema.get("required", []):
                     op_schema["required"].remove(param_name)
@@ -219,9 +218,9 @@ def call_api(action_context: ActionContext, name: str, payload: dict) -> dict:
     }
 
     # Check if the payload is empty
-    logger.info("============================================")
-    logger.info("Calling API: %s", name)
-    logger.info("============================================")
+    print("============================================")
+    print(f"Calling API: {name} ")
+    print("============================================")
 
     return execute_api_call(name=name, payload=payload, **params)
 
@@ -236,7 +235,7 @@ def execute_api_call(
     message_id: Optional[str],
 ) -> dict:
 
-    logger.info("Executing api call for %s\nConversation Id: %s\nAssistant Id: %s\nMessage Id: %s", current_user, conversation_id, assistant_id, message_id)  
+    print(f"Executing api call for {current_user}\nConversation Id: {conversation_id}\nAssistant Id: {assistant_id}\nMessage Id: {message_id}")  
 
     try:
         conversation = ""
@@ -269,7 +268,7 @@ def execute_api_call(
         # Make the request
         result = send_post_request(path, data, access_token)
 
-        logger.info("Response: %s", result)
+        print(f"Response: {result}")
 
         if (not result.get("success", False)):
             return result
@@ -285,7 +284,7 @@ def execute_api_call(
                     response_payload = response_payload["data"]
             else:
                 break
-        logger.info("Response payload: %s", response_payload)
+        print(f"Response payload: {response_payload}")
         return response_payload
 
     except Exception as e:
@@ -294,14 +293,14 @@ def execute_api_call(
 
 def send_post_request(path, payload, token):
     try:
-        logger.info(
-            "Sending POST request to %s with payload: %s and token: %s", path, payload, token
+        print(
+            f"Sending POST request to {path} with payload: {payload} and token: {token}"
         )
 
         url_base = os.environ.get("API_BASE_URL")
         url = f"{url_base}{path}"
 
-        logger.info("URL: %s", url)
+        print(f"URL: {url}")
 
         headers = {
             "Authorization": f"Bearer {token}",

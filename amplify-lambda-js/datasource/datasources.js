@@ -8,8 +8,8 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
-import { getModelByType, ModelTypes, isOpenAIModel} from "../common/params.js";
-import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
+import { getModelByType, ModelTypes, getChatFn, setModel} from "../common/params.js";
+import { LLM } from "../common/llm.js";
 
 const logger = getLogger("datasources");
 
@@ -78,18 +78,7 @@ export const doesNotSupportImagesInstructions = (modelName) => {
 
 export const getImageBase64Content = async (dataSource) => {
     const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
-    const key = extractKey(dataSource.id);
-    
-    // Check cache first
-    const { CacheManager } = await import('../common/cache.js');
-    const cacheKey = `${bucket}:${key}`;
-    const cached = await CacheManager.getCachedImageContent(cacheKey);
-    
-    if (cached) {
-        logger.debug("Using cached image content", {bucket: bucket, key: key});
-        return cached;
-    }
-    
+    const key = extractKey(dataSource.id)
     logger.debug("Fetching file from S3", {bucket: bucket, key: key});
 
     const command = new GetObjectCommand({
@@ -108,11 +97,7 @@ export const getImageBase64Content = async (dataSource) => {
             });
         
         const data = await streamToString(response.Body);
-        logger.debug("Base64 encoded image retrieved");
-        
-        // Cache the image content
-        CacheManager.setCachedImageContent(cacheKey, data);
-        
+        logger.debug("Base64 encoded image retrieved")
         return data;
     } catch (error) {
         logger.error("Error retrieving base64 encoded image", error);
@@ -151,14 +136,8 @@ export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
     logger.debug("Getting data sources by use", dataSources);
-    logger.info("🔍 getDataSourcesByUse Input:", {
-        dataSources_length: dataSources?.length || 0,
-        skipRag: chatRequestOrig.options?.skipRag,
-        ragOnly: chatRequestOrig.options?.ragOnly,
-        noDataSources: chatRequestOrig.options?.noDataSources
-    });
 
-    if ((chatRequestOrig.options?.skipRag && chatRequestOrig.options?.ragOnly) || chatRequestOrig.options?.noDataSources){
+    if ((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -177,16 +156,6 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
-    logger.debug("🔍 Conversation datasources search:", {
-        total_messages: chatRequestOrig.messages.length,
-        messages_with_data: chatRequestOrig.messages.slice(0,-1).filter(m => m.data && m.data.dataSources).length,
-        referencedDataSourcesInMessages_length: referencedDataSourcesInMessages.length,
-        referencedDataSources_sample: referencedDataSourcesInMessages[0] ? {
-            id: referencedDataSourcesInMessages[0].id,
-            type: referencedDataSourcesInMessages[0].type
-        } : null
-    });
-
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
         params,
         chatRequestOrig,
@@ -196,10 +165,10 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
 
     const getRagOnly = sources => sources.filter(ds =>
-        chatRequestOrig.options?.ragOnly || (ds.metadata?.ragOnly));
+        params.options.ragOnly || (ds.metadata && ds.metadata.ragOnly));
 
     const getInsertOnly = sources => sources.filter(ds =>
-        !chatRequestOrig.options?.ragOnly && !ds.metadata?.ragOnly);
+        !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
     const getDocumentDataSources = sources => sources.filter(isDocument);
 
@@ -210,20 +179,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     )];}
 
     const attachedDataSources = [
-        ...dataSources.filter(ds => !ds.metadata?.ragOnly),  // ✅ Exclude ragOnly sources from attached
-        ...msgDataSources.filter(ds => !ds.metadata?.ragOnly)  // ✅ Exclude ragOnly sources from attached
-    ];
-
-    logger.debug("🔍 RAG datasource calculation:", {
-        getRagOnly_dataSources: getRagOnly(dataSources).length,
-        getRagOnly_msgDataSources: getRagOnly(msgDataSources).length,
-        getDocumentDataSources_convoDataSources: getDocumentDataSources(convoDataSources).length,
-        convoDataSources_sample: convoDataSources[0] ? {
-            id: convoDataSources[0].id,
-            type: convoDataSources[0].type,
-            isDocument: isDocument(convoDataSources[0])
-        } : null
-    });
+        ...dataSources,
+        ...msgDataSources];
 
     const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
@@ -245,25 +202,18 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
-    // Only check chatRequestOrig.options?.skipRag, not params.options?.skipRag
-    // The router pre-resolves data sources and shouldn't override RAG detection
-    if(chatRequestOrig.options?.skipRag) {
+    if(params.options.skipRag) {
         ragDataSources = [];
     }
-
-    logger.debug("🔍 Final RAG decision:", {
-        ragDataSources_length: ragDataSources.length,
-        skipRag: chatRequestOrig.options?.skipRag,
-        ragDataSources_ids: ragDataSources.map(ds => ds.id?.substring(0, 50))
-    });
 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if(params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
+    if(params.options.dataSourceOptions || chatRequestOrig.options.dataSourceOptions) {
 
         const dataSourceOptions = {
-        ...(chatRequestOrig.options.dataSourceOptions || {})};
+        ...(chatRequestOrig.options.dataSourceOptions || {}),
+        ...(params.options.dataSourceOptions || {})};
 
         logger.debug("Applying data source options", dataSourceOptions);
 
@@ -423,22 +373,17 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
 export const resolveDataSources = async (params, body, dataSources) => {
     logger.info("Resolving data sources", {dataSources: dataSources});
 
-    // Ensure dataSources is always an array
-    if (!dataSources) {
-        dataSources = [];
-    }
-
     // seperate the image ds
     if (body && body.messages && body.messages.length > 0) {
         const lastMsg = body.messages[body.messages.length - 1];
         const ds = lastMsg.data && lastMsg.data.dataSources;
         if (ds) {
             body.imageSources = ds.filter(d => isImage(d));
-        } else if (body.options?.api_accessed && dataSources.length > 0){ // support images coming from the /chat endpoint
+        } else if (body.options?.api_accessed){ // support images coming from the /chat endpoint
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
-        logger.debug("IMAGE: body.imageSources", body.imageSources);
+        console.log("IMAGE: body.imageSources", body.imageSources);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -463,7 +408,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
-        logger.debug("IMAGE: ds_with_keys", image_ds_keys);
+        console.log("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
@@ -674,9 +619,8 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 key = extractKey(key);
             }
 
-            // Include ragOnly in cache key to prevent metadata conflicts
-            const cacheKey = ds.metadata?.ragOnly ? `${key}:ragOnly` : key;
-            const cached = hashDataSourcesCache.get(cacheKey);
+            // Check the hash keys cache
+            const cached = hashDataSourcesCache.get(key);
             if (cached) {
                 return cached;
             }
@@ -698,15 +642,15 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                     ...ds,
                     metadata: {...ds.metadata, userDataSourceId: ds.id},
                     id: "s3://" + item.textLocationKey};
-                hashDataSourcesCache.set(cacheKey, result);
+                hashDataSourcesCache.set(key, result);
                 return result;
             } else {
-                hashDataSourcesCache.set(cacheKey, ds);
+                hashDataSourcesCache.set(key, ds);
                 return ds; // No item found with the given ID
             }
             return ds;
         } catch (e) {
-            logger.debug("Error processing datasource:", e);
+            console.log(e);
             return ds;
         }
     }));
@@ -726,15 +670,6 @@ export const getContent = async (chatRequest, params, dataSource) => {
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
     if (sourceType === 's3://') {
-        // Try to get cached document content first
-        const { CacheManager } = await import('../common/cache.js');
-        const cacheKey = `doc:${dataSource.id}`;
-        const cached = await CacheManager.getCachedDocumentContent(cacheKey);
-        
-        if (cached) {
-            logger.debug("Using cached document content for:", dataSource.id);
-            return cached;
-        }
 
         logger.debug("Fetching data from S3");
         const result = await getFileText(dataSource.id.slice(sourceType.length));
@@ -743,9 +678,6 @@ export const getContent = async (chatRequest, params, dataSource) => {
         if (result == null) {
             throw new Error("Could not fetch data from S3");
         }
-        
-        // Cache the raw document content for future use
-        await CacheManager.setCachedDocumentContent(cacheKey, result);
 
         return result;
 
@@ -812,18 +744,8 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
             const originalTotalTokens = dataSource?.metadata?.totalTokens;
             const filteredTotalTokens = filteredContent.totalTokens;
-            const percentageOfOriginal = originalTotalTokens ? 
-                Math.round(filteredTotalTokens/originalTotalTokens*100) + '%' : 
-                'unknown (no original token count)';
-            logger.debug(`Original document total tokens: ${originalTotalTokens || 'not available'} \nFiltered document tokens: ${filteredTotalTokens}\n${percentageOfOriginal} of original`);
+            logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
             formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
-            
-            // 🚨 CRITICAL: Preserve noRelevantContent flag for LLM messaging
-            if (filteredContent.noRelevantContent) {
-                formattedContext.forEach(chunk => {
-                    chunk.noRelevantContent = true;
-                });
-            }
   
             return formattedContext;
         } catch (error) {
@@ -847,7 +769,25 @@ const getExtractedRelevantContext = async (resolutionEnv, context) => {
     const chatBody = resolutionEnv.chatRequest;
     const userMessage = chatBody.messages.slice(-1)[0].content;
     // Use a cheaper model for document analysis with built-in caching
+    
     const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
+    
+    // Create parameters for the LLM with caching enabled
+    const llmParams = setModel ({
+        ...params,
+        options: {
+            skipRag: true,
+            ragOnly: false,
+            dataSourceOptions:{},
+        }
+    }, model);
+    
+    // Initialize LLM for document analysis
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    };
+    
+    const llm = new LLM(chatFn, llmParams, null);
 
     // Create a mapped version of the context content for easier lookups
     const contentByIndex = {};
@@ -902,59 +842,40 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         }
     };
 
-    // Use direct native provider call for document analysis
-    const extraction = await promptUnifiedLLMForData(
+    // Use a simpler prompt for data
+    const extraction = await llm.promptForData(
+        updatedBody,
+        [],
+        '', // prompt already in messages
         {
-            account: resolutionEnv.params.account,
-            options: {
-                model,
-                requestId: resolutionEnv.params.requestId
+            "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
+        },
+        null,
+        (r) => {
+            // Ensure we get a valid array of numbers
+            if (!r.relevantIndexes) {
+                return null;
+            }
+            try {
+                const indexes = JSON.parse(r.relevantIndexes);
+                return indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+            } catch (e) {
+                logger.error("Error parsing relevant indexes:", e);
+                return null;
             }
         },
-        updatedBody.messages,
-        {
-            type: "object",
-            properties: {
-                relevantIndexes: {
-                    type: "array",
-                    items: { type: "integer" },
-                    description: "Array of integer indexes indicating relevant document fragments"
-                }
-            },
-            required: ["relevantIndexes"]
-        },
-        null // No streaming
+        2 // Fewer retries for faster response
     );
  
-    // Parse and validate the extraction result
-    let indexes = [];
-    try {
-        if (extraction.relevantIndexes) {
-            if (typeof extraction.relevantIndexes === 'string') {
-                indexes = JSON.parse(extraction.relevantIndexes);
-            } else if (Array.isArray(extraction.relevantIndexes)) {
-                indexes = extraction.relevantIndexes;
-            }
-            // Filter to ensure valid indexes
-            indexes = indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
-        }
-    } catch (e) {
-        logger.error("Error parsing relevant indexes:", e);
-        logger.debug("Dumping entire document context as a fallback...");
-        return context;
-    }
-    
     // Handle case where no relevant content was found
-    if (!indexes || indexes.length === 0) {
-        logger.debug("No datasource content was relevant to the query - providing full context with relevance flag");
-        
-        // Instead of returning null, provide full context with a flag for LLM to handle gracefully
-        return {
-            ...context,
-            noRelevantContent: true, // Flag to indicate LLM should mention no relevant info found
-            totalTokens: context.content.reduce((acc, item) => acc + (item.tokens || 0), 0)
-        };
+    if (!extraction.relevantIndexes) {
+        logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
+        return context; // Return unchanged context if nothing relevant found
+    } else if  (extraction.relevantIndexes.length === 0) {
+        logger.debug("No datasource content was relevant to the query");
+        return null;
     }
+    const indexes = JSON.parse(extraction.relevantIndexes);
     // Filter the content to only include relevant items
     const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
 
@@ -1134,157 +1055,3 @@ export const combineNeighboringLocations = (contentArray) => {
 
     return combined;
 };
-
-// Token count cache for performance optimization
-const tokenCountCache = new Map();
-
-/**
- * Get token count for a datasource with caching optimization
- * Eliminates redundant token calculations for the same datasource + model combinations
- */
-export function getTokenCount(dataSource, model) {
-    // Try cache first
-    const key = `${dataSource.id}:${model.id}`;
-    const cached = tokenCountCache.get(key);
-    if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) { // 5 min TTL
-        return cached.value;
-    }
-    
-    // Cache miss - calculate tokens
-    let tokenCount;
-    
-    if (dataSource.metadata && dataSource.metadata.totalTokens) {
-        const totalTokens = dataSource.metadata.totalTokens;
-        if (isImage(dataSource)) {
-            // Image token counting depends on the actual model type, regardless of provider
-            if (isOpenAIModel(model.id) || model.provider === 'OpenAI' || model.provider === 'Azure') {
-                tokenCount = totalTokens.gpt || 1000;
-            } else if (model.id.includes("anthropic") || model.id.includes("claude")) {
-                tokenCount = totalTokens.claude || 1000;
-            } else {
-                tokenCount = 1000; // Default fallback
-            }
-        } else if (!dataSource.metadata.ragOnly) {
-            tokenCount = totalTokens;
-        } else {
-            tokenCount = 0; // RAG-only datasources don't count toward context window
-        }
-    } else if (dataSource.metadata && dataSource.metadata.ragOnly) {
-        tokenCount = 0;
-    } else {
-        tokenCount = 1000; // Default fallback
-    }
-    
-    // Cache the result
-    tokenCountCache.set(key, {
-        value: tokenCount,
-        timestamp: Date.now()
-    });
-    
-    return tokenCount;
-}
-
-/**
- * Generates detailed descriptions for images using LLM for automation assistant compatibility
- * @param {Array} imageSources - Array of image data sources
- * @param {Object} model - The model to use for description generation
- * @param {Object} params - Request parameters including account info
- * @returns {Promise<Array>} Array of image descriptions
- */
-export const generateImageDescriptions = async (imageSources, model, params) => {
-    if (!imageSources || imageSources.length === 0) {
-        return [];
-    }
-
-    // Only generate descriptions if the model supports images
-    if (!model.supportsImages) {
-        logger.debug("Model doesn't support images, skipping description generation");
-        return [];
-    }
-
-    const descriptions = [];
-    
-    for (const imageSource of imageSources) {
-        try {
-            logger.debug(`Generating description for image: ${imageSource.id}`);
-            
-            // Get the base64 image content
-            const imageBase64 = await getImageBase64Content(imageSource);
-            if (!imageBase64) {
-                logger.warn(`Could not retrieve image content for: ${imageSource.id}`);
-                continue;
-            }
-
-            // Create vision message for the LLM
-            const visionMessages = [{
-                role: 'user',
-                content: [
-                    {
-                        type: 'text',
-                        text: `Analyze this image in detail. Provide a comprehensive description that captures:
-- All visible subjects, objects, and elements
-- Colors, textures, lighting, and visual composition  
-- Any text, numbers, charts, or data visible in the image
-- Spatial relationships and layout
-- Any relevant context or setting
-- Technical details if it's a diagram, screenshot, or document
-
-Be thorough and precise so someone could understand the image content without seeing it.`
-                    },
-                    {
-                        type: 'image_url',
-                        image_url: {
-                            url: `data:${imageSource.type};base64,${imageBase64}`
-                        }
-                    }
-                ]
-            }];
-
-            // Generate description using native provider
-            const descriptionResult = await promptUnifiedLLMForData(
-                {
-                    account: params.account,
-                    options: {
-                        model,
-                        requestId: params.requestId
-                    }
-                },
-                visionMessages,
-                {
-                    type: "object",
-                    properties: {
-                        description: {
-                            type: "string",
-                            description: "Detailed description of the image content"
-                        }
-                    },
-                    required: ["description"]
-                },
-                null // No streaming
-            );
-
-            const description = descriptionResult.description || 'Unable to generate image description.';
-            
-            descriptions.push({
-                imageId: imageSource.id,
-                imageType: imageSource.type,
-                imageName: imageSource.name || `Image ${descriptions.length + 1}`,
-                description: description
-            });
-
-            logger.debug(`Generated description for ${imageSource.id}: ${description.substring(0, 100)}...`);
-
-        } catch (error) {
-            logger.error(`Error generating description for image ${imageSource.id}:`, error);
-            descriptions.push({
-                imageId: imageSource.id,
-                imageType: imageSource.type,
-                imageName: imageSource.name || `Image ${descriptions.length + 1}`,
-                description: 'Error: Could not analyze this image.'
-            });
-        }
-    }
-
-    return descriptions;
-}
-

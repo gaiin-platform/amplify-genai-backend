@@ -17,8 +17,6 @@ from openai import AzureOpenAI
 from datetime import datetime, timezone
 from .token import count_tokens
 from PIL import Image
-from pycommon.logger import getLogger
-logger = getLogger("code_interpreter")
 
 
 openai_provider = os.environ["ASSISTANTS_OPENAI_PROVIDER"]
@@ -39,11 +37,7 @@ def get(dictionary, *keys):
 
 def get_openai_client():
     if openai_provider == "openai":
-        # Get the main secret containing all API keys
-        secret_name = os.environ.get("SECRETS_ARN_NAME")
-        secret_data = get_secret_value(secret_name)
-        parsed_secret = json.loads(secret_data)
-        openai_api_key = parsed_secret["OPENAI_API_KEY"]
+        openai_api_key = get_secret_value("OPENAI_API_KEY")
         client = OpenAI(api_key=openai_api_key)
         return client
     elif openai_provider == "azure":
@@ -67,14 +61,14 @@ def file_keys_to_file_ids(file_keys):
     if len(file_keys) == 0:
         return []
 
-    files_bucket_name = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
+    files_bucket_name = os.environ["ASSISTANTS_FILES_BUCKET_NAME"]
     images_bucket_name = os.environ["S3_IMAGE_INPUT_BUCKET_NAME"]
 
     updated_keys = []
     for file_key in file_keys:
         file_key_user = file_key.split("//")[1] if ("//" in file_key) else file_key
         if "@" not in file_key_user or len(file_key_user) <= 6:
-            logger.warning("Skipping %s: doesn't look valid.", file_key)
+            print(f"Skipping {file_key}: doesn't look valid.")
             continue
         updated_keys.append(file_key_user)
 
@@ -85,10 +79,11 @@ def file_keys_to_file_ids(file_keys):
         # if in files bucket
         try:
             s3.head_object(Bucket=files_bucket_name, Key=file_key_user)
-            logger.debug("[FOUND] Key '%s' is in the files bucket.", file_key_user)
-            logger.debug(
-                "Downloading file: %s/%s to transfer to OpenAI",
-                files_bucket_name, file_key
+            print(f"[FOUND] Key '{file_key_user}' is in the files bucket.")
+            print(
+                "Downloading file: {}/{} to transfer to OpenAI".format(
+                    files_bucket_name, file_key
+                )
             )
             # Use a BytesIO buffer to download the file directly into memory
             file_stream = BytesIO()
@@ -96,20 +91,18 @@ def file_keys_to_file_ids(file_keys):
             file_stream.seek(0)  # Move to the beginning of the file-like object
 
         except botocore.exceptions.ClientError as e:
-            logger.debug(
-                "[NOT FOUND] Key '%s' not in files bucket. Checking images bucket.",
-                file_key_user
+            print(
+                f"[NOT FOUND] Key '{file_key_user}' not in files bucket. Checking images bucket."
             )
 
         # check if in image bucket
         if not file_stream:
             try:
                 s3.head_object(Bucket=images_bucket_name, Key=file_key_user)
-                logger.debug("[FOUND] Key '%s' is in the images bucket.", file_key_user)
+                print(f"[FOUND] Key '{file_key_user}' is in the images bucket.")
 
-                logger.debug(
-                    "[DOWNLOAD] Fetching base64 image from: %s/%s",
-                    images_bucket_name, file_key_user
+                print(
+                    f"[DOWNLOAD] Fetching base64 image from: {images_bucket_name}/{file_key_user}"
                 )
                 s3_obj = s3.get_object(Bucket=images_bucket_name, Key=file_key_user)
                 base64_data = s3_obj["Body"].read().decode("utf-8")
@@ -117,18 +110,17 @@ def file_keys_to_file_ids(file_keys):
                 file_stream = BytesIO(file_bytes)
 
             except botocore.exceptions.ClientError as e:
-                logger.error(
-                    "[ERROR] Could not confirm existence in both files and images bucket for key '%s': %s",
-                    file_key_user, e
+                print(
+                    f"[ERROR] Could not confirm existence in both files and images bucket for key '{file_key_user}': {e}"
                 )
                 continue
         # safely check
         if file_stream:
-            logger.debug("Uploading file to OpenAI: %s", file_key)
+            print("Uploading file to OpenAI: {}".format(file_key))
             # Create the file on OpenAI using the downloaded data
             response = client.files.create(file=file_stream, purpose="assistants")
 
-            logger.debug("Response: %s", response)
+            print("Response: {}".format(response))
             file_id = response.id
             if file_id:
                 file_ids.append(file_id)
@@ -141,24 +133,21 @@ def file_keys_to_file_ids(file_keys):
 def send_file_to_s3(
     file_content, file_key, file_name, user_id, content_type="binary/octet-stream"
 ):
-    logger.debug("Sending files to s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    
-    # Use consolidation bucket format for new files
-    consolidation_key = f"codeInterpreter/{file_key}"
+    print("Sending files to s3")
+    bucket_name = os.environ["ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME"]
 
     try:
-        logger.debug("Transfer file to consolidation s3 bucket: %s", consolidation_bucket)
+        print("Transfer file to s3 bucket: ".format(bucket_name))
         file_stream = BytesIO(file_content)
-        logger.debug("File Stream: %s", file_stream)
+        print("File Stream: ", file_stream)
         s3.upload_fileobj(
             file_stream,
-            consolidation_bucket,
-            consolidation_key,
+            bucket_name,
+            file_key,
             ExtraArgs={"ACL": "private", "ContentType": content_type},
         )
 
-        logger.info("File uploaded to consolidation S3 bucket '%s' with key '%s'", consolidation_bucket, consolidation_key)
+        print(f"File uploaded to S3 bucket '{bucket_name}' with key '{file_key}'")
 
         file_url = get_presigned_download_url(file_key, user_id, file_name)
         if file_url["success"]:
@@ -166,20 +155,20 @@ def send_file_to_s3(
         return file_url
 
     except NoCredentialsError:
-        logger.error("Credentials not available")
+        print("Credentials not available")
     except ClientError as e:
         # DynamoDB client error handling
-        logger.error("Failed to upload file to S3")
-        logger.error("ClientError: %s", e.response["Error"]["Message"])
+        print(f"Failed to upload file to S3")
+        print(e.response["Error"]["Message"])
     except Exception as e:
         # Handle other possible exceptions
-        logger.error("An unexpected error occurred: %s", e)
+        print(f"An unexpected error occurred: {e}")
     finally:
         file_stream.close()
 
 
 def create_low_res_version(file):
-    logger.debug("Creating lower resolution version of image")
+    print("Creating lower resolution version of image")
     image = Image.open(BytesIO(file.content))
     original_width, original_height = image.size
     target_size_bytes = 204800  # 200KB
@@ -224,7 +213,7 @@ def create_low_res_version(file):
 
 
 def determine_content_type(file_name):
-    logger.debug("Determining file type of: %s", file_name)
+    print("Determining file type of: ", file_name)
     extension = file_name.split(".")[-1]
     if extension == "csv":
         return "text/csv"
@@ -237,12 +226,10 @@ def determine_content_type(file_name):
 
 
 def get_presigned_download_url(key, current_user, download_filename=None):
-    """Generate presigned download URL with backward compatibility for legacy and consolidation buckets"""
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    legacy_bucket = os.environ.get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME")  # Marked for deletion
+    bucket_name = os.environ["ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME"]
 
-    logger.debug("Getting presigned download URL for %s for user %s", key, current_user)
+    print(f"Getting presigned download URL for {key} for user {current_user}")
     if not (current_user in key):
         return {
             "success": False,
@@ -255,44 +242,23 @@ def get_presigned_download_url(key, current_user, download_filename=None):
         else {}
     )
 
-    # Try consolidation bucket first (new format)
-    consolidation_key = f"codeInterpreter/{key}"
+    # If the user matches, generate a presigned URL for downloading the file from S3
     try:
-        logger.debug("Trying consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
         presigned_url = s3.generate_presigned_url(
             ClientMethod="get_object",
-            Params={"Bucket": consolidation_bucket, "Key": consolidation_key, **response_headers},
+            Params={"Bucket": bucket_name, "Key": key, **response_headers},
             ExpiresIn=28800,  # Expires in 12 hrs
         )
-        
-        # Verify the object exists before returning the URL
-        s3.head_object(Bucket=consolidation_bucket, Key=consolidation_key)
-        logger.debug("Successfully found file in consolidation bucket")
-        return {"success": True, "downloadUrl": presigned_url}
-        
     except ClientError as e:
-        logger.debug("File not found in consolidation bucket: %s", str(e))
-    
-    # Fallback to legacy bucket if available
-    if legacy_bucket:
-        try:
-            logger.debug("Trying legacy bucket: %s/%s", legacy_bucket, key)
-            presigned_url = s3.generate_presigned_url(
-                ClientMethod="get_object",
-                Params={"Bucket": legacy_bucket, "Key": key, **response_headers},
-                ExpiresIn=28800,  # Expires in 12 hrs
-            )
-            
-            # Verify the object exists before returning the URL
-            s3.head_object(Bucket=legacy_bucket, Key=key)
-            logger.debug("Successfully found file in legacy bucket")
-            return {"success": True, "downloadUrl": presigned_url}
-            
-        except ClientError as e:
-            logger.debug("File not found in legacy bucket either: %s", str(e))
+        print(f"Error generating presigned download URL: {e}")
+        return {"success": False, "message": "File not found"}
 
-    logger.error("Failed to retrieve presigned url from any bucket")
-    return {"success": False, "message": "File not found"}
+    if presigned_url:
+        # print("Successfully retrieved a new presigned url: ", presigned_url)
+        return {"success": True, "downloadUrl": presigned_url}
+    else:
+        print("Failed to retrieve a new presigned url")
+        return {"success": False, "message": "File not found"}
 
 
 def chat_with_code_interpreter(
@@ -304,10 +270,10 @@ def chat_with_code_interpreter(
     request_id,
     api_accessed,
 ):
-    logger.debug("Entered Chat_with_code_interpreter")
+    print("Entered Chat_with_code_interpreter")
 
     # getting assistant id
-    logger.debug("Assistant with %s", openai_provider)
+    print("Assistant with ", openai_provider)
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if not assistant_existence["success"]:
         return assistant_existence
@@ -337,7 +303,7 @@ def chat_with_code_interpreter(
             return thread_id_data
         info = thread_id_data["data"]
     else:
-        logger.debug("thread key provided: %s", thread_id)
+        print("thread key provided: ", thread_id)
         # only api access will have the option of ending here because we dont manage thread conversation messages for the user, they do
         # so we need to check if it is still good, if it is not then we dont automatically create one because the user will not be on a thread that has their messages
         info["thread_key"] = thread_id
@@ -356,7 +322,7 @@ def chat_with_code_interpreter(
         # turn any file_id to the providers file ids
         message_catch_up_on_thread(sanitized_messages, info)
 
-    logger.debug(
+    print(
         "Initiating chat function"
     )  # , messages, assistant_key, account_id, request_id
     return chat(current_user, provider_assistant_id, info)
@@ -366,11 +332,11 @@ def check_last_known_thread(info):
     thread_id = info["thread_id"]
     if not thread_id:
         return {"success": False, "error": "Failed to check last known threads status."}
-    logger.debug("Checking if the thread is still good. ThreadId: %s", thread_id)
+    print("Checking if the thread is still good. ThreadId: ", thread_id)
     timestamp = int(time.time() * 1000)
     try:
         thread_info = client.beta.threads.retrieve(thread_id)
-        logger.debug("Thread info: %s", thread_info)
+        print(thread_info)
         if thread_info.id:
             op_details = {"type": "RETRIEVE_THREAD", "timestamp": timestamp}
             record_thread_usage(op_details, info)  # record when you activate the thread
@@ -381,12 +347,12 @@ def check_last_known_thread(info):
 
         return {"success": False, "error": "Last known thread is no good."}
     except Exception as e:
-        logger.error("Exception: %s", e)
+        print(e)
         return {"success": False, "error": "Failed to check last known threads status."}
 
 
 def get_active_thread_id_amplify_chat(messages, info):
-    logger.debug("Initiate getting active thread")
+    print("Initiate getting active thread")
     updated_info, new_messages_to_last_known = get_last_known_thread_id(messages, info)
 
     sanitized_messages = sanitize_messages(new_messages_to_last_known)
@@ -409,7 +375,7 @@ def get_last_known_thread_id(messages, info):
     if len(messages) == 0:
         return info, messages
 
-    logger.debug("Retrieving last known thread and missing messages")
+    print("Retrieving last known thread and missing messages")
     # traverse backward to see if and when there is some codeiterpreter message data attached to the messages passed in
     for index in range(len(messages) - 1, -1, -1):
         if (
@@ -420,9 +386,9 @@ def get_last_known_thread_id(messages, info):
             .get("threadId")
             is not None
         ):
-            logger.debug(
-                "Message with code interpreter message data: %s",
-                messages[index]["data"]["state"]["codeInterpreter"]
+            print(
+                "Message with code interpreter message data: ",
+                messages[index]["data"]["state"]["codeInterpreter"],
             )
             # theres no way the very last message in the list can have codeInterpreter MessageData according to existing logic
             # the list will always contain the new user prompt, so will always at the bare minimum get messages[-1] if code interpreter has been used at some point
@@ -443,7 +409,7 @@ def get_last_known_thread_id(messages, info):
 
 def create_new_thread_for_chat(messages, info):
     user_id = info["current_user"]
-    logger.debug("Creating a new thread")
+    print("Creating a new thread")
     dynamodb = boto3.resource("dynamodb")
     threads_table = dynamodb.Table(os.environ["ASSISTANT_THREADS_DYNAMODB_TABLE"])
     timestamp = int(time.time() * 1000)
@@ -451,7 +417,7 @@ def create_new_thread_for_chat(messages, info):
 
     try:
         # Create a new thread using the OpenAI Client
-        logger.debug("Creating OpenAI thread...")
+        print("Creating OpenAI thread...")
         thread_id = client.beta.threads.create().id
 
         info["thread_id"] = thread_id
@@ -459,11 +425,11 @@ def create_new_thread_for_chat(messages, info):
         op_details = {"type": "CREATE_THREAD", "timestamp": timestamp}
         record_thread_usage(op_details, info)  ## record when you create
 
-        logger.info("Created thread: %s", thread_id)
+        print(f"Created thread: {thread_id}")
         if messages:
             message_catch_up_on_thread(messages, info)
     except Exception as e:
-        logger.error("Exception: %s", e)
+        print(e)
         return {
             "success": False,
             "error": "Failed to create new thread with the client.",
@@ -479,7 +445,7 @@ def create_new_thread_for_chat(messages, info):
     }
     # Put the new item into the DynamoDB table
     threads_table.put_item(Item=new_item)
-    logger.info("Successful creation and sync of messages to new threadId: %s", thread_id)
+    print("Successful creation and sync of messages to new threadId: ", thread_id)
     return {
         "success": True,
         "message": "Successful creation and sync of messages to new thread.",
@@ -488,7 +454,7 @@ def create_new_thread_for_chat(messages, info):
 
 
 def sanitize_messages(messages, amplify_messages=True):
-    logger.debug("Entered sanitize_mssages")
+    print("Entered sanitize_mssages")
     sanitized_messages = []
     i = 0
     while i < len(messages):
@@ -527,7 +493,7 @@ def sanitize_messages(messages, amplify_messages=True):
 def message_catch_up_on_thread(missing_messages, info):
     if len(missing_messages) == 0:
         return {"success": False, "message": "No messages to add"}
-    logger.debug("Get any missing messages on the thread")
+    print("Get any missing messages on the thread")
     messages_to_send = []
     current_content = ""
     current_file_ids = []
@@ -579,9 +545,9 @@ def message_catch_up_on_thread(missing_messages, info):
             {"content": current_content, "file_ids": current_file_ids}
         )
 
-    logger.debug("Total messages in to send list: %s", len(messages_to_send))
+    print("Total messages in to send list: ", len(messages_to_send))
     try:
-        logger.debug("Adding missing messages to thread.")
+        print("Adding missing messages to thread.")
         for message in messages_to_send:
             content = message["content"]
             add_message_to_thread(info, content, message["file_ids"])
@@ -591,7 +557,7 @@ def message_catch_up_on_thread(missing_messages, info):
             "message": "Successfully added missing messages to the thread.",
         }
     except Exception as e:
-        logger.error("Exception: %s", e)
+        print(e)
     return {"success": False, "error": "Failed to sync messages to the thread."}
 
 
@@ -617,21 +583,21 @@ def chat(current_user, provider_assistant_id, info):
     openai_thread_id = info["thread_id"]
 
     try:
-        logger.info("Running assistant %s on thread %s", provider_assistant_id, openai_thread_id)
+        print(f"Running assistant {provider_assistant_id} on thread {openai_thread_id}")
         run = client.beta.threads.runs.create(
             thread_id=openai_thread_id, assistant_id=provider_assistant_id
         )
-        logger.debug("Run created: %s", run)
+        print(f"Run created: {run}")
 
         tries = 28
         while tries > 0:
-            logger.debug("Checking for the result of the run %s", run.id)
+            print(f"Checking for the result of the run {run.id}")
             try:
                 status = client.beta.threads.runs.retrieve(
                     thread_id=openai_thread_id, run_id=run.id
                 )
 
-                logger.debug("Status %s", status.status)
+                print(f"Status {status.status}")
                 if status.status == "completed":
                     break
                 elif status.status in [
@@ -642,13 +608,13 @@ def chat(current_user, provider_assistant_id, info):
                     "expired",
                     "incomplete",
                 ]:
-                    logger.error("Error run status: %s", status)
+                    print("Error run status: ", status)
                     return {
                         "success": False,
                         "error": f"Error with run status : {status.status}",
                     }
             except Exception as e:
-                logger.error("Exception: %s", e)
+                print(e)
                 run_data = {
                     openai_provider: {
                         "threadId": run.thread_id,
@@ -663,18 +629,18 @@ def chat(current_user, provider_assistant_id, info):
 
             time.sleep(1)
     except Exception as e:
-        logger.error("Exception: %s", e)
+        print(e)
         return {"success": False, "error": "Failed to run the assistant on the thread."}
 
     timestamp = int(time.time() * 1000)
-    logger.debug("Fetching the messages from %s", openai_thread_id)
+    print(f"Fetching the messages from {openai_thread_id}")
     thread_messages = client.beta.threads.messages.list(thread_id=openai_thread_id)
     # We only care about the last message which is the assistant reply because we are keeping track in our messages
-    logger.debug("Formatting messages")
+    print(f"Formatting messages")
 
     # assitant response message is the first in the data list
     assistantMessage = thread_messages.data[0]
-    logger.debug("Assistant Response Message: %s", assistantMessage)
+    print("Assistant Response Message: ", assistantMessage)
 
     # make sure its the assistant response!
     if not assistantMessage.role == "assistant":
@@ -710,9 +676,9 @@ def chat(current_user, provider_assistant_id, info):
             responseData["data"]["textContent"] += item_data.value + "\n"
 
             for annotation in item_data.annotations:
-                logger.debug("Annotation: %s", annotation)
+                print("Annotation: ", annotation)
                 if annotation.type == "file_path":
-                    logger.info("Code Interpreter generated a file!")
+                    print("Code Interpreter generated a file!")
                     created_file_id = annotation.file_path.file_id
                     file_obj = client.files.retrieve(created_file_id)
                     file_name = file_obj.filename[file_obj.filename.rfind("/") + 1 :]
@@ -723,7 +689,7 @@ def chat(current_user, provider_assistant_id, info):
 
                     # only csv and pdf are currently supported
                     content_type = determine_content_type(annotation.text)
-                    logger.debug("File content type: %s", content_type)
+                    print("File content type: ", content_type)
                     content_values = get_response_values(
                         file_content, content_type, s3_file_key, current_user, file_name
                     )
@@ -732,7 +698,7 @@ def chat(current_user, provider_assistant_id, info):
 
         elif item.type == "image_file":
             # no longer necessary since recent updates
-            logger.info("Code Interpreter generated an image file!")
+            print("Code Interpreter generated an image file!")
             continue
             created_file_id = item.image_file.file_id
             # send file to s3 ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME
@@ -762,7 +728,7 @@ def chat(current_user, provider_assistant_id, info):
 
 
 def get_response_values(file, content_type, file_key, current_user, file_name=None):
-    logger.debug("Get response Values")
+    print("Get response Values")
     values = {}
     presigned_url = send_file_to_s3(
         file.content, file_key, file_name, current_user, content_type
@@ -774,7 +740,7 @@ def get_response_values(file, content_type, file_key, current_user, file_name=No
         values["file_size"] = file_size
 
     if ("png" in content_type) and (file_size > 204800):  # Greater than 200KB
-        logger.debug("File was too large!")
+        print("File was too large!")
         # Create a low-resplution version of the file
         file_key_low_res = file_key + "-low-res"
         low_res_file_content = create_low_res_version(file)
@@ -808,9 +774,9 @@ def get_file_size(file):
 
 
 def record_thread_usage(op_details, info):
-    logger.debug("Recording thread usage")
+    print("Recording thread usage")
     dynamodb = boto3.resource("dynamodb")
-    usage_table = dynamodb.Table(os.environ["ADDITIONAL_CHARGES_TABLE"])
+    usage_table = dynamodb.Table(os.environ["BILLING_DYNAMODB_TABLE"])
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -836,7 +802,7 @@ def record_thread_usage(op_details, info):
             "requestId": info["request_id"],
         }
         usage_table.put_item(Item=new_item)
-        logger.debug("New Entry: %s", usage_table.get_item(Key={"id": entry_key})["Item"])
+        print("New Entry: ", usage_table.get_item(Key={"id": entry_key})["Item"])
 
         add_session_billing_table(timestamp, info)
 
@@ -844,13 +810,13 @@ def record_thread_usage(op_details, info):
         response = usage_table.get_item(Key={"id": entry_key})
 
         if "Item" not in response:
-            logger.error("Failed to find record of thread usage!")
+            print("Failed to find record of thread usage!")
             return
 
         usage_item = response["Item"]
         # Authorization check: the user making the request should own the assistant
         if usage_item["user"] != current_user:
-            logger.warning("Not authorized to access this Thread Usage data")
+            print("Not authorized to access this Thread Usage data")
             return
 
         details = get(usage_item, "details")
@@ -893,14 +859,14 @@ def record_thread_usage(op_details, info):
             UpdateExpression="set details = :d",
             ExpressionAttributeValues={":d": details},
         )
-        logger.debug("Updated Entry: %s", usage_table.get_item(Key={"id": entry_key})["Item"])
-    logger.debug("Successfully recorded thread usage")
+        print("Updated Entry: ", usage_table.get_item(Key={"id": entry_key})["Item"])
+    print("Successfully recorded thread usage")
 
 
 def add_session_billing_table(timestamp, info):
-    logger.debug("Recording session to billing")
+    print("Recording session to billing")
     dynamodb = boto3.resource("dynamodb")
-    billing_table = dynamodb.Table(os.environ["ADDITIONAL_CHARGES_TABLE"])
+    billing_table = dynamodb.Table(os.environ["BILLING_DYNAMODB_TABLE"])
     billing_table.put_item(
         Item={
             "id": f"{str(uuid.uuid4())}",
@@ -912,11 +878,11 @@ def add_session_billing_table(timestamp, info):
             "user": info["current_user"],
         }
     )
-    logger.debug("Billing session recorded")
+    print("Billing session recorded")
 
 
 def record_thread_run_data(run_data, run_status, info):
-    logger.debug("Adding run to dynamo table")
+    print("Adding run to dynamo table")
     user_id = info["current_user"]
     dynamodb = boto3.resource("dynamodb")
     runs_table = dynamodb.Table(os.environ["ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE"])
@@ -936,7 +902,7 @@ def record_thread_run_data(run_data, run_status, info):
         "assistant": "codeInterpreter",
     }
     runs_table.put_item(Item=new_item)
-    logger.debug("Successfully recorded run")
+    print("Successfully recorded run")
 
 
 def get_thread(thread_key, user_id):
@@ -969,7 +935,7 @@ def get_thread(thread_key, user_id):
         }
 
     except ClientError as e:
-        logger.error("ClientError: %s", e.response["Error"]["Message"])
+        print(e.response["Error"]["Message"])
         return {"success": False, "error": str(e)}
 
 
@@ -981,7 +947,7 @@ def get_assistant(assistant_id, current_user):
 
     try:
         # Fetch the assistant from DynamoDB
-        logger.debug("Assistant key: %s", assistant_id)
+        print("Assistant key: ", assistant_id)
         response = assistantstable.get_item(Key={"id": assistant_id})
 
         if "Item" not in response:
@@ -1010,7 +976,7 @@ def get_assistant(assistant_id, current_user):
 
     except ClientError as e:
         # DynamoDB client error handling
-        logger.error("ClientError: %s", e.response["Error"]["Message"])
+        print(e.response["Error"]["Message"])
         return {"success": False, "error": str(e)}
 
 
@@ -1020,7 +986,7 @@ def check_assistant_exists(assistant_id, current_user):
     if not assistant_info["success"]:
         return assistant_info  # Return error if any
 
-    logger.debug("Assistant info: %s", assistant_info)
+    print(f"Assistant info: {assistant_info}")
 
     provider_assistant_id = assistant_info["provider_assistant_id"]
 
@@ -1050,7 +1016,7 @@ def delete_thread_by_id(thread_id, user_id):
     openai_thread_id = get(item, "data", openai_provider, "threadId")
 
     # Ensure thread_id is valid
-    logger.info("Deleting thread: %s - %s: %s", thread_id, openai_provider, openai_thread_id)
+    print(f"Deleting thread: {thread_id} - {openai_provider}: {openai_thread_id}")
     if not openai_thread_id:
         return {"success": False, "message": "Thread not found"}
 
@@ -1066,12 +1032,12 @@ def delete_thread_by_id(thread_id, user_id):
 
 
 def create_new_openai_assistant(assistant_name, instructions, file_keys):
-    logger.info("Creating assistant with %s", openai_provider)
+    print("Creating assistant with ", openai_provider)
     # Create a new assistant using the OpenAI Client
 
     # limited to only 20 files total per assistant in general by openai/azure
     recent_file_keys = file_keys[-20:] if len(file_keys) > 20 else file_keys
-    logger.debug("File keys: %s", recent_file_keys)
+    print("File keys: ", recent_file_keys)
 
     file_ids = file_keys_to_file_ids(recent_file_keys)
     assistant = (
@@ -1146,7 +1112,7 @@ def create_new_assistant(
 
     # Put the new item into the DynamoDB table
     assistants_table.put_item(Item=new_item)
-    logger.debug("Put item in ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE table")
+    print("Put item in ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE table")
     # Return success response
     return {
         "success": True,
@@ -1165,7 +1131,7 @@ def delete_assistant_by_id(assistant_id, user_id):
     try:
         response = assistants_table.get_item(Key={"id": assistant_id})
     except ClientError as e:
-        logger.error("ClientError: %s", e.response["Error"]["Message"])
+        print(e.response["Error"]["Message"])
         return {"success": False, "message": "Assistant not found"}
 
     if "Item" not in response:
@@ -1197,7 +1163,7 @@ def delete_assistant_by_id(assistant_id, user_id):
     try:
         assistants_table.delete_item(Key={"id": assistant_id})
     except ClientError as e:
-        logger.error("ClientError: %s", e.response["Error"]["Message"])
+        print(e.response["Error"]["Message"])
         return {
             "success": False,
             "message": "Failed to delete assistant record from database",

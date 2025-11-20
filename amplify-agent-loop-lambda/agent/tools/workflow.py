@@ -4,8 +4,7 @@ from typing import List
 from agent.components.tool import register_tool
 from agent.components.util import resolve_references
 from agent.core import ActionContext
-from pycommon.logger import getLogger
-logger = getLogger("tool_worfklow")
+
 
 @register_tool(tags=["workflow"])
 def execute_workflow(
@@ -195,12 +194,15 @@ def execute_workflow(
                     },
                 )
 
-                logger.error("Error executing action %s: %s", action['tool'], str(e), exc_info=True)
+                traceback.print_exc()
+                print(f"Error executing action {action['tool']}: {str(e)}")
                 results_full[step_name] = {"error": str(e)}
                 results[step_name] = str(e)
 
     except Exception as e:
-        logger.error("Error setting up workflow for execution: %s", str(e), exc_info=True)
+        # print a detailed stack trace
+        traceback.print_exc()
+        print(f"Error setting up workflow for execution: {str(e)}")
         raise e
 
     action_context.send_event(

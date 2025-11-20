@@ -10,15 +10,8 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, S3Operation, SQSOperation
-)
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
-
-from pycommon.logger import getLogger
-logger = getLogger("files")
 
 import os
 import boto3
@@ -67,12 +60,6 @@ dynamodb = boto3.resource("dynamodb")
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated("download")
 def get_presigned_download_url(event, context, current_user, name, data):
     access_token = data["access_token"]
@@ -89,23 +76,23 @@ def get_presigned_download_url(event, context, current_user, name, data):
     # Access the specific table
     files_table = dynamodb.Table(files_table_name)
 
-    logger.info("Getting presigned download URL for %s for user %s", key, current_user)
-    logger.debug("GroupId attached to data source: %s", group_id)
+    print(f"Getting presigned download URL for {key} for user {current_user}")
+    print(f"GroupId attached to data source: {group_id}")
 
     # Retrieve the item from DynamoDB to check ownership
     try:
         response = files_table.get_item(Key={"id": key})
     except ClientError as e:
-        logger.error("Error getting file metadata from DynamoDB: %s", e)
+        print(f"Error getting file metadata from DynamoDB: {e}")
         error_message = e.response["Error"]["Message"]
         return {"success": False, "message": error_message}
 
     if "Item" not in response:
         # User doesn't match or item doesn't exist
-        logger.warning("File not found for user %s: %s", current_user, response)
+        print(f"File not found for user {current_user}: {response}")
         return {"success": False, "message": "File not found"}
     item = response["Item"]
-    logger.debug("Item found: %s", item)
+    print("Item found: ", item)
     access_result = can_access_file(item, current_user, key, group_id, access_token)
 
     if not access_result["success"]:
@@ -132,7 +119,7 @@ def get_presigned_download_url(event, context, current_user, name, data):
             ExpiresIn=3600,  # Expiration time for the presigned URL, in seconds
         )
     except ClientError as e:
-        logger.error("Error generating presigned download URL: %s", e)
+        print(f"Error generating presigned download URL: {e}")
         return {"success": False, "message": "File not found"}
 
     if presigned_url:
@@ -142,22 +129,22 @@ def get_presigned_download_url(event, context, current_user, name, data):
 
 
 def can_access_file(table_item, current_user, key, group_id, access_token):
-    logger.debug(
-        "Checking if user %s can access file %s with groupId %s", current_user, key, group_id
+    print(
+        f"Checking if user {current_user} can access file {key} with groupId {group_id}"
     )
     created_by = table_item["createdBy"]
     if created_by == current_user:
         pass
     elif group_id and created_by == group_id:
         # ensure the user/system user has access to the group by either
-        logger.debug("Checking if user is a member of the group: %s", group_id)
+        print("Checking if user is a member of the group: ", group_id)
         is_member = verify_member_of_ast_admin_group(access_token, group_id)
         if not is_member:
             return {
                 "success": False,
                 "message": f"User is not a member of groupId: {group_id}",
             }
-        logger.info("User is a member of the group: %s", group_id)
+        print("User is a member of the group: ", group_id)
     else:
         translated_ds = None
         try:  # need global
@@ -165,10 +152,10 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
                 [{"id": key, "type": table_item["type"]}]
             )
         except:
-            logger.error("Datasource translation failed")
+            print("Datasource translation failed")
 
         if not translated_ds or len(translated_ds) == 0:
-            logger.error("Translation for data source failed: %s", translated_ds)
+            print("Translation for data source failed: ", translated_ds)
             return {
                 "success": False,
                 "message": "Internal Server Error: Translation for data source failed",
@@ -180,7 +167,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 
             try:
                 object_id = translated_ds[0]["id"]
-                logger.debug("Checking Object Access for groupId permission to the datasource")
+                print("Checking Object Access for groupId permission to the datasource")
                 # Check if any permissions already exist for the object_id
                 query_response = object_table.get_item(
                     Key={"object_id": object_id, "principal_id": group_id}
@@ -188,7 +175,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
                 item = query_response.get("Item")
 
                 if not item:
-                    logger.warning("GroupId does not have access")
+                    print("Groupd Id does not have access")
                     return {
                         "success": False,
                         "message": "GroupId does not have access to the data source",
@@ -201,16 +188,16 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
                     permission_level in ["owner", "write", "read"] or policy == "public"
                 )
                 if not sufficient_privilege:
-                    logger.warning("GroupId has insufficient privilege")
+                    print("Groupd Id has insufficient privilege")
                     return {
                         "success": False,
                         "message": "GroupId does not have sufficient privilege to access the data source",
                     }
 
-                logger.info("GroupId has sufficient privilege to download datasource")
+                print("Groupd Id has sufficient privilege to download datasource")
             except ClientError as e:
-                logger.error(
-                    "Error accessing DynamoDB for can_access_objects: %s", e.response['Error']['Message']
+                print(
+                    f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}"
                 )
                 return {
                     "success": False,
@@ -220,7 +207,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
         elif not can_access_objects(
             access_token, translated_ds
         ):  # checks can access on the user
-            logger.warning("User %s does not have access to download: %s", current_user, table_item)
+            print(f"User {current_user} does not have acces to download: {table_item}")
             return {
                 "success": False,
                 "message": "User does not have access to the data source",
@@ -230,11 +217,6 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 
 
 # due to lambda layer requirements in rag.core, we have to define this function here
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
-    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-})
 @validated("upload")
 def reprocess_document_for_rag(event, context, current_user, name, data):
     """
@@ -263,19 +245,19 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
             "message": "Missing required parameters: bucket and key",
         }
 
-    logger.info("Reprocessing document: %s/%s", bucket, key)
+    print(f"Reprocessing document: {bucket}/{key}")
     files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
     
     try:
         response = files_table.get_item(Key={"id": key})
         if "Item" not in response:
-            logger.warning("File not found for user %s: %s", current_user, response)
+            print(f"File not found for user {current_user}: {response}")
             return {"success": False, "message": "File not found"}
         
         item = response["Item"]
         file_type = item.get("type")
         if file_type and file_type in IMAGE_FILE_TYPES:
-            logger.warning("File %s is an image file, not supported for reprocessing", key)
+            print(f"File {key} is an image file, not supported for reprocessing")
             return {
                 "success": False,
                 "message": "Image files are not supported for reprocessing",
@@ -286,7 +268,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
             return access_result
 
     except ClientError as e:
-        logger.error("Error getting file metadata from DynamoDB: %s", e)
+        print(f"Error getting file metadata from DynamoDB: {e}")
         error_message = e.response["Error"]["Message"]
         return {"success": False, "message": error_message}
     
@@ -295,7 +277,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         try:
             s3.head_object(Bucket=bucket, Key=key)
         except Exception as e:
-            logger.error("Error checking S3 object: %s", str(e))
+            print(f"Error checking S3 object: {str(e)}")
             return {
                 "success": False,
                 "message": f"File not found or not accessible: {bucket}/{key}",
@@ -316,16 +298,16 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         
         queue_url = os.environ["RAG_PROCESS_DOCUMENT_QUEUE_URL"]
         message_body = json.dumps(record)
-        logger.info("Sending reprocess message to queue: %s", message_body)
+        print(f"Sending reprocess message to queue: {message_body}")
         
         sqs = boto3.client("sqs")
         sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
-        logger.info("Message sent to queue: %s", message_body)
+        print(f"Message sent to queue: {message_body}")
 
         return {"success": True, "message": "Document queued for reprocessing"}
 
     except Exception as e:
-        logger.error("Error reprocessing document: %s", str(e))
+        print(f"Error reprocessing document: {str(e)}")
         return {"success": False, "message": f"Error reprocessing document: {str(e)}"}
 
 
@@ -362,10 +344,8 @@ def create_file_metadata_entry(
         update_file_tags(current_user, key, tags)
 
     return bucket_name, key
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
-})
+
+
 @validated("set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
 
@@ -559,18 +539,11 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
-})
 @validated("upload")
 def get_presigned_url(event, context, current_user, name, data):
     access = data["allowed_access"]
     if APIAccessType.FILE_UPLOAD.value not in access and APIAccessType.FULL_ACCESS.value not in access:
-        logger.warning("User does not have access to the file_upload functionality")
+        print("User does not have access to the file_upload functionality")
         return {
             "success": False,
             "error": "User does not have access to the file_upload functionality",
@@ -581,10 +554,10 @@ def get_presigned_url(event, context, current_user, name, data):
 
     # Extract ragOn parameter, default to True if not provided
     rag_on = data["data"].get("ragOn", False)
-    logger.info("RAG processing is %s for this upload", 'enabled' if rag_on else 'disabled')
+    print(f"RAG processing is {'enabled' if rag_on else 'disabled'} for this upload")
 
     if groupId:
-        logger.debug("GroupId ds upload: %s", groupId)
+        print("GroupId ds upload: ", groupId)
         current_user = groupId
 
     account_data = {
@@ -594,7 +567,7 @@ def get_presigned_url(event, context, current_user, name, data):
         "access_token": data["access_token"],
     }
 
-    # logger.debug("Data is %s", data)
+    # print(f"Data is {data}")
     data = data["data"]
 
     s3 = boto3.client("s3")
@@ -602,37 +575,17 @@ def get_presigned_url(event, context, current_user, name, data):
     name = data["name"]
     name = re.sub(r"[_\s]+", "_", name)
     file_type = data["type"]
-    
-    # VALIDATION: Ensure type is not empty (DynamoDB GSI constraint)
-    if not file_type or file_type.strip() == "":
-        logger.error("File type cannot be empty for file: %s", name)
-        return {
-            "success": False,
-            "error": "File type is required and cannot be empty. Please provide a valid MIME type (e.g., 'text/markdown', 'application/pdf')."
-        }
-    
-    # VALIDATION: Check for zip files (not supported)
-    zip_mime_types = ["application/zip", "application/x-zip-compressed", "application/x-zip"]
-    if (name.lower().endswith('.zip') or 
-        file_type.lower() in zip_mime_types or 
-        'zip' in file_type.lower()):
-        logger.warning("Zip file upload attempted: %s (type: %s)", name, file_type)
-        return {
-            "success": False,
-            "error": "ZIP files are not supported. Please upload individual files or extract the contents of the ZIP file and upload them separately."
-        }
-    
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
 
-    logger.info(
-        "Getting presigned URL for %s of type %s with tags %s and data %s and knowledge base %s", name, file_type, tags, data, knowledge_base
+    print(
+        f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}"
     )
 
     # Set the S3 bucket and key
     bucket_name, key = create_file_metadata_entry( current_user, name, file_type, tags, props, knowledge_base )
-    logger.info("Created metadata entry for file %s in bucket %s", key, bucket_name)
+    print(f"Created metadata entry for file {key} in bucket {bucket_name}")
 
     # Generate a presigned URL for uploading the file to S3
     presigned_url = s3.generate_presigned_url(
@@ -653,7 +606,7 @@ def get_presigned_url(event, context, current_user, name, data):
     )
 
     if file_type in IMAGE_FILE_TYPES:
-        logger.debug("Generating presigned urls for Image file")
+        print("Generating presigned urls for Image file")
         metadata_key = key + ".metadata.json"
         presigned_metadata_url = s3.generate_presigned_url(
             ClientMethod="get_object",
@@ -671,7 +624,7 @@ def get_presigned_url(event, context, current_user, name, data):
         rag.util.get_text_content_location(bucket_name, key)
     )
 
-    logger.debug("Getting presigned URL for text content %s in bucket %s", text_content_key, file_text_content_bucket_name)
+    print(f"Getting presigned URL for text content {text_content_key} in bucket {file_text_content_bucket_name}")
 
     presigned_text_status_content_url = s3.generate_presigned_url(
         ClientMethod="head_object",
@@ -773,9 +726,6 @@ def get_presigned_url(event, context, current_user, name, data):
         "required": ["success", "data"],
     },
 )
-@required_env_vars({
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated("list")
 def list_tags_for_user(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_TAGS_DYNAMO_TABLE"])
@@ -786,14 +736,14 @@ def list_tags_for_user(event, context, current_user, name, data):
         # Check if 'Item' key is in the response which indicates a result was returned
         if "Item" in response:
             user_tags = response["Item"].get("tags", [])
-            logger.debug("Tags for user ID '%s': %s", current_user, user_tags)
+            print(f"Tags for user ID '{current_user}': {user_tags}")
             return {"success": True, "data": {"tags": user_tags}}
         else:
-            logger.info("No tags found for user ID '%s'.", current_user)
+            print(f"No tags found for user ID '{current_user}'.")
             return {"success": True, "data": {"tags": []}}
     except ClientError as e:
-        logger.error(
-            "Error getting tags for user ID '%s': %s", current_user, e.response['Error']['Message']
+        print(
+            f"Error getting tags for user ID '{current_user}': {e.response['Error']['Message']}"
         )
         return {"success": False, "data": {"tags": []}}
 
@@ -861,9 +811,6 @@ def list_tags_for_user(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
-@required_env_vars({
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM],
-})
 @validated("delete")
 def delete_tag_from_user(event, context, current_user, name, data):
     data = data["data"]
@@ -884,8 +831,8 @@ def delete_tag_from_user(event, context, current_user, name, data):
             },
             ReturnValues="UPDATED_NEW",
         )
-        logger.info(
-            "Tag '%s' deleted successfully from user ID: %s", tag_to_delete, current_user
+        print(
+            f"Tag '{tag_to_delete}' deleted successfully from user ID: {current_user}"
         )
         return {"success": True, "message": "Tag deleted successfully"}
 
@@ -895,7 +842,7 @@ def delete_tag_from_user(event, context, current_user, name, data):
             error_code == "ValidationException"
             and "provided key element does not match" in e.response["Error"]["Message"]
         ):
-            logger.warning("User ID: %s does not exist or tag does not exist.", current_user)
+            print(f"User ID: {current_user} does not exist or tag does not exist.")
             return {
                 "success": False,
                 "message": "User ID does not exist or tag does not exist",
@@ -975,9 +922,6 @@ def delete_tag_from_user(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
-@required_env_vars({
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
-})
 @validated("create")
 def create_tags(event, context, current_user, name, data):
     data = data["data"]
@@ -1003,7 +947,7 @@ def add_tags_to_user(current_user, tags_to_add):
             },
             ReturnValues="UPDATED_NEW",
         )
-        logger.info("Tags added successfully to user ID: %s", current_user)
+        print(f"Tags added successfully to user ID: {current_user}")
         return {"success": True, "message": "Tags added successfully"}
 
     except ClientError as e:
@@ -1013,11 +957,11 @@ def add_tags_to_user(current_user, tags_to_add):
             response = table.put_item(
                 Item={"UserID": current_user, "tags": set(tags_to_add)}
             )
-            logger.info("New user created with tags for user ID: %s", current_user)
+            print(f"New user created with tags for user ID: {current_user}")
             return {"success": True, "message": "Tags added successfully"}
         else:
-            logger.error(
-                "Error adding tags to user ID: %s: %s", current_user, e.response['Error']['Message']
+            print(
+                f"Error adding tags to user ID: {current_user}: {e.response['Error']['Message']}"
             )
             return {"success": False, "message": e.response["Error"]["Message"]}
 
@@ -1102,10 +1046,6 @@ def add_tags_to_user(current_user, tags_to_add):
         "required": ["success", "message"],
     },
 )
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
-})
 @validated("set_tags")
 def update_item_tags(event, context, current_user, name, data):
     data = data["data"]
@@ -1148,7 +1088,7 @@ def update_file_tags(current_user, item_id, tags):
             return False, "File not found or not authorized to update tags"
 
     except ClientError as e:
-        logger.error("Unable to update tags: %s", e.response['Error']['Message'])
+        print(f"Unable to update tags: {e.response['Error']['Message']}")
         return False, "Unable to update tags"
 
 
@@ -1380,12 +1320,9 @@ def update_file_tags(current_user, item_id, tags):
         "required": ["success", "data"],
     },
 )
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
-})
 @validated("query")
 def query_user_files(event, context, current_user, name, data):
-    logger.info("Querying user files for %s", current_user)
+    print(f"Querying user files for {current_user}")
     # Extract the query parameters from the event
     query_params = data["data"]
 
@@ -1453,9 +1390,19 @@ def query_user_files(event, context, current_user, name, data):
         )
 
     # Print all of the params (for debugging purposes)
-    logger.debug(
-        "Querying user files with parameters: start_date=%s, page_size=%d, exclusive_start_key=%s, name_prefix=%s, created_at_prefix=%s, type_prefix=%s, type_filters=%s, tag_search=%s, page_index=%d, forward_scan=%s, sort_index=%s",
-        start_date, page_size, exclusive_start_key, name_prefix, created_at_prefix, type_prefix, type_filters, tag_search, page_index, forward_scan, index_name
+    print(
+        f"Querying user files with the following parameters: "
+        f"start_date={start_date}, "
+        f"page_size={page_size}, "
+        f"exclusive_start_key={exclusive_start_key}, "
+        f"name_prefix={name_prefix}, "
+        f"created_at_prefix={created_at_prefix}, "
+        f"type_prefix={type_prefix}, "
+        f"type_filters={type_filters}, "
+        f"tag_search={tag_search}, "
+        f"page_index={page_index}"
+        f"forward_scan={forward_scan}"
+        f"sort_index={index_name}"
     )
 
     # Use 'query_table_index' as the refactored function with new parameters
@@ -1659,7 +1606,7 @@ def query_table_index(
         }
         query_params["ExclusiveStartKey"] = exclusive_start_key
 
-    logger.debug("Query: %s", query_params)
+    print(f"Query: {query_params}")
 
     # Query the DynamoDB table or index
     response = dynamodb.query(**query_params)
@@ -1737,15 +1684,8 @@ def query_user_files_by_created_at2(
         "success": True,
         "data": {"items": plain_items, "pageKey": last_evaluated_key},
     }
-@required_env_vars({
-    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
-    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
-    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.DELETE_ITEM],
-    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
-    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
-    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
-})
+
+
 @validated("delete")
 def delete_file(event, context, current_user, name, data):
     """
@@ -1767,25 +1707,25 @@ def delete_file(event, context, current_user, name, data):
         if not key or not current_user:
             raise ValueError("'key' and 'name' are required")
 
-        logger.info("Key: %s", key)
-        logger.info("Current User: %s", current_user)
+        print(f"Key: {key}")
+        print(f"Current User: {current_user}")
         # check if the file is an image
         try:
-            logger.debug("Looking up file in files table")
+            print("Looking up file in files table")
             files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
             response = files_table.get_item(Key={"id": key})
             if "Item" not in response:
                 # User doesn't match or item doesn't exist
-                logger.warning("File not found for user %s: %s", current_user, response)
+                print(f"File not found for user {current_user}: {response}")
                 return {"success": False, "message": "File not found"}
         except ClientError as e:
-            logger.error("Error getting file metadata from DynamoDB: %s", e)
+            print(f"Error getting file metadata from DynamoDB: {e}")
             error_message = e.response["Error"]["Message"]
             return {"success": False, "message": error_message}
 
         item = response["Item"]
         file_type = item.get("type")
-        logger.debug("File type: %s", file_type)
+        print(f"File type: {file_type}")
         is_image = file_type and file_type in IMAGE_FILE_TYPES
 
         file_contents_hash = None
@@ -1796,10 +1736,10 @@ def delete_file(event, context, current_user, name, data):
             hash_files_table = dynamodb.Table(hash_table)
             hash_response = hash_files_table.get_item(Key={"id": key})
             if "Item" not in hash_response:
-                logger.warning("File not found in hash files table")
+                print(f"File not found in hash files table")
                 # applicable to files who have never been processed by RAG
                 if current_user in key:
-                    logger.info("Deleting entry from user files table only")
+                    print("Deleting entry from user files table only")
                     # if they are owner then delete from user files
                     delete_file_from_table(key)
                     return {
@@ -1814,7 +1754,7 @@ def delete_file(event, context, current_user, name, data):
 
             global_key = hash_response["Item"].get("textLocationKey")
             file_contents_hash = hash_response["Item"].get("hash")
-            logger.debug("Global Key: %s", global_key)
+            print(f"Global Key: {global_key}")
 
         # Get all access entries for this file
         oa_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
@@ -1824,7 +1764,7 @@ def delete_file(event, context, current_user, name, data):
         )
 
         if not access_response["Items"]:
-            logger.warning("No access entries found for this file")
+            print(f"No access entries found for this file")
             return {
                 "success": False,
                 "message": "No access entries found for this file",
@@ -1855,7 +1795,7 @@ def delete_file(event, context, current_user, name, data):
 
         # Handle deletion paths
         if current_user_permission.lower() == "read":
-            logger.info("Current user has read access only")
+            print("Current user has read access only")
             route_personal_file_deletion(global_key, key, current_user, is_image)
 
             # Delete from object access table
@@ -1863,9 +1803,9 @@ def delete_file(event, context, current_user, name, data):
                 object_access_table.delete_item(
                     Key={"object_id": global_key, "principal_id": current_user}
                 )
-                logger.info("Deleted from object access file table")
+                print("Deleted from object access file table")
             except ClientError as e:
-                logger.error("Error deleting file text from object access table: %s", e)
+                print(f"Error deleting file text from object access table: {e}")
 
         elif current_user_permission.lower() in ["write", "owner"]:
             if high_access_count > 1:
@@ -1877,13 +1817,13 @@ def delete_file(event, context, current_user, name, data):
                     object_access_table.delete_item(
                         Key={"object_id": global_key, "principal_id": current_user}
                     )
-                    logger.info("Deleted from object access file table")
+                    print("Deleted from object access file table")
                 except ClientError as e:
-                    logger.error("Error deleting file text from object access table: %s", e)
+                    print(f"Error deleting file text from object access table: {e}")
 
             elif len(users_with_access) > 1:
                 # Other users have access, but current user is the only one with write access
-                logger.info(
+                print(
                     "Other users have access, but current user is the only one with write access"
                 )
                 # TODO Update with whatever we want to do to the other lower accessed people
@@ -1897,7 +1837,7 @@ def delete_file(event, context, current_user, name, data):
                 )
             else:
                 # Current user is the only one with access
-                logger.info("Current user is the only one with access")
+                print("Current user is the only one with access")
                 route_full_file_deletion(
                     global_key,
                     key,
@@ -1910,12 +1850,12 @@ def delete_file(event, context, current_user, name, data):
         return {"success": True, "message": f"File deleted successfully"}
 
     except Exception as e:
-        logger.error("Exception occurred: %s", str(e))
+        print(f"Exception occurred: {str(e)}")
         return {"success": False, "message": str(e)}
 
 
 def route_personal_file_deletion(global_key, key, current_user, is_image):
-    logger.debug("Route personal file deletion - is_image: %s", is_image)
+    print(f"Route personal file deletion - is_image: {is_image}")
     if is_image:
         delete_file_from_table(key)
     else:
@@ -1925,7 +1865,7 @@ def route_personal_file_deletion(global_key, key, current_user, is_image):
 def route_full_file_deletion(
     global_key, key, file_contents_hash, current_user, access_token, is_image
 ):
-    logger.debug("Route full file deletion - is_image: %s", is_image)
+    print(f"Route full file deletion - is_image: {is_image}")
     if is_image:
         delete_file_from_table(key)
         delete_image_file(key)
@@ -1959,25 +1899,25 @@ def delete_text_file_personally(global_key, key, current_user):
         )
         items_to_delete.extend(response["Items"])
 
-    logger.info("Deleting items:")
+    print("Deleting items:")
     # Delete each item
     for item in items_to_delete:
         user = item.get("originalCreator") or item["id"].split("/")[0]
-        logger.debug("item: %s", item)
-        logger.debug("user: %s", user)
+        print("item: ", item)
+        print(f"user: {user}")
         if user == current_user:
             try:
-                logger.info("Deleting entry from hash files table: %s", item['id'])
+                print(f"Deleting entry from hash files table: {item['id']}")
                 hash_files_table.delete_item(Key={"id": item["id"]})
-                logger.info("Deleted item with id %s from hash files table", item['id'])
+                print(f"Deleted item with id {item['id']} from hash files table")
             except ClientError as e:
-                logger.error("Error deleting file text from hash file table: %s", e)
+                print(f"Error deleting file text from hash file table: {e}")
         else:
-            logger.info(
-                "Skipping delete, entry belongs to another user with the entry ID: %s", item['id']
+            print(
+                f"Skipping delete, entry belongs to another user with the entry ID: {item['id']}"
             )
 
-    logger.info("Total items deleted: %d", len(items_to_delete))
+    print(f"Total items deleted: {len(items_to_delete)}")
 
     # Delete from user files table
     delete_file_from_table(key)
@@ -1995,12 +1935,12 @@ def delete_text_file_fully(
     hash_files_table = dynamodb.Table(hash_table)
 
     try:
-        logger.info("Deleting hash entry from hash files table: %s", file_contents_hash)
+        print(f"Deleting hash entry from hash files table: {file_contents_hash}")
         # delete hash
         hash_files_table.delete_item(Key={"id": file_contents_hash})
-        logger.info("Deleted item with id %s from hash files table", file_contents_hash)
+        print(f"Deleted item with id {file_contents_hash} from hash files table")
     except ClientError as e:
-        logger.error("Error deleting file text from hash file table: %s", e)
+        print(f"Error deleting file text from hash file table: {e}")
 
     # Delete embedding progress
     embedding_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
@@ -2008,36 +1948,36 @@ def delete_text_file_fully(
 
     try:
         embedding_progress_table.delete_item(Key={"object_id": global_key})
-        logger.info("Deleted from embedding progress file table")
+        print("Deleted from embedding progress file table")
     except ClientError as e:
-        logger.error("Error deleting file text from embedding progress table: %s", e)
+        print(f"Error deleting file text from embedding progress table: {e}")
 
     # Delete file from S3
     s3 = boto3.client("s3")
     s3_bucket_name = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
 
     try:
-        logger.info("Deleting file from S3: %s", key)
+        print(f"Deleting file from S3: {key}")
         s3.delete_object(Bucket=s3_bucket_name, Key=key)
-        logger.info("Deleted file from S3")
+        print("Deleted file from S3")
     except ClientError as e:
-        logger.error("Error deleting file from S3: %s", e)
+        print(f"Error deleting file from S3: {e}")
 
     # Delete from file-text bucket
     file_text_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 
     try:
         s3.delete_object(Bucket=file_text_bucket, Key=global_key)
-        logger.info("Deleted file from file-text bucket")
+        print("Deleted file from file-text bucket")
     except ClientError as e:
-        logger.error("Error deleting file text from S3: %s", e)
+        print(f"Error deleting file text from S3: {e}")
 
     # Delete from embeddings
     success, result = delete_embeddings(access_token, global_key)
     if success:
-        logger.info("Embeddings deleted successfully. Result: %s", result)
+        print(f"Embeddings deleted successfully. Result: {result}")
     else:
-        logger.error("Failed to delete embeddings. Error: %s", result)
+        print(f"Failed to delete embeddings. Error: {result}")
 
     # Finally: Delete from object access
     oa_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
@@ -2046,9 +1986,9 @@ def delete_text_file_fully(
         object_access_table.delete_item(
             Key={"object_id": global_key, "principal_id": current_user}
         )
-        logger.info("Deleted from object access file table")
+        print("Deleted from object access file table")
     except ClientError as e:
-        logger.error("Error deleting file text from object access table: %s", e)
+        print(f"Error deleting file text from object access table: {e}")
 
 
 def delete_file_from_table(key):
@@ -2057,17 +1997,17 @@ def delete_file_from_table(key):
     user_files_table = dynamodb.Table(user_table)
     try:
         user_files_table.delete_item(Key={"id": key})
-        logger.info("Deleted from user file table")
+        print("Deleted from user file table")
     except ClientError as e:
-        logger.error("Error deleting file text from the user file table: %s", e)
+        print(f"Error deleting file text from the user file table: {e}")
 
 
 def delete_image_file(key):
     bucket_name = os.environ["S3_IMAGE_INPUT_BUCKET_NAME"]
     s3 = boto3.client("s3")
     try:
-        logger.info("Deleting image file from S3: %s", key)
+        print(f"Deleting image file from S3: {key}")
         s3.delete_object(Bucket=bucket_name, Key=key)
-        logger.info("Deleted from S3")
+        print("Deleted from S3")
     except ClientError as e:
-        logger.error("Error deleting file from S3: %s", e)
+        print(f"Error deleting file from S3: {e}")

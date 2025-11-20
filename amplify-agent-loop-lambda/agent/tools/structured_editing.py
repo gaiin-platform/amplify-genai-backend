@@ -5,8 +5,7 @@ from agent.components.util import add_line_numbers, extract_markdown_block
 from agent.tools.prompt_tools import qa_check
 
 from typing import List, Dict, Union
-from pycommon.logger import getLogger
-logger = getLogger("tool_structured_editing")
+
 
 def apply_multiline_edit_operations(
     text: str, operations: List[Dict[str, Union[str, int, Tuple[int, int]]]]
@@ -151,28 +150,36 @@ def edit_content_with_oracle(
 ) -> str:
     modified_text = content
 
-    logger.debug("Editing Content to Achieve Goal - Starting")
-    logger.debug("Initial content: %s", modified_text[:200] + "..." if len(modified_text) > 200 else modified_text)
+    print("=========================")
+    print("Editing Content to Achieve Goal")
+    print(modified_text)
+    print("=========================")
 
     for _ in range(max_tries):
         line_edits, reasoning = propose_multiline_edits(
             action_context, instructions, modified_text
         )
 
-        logger.debug("Edit iteration %s", _ + 1)
-        logger.debug("Reasoning: %s", reasoning)
-        logger.debug("Line Edits: %s", line_edits)
+        print("=========================")
+        print(f"Reasoning: {reasoning}")
+        print(f"Line Edits: {line_edits}")
+        print("=========================")
 
         edits = parse_multiline_edit_operations(line_edits)
         modified_text = apply_multiline_edit_operations(modified_text, edits)
 
-        logger.debug("Updated content: %s", modified_text[:200] + "..." if len(modified_text) > 200 else modified_text)
+        print("=========================")
+        print("Updated Content:")
+        print(modified_text)
+        print("=========================")
 
         passed, feedback = oracle(content, modified_text, reasoning)
         if passed:
             return modified_text
         else:
-            logger.debug("Feedback: %s", feedback)
+            print("=========================")
+            print(f"Feedback: {feedback}")
+            print("=========================")
 
         instructions = feedback
 
@@ -386,7 +393,7 @@ Your output must be placed in a ```output markdown block.
 # """
 
 # updated_text = edit_content_to_achieve_goal(action_context, instructions, text)
-# logger.debug("Updated text: %s", updated_text)
+# print(updated_text)
 
 
 from agent.tools.prompt_tools import prompt_llm_with_messages
