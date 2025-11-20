@@ -1,6 +1,7 @@
 import json
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from integrations.oauth import get_ms_graph_session
 from typing import Dict, List, Optional
 import base64
@@ -182,12 +183,26 @@ def delete_event(current_user, event_id, access_token):
         raise CalendarError(f"Network error while deleting event: {str(e)}")
 
 
-def get_event_details(current_user, event_id, access_token):
+def get_event_details(current_user, event_id, access_token, user_timezone: str = "UTC"):
+    """
+    Get details for a specific calendar event.
 
+    Args:
+        current_user: The user's identifier
+        event_id: ID of the event to retrieve
+        access_token: Optional access token
+        user_timezone: User's preferred timezone (Windows format)
+    """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/events/{event_id}"
-        response = session.get(url)
+
+        # Add timezone preference header to get event in user's timezone
+        headers = {}
+        if user_timezone and user_timezone != "UTC":
+            headers["Prefer"] = f'outlook.timezone="{user_timezone}"'
+
+        response = session.get(url, headers=headers)
 
         if not response.ok:
             handle_graph_error(response)
@@ -200,11 +215,24 @@ def get_event_details(current_user, event_id, access_token):
 
 
 def get_events_between_dates(
-    current_user, start_dt, end_dt, page_size: int = 50, access_token: str = None
+    current_user,
+    start_dt,
+    end_dt,
+    page_size: int = 50,
+    access_token: str = None,
+    user_timezone: str = "UTC",
 ):
     """
     Retrieves events between two date/times, e.g. '2025-01-30T00:00:00Z' to '2025-01-31T23:59:59Z'.
     Uses /calendarView endpoint for easy range queries.
+
+    Args:
+        current_user: The user's identifier
+        start_dt: Start datetime in ISO format
+        end_dt: End datetime in ISO format
+        page_size: Maximum number of events to retrieve per page
+        access_token: Optional access token
+        user_timezone: User's preferred timezone (Windows format)
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
@@ -214,9 +242,14 @@ def get_events_between_dates(
             f"&$orderby=start/dateTime&$top={page_size}"
         )
 
+        # Add timezone preference header to get events in user's timezone
+        headers = {}
+        if user_timezone and user_timezone != "UTC":
+            headers["Prefer"] = f'outlook.timezone="{user_timezone}"'
+
         all_events = []
         while url:
-            response = session.get(url)
+            response = session.get(url, headers=headers)
             if not response.ok:
                 handle_graph_error(response)
 
@@ -235,19 +268,112 @@ def get_events_between_dates(
 
 def format_event(event: Dict) -> Dict:
     """
-    Format event data consistently.
+    Format event data consistently with proper timezone handling.
+    Converts UTC times to Central Time before returning.
 
     Args:
         event: Raw event data from Graph API
 
     Returns:
-        Dict containing formatted event details
+        Dict containing formatted event details with timezone information
     """
+    # Get UTC times from the event
+    start_utc_str = event.get("start", {}).get("dateTime", "")
+    end_utc_str = event.get("end", {}).get("dateTime", "")
+
+    # Convert UTC to Central Time
+    start_ct_str = start_utc_str
+    end_ct_str = end_utc_str
+    start_timezone = "Central Standard Time"
+    end_timezone = "Central Standard Time"
+
+    if start_utc_str:
+        try:
+            # Parse UTC datetime (format: "2025-11-14T15:00:00.0000000" or "2025-11-14T15:00:00Z")
+            # Handle format with microseconds
+            if "." in start_utc_str:
+                # Remove extra digits after decimal to get standard format
+                parts = start_utc_str.split(".")
+                date_part = parts[0]
+                # Keep only first 6 digits of microseconds for parsing
+                micro_part = (
+                    parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
+                )
+                start_utc_clean = f"{date_part}.{micro_part}"
+            else:
+                start_utc_clean = start_utc_str
+
+            # Parse and ensure UTC timezone
+            start_dt_utc = datetime.fromisoformat(
+                start_utc_clean.replace("Z", "+00:00")
+            )
+            if start_dt_utc.tzinfo is None:
+                start_dt_utc = start_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+
+            # Convert to Central Time
+            start_dt_ct = start_dt_utc.astimezone(ZoneInfo("America/Chicago"))
+            # Format to match API format: "2025-11-14T15:00:00.0000000" (7 digits after decimal)
+            microseconds = start_dt_ct.strftime("%f")
+            start_ct_str = (
+                start_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
+            )
+
+            # Determine if it's CST or CDT
+            if start_dt_ct.dst() != timedelta(0):
+                start_timezone = "Central Daylight Time"
+            else:
+                start_timezone = "Central Standard Time"
+        except (ValueError, AttributeError) as e:
+            # If parsing fails, keep original UTC time
+            start_ct_str = start_utc_str
+            start_timezone = event.get("start", {}).get("timeZone", "UTC")
+
+    if end_utc_str:
+        try:
+            # Parse UTC datetime (format: "2025-11-14T15:00:00.0000000" or "2025-11-14T15:00:00Z")
+            # Handle format with microseconds
+            if "." in end_utc_str:
+                # Remove extra digits after decimal to get standard format
+                parts = end_utc_str.split(".")
+                date_part = parts[0]
+                # Keep only first 6 digits of microseconds for parsing
+                micro_part = (
+                    parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
+                )
+                end_utc_clean = f"{date_part}.{micro_part}"
+            else:
+                end_utc_clean = end_utc_str
+
+            # Parse and ensure UTC timezone
+            end_dt_utc = datetime.fromisoformat(end_utc_clean.replace("Z", "+00:00"))
+            if end_dt_utc.tzinfo is None:
+                end_dt_utc = end_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+
+            # Convert to Central Time
+            end_dt_ct = end_dt_utc.astimezone(ZoneInfo("America/Chicago"))
+            # Format to match API format: "2025-11-14T15:00:00.0000000" (7 digits after decimal)
+            microseconds = end_dt_ct.strftime("%f")
+            end_ct_str = end_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
+
+            # Determine if it's CST or CDT
+            if end_dt_ct.dst() != timedelta(0):
+                end_timezone = "Central Daylight Time"
+            else:
+                end_timezone = "Central Standard Time"
+        except (ValueError, AttributeError) as e:
+            # If parsing fails, keep original UTC time
+            end_ct_str = end_utc_str
+            end_timezone = event.get("end", {}).get("timeZone", "UTC")
+
     return {
         "id": event.get("id", ""),
         "subject": event.get("subject", ""),
-        "start": event.get("start", {}).get("dateTime", ""),
-        "end": event.get("end", {}).get("dateTime", ""),
+        "start": start_ct_str,
+        "startTimeZone": start_timezone,
+        "end": end_ct_str,
+        "endTimeZone": end_timezone,
+        "originalStartTimeZone": event.get("originalStartTimeZone", ""),
+        "originalEndTimeZone": event.get("originalEndTimeZone", ""),
         "bodyPreview": event.get("bodyPreview", ""),
         "location": event.get("location", {}).get("displayName", ""),
         "organizer": event.get("organizer", {}).get("emailAddress", {}).get("name", ""),
@@ -961,7 +1087,7 @@ def remove_calendar_sharing(
 
 
 def list_calendar_events(
-    current_user: str, calendar_id: str, access_token: str
+    current_user: str, calendar_id: str, access_token: str, user_timezone: str = "UTC"
 ) -> List[Dict]:
     """
     List events for a given calendar.
@@ -970,6 +1096,7 @@ def list_calendar_events(
         current_user: User identifier
         calendar_id: ID of the calendar to list events from
         access_token: Optional access token
+        user_timezone: User's preferred timezone (Windows format)
 
     Returns:
         List of formatted event details from the specified calendar
@@ -980,9 +1107,15 @@ def list_calendar_events(
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/calendars/{calendar_id}/events"
+
+        # Add timezone preference header to get events in user's timezone
+        headers = {}
+        if user_timezone and user_timezone != "UTC":
+            headers["Prefer"] = f'outlook.timezone="{user_timezone}"'
+
         all_events = []
         while url:
-            response = session.get(url)
+            response = session.get(url, headers=headers)
             if not response.ok:
                 handle_graph_error(response)
             data = response.json()
