@@ -267,19 +267,34 @@ def get_all_organization_users(page_size: int = 100) -> List[Dict[str, str]]:
 })
 def webhook_handler(event, context):
     """
-    Lightweight Microsoft Graph webhook handler.
+    Secure Microsoft Graph webhook handler with token-based authentication.
     
     This function:
-    1. Handles validation requests (GET with validationToken parameter)
-    2. Forwards notification requests (POST) directly to SQS with minimal processing
+    1. Validates webhook token in URL path for security
+    2. Handles validation requests (GET with validationToken parameter) 
+    3. Forwards notification requests (POST) directly to SQS with minimal processing
     
-    Microsoft Graph requires the same URL for both validation and notifications.
-    This handler provides minimal overhead while forwarding to SQS for processing.
+    Security: Uses secret token in URL path to authenticate Microsoft Graph requests
+    without requiring public endpoints. All requests must include valid webhook token.
     
     Must respond within 3 seconds or Microsoft will retry.
     """
     try:
         logger.info(f"Webhook handler called with method: {event.get('httpMethod')}")
+        
+        # Validate webhook token for security
+        path_params = event.get("pathParameters") or {}
+        provided_token = path_params.get("token")
+        expected_token = os.environ.get("EMAIL_WEBHOOK_TOKEN")
+        
+        if not provided_token or provided_token != expected_token:
+            logger.error(f"Invalid webhook token provided: {provided_token}")
+            return {
+                "statusCode": 401,
+                "body": json.dumps({"error": "Unauthorized - Invalid webhook token"})
+            }
+        
+        logger.info("Webhook token validated successfully")
         
         # Handle validation request (Microsoft sends GET with ?validationToken=xyz)
         if event.get("httpMethod") == "GET":
@@ -710,14 +725,19 @@ def _create_graph_subscription(user_id: str, user_email: str) -> Optional[Dict[s
     try:
         headers = get_graph_headers()
         
-        # Get webhook endpoint URL
+        # Get webhook endpoint URL with secure token
         api_base_url = os.environ.get("API_BASE_URL")
         stage = os.environ.get("STAGE", "dev")
+        webhook_token = os.environ.get("EMAIL_WEBHOOK_TOKEN")
         
         if not api_base_url:
             raise EmailWebhookError("API_BASE_URL not configured")
         
-        notification_url = f"{api_base_url}/{stage}/integrations/email/webhook"
+        if not webhook_token:
+            raise EmailWebhookError("EMAIL_WEBHOOK_TOKEN not configured")
+        
+        # Use secure URL format with token
+        notification_url = f"{api_base_url}/{stage}/integrations/email/webhook/{webhook_token}"
         client_state = os.environ.get("EMAIL_WEBHOOK_CLIENT_STATE")
         
         # Calculate expiration (72 hours from now - maximum allowed)
