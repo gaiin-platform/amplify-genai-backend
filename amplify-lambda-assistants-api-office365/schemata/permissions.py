@@ -30,4 +30,7 @@ permissions_by_state_type = {
     "/microsoft/integrations": {
         "get": lambda for_user, with_data: True,
     },
+    "/microsoft/integrations/register": {
+        "register": lambda for_user, with_data: True,
+    },
 }

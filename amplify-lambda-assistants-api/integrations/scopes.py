@@ -33,7 +33,8 @@ scopes = {
         "microsoft_excel": ["Files.Read", "Files.ReadWrite"],
         "microsoft_onenote": ["Notes.Read", "Notes.ReadWrite"],
         "microsoft_outlook": ["Mail.Read", "Mail.ReadWrite", "Mail.Send"],
-        "microsoft_exchange": ["Mail.Read.Shared", "Mail.ReadWrite.Shared", "Mail.Send.Shared"],
+        "microsoft_exchange": ["Mail.Read", "Mail.ReadWrite", "Mail.Send",
+                               "Mail.Read.Shared", "Mail.ReadWrite.Shared", "Mail.Send.Shared"],
         "microsoft_planner": ["Group.Read.All", "Group.ReadWrite.All"],
         "microsoft_sharepoint": ["Sites.Read.All", "Sites.ReadWrite.All"],
         "microsoft_teams": [

@@ -18,6 +18,7 @@ from integrations.oauth_encryption import (
     verify_oauth_encryption_parameter,
 )
 from pycommon.api.auth_admin import verify_user_as_admin
+from pycommon.api.amplify_groups import verify_user_in_amp_group
 
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
@@ -198,7 +199,7 @@ def get_user_credentials(current_user, integration):
     integration_provider = provider_case(integration).value
     item_key = f"{current_user}/{integration_provider}"
 
-    logger.info(
+    logger.debug(
         "Retrieving credentials for user %s and integration %s using key %s", current_user, integration, item_key
     )
     try:
@@ -240,7 +241,7 @@ def get_oauth_integration_parameter(integration):
     integration_provider = provider_case(integration).value
     ssm = boto3.client("ssm")
     parameter_name = build_integration_parameter_name(integration_provider)
-    logger.info("Getting OAuth client for integration: /oauth/%s", parameter_name)
+    logger.debug("Getting OAuth client for integration: /oauth/%s", parameter_name)
     try:
         response = ssm.get_parameter(
             Name=f"/oauth/{parameter_name}", WithDecryption=True
@@ -276,7 +277,7 @@ def get_oauth_client_for_integration(integration):
 def start_auth(event, context, current_user, name, data):
 
     integration = data["data"]["integration"]
-    logger.info("Starting OAuth flow for integration: %s", integration)
+    logger.debug("Starting OAuth flow for integration: %s", integration)
 
     auth_client, scopes = get_oauth_client_for_integration(integration)
 
@@ -317,7 +318,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
     integration_provider = provider_case(integration).value
     item_key = f"{current_user}/{integration_provider}"
 
-    logger.info("Storing token in DynamoDB under key: %s", item_key)
+    logger.debug("Storing token in DynamoDB under key: %s", item_key)
 
     integration_map = {}
     try:
@@ -349,7 +350,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
                 "last_updated": timestamp,
             }
         )
-        logger.info("Credentials successfully stored in DynamoDB under key %s", item_key)
+        logger.debug("Credentials successfully stored in DynamoDB under key %s", item_key)
         return {"success": True}
     except Exception as e:
         logger.error("Error storing token in DynamoDB: %s", e)
@@ -511,7 +512,8 @@ def return_html_failed_auth(message):
 })
 @validated("list_integrations")
 def list_connected_integrations(event, context, current_user, name, data):
-    supported_integrations = get_available_integrations()
+    access_token = data.get("access_token")
+    supported_integrations = get_available_integrations(current_user, access_token)
     if not supported_integrations:
         return {
             "success": False,
@@ -580,7 +582,7 @@ def delete_integration(current_user, integration):
         if record:
             integration_map = record.get("integrations", {})
             if integration in integration_map:
-                logger.info("Integration %s found in the record %s", integration, item_key)
+                logger.debug("Integration %s found in the record %s", integration, item_key)
                 del integration_map[integration]
                 timestamp = datetime.now(timezone.utc).isoformat()
                 # Update the record with the new integrations map.
@@ -591,7 +593,7 @@ def delete_integration(current_user, integration):
                         "last_updated": timestamp,
                     }
                 )
-                logger.info(
+                logger.debug(
                     "Successfully updated record for user %s after deleting integration %s", current_user, integration
                 )
                 return True
@@ -653,7 +655,10 @@ def delete_integration(current_user, integration):
 })
 @validated("list_integrations")
 def get_supported_integrations(event, context, current_user, name, data):
-    supported_integrations = get_available_integrations()
+    access_token = data.get("access_token")
+    logger.debug(f"[list_supported] 🔍 Request - current_user: {current_user}")
+    supported_integrations = get_available_integrations(current_user, access_token)
+    logger.debug(f"[list_supported] 📦 Filtered integrations: {supported_integrations}")
     if supported_integrations:
         return {"success": True, "data": supported_integrations}
     else:
@@ -663,33 +668,63 @@ def get_supported_integrations(event, context, current_user, name, data):
         }
 
 
-def get_available_integrations():
+def get_available_integrations(current_user=None, access_token=None):
     INTEGRATIONS = "integrations"
     dynamodb = boto3.resource("dynamodb")
     admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
-    # Retrieve available integrations list from DynamoDB
+    
+    logger.debug(f"[get_available_integrations] 🔍 Params - current_user: {current_user}")
+    
     try:
         response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
         data = {}
         if "Item" in response:
             logger.debug("Integrations found in DynamoDB")
             integrations_map = response["Item"].get("data", {})
-            # keep only available integrations
+            logger.debug(f"[get_available_integrations] 📋 All integrations from DB: {list(integrations_map.keys())}")
+            
             for provider, integrations in integrations_map.items():
-                # For each integration entry, only keep those with isAvailable set to True
-                filtered_list = [
-                    integration
-                    for integration in integrations
-                    if integration.get("isAvailable", False)
-                ]
+                filtered_list = []
+                for integration in integrations:
+                    integration_id = integration.get("id", "unknown")
+                    is_available = integration.get("isAvailable", False)
+                    user_exceptions = integration.get("userExceptions", [])
+                    
+                    logger.debug(f"[get_available_integrations] 🔎 Checking {provider}/{integration_id} - isAvailable: {is_available}, userExceptions: {user_exceptions}, current_user: {current_user}")
+                    
+                    if is_available:
+                        filtered_list.append(integration)
+                    elif current_user and has_integration_access(integration, current_user, access_token):
+                        filtered_list.append(integration)
+
                 if filtered_list:
                     data[provider] = filtered_list
 
+        logger.debug(f"[get_available_integrations] 🎯 Final filtered result: {data}")
         return data
 
     except Exception as e:
         logger.error("Error retrieving user integrations: %s", str(e))
         return None
+
+
+def has_integration_access(integration, current_user, access_token):
+    user_exceptions = integration.get("userExceptions", [])
+    
+    # Check if current_user (could be email or group_id) is in userExceptions
+    if current_user in user_exceptions:
+        logger.debug(f"[has_integration_access] 🔐 {current_user} found in userExceptions: {user_exceptions}")
+        return True
+    
+    # Check amplifyGroupExceptions for regular users
+    group_exceptions = integration.get("amplifyGroupExceptions", [])
+    if group_exceptions and access_token:
+        has_group_access = verify_user_in_amp_group(access_token, group_exceptions)
+        logger.debug(f"[has_integration_access] 🔐 amplifyGroupExceptions check: {has_group_access}")
+        return has_group_access
+    
+    logger.debug(f"[has_integration_access] ❌ {current_user} has no access")
+    return False
 
 
 @required_env_vars({
@@ -700,9 +735,7 @@ def get_available_integrations():
 @validated("register_secret")
 def regiser_secret(event, context, current_user, name, data):
     integration_provider = data["data"]["integration"]
-    if not verify_user_as_admin(
-        data["access_token"], f"Register Integration Secrets for {integration_provider}"
-    ):
+    if not verify_user_as_admin(data["access_token"], f"Register Integration Secrets for {integration_provider}"):
         return {"success": False, "error": "Unable to authenticate user as admin"}
 
     verify_oauth_encryption_parameter()
@@ -814,7 +847,7 @@ def refresh_credentials(current_user, integration, credentials):
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    logger.info("Refreshing token for integration: %s", integration)
+    logger.debug("Refreshing token for integration: %s", integration)
     response = requests.post(token_uri, data=data)
     if response.status_code != 200:
         logger.error("Failed to refresh token: %s", response.text)

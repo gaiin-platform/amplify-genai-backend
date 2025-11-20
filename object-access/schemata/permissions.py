@@ -81,4 +81,8 @@ permissions_by_state_type = {
     "/groups/assistants/amplify": {"create": can_create},
     "/groups/assistant/add_path": {"add_assistant_path": can_add_path},
     "/groups/verify_ast_group_member": {"verify_member": can_read},
+    "/groups/oauth/integrations/initiate": {"read": can_read},
+    "/groups/oauth/integrations/list": {"read": can_read},
+    "/groups/oauth/integrations/list_supported": {"read": can_read},
+    "/groups/oauth/integrations/delete": {"delete": can_delete},
 }

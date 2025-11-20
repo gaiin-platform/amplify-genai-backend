@@ -13,6 +13,8 @@ from pycommon.dal.providers.aws.resource_perms import (
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.api.auth_admin import verify_user_as_admin
+from service.register_ops import register_ops
 
 setup_validated(rules, get_permission_checker)
 
@@ -133,3 +135,30 @@ def get_integrations(event, context, current_user, name, data):
         "success": True,
         "data": {"integrations": integrations_list, "secrets": secrets},
     }
+
+
+@validated("register")
+def register_integrations_ops(event, context, current_user, name, data):
+    """
+    Manual ops registration endpoint for admin UI refresh button.
+    
+    NOTE: This is ONLY called on manual refresh, NOT on initial registration.
+    Initial registration is handled automatically by the DynamoDB stream trigger
+    (googleAdminConfigOpsTrigger) which doesn't have API Gateway timeout limits.
+    
+    This endpoint is called asynchronously (fire-and-forget) from the frontend
+    to avoid blocking the UI while ops registration completes.
+    """
+    access_token = data.get("access_token")
+    if not verify_user_as_admin(access_token, f"Register {PROVIDER} Integration Ops"):
+        return {"success": False, "error": "User is not authorized as admin"}
+    
+    logger.info("Re-registering %s integration ops triggered by user %s", PROVIDER, current_user)
+    result = register_ops()
+    
+    if result.get("success"):
+        logger.info("Successfully re-registered %s ops. Count: %s", PROVIDER, result.get("operations_count", 0))
+    else:
+        logger.error("Failed to re-register %s ops: %s", PROVIDER, result.get("error"))
+    
+    return result

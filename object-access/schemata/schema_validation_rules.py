@@ -20,6 +20,9 @@ from .groupId_schema import groupId_schema
 from .assistant_path_schema import assistant_path_schema
 from .add_assistant_path_schema import add_assistant_path_schema
 from .validate_users_schema import validate_users_schema
+from .group_oauth_initiate_schema import group_oauth_initiate_schema
+from .group_oauth_list_schema import group_oauth_list_schema
+from .group_oauth_delete_schema import group_oauth_delete_schema
 
 rules = {
     "validators": {
@@ -53,6 +56,11 @@ rules = {
         "/groups/assistants/amplify": {"create": create_amplify_assistants_group_schema},
         "/groups/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
         "/groups/verify_ast_group_member": {"verify_member": groupId_schema},
+        "/groups/oauth/integrations/initiate": {"read": group_oauth_initiate_schema},
+        "/groups/oauth/integrations/list": {"read": group_oauth_list_schema},
+        "/groups/oauth/integrations/list_supported": {"read": group_oauth_list_schema},
+        "/groups/oauth/integrations/delete": {"delete": group_oauth_delete_schema},
+        
     },
     "api_validators": {
         "/utilities/update_object_permissions": {

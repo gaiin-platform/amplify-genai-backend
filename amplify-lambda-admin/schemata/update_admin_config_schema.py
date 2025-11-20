@@ -465,11 +465,18 @@ update_admin_config_schema = {
                                             "properties": {
                                                 "name": {"type": "string"},
                                                 "id": {"type": "string"},
-                                                "icon": {"type": "string"},
                                                 "description": {"type": "string"},
                                                 "isAvailable": {"type": "boolean"},
+                                                "userExceptions": {
+                                                    "type": "array",
+                                                    "items": {"type": "string"}
+                                                },
+                                                "amplifyGroupExceptions": {
+                                                    "type": "array",
+                                                    "items": {"type": "string"}
+                                                }
                                             },
-                                            "required": ["name", "id", "icon", "description"],
+                                            "required": ["name", "id", "description"],
                                             "additionalProperties": False
                                         },
                                     }

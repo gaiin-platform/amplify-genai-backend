@@ -19,7 +19,9 @@ custom:
 
   pythonRequirements:
     dockerizePip: non-linux
- 
+  
+  cf-changesets:
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN} 
   stages:
     - dev
     - staging

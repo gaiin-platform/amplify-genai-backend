@@ -28,4 +28,7 @@ permissions_by_state_type = {
     "/google/integrations": {
         "get": lambda for_user, with_data: True,
     },
+    "/google/integrations/register": {
+        "register": lambda for_user, with_data: True,
+    },
 }

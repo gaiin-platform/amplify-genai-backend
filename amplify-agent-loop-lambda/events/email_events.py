@@ -691,22 +691,42 @@ class SharedExchangeMessageHandler(MessageHandler):
         try:
             ses_content = json.loads(message["Message"])
             
-            # Check if this is an SES message
             if not all(k in ses_content for k in ["notificationType", "mail", "receipt"]):
                 return False
             
-            # Check if destination email is for a shared exchange inbox (group)
-            # ### TODO IMPLEMENTATION: Need to determine how to identify shared exchange emails
-            # Perhaps check if the email matches a pattern or if the destination is in a group mapping table
             mail = ses_content.get("mail", {})
             destination = mail.get("destination", [])
             
-            # For now, check if any destination ends with the AI domain and maps to a group
-            # This logic needs to be refined based on actual implementation
             logger.debug("SharedExchangeMessageHandler checking destinations: %s", destination)
             
-            # ### TODO IMPLEMENTATION: Query DynamoDB to see if this email maps to a group_id
-            # For now, return False to not interfere with existing flow
+            # Query DynamoDB to check if any destination email maps to a group template
+            for dest_email in destination:
+                parsed = parse_email(dest_email)
+                user_part = f"{parsed['user']}@{parsed['domain']}"
+                
+                # Check if this destination email corresponds to a shared mailbox in event templates
+                # Shared mailbox emails are stored as tags in the event templates table
+                dynamodb = boto3.resource("dynamodb")
+                table_name = os.environ.get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE")
+                if not table_name:
+                    continue
+                    
+                table = dynamodb.Table(table_name)
+                
+                # Scan for templates where tag matches a shared mailbox email pattern
+                # We need to check if the user_part (without plus addressing) matches any group template
+                response = table.scan(
+                    FilterExpression="attribute_exists(isGroupTemplate) AND isGroupTemplate = :true",
+                    ExpressionAttributeValues={":true": True}
+                )
+                
+                for item in response.get("Items", []):
+                    # Check if the destination matches the configured shared mailbox email pattern
+                    shared_mailbox = item.get("sharedMailboxEmail", "")
+                    if shared_mailbox and user_part.lower() == shared_mailbox.lower():
+                        logger.info("Found group template match for %s -> group %s", dest_email, item["user"])
+                        return True
+            
             return False
             
         except (KeyError, json.JSONDecodeError) as e:
@@ -718,25 +738,11 @@ class SharedExchangeMessageHandler(MessageHandler):
         Process shared exchange email and create agent event for group assistant.
         """
         sns_message = {"Records": [{"Sns": {"Message": message["Message"]}}]}
-        
-        # ### TODO IMPLEMENTATION: Need to modify process_email to handle group_id
-        # Or create a new process_shared_exchange_email function
-        # The key difference is that currentUser will be a group_id instead of username
-        
-        # For now, delegate to standard email processing
-        # This will need to be updated to:
-        # 1. Extract group_id from destination email lookup
-        # 2. Get group's API key
-        # 3. Get group's assistant configuration with shared mailbox settings
-        # 4. Format prompt with shared mailbox context
-        
-        event = process_email(sns_message, context)
+        event = process_shared_exchange_email(sns_message, context)
         return event
     
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
         logger.error("SharedExchangeMessageHandler onFailure: %s", error)
-        # ### TODO IMPLEMENTATION: Consider group-specific error handling
-        # e.g., notify group admins of failure
     
     def onSuccess(
         self, agent_input_event: Dict[str, Any], agent_result: Dict[str, Any]
@@ -756,3 +762,194 @@ class SharedExchangeMessageHandler(MessageHandler):
             )
         else:
             logger.warning("No access token found for shared exchange conversation")
+
+
+def process_shared_exchange_email(event, context):
+    """
+    Processes shared Exchange mailbox emails for group assistants.
+    Similar to process_email but uses group_id as currentUser.
+    """
+    ses_notification = event["Records"][0]["Sns"]["Message"]
+    ses_notification = json.loads(ses_notification)
+
+    # Spam checks
+    if (
+        ses_notification["receipt"]["spfVerdict"]["status"] == "FAIL"
+        or ses_notification["receipt"]["dkimVerdict"]["status"] == "FAIL"
+        or ses_notification["receipt"]["spamVerdict"]["status"] == "FAIL"
+        or ses_notification["receipt"]["virusVerdict"]["status"] == "FAIL"
+    ):
+        logger.info("Dropping spam from shared exchange handler")
+        return {"disposition": "STOP_RULE_SET"}
+
+    source_email = ses_notification["mail"]["source"]
+    if isinstance(source_email, str):
+        source_email = source_email.lower()
+
+    destination_emails = ses_notification["mail"]["destination"]
+
+    logger.info("Shared Exchange - Source: %s", source_email)
+    logger.info("Shared Exchange - Destinations: %s", destination_emails)
+
+    parsed_source_email = parse_email(source_email)
+    parsed_destination_emails = [parse_email(email) for email in destination_emails]
+
+    for email in parsed_destination_emails:
+        logger.info("Processing shared exchange destination: %s", json.dumps(email, indent=2))
+
+        user_part = f"{email['user']}@{email['domain']}"
+        
+        # Look up group template by shared mailbox email
+        group_template = lookup_group_template_by_email(user_part)
+        
+        if not group_template:
+            logger.warning("No group template found for shared mailbox: %s", user_part)
+            continue
+
+        group_id = group_template["user"]
+        shared_mailbox_email = group_template["sharedMailboxEmail"]
+        
+        logger.info("Found group %s for shared mailbox %s", group_id, shared_mailbox_email)
+
+        # Check sender allowlist for group
+        if is_allowed_sender(group_id, shared_mailbox_email, source_email, owner_email=shared_mailbox_email):
+            logger.info("Sender %s is allowed for group %s", source_email, group_id)
+            return to_group_agent_event(email, source_email, ses_notification, group_id, group_template)
+
+        logger.warning("Sender %s is NOT allowed for group %s", source_email, group_id)
+        return None
+
+    return None
+
+
+def lookup_group_template_by_email(shared_mailbox_email: str) -> dict:
+    """
+    Look up group template by shared mailbox email.
+    
+    Args:
+        shared_mailbox_email (str): The shared mailbox email (e.g., "support@vanderbilt.edu")
+    
+    Returns:
+        dict: Group template data or None if not found
+    """
+    try:
+        dynamodb = boto3.resource("dynamodb")
+        table_name = os.environ.get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE")
+        if not table_name:
+            logger.error("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE not configured")
+            return None
+            
+        table = dynamodb.Table(table_name)
+        
+        # Scan for group templates matching this shared mailbox email
+        response = table.scan(
+            FilterExpression="sharedMailboxEmail = :email AND isGroupTemplate = :true",
+            ExpressionAttributeValues={
+                ":email": shared_mailbox_email.lower(),
+                ":true": True
+            }
+        )
+        
+        items = response.get("Items", [])
+        if items:
+            return items[0]
+        
+        return None
+        
+    except Exception as e:
+        logger.error("Error looking up group template: %s", e)
+        return None
+
+
+def to_group_agent_event(parsed_destination_email, source_email, ses_notification, group_id, group_template):
+    """
+    Creates an agent event for a group assistant from a shared mailbox email.
+    Similar to to_agent_event but uses group_id and group's API key.
+    
+    Args:
+        parsed_destination_email (dict): Parsed email details
+        source_email (str): Sender's email
+        ses_notification (dict): SES notification payload
+        group_id (str): Group identifier (e.g., "SupportTeam_abc-123")
+        group_template (dict): Group event template data
+    
+    Returns:
+        dict: Formatted event for the agent
+    """
+    logger.info("Creating group agent event for group %s", group_id)
+
+    # Extract email metadata
+    mail_data = ses_notification["mail"]
+    common_headers = mail_data.get("commonHeaders", {})
+    email_details = {
+        "sender": source_email,
+        "timestamp": mail_data["timestamp"],
+        "subject": common_headers.get("subject", "No Subject"),
+        "recipients": mail_data["destination"],
+        "cc": common_headers.get("cc", "No CC'd emails"),
+        "bcc": common_headers.get("bcc", "No BCC'd emails"),
+    }
+
+    # Extract email body
+    parsed_email = extract_email_body_and_attachments(ses_notification)
+    email_details["contents"] = parsed_email.get("body_plain", None) or parsed_email.get(
+        "body_html", "No content available."
+    )
+
+    # Generate unique email hash
+    serialized_data = json.dumps(email_details, default=str).encode("utf-8")
+    email_id = hashlib.sha256(serialized_data).hexdigest()
+    email_details["received_time"] = datetime.utcnow().isoformat()
+
+    # Get group's API key from template
+    api_key_id = group_template.get("apiKeyId")
+    api_result = get_api_key_directly_by_id(api_key_id)
+    if not api_result["success"]:
+        logger.error("Failed to get API key for group %s", group_id)
+        return None
+
+    api_key = api_result["apiKey"]
+
+    # Format prompt using template
+    formatted_prompt = []
+    prompts = group_template.get(
+        "prompt",
+        [
+            {
+                "role": "user",
+                "content": "I have received an email from ${sender} at ${timestamp}. The subject is: '${subject}'. Sent to: ${recipients}. Contents:\n\n'''${contents}'''",
+            }
+        ],
+    )
+    
+    for entry in prompts:
+        content_template = entry.get("content", "")
+        try:
+            formatted_content = Template(content_template).safe_substitute(email_details)
+        except KeyError as e:
+            logger.error("Error filling template: %s", e)
+            formatted_content = content_template
+
+        formatted_prompt.append({"role": entry["role"], "content": formatted_content})
+
+    logger.info("Group event formatted prompt: %s", formatted_prompt)
+
+    # Construct event with group_id as currentUser
+    event_payload = {
+        "currentUser": group_id,
+        "sessionId": email_id,
+        "prompt": formatted_prompt,
+        "metadata": {
+            "accessToken": api_key,
+            "source": "SharedExchange",
+            "eventId": email_id,
+            "timestamp": email_details["received_time"],
+            "requestContent": email_details["contents"],
+            "assistant": group_template.get("assistant", {}),
+            "sharedMailboxEmail": group_template.get("sharedMailboxEmail"),
+            "groupId": group_id,
+            "files": [],
+        },
+    }
+
+    return event_payload

@@ -85,6 +85,14 @@ functions:
           path: microsoft/integrations
           method: get
 
+  microsoftRegisterIntegrationOps:
+    handler: integrations/oauth.register_integrations_ops
+    timeout: 300
+    events:
+      - http:
+          path: microsoft/integrations/register
+          method: post
+
   microsoftIntegrationsRouter:
     handler: service/core.route_request
     timeout: 30

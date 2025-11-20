@@ -143,6 +143,11 @@ def validate_users_across_configs(configs, token):
         elif config_type == AdminConfigTypes.FEATURE_FLAGS:
             for feature_data in update_data.values():
                 all_users.update(feature_data.get("userExceptions", []))
+        elif config_type == AdminConfigTypes.INTEGRATIONS:
+            for provider_integrations in update_data.values():
+                if isinstance(provider_integrations, list):
+                    for integration in provider_integrations:
+                        all_users.update(integration.get("userExceptions", []))
     
     # Make single API call if there are users to validate
     if all_users:
@@ -183,6 +188,15 @@ def validate_and_filter_users_in_config(config_type, update_data, invalid_users_
                 feature_data["userExceptions"] = filter_valid_users(users, invalid_users_set)
         return update_data
     
+    elif config_type == AdminConfigTypes.INTEGRATIONS:
+        for provider_key, provider_integrations in update_data.items():
+            if isinstance(provider_integrations, list):
+                for integration in provider_integrations:
+                    users = integration.get("userExceptions", [])
+                    if users:
+                        integration["userExceptions"] = filter_valid_users(users, invalid_users_set)
+        return update_data
+    
     # For config types that don't need user validation
     return update_data
 
@@ -196,7 +210,8 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
     match config_type:
         case ( AdminConfigTypes.ADMINS
               | AdminConfigTypes.AMPLIFY_GROUPS
-              | AdminConfigTypes.FEATURE_FLAGS ):
+              | AdminConfigTypes.FEATURE_FLAGS
+              | AdminConfigTypes.INTEGRATIONS ):
             processed_data = validate_and_filter_users_in_config(config_type, update_data, invalid_users_set)
             
             # Special handling for ADMINS - check if we have valid users
@@ -207,7 +222,6 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
         
         case ( AdminConfigTypes.RATE_LIMIT
             | AdminConfigTypes.PROMPT_COST_ALERT
-            | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE

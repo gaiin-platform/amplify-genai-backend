@@ -86,6 +86,14 @@ functions:
           path: google/integrations
           method: get
 
+  googleRegisterIntegrationOps:
+    handler: integrations/oauth.register_integrations_ops
+    timeout: 300
+    events:
+      - http:
+          path: google/integrations/register
+          method: post
+
   googleIntegrationsRouter:
     handler: service/core.route_request
     timeout: 900

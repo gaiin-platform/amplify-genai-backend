@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import requests
 from datetime import datetime, timezone
 from pycommon.api.api_key import deactivate_key
 from pycommon.api.assistants import (
@@ -1562,20 +1563,259 @@ def initiate_group_oauth(event, context, current_user, name, data):
     """
     data = data["data"]
     group_id = data.get("group_id")
-    integration_type = data.get("integration_type", "microsoft_exchange")
+    integration_type = data.get("integration_type")
+    
+    logger.debug(f"Initiating OAuth for group {group_id}, integration: {integration_type}")
     
     if not group_id or not is_valid_group_id(group_id):
         logger.warning("Invalid or missing group id parameter")
         return {"message": "Invalid or missing group id parameter", "success": False}
 
-    # Check if user has admin access to group
     auth_check = authorized_user(group_id, current_user, requires_admin_access=True)
     
     if not auth_check["success"]:
+        logger.debug(f"Auth check failed for group {group_id}")
         return auth_check
 
     item = auth_check["item"]
-    api_key = item["access"]
+    access_token = item["access"]
     
-    #TODO
+    api_base_url = os.environ.get("API_BASE_URL")
+    if not api_base_url:
+        logger.error("API_BASE_URL not configured")
+        return {
+            "success": False,
+            "message": "OAuth service not configured"
+        }
+    
+    logger.debug(f"Calling start_auth for {integration_type}")
+    try:
+        response = requests.post(
+            f"{api_base_url}/integrations/oauth/start-auth",
+            json={"data": {"integration": integration_type}},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            logger.debug(f"OAuth initiation successful for {integration_type}")
+            return response.json()
+        else:
+            logger.error(f"OAuth initiation failed: {response.status_code}")
+            return {
+                "success": False,
+                "message": "Error initiating OAuth"
+            }
+        
+    except requests.RequestException as e:
+        logger.error(f"Error calling start_auth: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error initiating OAuth: {str(e)}"
+        }
+
+
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def list_group_integrations(event, context, current_user, name, data):
+    """
+    Lists OAuth integrations connected to a group.
+    Verifies user has access to the group before listing integrations.
+    """
+    data = data["data"]
+    group_id = data.get("group_id")
+
+    logger.debug(f"Listing integrations for group {group_id}")
+    
+    if not group_id or not is_valid_group_id(group_id):
+        logger.warning("Invalid or missing group id parameter")
+        return {"message": "Invalid or missing group id parameter", "success": False}
+    
+    auth_check = authorized_user(group_id, current_user, requires_admin_access=True)
+    
+    if not auth_check["success"]:
+        logger.debug(f"Auth check failed for group {group_id}")
+        return auth_check
+
+    item = auth_check["item"]
+    access_token = item["access"]
+    
+    api_base_url = os.environ.get("API_BASE_URL")
+    if not api_base_url:
+        logger.error("API_BASE_URL not configured")
+        return {
+            "success": False,
+            "message": "OAuth service not configured"
+        }
+    
+    logger.debug(f"Calling list integrations API")
+    try:
+        response = requests.get(
+            f"{api_base_url}/integrations/oauth/user/list",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            logger.debug(f"Successfully listed integrations")
+            return response.json()
+        else:
+            logger.error(f"Error listing group integrations: {response.status_code}")
+            return {
+                "success": False,
+                "message": "Error listing integrations"
+            }
+        
+    except requests.RequestException as e:
+        logger.error(f"Error calling list integrations: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error listing integrations: {str(e)}"
+        }
+
+
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_BASE_URL": [],
+})
+@validated(op="read")
+def list_group_supported_integrations(event, context, current_user, name, data):
+    """
+    Lists integrations that a group has ACCESS TO (via userExceptions in admin config).
+    This checks which integrations the group CAN use, not which ones are connected.
+    """
+    data = data["data"]
+    group_id = data.get("group_id")
+    
+    logger.info(f"group_id: {group_id}")
+    
+    if not group_id or not is_valid_group_id(group_id):
+        logger.warning("Invalid or missing group id parameter")
+        return {"message": "Invalid or missing group id parameter", "success": False}
+    
+    auth_check = authorized_user(group_id, current_user, requires_admin_access=False)
+    
+    if not auth_check["success"]:
+        logger.error(f"[list_group_supported_integrations] ❌ Authorization FAILED. Returning: {auth_check}")
+        return auth_check
+
+    item = auth_check["item"]
+    access_token = item["access"]
+    
+    api_base_url = os.environ.get("API_BASE_URL")
+    
+    if not api_base_url:
+        logger.error("API_BASE_URL not configured")
+        return {
+            "success": False,
+            "message": "OAuth service not configured"
+        }
+    
+    logger.info(f"Calling {api_base_url}/integrations/list_supported")
+    try:
+        response = requests.get(
+            f"{api_base_url}/integrations/list_supported",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"Error listing supported integrations: {response.status_code} - {response.text}")
+            return {
+                "success": False,
+                "message": "Error listing supported integrations"
+            }
+        
+    except requests.RequestException as e:
+        logger.error(f"Error calling list supported integrations: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error listing supported integrations: {str(e)}"
+        }
+
+
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="delete")
+def delete_group_integration(event, context, current_user, name, data):
+    """
+    Deletes an OAuth integration from a group.
+    Verifies user has admin access to the group before deleting.
+    """
+    data = data["data"]
+    group_id = data.get("group_id")
+    integration_type = data.get("integration_type")
+    
+    logger.debug(f"Deleting integration {integration_type} from group {group_id}")
+    
+    if not group_id or not is_valid_group_id(group_id):
+        logger.warning("Invalid or missing group id parameter")
+        return {"message": "Invalid or missing group id parameter", "success": False}
+    
+    if not integration_type:
+        logger.warning("Missing integration_type parameter")
+        return {"message": "Missing integration_type parameter", "success": False}
+
+    auth_check = authorized_user(group_id, current_user, requires_admin_access=True)
+    
+    if not auth_check["success"]:
+        logger.debug(f"Auth check failed for group {group_id}")
+        return auth_check
+
+    item = auth_check["item"]
+    access_token = item["access"]
+    
+    api_base_url = os.environ.get("API_BASE_URL")
+    if not api_base_url:
+        logger.error("API_BASE_URL not configured")
+        return {
+            "success": False,
+            "message": "OAuth service not configured"
+        }
+    
+    logger.debug(f"Calling delete integration API")
+    try:
+        response = requests.post(
+            f"{api_base_url}/integrations/oauth/user/delete",
+            json={"integration": integration_type},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            logger.debug(f"Successfully deleted integration {integration_type}")
+            return response.json()
+        else:
+            logger.error(f"Error deleting group integration: {response.status_code}")
+            return {
+                "success": False,
+                "message": "Error deleting integration"
+            }
+        
+    except requests.RequestException as e:
+        logger.error(f"Error calling delete integration: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error deleting integration: {str(e)}"
+        }
 
