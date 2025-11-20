@@ -16,6 +16,9 @@ from service.email_events_handlers import *
 
 from pycommon.authz import validated
 
+from pycommon.logger import getLogger
+logger = getLogger("route")
+
 
 def has_named_parameter(func, param_name):
     # Get the signature of the function
@@ -42,7 +45,7 @@ def camel_to_snake(name):
 def common_handler(operation, func_schema, **optional_params):
     def handler(event, context, current_user, name, data):
         try:
-            print(f"Function schema: {func_schema}")
+            logger.debug("Function schema: %s", func_schema)
 
             wrapper_schema = {
                 "type": "object",
@@ -51,17 +54,17 @@ def common_handler(operation, func_schema, **optional_params):
             }
 
             # Validate the data against the schema
-            print("Validating request")
-            print(f"Data: {data}")
-            print(f"Wrapper schema: {wrapper_schema}")
+            logger.debug("Validating request")
+            logger.debug("Data: %s", data)
+            logger.debug("Wrapper schema: %s", wrapper_schema)
             try:
                 validate(data, wrapper_schema)
-                print("Request is valid")
+                logger.debug("Request is valid")
             except ValidationError as e:
-                print(f"Validation error: {str(e)}")
+                logger.error("Validation error: %s", str(e))
                 raise ValueError(f"Invalid request: {str(e)}")
 
-            print("Converting parameters to snake case")
+            logger.debug("Converting parameters to snake case")
             # build a keyword argument dictionary from the data based on the schema
             args = {
                 camel_to_snake(param): data["data"].get(
@@ -82,11 +85,11 @@ def common_handler(operation, func_schema, **optional_params):
                 if has_named_parameter(operation, param):
                     args[param] = value
 
-            print("Invoking operation")
+            logger.debug("Invoking operation")
             response = operation(**args)
 
             success = response.get("success", True)
-            print(f"Returning response success: {success}")
+            logger.debug("Returning response success: %s", success)
             return {"success": success, "data": response}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -101,15 +104,15 @@ def route(event, context, current_user, name, data):
         # get the request path from the event and remove the first component...if there aren't enough components
         # then the path is invalid
         target_path_string = event.get("path", event.get("rawPath", ""))
-        print(f"Route: {target_path_string}")
+        logger.debug("Route: %s", target_path_string)
 
-        print(f"Route data: {route_data.keys()}")
+        logger.debug("Route data: %s", route_data.keys())
 
         route_info = route_data.get(target_path_string, None)
         if not route_info:
-            print(f"Invalid path: {target_path_string}")
+            logger.warning("Invalid path: %s", target_path_string)
             return {"success": False, "error": "Invalid path"}
-        print(f"Route info: {route_info}")
+        logger.debug("Route info: %s", route_info)
         handler_func = route_info["handler"]
         func_schema = route_info["parameters"] or {}
 

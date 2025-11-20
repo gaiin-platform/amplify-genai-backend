@@ -7,6 +7,8 @@ from botocore.exceptions import ClientError
 dynamodb_client = boto3.client("dynamodb")
 requests_table = os.environ.get("REQUEST_STATE_DYNAMO_TABLE")
 
+from pycommon.logger import getLogger
+logger = getLogger("request_state")
 
 def request_killed(user, request_id):
     """
@@ -20,30 +22,30 @@ def request_killed(user, request_id):
         bool: True if the request should be killed, False otherwise
     """
     if not requests_table:
-        print(
-            "REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables."
+        logger.error(
+            "REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables"
         )
         raise ValueError(
             "REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables."
         )
 
     try:
-        print("Checking requests table for killswitch state.")
+        logger.info("Checking requests table for killswitch state")
         response = dynamodb_client.get_item(
             TableName=requests_table,
             Key={"user": {"S": user}, "requestId": {"S": request_id}},
         )
 
         if "Item" not in response:
-            print("Request state not found, assuming was killed/deleted in chat js")
+            logger.warning("Request state not found, assuming was killed/deleted in chat js")
             return True
 
         killswitch = response["Item"]["exit"]["BOOL"]
 
-        print(f"Killswitch state is {'kill' if killswitch else 'continue'}.")
+        logger.info("Killswitch state is %s", 'kill' if killswitch else 'continue')
 
         return killswitch
 
     except ClientError as e:
-        print(f"Error checking killswitch state: {e}")
+        logger.error("Error checking killswitch state: %s", e)
         return False

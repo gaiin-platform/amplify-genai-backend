@@ -11,6 +11,8 @@ from integrations.oauth import get_ms_graph_session
 integration_name = "microsoft_onenote"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class OneNoteError(Exception):
     """Base exception for OneNote operations"""
@@ -445,5 +447,4 @@ def format_page(page: Dict) -> Dict:
         "lastModifiedDateTime": page.get("lastModifiedDateTime", ""),
         "contentUrl": page.get("contentUrl", ""),
         "links": page.get("links", {}),
-    }
     }

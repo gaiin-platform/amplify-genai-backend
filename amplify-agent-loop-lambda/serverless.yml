@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop
+service: amplify-${self:custom.depName}-agent-loop
 
 frameworkVersion: "3"
 
@@ -15,17 +15,23 @@ plugins:
 
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
   pythonRequirements:
     dockerizePip: true
     usePoetry: false
     usePipenv: false
     fileName: requirements.txt
+    pipCmdExtraArgs: ['--prefer-binary', '--only-binary=:all:']
+    slim: true
+    strip: false
   stages:
     - dev
     - staging
     - prod
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
   # Using your existing repository
   ecrRepository: 654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
   # Add timestamp to image tags from build script
@@ -48,44 +54,51 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
-    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
-    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
-    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
-    # We will need to change this below in the policy when we migrate too
-    # OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     AGENT_QUEUE_URL: !Ref AgentQueue
-    AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
-    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
-    DB_CONNECTIONS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-db-connections
-    USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
-    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
-    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
-    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
-    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
-    AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
-    ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
-    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
-    WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
-    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    ORGANIZATION_EMAIL_DOMAIN: ${ssm:/amplify/${sls:stage}/ORGANIZATION_EMAIL_DOMAIN}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
+    AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
+    AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
+    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state #Marked for future deletion
+    AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
+    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
+    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
+    SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs #Marked for future deletion
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
-    SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-    REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
-    DATASOURCES_RESOLVER_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
+    WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
+
+    # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
+    ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    DB_CONNECTIONS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/DB_CONNECTIONS_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/FILES_DYNAMO_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
+    S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
+    USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
 
   iam:
     role:
@@ -211,6 +224,8 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
@@ -231,16 +246,16 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}/*"
-                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
@@ -250,8 +265,11 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SCHEDULED_TASKS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SCHEDULED_TASKS_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}"  #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"  #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 
             - Effect: Allow
               Action:
@@ -285,6 +303,24 @@ resources:
               Resource:
                 - arn:aws:ecr:us-east-1:654654422653:repository/dev-amplifygenai-repo
 
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -303,7 +339,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
 
-    AgentStateBucket:
+    AgentStateBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.AGENT_STATE_BUCKET}
@@ -444,7 +480,7 @@ resources:
             KeyType: RANGE
         TableName: ${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}
 
-    WorkflowTemplatesBucket:
+    WorkflowTemplatesBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}
@@ -492,7 +528,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
           
-    ScheduledTasksLogsBucket:
+    ScheduledTasksLogsBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:service}-${sls:stage}-scheduled-tasks-logs

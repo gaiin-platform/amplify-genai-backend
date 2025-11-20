@@ -1,4 +1,4 @@
-git+https://github.com/gaiin-platform/pycommon.git@v0.1.0
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 absl-py==2.3.0
 affine==2.4.0
 aiofiles==24.1.0
@@ -180,7 +180,7 @@ langdetect==1.0.9
 lark==1.1.9
 lazy-loader==0.4
 librosa==0.11.0
-litellm==1.57.11
+litellm==1.78.7
 llvmlite==0.44.0
 logistro==1.1.0
 loguru==0.7.3
@@ -236,7 +236,7 @@ odfpy==1.4.1
 olefile==0.47
 oletools==0.60.2
 onnxruntime==1.16.3
-openai==1.91.0
+openai==1.99.5
 opencv-python==4.11.0.86
 openpyxl==3.1.5
 opentelemetry-api==1.36.0

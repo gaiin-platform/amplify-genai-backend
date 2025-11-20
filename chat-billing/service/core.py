@@ -2,7 +2,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import os
 import boto3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from model_rates.update_table import load_model_rate_table, get_csv_model_ids
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.api.amplify_groups import get_user_affiliated_groups
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.ops import api_tool
@@ -18,10 +23,13 @@ dynamodb = boto3.resource("dynamodb")
 COST_FIELDS = [
     "OutputCostPerThousandTokens",
     "InputCostPerThousandTokens",
-    "CachedCostPerThousandTokens",
+    "InputCachedCostPerThousandTokens",
+    "InputWriteCachedCostPerThousandTokens",
 ]
 DEFAULT_MODELS = "defaultModels"
 
+from pycommon.logger import getLogger
+logger = getLogger("models")
 
 @api_tool(
     path="/available_models",
@@ -134,17 +142,34 @@ DEFAULT_MODELS = "defaultModels"
         "required": ["success", "data"],
     },
 )
+@required_env_vars({
+    "MODEL_RATE_TABLE": [DynamoDBOperation.SCAN],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="read")
 def get_user_available_models(event, context, current_user, name, data):
-    # Retrieve supported models
-    supported_models_result = get_supported_models()
-
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # Submit all independent operations simultaneously
+        supported_models_future = executor.submit(get_supported_models)
+        affiliated_groups_future = executor.submit(lambda: get_user_affiliated_groups(data["access_token"]))
+        default_models_future = executor.submit(get_admin_default_models)
+        
+        # Wait for all operations to complete
+        try:
+            supported_models_result = supported_models_future.result()
+            affiliated_groups, _ = affiliated_groups_future.result()  
+            default_results = default_models_future.result()
+        except Exception as e:
+            return {"success": False, "message": f"Error in parallel execution: {str(e)}"}
+    
     if not supported_models_result.get("success"):
         return supported_models_result
 
     supported_models = supported_models_result.get("data", {}).items()
-    affiliated_groups, _ = get_user_affiliated_groups(data["access_token"])
-    print("User affiliated_groups: ", affiliated_groups)
+    logger.debug("User affiliated_groups: ", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
     available_models = [
@@ -155,14 +180,15 @@ def get_user_available_models(event, context, current_user, name, data):
         )
     ]
     
-    # print("Available user models:", available_models)
+    # logger.debug("Available user models:", available_models)
 
     default_results = get_admin_default_models()
     # setting as None if not found
     default_model = None
     advanced_model = None
     cheapest_model = None
-    # print("default_results: ", default_results)
+    document_caching_model = None
+    
     if not default_results or len(default_results.keys()) == 0:
         default_model, advanced_model, cheapest_model, _ = (
             extract_and_update_default_models()
@@ -181,7 +207,7 @@ def get_user_available_models(event, context, current_user, name, data):
             model_id = default_results.get(model_type)
             if model_id and model_id in available_models_by_id:
                 default_model_types[model_type] = available_models_by_id[model_id]
-            print(f"{model_type}_model: {default_model_types[model_type]}")
+            logger.debug(f"{model_type}_model: {default_model_types[model_type]}")
 
         # Assign variables from the dictionary
         default_model = default_model_types["user"]
@@ -203,7 +229,7 @@ def get_user_available_models(event, context, current_user, name, data):
 
 # to seamlessly update to the new form of saving default models - over time this will not be needed
 def extract_and_update_default_models():
-    print("Directly querying for default models in table")
+    logger.debug("Directly querying for default models in table")
     model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
 
     # Map DB fields to result types
@@ -218,10 +244,10 @@ def extract_and_update_default_models():
 
     results = {model_type: None for model_type in field_mappings.values()}
 
-    try:
-        # Query each default model type
-        for db_field, model_type in field_mappings.items():
-            # Scan with filter for each default type
+    def scan_for_default_model(db_field_and_type):
+        """Scan for a specific default model type - designed for parallel execution"""
+        db_field, model_type = db_field_and_type
+        try:
             response = model_rate_table.scan(
                 FilterExpression=f"attribute_exists({db_field}) AND {db_field} = :true_val",
                 ExpressionAttributeValues={":true_val": True},
@@ -235,12 +261,36 @@ def extract_and_update_default_models():
 
                 # Transform to our internal format and extract data
                 transformed_model = model_transform_db_to_internal(model_data)
-                results[model_type] = extract_data(model_id, transformed_model)
-                print(f"Found {model_type} model: {model_id}")
+                result_model = extract_data(model_id, transformed_model)
+                logger.debug(f"Found {model_type} model: {model_id}")
+                return model_type, result_model
+            return model_type, None
+        except Exception as e:
+            logger.debug(f"Error scanning for {model_type} default model: {str(e)}")
+            return model_type, None
+
+    try:
+        # ⚡ PERFORMANCE BOOST: Scan all default model types in parallel
+        max_workers = min(len(field_mappings), 6)  # Limit concurrent scans
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all scan operations simultaneously
+            future_to_field = {
+                executor.submit(scan_for_default_model, item): item 
+                for item in field_mappings.items()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_field):
+                try:
+                    model_type, result_model = future.result()
+                    results[model_type] = result_model
+                except Exception as e:
+                    logger.error(f"Error in parallel default model scan: {str(e)}")
 
         # Update the admin table with the found defaults
         if any(model is not None for model in results.values()):
-            print("Updating default models in admin table")
+            logger.debug("Updating default models in admin table")
             admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
 
             default_models_data = {
@@ -260,7 +310,7 @@ def extract_and_update_default_models():
             )
 
     except Exception as e:
-        print(f"Error querying/updating default models: {str(e)}")
+        logger.error(f"Error querying/updating default models: {str(e)}")
         raise e
 
     return (
@@ -285,10 +335,18 @@ def extract_data(model_id, model_data):
         "systemPrompt": model_data.get("systemPrompt", ""),
         "inputTokenCost": model_data.get("inputTokenCost", 0),
         "outputTokenCost": model_data.get("outputTokenCost", 0),
-        "cachedTokenCost": model_data.get("cachedTokenCost", 0),
+        "inputCachedTokenCost": model_data.get("inputCachedTokenCost", 0),
+        "inputWriteCachedTokenCost": model_data.get("inputWriteCachedTokenCost", 0),
     }
 
 
+@required_env_vars({
+    "MODEL_RATE_TABLE": [
+        DynamoDBOperation.SCAN,
+        DynamoDBOperation.BATCH_WRITE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="read")
 def get_supported_models_as_admin(event, context, current_user, name, data):
     if data["api_accessed"] and "admin" not in data["allowed_access"]:
@@ -306,14 +364,8 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
     if not model_result["success"] or models_are_current(current_model_data):
         return model_result
 
-    print("Models are not popluated or are outdated")
-    if current_model_data:
-        current_model_data = {
-            model["id"]: adjust_data_to_decimal(model_transform_internal_to_db(model))
-            for model in model_result.get("data", {}).values()
-        }
-
-    load_model_rate_table(current_model_data)
+    logger.info("Models are not popluated or are outdated")
+    load_model_rate_table({})
     return get_supported_models()
 
 
@@ -355,23 +407,50 @@ def get_supported_models():
             models_data.extend(response.get("Items", []))
     except Exception as e:
         return {"success": False, "message": f"Error retrieving model data: {str(e)}"}
+    
+    # ⚡ PERFORMANCE BOOST: Process all models in parallel
+    def process_model(model):
+        """Process a single model - designed for parallel execution"""
+        try:
+            model_id = model.get("ModelID")
+            if not model_id:
+                return None, None
 
-    # Transform data into the desired structure
+            # Convert Decimal fields to floats before creating transformed model
+            for field in COST_FIELDS:
+                if field in model and isinstance(model[field], Decimal):
+                    model[field] = float(model[field])
+
+            transformed_model = model_transform_db_to_internal(model)
+            
+            # Filter out outdated models
+            if is_model_current(transformed_model):
+                return model_id, transformed_model
+            else:
+                logger.debug("Skipping outdated model: ", model_id)
+                return None, None
+        except Exception as e:
+            logger.error(f"Error processing model {model.get('ModelID', 'unknown')}: {str(e)}")
+            return None, None
+
     supported_models_config = {}
-    for model in models_data:
-        model_id = model.get("ModelID")
-
-        # Convert Decimal fields to floats before creating your transformed model
-        for field in COST_FIELDS:
-            if field in model and isinstance(model[field], Decimal):
-                model[field] = float(model[field])
-
-        transformed_model = model_transform_db_to_internal(model)
-        # filter out outdated models
-        if is_model_current(transformed_model):
-            supported_models_config[model_id] = transformed_model
-        else:
-            print("Skipping outdated model: ", model_id)
+    
+    # Process models in parallel with optimal thread count
+    max_workers = min(32, len(models_data)) if models_data else 1
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all model processing tasks
+        future_to_model = {executor.submit(process_model, model): model for model in models_data}
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_model):
+            try:
+                model_id, transformed_model = future.result()
+                if model_id and transformed_model:
+                    supported_models_config[model_id] = transformed_model
+            except Exception as e:
+                print(f"Error in parallel model processing: {str(e)}")
+    
 
     return {"success": True, "data": supported_models_config}
 
@@ -384,10 +463,18 @@ def adjust_data_to_decimal(model):
                 try:
                     model[field] = Decimal(str(model[field]))
                 except (ValueError, TypeError) as e:
-                    print(f"Warning: Could not convert {field} value '{model[field]}' to Decimal: {e}")
+                    logger.warning(f"Warning: Could not convert {field} value '{model[field]}' to Decimal: {e}")
     return model
 
 
+@required_env_vars({
+    "MODEL_RATE_TABLE": [
+        DynamoDBOperation.SCAN,
+        DynamoDBOperation.BATCH_WRITE_ITEM,
+        DynamoDBOperation.DELETE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="update")
 def update_supported_models(event, context, current_user, name, data):
     if not verify_user_as_admin(data["access_token"], "Update Supported Models"):
@@ -406,7 +493,7 @@ def update_supported_models(event, context, current_user, name, data):
             )
             existing_models.extend(response.get("Items", []))
     except Exception as e:
-        print(f"Error retrieving existing models: {str(e)}")
+        logger.error(f"Error retrieving existing models: {str(e)}")
         return {
             "success": False,
             "message": f"Error retrieving existing models: {str(e)}",
@@ -424,18 +511,18 @@ def update_supported_models(event, context, current_user, name, data):
 
     # Models to delete (in existing but not in new)
     models_to_delete = existing_model_ids - new_model_ids
-    print("delete: ", models_to_delete)
+    logger.debug("delete: %s", models_to_delete)
 
     # Models to add (in new but not in existing)
     models_to_add = new_model_ids - existing_model_ids
-    print("add: ", models_to_add)
+    logger.debug("add: %s", models_to_add)
 
     # Models to update (in both existing and new)
     models_to_update = existing_model_ids & new_model_ids
-    print("update: ", models_to_update)
+    logger.debug("update: %s", models_to_update)
 
     try:
-        # Batch Write Operations
+        # Batch operations for deletions and additions (full records)
         with model_rate_table.batch_writer() as batch:
             for model_id in models_to_delete:
                 batch.delete_item(Key={"ModelID": model_id})
@@ -443,17 +530,18 @@ def update_supported_models(event, context, current_user, name, data):
             for model_id in models_to_add:
                 updated_model = adjust_data_to_decimal(new_models_dict[model_id])
                 batch.put_item(Item=updated_model)
-
+        
             for model_id in models_to_update:
                 # if Data has changed, update the model
                 if not models_are_equal(
                     existing_models_dict[model_id], new_models_dict[model_id]
                 ):
-                    print("updating model: ", model_id)
+                    logger.debug("updating model: %s", model_id)
                     updated_model = adjust_data_to_decimal(new_models_dict[model_id])
                     batch.put_item(Item=updated_model)
+                
     except Exception as e:
-        print(f"Error batch writing models: {str(e)}")
+        logger.error(f"Error batch writing models: {str(e)}")
         return {"success": False, "message": f"Error batch writing models: {str(e)}"}
 
     return {"success": True, "message": "Model configurations updated successfully."}
@@ -468,7 +556,8 @@ dynamodb_to_internal_field_map = {
     "OutputTokenLimit": "outputTokenLimit",
     "OutputCostPerThousandTokens": "outputTokenCost",
     "InputCostPerThousandTokens": "inputTokenCost",
-    "CachedCostPerThousandTokens": "cachedTokenCost",
+    "InputCachedCostPerThousandTokens": "inputCachedTokenCost",
+    "InputWriteCachedCostPerThousandTokens": "inputWriteCachedTokenCost",
     "Description": "description",
     "ExclusiveGroupAvailability": "exclusiveGroupAvailability",
     "SupportsImages": "supportsImages",
@@ -528,6 +617,9 @@ def models_are_equal(existing_model, new_model):
     return True
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_default_models(event, context, current_user, name, data):
     default_models_result = get_admin_default_models()
@@ -545,13 +637,13 @@ def get_default_models(event, context, current_user, name, data):
 def get_admin_default_models():
     admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
     try:
-        print("Getting default model ids from admin table")
+        logger.debug("Getting default model ids from admin table")
         response = admin_table.get_item(Key={"config_id": DEFAULT_MODELS})
         if "Item" in response:
             return response["Item"]["data"]
         else:
-            print(f"No Default Models Data Found")
+            logger.error(f"No Default Models Data Found")
             return {}
     except Exception as e:
-        print(f"Error retrieving default models: {str(e)}")
+        logger.error(f"Error retrieving default models: {str(e)}")
     return None

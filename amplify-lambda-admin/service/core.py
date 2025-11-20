@@ -21,12 +21,19 @@ from datetime import datetime
 from botocore.config import Config
 from service.user_services import is_in_amp_group
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SecretsManagerOperation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ADMIN.value])
+
+from pycommon.logger import getLogger
+logger = getLogger("admin")
 
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
@@ -58,11 +65,18 @@ class AdminConfigTypes(Enum):
 secret_name_map = {
     AdminConfigTypes.APP_VARS: os.environ["APP_ARN_NAME"],
     AdminConfigTypes.APP_SECRETS: os.environ["SECRETS_ARN_NAME"],
-    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"],
+    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ["LLM_ENDPOINTS_SECRETS_NAME"],
 }
 
 
 # flow, list of feature flags that are user based
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+})
 @validated(op="update")
 def update_configs(event, context, current_user, name, data):
     if not authorized_admin(current_user):
@@ -79,8 +93,8 @@ def update_configs(event, context, current_user, name, data):
         config_type_val = config["type"]
         config_type = AdminConfigTypes(config_type_val)
         update_data = config["data"]  # The data to update
-        print(f"\nUpdating: {config_type}")
-        print(f"Data: {update_data}\n")
+        logger.info("Updating: %s", config_type)
+        logger.debug("Data: %s", update_data)
 
         update_result = handle_update_config(config_type, update_data, token, invalid_users_set)
 
@@ -94,8 +108,8 @@ def update_configs(event, context, current_user, name, data):
         response_data[config_type_val] = update_result
 
     if all(value.get("success") == True for value in response_data.values()):
-        print("All successful")
-        print(response_data)
+        logger.info("All configuration updates successful")
+        logger.debug("Response data: %s", response_data)
         return {"success": True, "data": response_data}
     return {
         "success": False,
@@ -198,7 +212,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS ):
-            print(f"Updating {config_type.value} - {update_data}")
+            logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
         case AdminConfigTypes.AVAILABLE_MODELS:
@@ -220,7 +234,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             return {"success": False, "message": "Invalid Secret Name"}
 
         case _:
-            print("Unknown configuration type")
+            logger.error("Unknown configuration type")
             return {"success": False, "message": "Unknown configuration type"}
 
 
@@ -253,7 +267,7 @@ def update_admin_config_data(config_type, update_data):
         )
         return {"success": True, "data": f"{type_value} updated successfully."}
     except Exception as e:
-        print(f"Error updating {type_value}: {str(e)}")
+        logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
 
 
@@ -268,7 +282,7 @@ def get_secret(secret_name, region_name):
         secret_dict = json.loads(secret_string)
         return secret_dict
     except ClientError as e:
-        print(f"Error getting secret: {e}")
+        logger.error("Error getting secret: %s", e)
         return None
 
 
@@ -337,6 +351,14 @@ def update_pptx_data(pptx_type, update_data):
         return {"success": False, "message": f"Error updating {pptx_type}: {str(e)}"}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.LIST_BUCKET], #Marked for deletion
+    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="read")
 def get_configs(event, context, current_user, name, data):
     if not authorized_admin(current_user):
@@ -348,7 +370,7 @@ def get_configs(event, context, current_user, name, data):
     configurations = {}
 
     if lazy_load:
-        print("Loading admin table configs only")
+        logger.info("Loading admin table configs only")
         dynamo_config_types = [
             AdminConfigTypes.FEATURE_FLAGS,
             AdminConfigTypes.ADMINS,
@@ -377,8 +399,8 @@ def get_configs(event, context, current_user, name, data):
                         )
                         if missing_base_flags:
                             new_data.update(missing_base_flags)
-                            print(
-                                f"Added missing base feature flags: {list(missing_base_flags.keys())}"
+                            logger.info(
+                                "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
                 else:
                     # Configuration does not exist, initialize it
@@ -386,14 +408,14 @@ def get_configs(event, context, current_user, name, data):
                 configurations[config_type.value] = new_data
 
             except Exception as e:
-                print(f"Error retrieving or initializing {config_type.value}: {str(e)}")
+                logger.error("Error retrieving or initializing %s: %s", config_type.value, str(e))
                 return {
                     "success": False,
                     "message": f"Error retrieving or initializing {config_type.value}: {str(e)}",
                 }
 
     else:
-        print("Loading remaining configs only")
+        logger.info("Loading remaining configs only")
 
         region_name = os.environ.get("AWS_REGION", "us-east-1")
         # secrets manager info
@@ -402,7 +424,7 @@ def get_configs(event, context, current_user, name, data):
                 secret_value = get_secret(secret_name, region_name)
                 configurations[config_type.value] = secret_value
             except ClientError as e:
-                print(f"Error retrieving {config_type.value}: {str(e)}")
+                logger.error("Error retrieving %s: %s", config_type.value, str(e))
         # dyanmo table rows
 
         # print(data)
@@ -431,7 +453,7 @@ def get_configs(event, context, current_user, name, data):
 
 
 def initialize_config(config_type):
-    print("Initializing data: ", config_type.value)
+    logger.info("Initializing data: %s", config_type.value)
     item = {
         "config_id": config_type.value,
         "data": None,
@@ -461,33 +483,46 @@ def initialize_config(config_type):
         item["data"] = transformed_flags
 
     elif config_type == AdminConfigTypes.PPTX_TEMPLATES:
-        # Initialize PPTX_TEMPLATES
-        output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        # Initialize PPTX_TEMPLATES - BACKWARD COMPATIBLE: Check both buckets
+        consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
         s3_client = boto3.client("s3")
 
-        try:
-            # List objects in the 'templates/' prefix
-            paginator = s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=output_bucket_name, Prefix="templates/")
+        templates = []
+        template_names_seen = set()  # Prevent duplicates across buckets
 
-            templates = []
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.endswith("/"):  # Skip folders
-                        continue
-                    # Remove 'templates/' prefix to get the name
-                    name = key[len("templates/") :]
-                    if name:
-                        templates.append(
-                            {"name": name, "isAvailable": False, "amplifyGroups": []}
-                        )
+        # Check both buckets for templates
+        buckets_to_check = [
+            (consolidation_bucket_name, "powerPointTemplates/"),  # New location
+            (legacy_bucket_name, "conversion/templates/"),         # Legacy location
+        ]
 
-            item["data"] = templates
+        for bucket_name, prefix in buckets_to_check:
+            try:
+                # List objects in the bucket with prefix
+                paginator = s3_client.get_paginator("list_objects_v2")
+                pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-        except Exception as e:
-            item["data"] = []
-            print(f"Error listing PPTX templates from S3: {str(e)}")
+                for page in pages:
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith("/"):  # Skip folders
+                            continue
+                        # Remove prefix to get the name
+                        name = key[len(prefix):]
+                        if name and name.endswith(".pptx") and name not in template_names_seen:
+                            template_names_seen.add(name)
+                            templates.append(
+                                {"name": name, "isAvailable": False, "amplifyGroups": []}
+                            )
+                            logger.info("Found PPTX template: %s in bucket %s", name, bucket_name)
+
+            except Exception as e:
+                logger.error("Error listing PPTX templates from bucket %s: %s", bucket_name, str(e))
+                continue  # Try next bucket
+
+        item["data"] = templates
+        logger.info("Initialized %d PPTX templates from both buckets", len(templates))
 
     elif config_type == AdminConfigTypes.AMPLIFY_GROUPS:
         item["data"] = (
@@ -524,13 +559,16 @@ def initialize_config(config_type):
         raise ValueError(f"Unknown config type: {config_type}")
     try:
         admin_table.put_item(Item=item)
-        print(f"Config Item Initialized: {config_type.value}")
+        logger.info("Config Item Initialized: %s", config_type.value)
     except Exception as e:
-        print(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
+        logger.error("Error initializing AMPLIFY_GROUPS config: %s", str(e))
 
     return item["data"]
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_user_app_configs(event, context, current_user, name, data):
     # For quick table data only, anything with more complex logic should be its own endpoint
@@ -546,7 +584,7 @@ def get_user_app_configs(event, context, current_user, name, data):
             if "Item" in response:
                 configs[config_type.value] = response["Item"]["data"]
             else:
-                print(f"No {config_type.value} Data Found, skipping...")
+                logger.warning("No %s Data Found, skipping...", config_type.value)
         except Exception as e:
             return {
                 "success": False,
@@ -556,6 +594,9 @@ def get_user_app_configs(event, context, current_user, name, data):
     return {"success": True, "data": configs}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="read")
 def get_user_feature_flags(event, context, current_user, name, data):
     # Retrieve feature flags from DynamoDB
@@ -569,8 +610,8 @@ def get_user_feature_flags(event, context, current_user, name, data):
             missing_base_flags = check_and_update_missing_base_flags(feature_flags)
             if missing_base_flags:
                 feature_flags.update(missing_base_flags)
-                print(
-                    f"Added missing base feature flags: {list(missing_base_flags.keys())}"
+                logger.info(
+                    "Added missing base feature flags: %s", list(missing_base_flags.keys())
                 )
         else:
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
@@ -625,7 +666,7 @@ def check_and_update_missing_base_flags(stored_flags):
 
     # If we found missing flags, update the DynamoDB table
     if missing_flags:
-        print("Updating Missing flags: ", missing_flags.keys())
+        logger.info("Updating Missing flags: %s", list(missing_flags.keys()))
         # Create a new dictionary with all flags (existing + missing)
         updated_flags = {**stored_flags, **missing_flags}
 
@@ -638,17 +679,20 @@ def check_and_update_missing_base_flags(stored_flags):
                     "last_updated": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            print(
-                f"Updated feature flags in DynamoDB with {len(missing_flags)} new base flags"
+            logger.info(
+                "Updated feature flags in DynamoDB with %d new base flags", len(missing_flags)
             )
         except Exception as e:
-            print(f"Error updating feature flags in DynamoDB: {str(e)}")
+            logger.error("Error updating feature flags in DynamoDB: %s", str(e))
             # We'll return an empty dict if we couldn't update the table
             return {}
 
     return missing_flags
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_pptx_for_users(event, context, current_user, name, data):
     try:
@@ -671,17 +715,22 @@ def get_pptx_for_users(event, context, current_user, name, data):
             return {"success": True, "data": []}
 
     except Exception as e:
-        print(f"Error retrieving PPTX_TEMPLATES: {str(e)}")
+        logger.error("Error retrieving PPTX_TEMPLATES: %s", str(e))
         return {
             "success": False,
             "message": f"Error retrieving PPTX_TEMPLATES: {str(e)}",
         }
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
+})
 @validated(op="delete")
 def delete_pptx_by_admin(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     template_name = query_params.get("template_name", "")
     if not template_name or not template_name.endswith(".pptx"):
         return {
@@ -696,7 +745,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         return {"success": False, "message": "User is not an authorized admin."}
 
     s3_client = boto3.client("s3")
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     try:
         # Retrieve Existing PPTX_TEMPLATES Configuration
@@ -726,15 +775,38 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
             }
         )
 
-        #  Delete the PPTX File from S3
-        pptx_key = f"templates/{template_name}"
-        try:
-            s3_client.delete_object(Bucket=output_bucket_name, Key=pptx_key)
-        except Exception as e:
-            print(f"Error deleting PPTX file from S3: {str(e)}")
+        # BACKWARD COMPATIBLE: Delete the PPTX File from S3 (check both buckets)
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        
+        # Try to delete from both buckets (file might exist in either)
+        buckets_to_try = [
+            (consolidation_bucket_name, f"powerPointTemplates/{template_name}", "consolidation"),
+            (legacy_bucket_name, f"conversion/templates/{template_name}", "legacy")
+        ]
+        
+        deleted_from_bucket = None
+        for bucket_name, pptx_key, bucket_type in buckets_to_try:
+            try:
+                # First check if file exists in this bucket
+                s3_client.head_object(Bucket=bucket_name, Key=pptx_key)
+                # File exists, delete it
+                s3_client.delete_object(Bucket=bucket_name, Key=pptx_key)
+                deleted_from_bucket = bucket_type
+                logger.info("Deleted PPTX template from %s bucket: %s", bucket_type, template_name)
+                break  # Successfully deleted, don't try other bucket
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logger.debug("Template not found in %s bucket: %s", bucket_type, template_name)
+                    continue  # Try next bucket
+                else:
+                    logger.error("Error checking/deleting PPTX from %s bucket: %s", bucket_type, str(e))
+                    continue  # Try next bucket
+        
+        if not deleted_from_bucket:
+            logger.warning("Template %s not found in any bucket", template_name)
             return {
                 "success": False,
-                "message": f"Error deleting PPTX file from S3: {str(e)}",
+                "message": f"Template {template_name} not found in any S3 bucket",
             }
 
         return {
@@ -743,10 +815,15 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        print(f"Error deleting template: {str(e)}")
+        logger.error("Error deleting template: %s", str(e))
         return {"success": False, "message": f"Error deleting template: {str(e)}"}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated(op="upload")
 def generate_presigned_url_for_upload(event, context, current_user, name, data):
     data = data["data"]
@@ -777,8 +854,8 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
     if not authorized_admin(current_user):
         return {"success": False, "message": "User is not an authorized admin."}
 
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
-    pptx_key = f"templates/{template_name}"
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    pptx_key = f"powerPointTemplates/{template_name}"
 
     try:
         config = Config(signature_version="s3v4")  # Force AWS Signature Version 4
@@ -787,7 +864,7 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": output_bucket_name,
+                "Bucket": consolidation_bucket_name,
                 "Key": pptx_key,
                 "ContentType": content_type,
                 "Metadata": {
@@ -799,22 +876,190 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
             ExpiresIn=3600,  # URL expires in 1 hour
         )
 
-        print("\n", presigned_url)
+        logger.debug("Generated presigned URL: %s", presigned_url)
 
         return {"success": True, "presigned_url": presigned_url}
     except ClientError as e:
-        print(f"Error generating presigned URL: {str(e)}")
+        logger.error("Error generating presigned URL: %s", str(e))
         return {
             "success": False,
             "message": f"Error generating presigned URL: {str(e)}",
         }
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def get_user_amplify_groups(event, context, current_user, name, data):
+    # will need some rework - for now we are just going to return all the groups
+    all_groups = get_all_amplify_groups()
+    if not all_groups:
+        return {"success": False, "message": "No Amplify Groups Found"}
+    return {"success": True, "data": list(all_groups.keys())}
 
+
+def get_all_amplify_groups():
+    try:
+        config_item = admin_table.get_item(
+            Key={"config_id": AdminConfigTypes.AMPLIFY_GROUPS.value}
+        )
+        if "Item" in config_item and "data" in config_item["Item"]:
+            return config_item["Item"]["data"]
+        else:
+            logger.warning("No Amplify Groups Found")
+    except Exception as e:
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
+    return None
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def get_user_affiliated_groups(event, context, current_user, name, data):
+    try:
+        all_groups = get_all_amplify_groups()
+        if not all_groups:
+            return {"success": False, "message": "No Amplify Groups Found"}
+        
+        affiliated_groups = find_all_user_groups(current_user, all_groups)
+        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
+    except Exception as e:
+        logger.error("Error retrieving user affiliated groups: %s", str(e))
+        return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
+
+
+def find_all_user_groups(current_user, all_groups):
+    """
+    Find all groups a user is affiliated with (direct and indirect membership).
+    
+    Returns a list of group names the user belongs to.
+    """
+    affiliated = []
+    
+    # Phase 1: Find all groups where user is a direct member
+    direct_groups = set()
+    for group_name, group_data in all_groups.items():
+        members = group_data.get("members", [])
+        if current_user in members:
+            direct_groups.add(group_name)
+            affiliated.append(group_name)
+    
+    # Phase 2: Find all groups that include user's groups (directly or indirectly)
+    # Use BFS to find all groups that eventually include user's direct groups
+    for group_name, group_data in all_groups.items():
+        if group_name not in direct_groups:  # Skip already found direct groups
+            visited = set()
+            if group_includes_user_groups(group_name, direct_groups, all_groups, visited):
+                affiliated.append(group_name)
+    
+    return affiliated
+
+
+def group_includes_user_groups(group_name, user_direct_groups, all_groups, visited):
+    """
+    Check if a group includes any of the user's direct groups through its includeFromOtherGroups chain.
+    """
+    if group_name not in all_groups or group_name in visited:
+        return False
+    
+    visited.add(group_name)
+    group_data = all_groups[group_name]
+    
+    # Check if this group directly includes any of user's direct groups
+    includes = group_data.get("includeFromOtherGroups", [])
+    for included_group in includes:
+        if included_group in user_direct_groups:
+            return True
+        # Recursively check if included group eventually includes user's groups
+        if group_includes_user_groups(included_group, user_direct_groups, all_groups, visited):
+            return True
+    
+    return False
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def verify_is_in_amp_group(event, context, current_user, name, data):
+    amp_groups = data["data"]["groups"]
+    try:
+        isMember = is_in_amp_group(current_user, amp_groups)
+        logger.debug("User %s is in group: %s", current_user, isMember)
+        return {"success": True, "isMember": isMember}
+    except Exception as e:
+        logger.error("Error verifying is in amp group: %s", str(e))
+        return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
+
+
+def is_in_amp_group(current_user, check_amplify_groups):
+    if len(check_amplify_groups) == 0:
+        return False
+    """
+    Given a current_user and a list of group names (check_amplify_groups), determine if the user
+    has access via direct or indirect (nested) membership in any of these groups.
+
+    Steps:
+    1. Retrieve all_amplify_groups from the admin table.
+    2. For each group in check_amplify_groups, check if the user is a member.
+    3. If found in any, return True. Otherwise, return False.
+    """
+
+    all_amplify_groups = get_all_amplify_groups()
+    if all_amplify_groups is None:
+        raise Exception("No Amplify Groups Found")
+    
+    if not all_amplify_groups or len(all_amplify_groups) == 0:
+        return False
+
+    # Check each provided group in check_amplify_groups for user membership
+    visited = set()
+    for group_name in check_amplify_groups:
+        if user_in_group(group_name, current_user, all_amplify_groups, visited):
+            return True
+
+    # If none of the groups matched, user is not in any Amplify Group
+    return False
+
+
+def user_in_group(group_name, current_user, all_amplify_groups, visited):
+    """
+    Checks if `current_user` is in `group_name` directly or through nested groups.
+    Avoids infinite loops using the `visited` set.
+    """
+    # If the group does not exist in the map, return False
+    # If we have already visited this group, return False to avoid cycles
+    if group_name not in all_amplify_groups or group_name in visited:
+        return False
+
+    visited.add(group_name)
+
+    cur_group = all_amplify_groups[group_name]
+
+    # Check direct membership
+    members = cur_group.get("members", [])
+    if current_user in members:
+        return True
+
+    # Check include groups
+    for include_group_name in cur_group.get("includeFromOtherGroups", []):
+        if user_in_group(include_group_name, current_user, all_amplify_groups, visited):
+            return True
+
+    # If user not found here or in any included groups
+    return False
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="read")
 def verify_valid_admin(event, context, current_user, name, data):
     purpose = data["data"]["purpose"]
-    print(f"{current_user} is being verified for the purpose of: {purpose}")
+    logger.info("%s is being verified for the purpose of: %s", current_user, purpose)
     log_item(None, current_user, f"Authentication user for the purpose of: {purpose}")
     return {"success": True, "isAdmin": authorized_admin(current_user)}
 
@@ -829,16 +1074,16 @@ def authorized_admin(current_user, forFeatureFlags=False):
         if "Item" in response:
             admins_list = response["Item"].get("data", [])
             if current_user in admins_list:
-                print(current_user + " is authorized to make changes.")
+                logger.info("%s is authorized to make changes.", current_user)
                 return True
         else:
-            print("No admins list in the admins table...")
+            logger.warning("No admins list in the admins table...")
             init_admins = initialize_config(AdminConfigTypes.ADMINS)
             return current_user in init_admins
 
     except Exception as e:
-        print(f"Error in authorized_admin: {str(e)}")
-    print(current_user + " is not authorized to make changes.")
+        logger.error("Error in authorized_admin: %s", str(e))
+    logger.warning("%s is not authorized to make changes.", current_user)
 
     # using for authentication
     if not forFeatureFlags:
@@ -864,9 +1109,9 @@ def log_item(config_type, username, details):
 
 
 def sync_assistant_admins(event, context):
-    print("Syncing Assistant Admin Interface Users...")
+    logger.info("Syncing Assistant Admin Interface Users...")
     AST_ADMIN_UI_FLAG = "assistantAdminInterface"
-    groups_table = dynamodb.Table(os.environ["AMPLIFY_GROUPS_DYNAMODB_TABLE"])
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
     # Retrieve feature flags from DynamoDB
     feature_flags = None
     try:
@@ -876,15 +1121,15 @@ def sync_assistant_admins(event, context):
         if "Item" in response:
             feature_flags = response["Item"].get("data", {})
         else:
-            print("Feature flags are being initialized..")
+            logger.info("Feature flags are being initialized..")
             # ast admin is set to false so it will get updated to the table
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
     except Exception as e:
-        print(f"Error retrieving feature flags: {str(e)}")
+        logger.error("Error retrieving feature flags: %s", str(e))
         return {"statusCode": 500, "body": f"Error retrieving feature flags: {str(e)}"}
 
     if not feature_flags or AST_ADMIN_UI_FLAG not in feature_flags:
-        print(f"Error retrieving feature flags")
+        logger.error("Error retrieving feature flags")
         return {"statusCode": 500, "body": f"Error retrieving feature flags"}
 
     admin_feature = feature_flags[AST_ADMIN_UI_FLAG]
@@ -907,7 +1152,7 @@ def sync_assistant_admins(event, context):
             groups.extend(response.get("Items", []))
 
     except Exception as e:
-        print(f"An error occurred while retrieving groupss: {e}")
+        logger.error("An error occurred while retrieving groupss: %s", e)
         return {
             "statusCode": 500,
             "body": f"An error occurred while retrieving groupss: {e}",
@@ -926,16 +1171,16 @@ def sync_assistant_admins(event, context):
     current_exceptions_set = set(user_exceptions)
 
     if current_exceptions_set == access_to_users_set:
-        print("No updates needed. ")
+        logger.info("No updates needed.")
         return {"statusCode": 200, "body": "No updates needed. "}
-    print("\nUsers needing access", access_to_users_set)
+    logger.info("Users needing access: %s", access_to_users_set)
 
     adding = access_to_users_set - current_exceptions_set
     if adding:
-        print("\nNew Users added:", adding)
+        logger.info("New Users added: %s", adding)
     removing = current_exceptions_set - access_to_users_set
     if removing:
-        print("Existing Users removed:", removing)
+        logger.info("Existing Users removed: %s", removing)
 
     admin_feature["userExceptions"] = list(
         access_to_users_set
@@ -947,11 +1192,11 @@ def sync_assistant_admins(event, context):
         AdminConfigTypes.FEATURE_FLAGS.value, feature_flags
     )
     if not update_res["success"]:
-        print(f"Error updating feature flags: {update_res['message']}")
+        logger.error("Error updating feature flags: %s", update_res['message'])
         return {
             "statusCode": 500,
             "body": f"Error updating feature flags: {update_res['message']}",
         }
     else:
-        print("Feature flags updated successfully.")
+        logger.info("Feature flags updated successfully.")
         return {"statusCode": 200, "body": "Feature flags updated successfully."}

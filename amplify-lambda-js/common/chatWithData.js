@@ -1,505 +1,443 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { Writable } from 'stream';
-import {extractProtocol, getContexts, getDataSourcesByUse, isDocument} from "../datasource/datasources.js";
-import {countChatTokens, countTokens} from "../azure/tokens.js";
-import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
-import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
-import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
+import {extractProtocol, getContexts, isDocument} from "../datasource/datasources.js";
+import {getSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
+import {addContextMessage} from "./chat/controllers/common.js";
+import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import {defaultSource} from "./sources.js";
-import {openAiTransform, openaiUsageTransform} from "./chat/events/openai.js";
-import {geminiTransform, geminiUsageTransform } from "./chat/events/gemini.js";
-import {bedrockConverseTransform, bedrockTokenUsageTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
-import {getMaxTokens, isOpenAIModel, isGeminiModel} from "./params.js";
 import {createTokenCounter} from "../azure/tokens.js";
-import {recordUsage} from "./accounting.js";
-import { v4 as uuidv4 } from 'uuid';
+import {countChatTokens} from "../azure/tokens.js";
 import {getContextMessages} from "./chat/rag/rag.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
-import {createBlockDetector} from "./chat/controllers/blockDetector.js";
-import {localKill} from "../requests/requestState.js";
+import {isKilled} from "../requests/requestState.js";
 
 const logger = getLogger("chatWithData");
 
-class CustomWritable extends Writable {
-    constructor(underlyingStream, options = {}) {
-        super(options);
-        this.underlyingStream = underlyingStream;
-    }
 
-    // Override the _write method and simply pass the data to the underlying stream
-    _write(chunk, encoding, callback) {
-        if (this.underlyingStream.writable) {
-            this.underlyingStream.write(chunk, encoding, callback);
-        } else {
-            callback(new Error('Underlying stream is not writable'));
-        }
-    }
-
-    // Override the _final method to prevent calling end on the underlying stream
-    _final(callback) {
-        // Do not call end on the underlying stream
-        // You can perform any cleanup here if necessary
-        callback();
-    }
-}
-
-const chooseController = ({chatFn, chatRequest, dataSources}) => {
-    return sequentialChat;
-    //return parallelChat;
-}
-
-const generateSupersetObject = (arr) => {
-    const result = {};
-
-    arr.forEach(obj => {
-        Object.keys(obj).forEach(key => {
-            if (!result[key]) {
-                result[key] = new Set();
-            }
-            result[key].add(obj[key]);
-        });
-    });
-
-    // Convert sets to arrays for the final result
-    Object.keys(result).forEach(key => {
-        result[key] = Array.from(result[key]);
-    });
-
-    return result;
-}
-
-const summarizeRanges = (obj) => {
-    const result = {};
-
-    Object.keys(obj).forEach(key => {
-        const values = obj[key];
-        if (values.every(value => typeof value === 'number')) {
-            const min = Math.min(...values);
-            const max = Math.max(...values);
-            result[key] = `${min}-${max}`;
-        } else {
-            result[key] = values;
-        }
-    });
-
-    return result;
-}
-
-const summarizeLocations = (locations) => {
-    const superset = generateSupersetObject(locations);
-    return summarizeRanges(superset);
-}
-
-const splitMessageToFit = (message, tokenLimit) => {
-    let content = message.content;
-    let tokens = countTokens(content);
-
-    while(tokens > tokenLimit){
-        // Split at an arbitrary point in the string that is roughly the right length.
-        const ratio = (tokenLimit / tokens) * 0.8;
-        // Split at an arbitrary point in the string that is roughly the right length.
-        const splitIndex = Math.floor(content.length * ratio);
-        content = content.slice(-1 * splitIndex);
-        tokens = countTokens(content);
-    }
-
-    return {...message, content};
-}
-
+/**
+ * ✅ OPTIMIZED: Fit messages within token limit efficiently
+ */
 const fitMessagesInTokenLimit = (messages, tokenLimit) => {
-    // We have to make sure that the message history will fit into a prompt
-    // and trim the list of messages if it won't.
-
     let tokenCount = 0;
     const messagesToKeep = [];
 
+    // Process messages in reverse order (keeping most recent)
     for(let i = messages.length - 1; i >= 0; i--){
         const currCount = countChatTokens([messages[i]]);
         const remaining = tokenLimit - tokenCount;
 
         if(currCount <= remaining){
-            // Message fits, add it
             messagesToKeep.push(messages[i]);
             tokenCount += currCount;
-        }
-        else if(currCount > 200 && remaining > 200){
-            // The message is too big to fit and it is not the most recent message, so
-            // we keep it if there are enough tokens left to justify trying to cram it in
-           messagesToKeep.push(splitMessageToFit(messages[i], remaining));
-           break;
-        }
-        else if(i === messages.length - 1){
-            // No matter what, we need at least one message, so we just truncate the most
-            // recent message if it is too big.
-            messagesToKeep.push(splitMessageToFit(messages[i], remaining));
+        } else if(i === messages.length - 1 && remaining > 100){
+            // Keep at least part of the most recent message
+            const ratio = Math.min(0.9, remaining / currCount);
+            const splitIndex = Math.floor(messages[i].content.length * ratio);
+            messagesToKeep.push({
+                ...messages[i], 
+                content: messages[i].content.slice(-splitIndex)
+            });
             break;
+        } else {
+            break; // Can't fit more messages
         }
     }
 
     return messagesToKeep.reverse();
 }
 
-
-export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dataSources, responseStream) => {
-
+/**
+ * ⚡ ULTRA-OPTIMIZED chatWithDataStateless
+ * - Parallel context fetching
+ * - Parallel RAG processing
+ * - Streamlined token management
+ * - Direct native provider integration (no Python subprocess)
+ */
+export const chatWithDataStateless = async (params, model, chatRequestOrig, dataSources, responseStream) => {
     if(!chatRequestOrig.messages){
         throw new Error("Chat request must have messages.");
     }
 
-    // To RAG or not to RAG, that is the question...
-    // 1. Is the document beneath a token threshold where we can just dump it in the prompt?
-    // 2. Do we even need the documents farther back in the conversation to answer the question?
-    // 3. Is the document done processing wtih RAG, if not, run against the whole document.
+    const account = params.account;
+    const options = params.options || {};
+    const srcPrefix = options.source || defaultSource;
+    
+    
+    // 🚀 PERFORMANCE BREAKTHROUGH: Use pre-resolved data sources directly - NO duplicate calls!
+    const tokenCounter = createTokenCounter();
+    
+    // If we're routed here, router should ALWAYS provide pre-resolved sources
+    if (!params.preResolvedDataSourcesByUse) {
+        logger.error("❌ CRITICAL: chatWithDataStateless called without pre-resolved data sources - this should never happen!");
+        throw new Error("Pre-resolved data sources required but not provided");
+    }
+    
+    logger.debug("✅ Using pre-resolved data sources from router (ZERO duplicate calls)");
+    const dataSourcesByUse = params.preResolvedDataSourcesByUse;
 
-    const allSources = await getDataSourcesByUse(params, chatRequestOrig, dataSources);
+    logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
+    
 
-    logger.debug("All datasources for chatWithData: ", allSources);
+    // Extract categorized data sources
+    const categorizedDataSources = dataSourcesByUse.dataSources || [];
+    const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
+    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
+        (dataSourcesByUse.conversationDataSources || []) : [];
 
-    // These data sources are the ones that will be completely inserted into the
-    // conversation
-    dataSources = allSources.dataSources;
-    // These data sources will be searched with RAG for relevant information to
-    // insert into the conversation
-    let ragDataSources = [];
-    let conversationDataSources = [];
 
-    if (!params.options.skipRag) { // only populated on !params.options.skipRag
-        ragDataSources = allSources.ragDataSources;
-    } else if (!params.options.skipDocumentCache) { // only populated when rag is off
-        conversationDataSources = allSources.conversationDataSources;
-    } 
-
-    // This is helpful later to convert a key to a data source
-    // file name and type
+    // Build lookup table for data source details
     const dataSourceDetailsLookup = {};
-    [ragDataSources, dataSources, conversationDataSources].forEach(sourceArray => {
-        sourceArray.forEach(ds => {
-            dataSourceDetailsLookup[ds.id] = ds;
+    [...categorizedDataSources, ...ragDataSources, ...conversationDataSources].forEach(ds => {
+        dataSourceDetailsLookup[ds.id] = ds;
+    });
+
+    // 🔥 SEQUENTIAL RAG PROCESSING: Follow original pattern for immediate source transmission
+    const tokenLimitBuffer = chatRequestOrig.max_tokens || 1000;
+    const minTokensForContext = (categorizedDataSources.length > 0) ? 1000 : 0;
+    const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext;
+
+    // ✅ STEP 1: Process RAG first (sequential, not parallel)
+    let ragResults = { messages: [], sources: [] };
+    
+    if (ragDataSources.length > 0) {
+        logger.info(`🔍 RAG Query: Starting with ${ragDataSources.length} data sources`);
+        
+        // Send RAG status
+        const ragStatus = newStatus({
+            inProgress: true,
+            sticky: false,
+            message: "I am searching for relevant information...",
+            icon: "aperture",
         });
-    });
-
-
-    const ragStatus = newStatus({
-        inProgress: true,
-        sticky: false,
-        message: "I am searching for relevant information...",
-        icon: "aperture",
-    });
-
-    if (ragDataSources.length > 0) {
-        sendStatusEventToStream(responseStream, ragStatus);
-        forceFlush(responseStream);
-    }
-
-    // Query for related information from RAG
-    const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0) ?
-        await getContextMessages(params, chatRequestOrig, ragDataSources) :
-        {messages:[], sources:[]};
-
-    if (ragDataSources.length > 0) {
-        if (sources.length > 0) {
-            sendStateEventToStream(responseStream, {
-            sources: {
-                rag:{
-                    sources: sources
-                }
-            }
-            });
-        } else {
-            logger.error("Rag Error: No sources found");
-            ragStatus.message = "Rag ran into an unexpected error";
-            // TODO: Think through this logic better
-            // if (!params.options.skipDocumentCache) {
-            //     logger.debug("File caching will be used instead...");
-            //     conversationDataSources = ragDataSources;
-            // }
+        if (responseStream && !responseStream.destroyed) {
+            sendStatusEventToStream(responseStream, ragStatus);
+            forceFlush(responseStream);
         }
-
-        ragStatus.inProgress = false;
-        sendStatusEventToStream(responseStream, ragStatus);
-        forceFlush(responseStream);
+        
+        // Perform RAG query with error handling
+        logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
+        
+        try {
+            ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
+            logger.debug(`✅ RAG Query completed:`, {
+                sources_found: ragResults.sources?.length || 0,
+                messages_added: ragResults.messages?.length || 0,
+                sources_sample: ragResults.sources?.[0]
+            });
+            logger.info(`✅ RAG Query: Completed with ${ragResults.sources?.length || 0} sources found`);
+        } catch (error) {
+            logger.error("❌ RAG Query Failed:", error);
+            logger.error("❌ RAG Query Failed:", error.message);
+            ragStatus.message = "RAG search failed, continuing without additional context";
+            ragStatus.inProgress = false;
+            if (responseStream && !responseStream.destroyed) {
+                sendStatusEventToStream(responseStream, ragStatus);
+                forceFlush(responseStream);
+            }
+            ragResults = { messages: [], sources: [] }; // Empty result on failure
+        }
+        
+        // ✅ IMMEDIATELY send RAG sources following original pattern
+        if (responseStream && !responseStream.destroyed) {
+            ragStatus.inProgress = false;
+            ragStatus.message = ragResults.sources.length > 0 ? 
+                "Found relevant information" : "No relevant information found";
+            sendStatusEventToStream(responseStream, ragStatus);
             
+            if (ragResults.sources.length > 0) {
+                sendStateEventToStream(responseStream, {
+                    sources: {
+                        rag: {
+                            sources: ragResults.sources
+                        }
+                    }
+                });
+            }
+            forceFlush(responseStream);
+        }
     }
 
-    // Remove any non-standard attributes on messages
-    const safeMessages = [
-        ...chatRequestOrig.messages.map(m => {
-            return {role: m.role, content: m.content}
-        })
-    ];
+    // Calculate max tokens for context document processing
+    const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
 
-    // Build the chat request and insert the rag context
+    // Build safe messages and insert RAG context
+    const safeMessages = fittedMessages.map(m => ({role: m.role, content: m.content}));
     const chatRequest = {
         ...chatRequestOrig,
         messages: [
             ...safeMessages.slice(0, -1),
-            ...ragContextMsgs,
+            ...ragResults.messages,
             ...safeMessages.slice(-1)
         ]
     };
 
-    const requestId = params.requestId || ""+uuidv4();
-    logger.debug(`Chat with data called with request id ${requestId}`);
+    // Calculate max tokens for contexts
+    const chatRequestTokens = tokenCounter.countMessageTokens(chatRequest.messages);
+    const maxTokens = model.inputContextWindow - (chatRequestTokens + tokenLimitBuffer);
+    logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id}`);
 
-    const account = params.account;
-    const model = params.model;
-    const options = params.options || {};
-    const details = {userSetMaxTokenLimit: getMaxTokens(params)};
+    // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
+    let contexts = [];
+    if(!params.options.ragOnly && (categorizedDataSources.length > 0 || conversationDataSources.length > 0)) {
+        const contextResolverEnv = {
+            tokenCounter: tokenCounter.countTokens,
+            params,
+            chatRequest: chatRequestOrig
+        };
 
-    let srcPrefix = options.source || defaultSource;
-
-    const tokenCounter = createTokenCounter(model);
-
-    // We have to leave a buffer for the output
-    const tokenLimitBuffer = chatRequest.max_tokens || 1000;
-
-    // If we have data sources, we need to make sure that we have enough tokens to
-    // fit the context window of the model. If we don't have enough tokens, we will
-    // trim the message history to fit.
-    let msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
-    const minTokensForContext = (dataSources && dataSources.length > 0) ? 1000 : 0;
-    const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext
-    if(msgTokens > maxTokensForMessages) {
-        chatRequest.messages = fitMessagesInTokenLimit(chatRequest.messages, maxTokensForMessages);
-    }
-
-    // Since it isn't exact, we have to leave a buffer of tokens to ensure we don't go over the limit.
-    // and account for formatting, etc.
-
-    msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
-    logger.debug(`Total tokens in messages: ${msgTokens}`);
-
-    const maxTokens = model.inputContextWindow - (msgTokens + tokenLimitBuffer);
-
-    logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id} with a buffer of ${tokenLimitBuffer}.`)
-
-
-    // This is a block detector that is used to detect the end of an assistant operation
-    // and automatically ignore the rest of the output. If it isn't set, nothing will
-    // happen, it will just return the input.
-    let responseStreamClosed = false;
-    const blockTerminator = createBlockDetector(options.blockTerminator);
-    // This function is used to transform the output of the LLM provider into
-    // a format that can be streamed back to the client. It translates from the
-    // native streaming format of the LLM provider to the format expected by the
-    // client. Both us and the LLM provider will use Server Side Events that have the
-    // format:
-    // data: <json encoded event>
-    // We have our own custom event format.
-    // The transformer also is where we count output tokens from OpenAI. Each event
-    // from OpenAI is one token. Every time we reach the "increment" of tokens, we
-    // forward bill for another increment.
-    const eventTransformer = (event) => {
-
-        let result;
-
-        if (isOpenAIModel(model.id)) {
-            const usage = openaiUsageTransform(event);
-            if (usage) {
-                recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 
-                            usage.prompt_tokens_details?.cached_tokens ?? 0,
-                           {...details, reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens,
-                            prompt_tokens_details: usage.prompt_tokens_details,
-                           });
-            }
-
-            result = openAiTransform(event, responseStream);  
-            
-        } else if (model.provider === 'Bedrock') {
-            const usage = bedrockTokenUsageTransform(event);
-            if (usage) {                                                                     // currently no cached tokens 
-                recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
-            }
-            result = bedrockConverseTransform(event, responseStream);
-        } else if (isGeminiModel(model.id)) {            
-            result = geminiTransform(event, responseStream);
-            const usage = geminiUsageTransform(event);
-            if (usage) {
-                recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 
-                            usage.prompt_tokens_details?.cached_tokens ?? 0,
-                           {...details, reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens,
-                            prompt_tokens_details: usage.prompt_tokens_details,
-                           });
-            }
-        }
- 
-        if(result && result.d){
-            const [blockEnded, remaining] = blockTerminator(result.d);
-            if(blockEnded){
-                result.d = remaining;
-                //localKill(account, requestId);
-            }
-        }
-
-
-        return result;
-    }
-
-    // This is where we take the data sources, which are typically uploaded files from the client,
-    // and fetch them from the storage provider. We also break them up into chunks that fit into the
-    // context window of whatever model we are using. Each chunk becomes a "context" and we will prompt
-    // against each context in a separate request to the LLM.
-    let contexts = []
-    if(!params.options.ragOnly && (dataSources.length > 0 || conversationDataSources.length > 0)) {
-        const DOCUMENT_CONTEXT_CACHE = "documentCacheContext";
-        const DOCUMENT_CONTEXT = "documentContext";
-        try {
-            const contextResolverEnv = {
-                tokenCounter: tokenCounter.countTokens,
-                chatFn,
-                params,
-                chatRequest:chatRequestOrig
-            };
-
-           const statuses = [...dataSources, ...conversationDataSources].map(dataSource => {
-                const status = newStatus({
-                    inProgress: true,
-                    sticky: false,
-                    message: `Searching: ${dataSource.name}...`,
-                    icon: "aperture",
-                });
-                return status;
-            });
-            
-           statuses.map(async (status) => {
+        // Send status for all data sources
+        const dataSourceList = [...categorizedDataSources, ...conversationDataSources];
+        const statuses = dataSourceList.map(ds => newStatus({
+            inProgress: true,
+            sticky: false,
+            message: `Processing: ${ds.name}...`,
+            icon: "aperture",
+        }));
+        
+        if (responseStream && !responseStream.destroyed) {
+            statuses.forEach(status => {
                 sendStatusEventToStream(responseStream, status);
-                forceFlush(responseStream);
+                forceFlush(responseStream); // Force flush each status
             });
+        }
 
-            contexts = (await Promise.all([
-                ...dataSources.map(async dataSource => {
-                    const results = await getContexts(contextResolverEnv, dataSource, maxTokens, options);
-                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT}));
-                }), 
-                ...conversationDataSources.map(async dataSource => {
-                    const results = await getContexts(contextResolverEnv, dataSource, maxTokens, options, true);
-                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT_CACHE}));
-                }) ]))
-                .flat()
-                .filter(context => context !== null)
-                .map((context) => {
-                    return {...context, id: srcPrefix + "#" + context.id};
-                })
+        // ⚡ PARALLEL: Fetch all contexts simultaneously with caching
+        const { CacheManager } = await import('./cache.js');
+        const contextResults = await Promise.all([
+            ...categorizedDataSources.map(async ds => {
+                // Check cache first
+                const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, options);
+                if (cached && Array.isArray(cached) && cached.length > 0) {
+                    logger.debug(`Using cached contexts for datasource ${ds.id}`);
+                    return cached.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
+                }
+                
+                // Not cached, fetch and cache
+                const results = await getContexts(contextResolverEnv, ds, maxTokens, options);
+                // Only cache successful results, not null/empty
+                if (results && Array.isArray(results) && results.length > 0) {
+                    CacheManager.setCachedContexts(account.user, ds, maxTokens, options, results);
+                }
+                return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
+            }),
+            ...conversationDataSources.map(async ds => {
+                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
+                // depends on the user's current message! Each query needs fresh extraction.
+                // Only the raw document content should be cached (inside getContent).
+                
+                // Always fetch fresh - extraction depends on current user message
+                const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
+                return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
+            })
+        ]);
 
+        contexts = contextResults
+            .flat()
+            .filter(context => context !== null)
+            .map(context => ({...context, id: srcPrefix + "#" + context.id}));
+
+        // Clear all statuses
+        if (responseStream && !responseStream.destroyed) {
             statuses.forEach(status => {
                 status.inProgress = false;
                 sendStatusEventToStream(responseStream, status);
-                forceFlush(responseStream);
             });
+            forceFlush(responseStream);
+        }
 
-            if (contexts.length > 0) {
+        // Process and send sources
+        if (contexts.length > 0) {
+            const sources = contexts.flatMap(ctx => {
+                const dataSource = ctx.dataSource || dataSourceDetailsLookup[ctx.dataSourceId];
+                if (!dataSource) return [];
 
-                const sources = contexts.map(s => {
-                    const dataSource = s.dataSource;
-                    if (s && !dataSource) {
-                        const source = {key: s.id, type: dataSource.type, locations: s.locations};
-                        return {type: DOCUMENT_CONTEXT, source};
-                    } else if (dataSource && isDocument(dataSource)){
-                        const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
-                        const getSourceData = (locations = null) => {
-                            return {key: dataSource.id, name, type: dataSource.type, locations: locations ?? s.locations, contentKey: dataSource.metadata?.userDataSourceId};
-                        }
-                        if (s.type === DOCUMENT_CONTEXT || !s.content) return {type: s.type, source: getSourceData()};
-                        if (s.type === DOCUMENT_CONTEXT_CACHE) {
-                            // Return list of sources from the combined neighboring locations
-                            if (s.content) {
-                                return s.content.map(i => {
-                                    const source = getSourceData(i.locations);
-                                    source.content = i.content;
-                                    return {type: s.type, source};
-                                });
-                            } else {
-                                return {type: s.type, source: getSourceData()};
+                // 🚨 CRITICAL: Only apply document logic if it's actually a document (like original code)
+                if (dataSource && isDocument(dataSource)) {
+                    const name = dataSourceDetailsLookup[dataSource.id]?.name || `Attached Document (${dataSource.type})`;
+
+                    // ✅ ATTACHED DOCUMENTS: Flat structure for frontend
+                    if (ctx.type === "documentContext") {
+                        return [{
+                            type: ctx.type,
+                            key: dataSource.id,
+                            name: name,
+                            dataType: dataSource.type,
+                            locations: ctx.locations || [],
+                            contentKey: dataSource.metadata?.userDataSourceId
+                        }];
+                    }
+                    
+                    // Handle cases where content is missing (fallback)
+                    if (!ctx.content) {
+                        return [{
+                            type: ctx.type,
+                            key: dataSource.id,
+                            name: name,
+                            dataType: dataSource.type,
+                            locations: ctx.locations || [],
+                            contentKey: dataSource.metadata?.userDataSourceId
+                        }];
+                    }
+                    
+                    if (ctx.type === "documentCacheContext") {
+                        // Check if this context has extracted content groups (from combineNeighboringLocations)
+                        if (ctx.content && Array.isArray(ctx.content)) {
+                            // SAFEGUARD: Limit to top 10 most relevant groups to prevent UI overload
+                            if (ctx.content.length > 20) {
+                                logger.warn("🛡️ SAFEGUARD: Limiting to top 10 content groups to prevent UI overload");
+                                ctx.content = ctx.content.slice(0, 10);
                             }
+                            
+                            // Return list of sources from the combined neighboring locations (original pattern)
+                            return ctx.content.map(i => {
+                                return {
+                                    type: ctx.type,
+                                    key: dataSource.id,
+                                    name: name,
+                                    dataType: dataSource.type,
+                                    locations: i.locations || [],
+                                    contentKey: dataSource.metadata?.userDataSourceId,
+                                    content: i.content  // Full content for frontend sources
+                                };
+                            });
+                        } else {
+                            return [{
+                                type: ctx.type,
+                                key: dataSource.id,
+                                name: name,
+                                dataType: dataSource.type,
+                                locations: ctx.locations || [],
+                                contentKey: dataSource.metadata?.userDataSourceId
+                            }];
                         }
-                        return null;
-                    } else if (dataSource) {
-                        const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
-                        return {type, source: {key: dataSource.id, name: dataSource.name || dataSource.id, locations: s.locations}};
+                    }
+                    return [];
+                } else if (dataSource) {
+                    // Non-document sources (from original code)  
+                    const sourceType = (extractProtocol(dataSource.id) || "data://").split("://")[0];
+                    return [{
+                        type: sourceType,
+                        key: dataSource.id, 
+                        name: dataSource.name || dataSource.id, 
+                        locations: ctx.locations || []
+                    }];
+                } else {
+                    return [];
+                }
+            }).filter(source => source);
+
+            if (sources.length > 0) {
+                // Send document sources with proper categorization
+                const contextSources = {};
+                let hasAttachedDocuments = false;
+                let hasDocumentCache = false;
+
+                sources.forEach(source => {
+                    const categoryKey = source.type === "documentCacheContext" ? "documentCacheContext" : "documentContext";
+                    
+                    if (source.type === "documentCacheContext") {
+                        hasDocumentCache = true;
                     } else {
-                        return null;
+                        hasAttachedDocuments = true;
                     }
-                }).flat().filter(s => s);
-
-                const byType = sources.reduce((acc, source) => {
-                    if(!acc[source.type]){
-                        acc[source.type] = {sources: [], data: {chunkCount: 0}};
+                    
+                    if (!contextSources[categoryKey]) {
+                        contextSources[categoryKey] = { sources: [] };
                     }
-                    acc[source.type].sources.push(source.source);
-                    acc[source.type].data.chunkCount++;
-                    return acc;
-                }, {});
-
-                sendStateEventToStream(responseStream, {
-                    sources: {
-                    //
-                        ...byType
-                    }
+                    contextSources[categoryKey].sources.push(source);
                 });
+
+                if (responseStream && !responseStream.destroyed) {
+                    sendStateEventToStream(responseStream, {
+                        sources: contextSources
+                    });
+                    forceFlush(responseStream);
+                }
             }
-
-        } catch (e) {
-            logger.error(e);
-            logger.error("Error fetching contexts: " + e);
-            return {
-                statusCode: 404,
-                body: {error: "Data source not found."}
-            };
         }
     }
 
-    if(contexts.length === 0){
-        logger.debug("No data sources, just using messages.");
-        contexts = [{id:srcPrefix}];
+    // ✅ Final message construction with all contexts
+    const contextMessages = contexts.map(ctx => addContextMessage(ctx, tokenCounter.countTokens));
+    
+    // 🔍 DEBUG: Log context being passed to LLM
+    if (contextMessages.length > 0) {
+        logger.debug("🔍 CONTEXT PASSED TO LLM:", {
+            contextCount: contextMessages.length,
+            contextTypes: contexts.map(ctx => ctx.type),
+            contextPreview: contextMessages.map(msg => ({
+                role: msg.role,
+                contentLength: typeof msg.content === 'string' ? msg.content.length : 'not-string',
+                contentPreview: typeof msg.content === 'string' ? 
+                    msg.content.substring(0, 100) + "..." : 
+                    `[${typeof msg.content}] ${JSON.stringify(msg.content).substring(0, 100)}...`
+            }))
+        });
     }
+    
+    const rawMessages = [
+        ...chatRequest.messages.slice(0, -1),  // Includes original messages + RAG context
+        ...contextMessages,                    // Add document contexts
+        ...chatRequest.messages.slice(-1)     // Last message
+    ];
 
-    // Create the source metadata that maps contexts to shorter ids to
-    // to be more efficient.
-    const metaData = getSourceMetadata({contexts});
-    let updatedContexts = aliasContexts(metaData, contexts);
+    // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call
+    const cleanedMessages = rawMessages
+        .filter(msg => msg && msg.role && msg.content !== undefined) // Remove undefined messages
+        .map(msg => ({
+            role: msg.role,
+            content: typeof msg.content === 'string' ? 
+                msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() : // Remove Location: {...}
+                msg.content
+        }))
+        .filter(msg => msg.content && msg.content.length > 0); // Remove empty content
 
-    // if the all contexts fit within the token limit then we can just merge them into one while leaving the metadata as its been
-    if (updatedContexts.length > 1) {
-        const totalDsTokens = contexts.reduce((acc, context) => acc + (context.tokens || 1000), 0);
-        if (totalDsTokens <= maxTokens) {
-            logger.debug("Merging contexts into one: ", updatedContexts);
-            const mergedContext = contexts.map((c, index) => `DataSource ${index + 1}: \n\n${c.context}`).join("\n\n");
-            // we can save the old contexts in its own attribute for now
-            updatedContexts = [{id: 0, context: mergedContext, contexts: updatedContexts}];
-        }
-    }
-
-    const chatContext = {
-        account,
-        chatFn,
-        chatRequest,
-        dataSources,
-        contexts:updatedContexts,
-        metaData,
-        responseStream,
-        eventTransformer
+    const requestWithContext = {
+        ...chatRequest,
+        messages: cleanedMessages
     };
 
-    // Should no longer be needed, keeping for now
-    // if(responseStream.setContentType){
-    //     responseStream.setContentType('text/event-stream');
-    // }
+    // Check killswitch before making final request
+    if (await isKilled(account.user, responseStream, requestWithContext)) return;
 
-    // Since we have multiple contexts, we can potentially execute them in parallel.
-    // This code provides future support for that, but currently we execute them in
-    // sequence with the sequentialChat.
-    const controller = chooseController(chatContext);
-    await controller(chatContext);
+    // Process the final request based on context types
+    const hasRAGSources = ragResults.sources.length > 0;
+    const hasContexts = contexts.length > 0;
 
-    logger.debug("Chat function finished, ending responseStream.");
-
-    responseStream.end();
-
-
-    logger.debug("Response stream ended");
+    if (hasRAGSources || hasContexts) {
+        logger.info(`🎯 Final request with contexts: RAG sources: ${ragResults.sources.length}, Context documents: ${contexts.length}`);
+        
+        // Check killswitch before LLM call
+        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+        
+        // ✅ Direct native provider call for each context
+        await callUnifiedLLM(
+            { account, options: { ...options, model } },  // Pass all options including trackConversations
+            requestWithContext.messages,
+            responseStream,
+            { 
+                max_tokens: requestWithContext.max_tokens || 2000,
+                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+            }
+        );
+    } else if(!params.options.ragOnly) {
+        // No context, direct LLM call
+        logger.info("🎯 No relevant contexts found, making direct LLM call");
+        
+        // Check killswitch before LLM call
+        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+        
+        await callUnifiedLLM(
+            { account, options: { ...options, model } },  // Pass all options including trackConversations
+            requestWithContext.messages,
+            responseStream,
+            { 
+                max_tokens: requestWithContext.max_tokens || 2000,
+                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+            }
+        );
+    }
 };
-

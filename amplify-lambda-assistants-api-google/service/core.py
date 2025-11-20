@@ -117,8 +117,14 @@ from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SecretsManagerOperation
+)
 from pycommon.authz import validated
 
+from pycommon.logger import getLogger
+logger = getLogger("google")
 
 def camel_to_snake(name):
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
@@ -203,7 +209,7 @@ def fix_data_types(data, func_schema):
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
-        print("Input Data: ", data["data"])
+        logger.debug("Input Data: %s", data["data"])
         try:
             params = {
                 camel_to_snake(param): data["data"][param] for param in required_params
@@ -214,24 +220,28 @@ def common_handler(operation, *required_params, **optional_params):
                     params[snake_param] = data["data"][param]
             params["access_token"] = data["access_token"]
             response = operation(current_user, **params)
-            print("Integration Response: ", response)
+            logger.debug("Integration Response: %s", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
-            print("Missing Credentials Error: ", str(me))
+            logger.warning("Missing Credentials Error: %s", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
-            print("Error: ", str(e))
+            logger.error("Error: %s", str(e))
             return {"success": False, "error": str(e)}
 
     return handler
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "OAUTH_ENCRYPTION_PARAMETER": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated("route", False)
 def route_request(event, context, current_user, name, data):
     try:
         # First try to use path-based routing if available
         target_path_string = event.get("path", event.get("rawPath", ""))
-        print(f"Route path: {target_path_string}")
+        logger.debug("Route path: %s", target_path_string)
 
         # Check if we have a direct path match in our route_data
         route_info = route_data.get(target_path_string, None)
@@ -247,21 +257,21 @@ def route_request(event, context, current_user, name, data):
             "required": ["data"],
         }
 
-        print("Validating request")
+        logger.debug("Validating request")
         try:
             validate(data, wrapper_schema)
-            print("Request data validated")
+            logger.info("Request data validated")
         except ValidationError as e:
-            print("Validation error: ", str(e))
-            print("Attempting to fix data types...")
+            logger.error("Validation error: %s", str(e))
+            logger.debug("Attempting to fix data types...")
             
             try:
                 fixed_data = fix_data_types(data, func_schema)
                 validate(fixed_data, wrapper_schema)
-                print("Data types fixed and validation successful")
+                logger.info("Data types fixed and validation successful")
                 data = fixed_data
             except (ValidationError, ValueError, TypeError) as fix_error:
-                print(f"Type fixing failed: {str(fix_error)}")
+                logger.error("Type fixing failed: %s", str(fix_error))
                 raise ValueError(f"Invalid request: {str(e)}")
 
         service = "/google/integrations/"
@@ -272,7 +282,7 @@ def route_request(event, context, current_user, name, data):
         else:
             return {"success": False, "message": "Invalid path"}
 
-        print("Operation to execute: ", op)
+        logger.debug("Operation to execute: %s", op)
 
         # Dynamically look up the handler function based on the operation name
         handler_name = f"{op}_handler"
@@ -284,7 +294,7 @@ def route_request(event, context, current_user, name, data):
                 "message": f"Invalid operation: {op}. No handler function found for {handler_name}",
             }
 
-        print("Executing handler function...")
+        logger.debug("Executing handler function...")
         return handler_func(current_user, data)
 
     except Exception as e:

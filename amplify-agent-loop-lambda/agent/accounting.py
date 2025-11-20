@@ -2,7 +2,8 @@ import os
 import uuid
 import boto3
 from datetime import datetime
-
+from pycommon.logger import getLogger
+logger = getLogger("accounting")
 
 dynamodb = boto3.client("dynamodb")
 
@@ -25,19 +26,19 @@ def record_usage(
     Records usage and costs in DynamoDB tables.
     """
     if not dynamoTableName:
-        print(
+        logger.error(
             "CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables."
         )
         return 0.0
 
     if not costDynamoTableName:
-        print(
+        logger.error(
             "COST_CALCULATIONS_DYNAMO_TABLE table is not provided in the environment variables."
         )
         return 0.0
 
     if not modelRateDynamoTable:
-        print("MODEL_RATE_TABLE table is not provided in the environment variables.")
+        logger.error("MODEL_RATE_TABLE table is not provided in the environment variables.")
         return 0.0
     
     api_key_id = get_api_key_id(account)
@@ -66,10 +67,10 @@ def record_usage(
         }
 
         dynamodb.put_item(TableName=dynamoTableName, Item=item)
-        print(f"Usage recorded for user: {account['user']}")
+        logger.info("Usage recorded for user: %s", account['user'])
 
     except Exception as e:
-        print(f"Error recording usage: {e}")
+        logger.error("Error recording usage: %s", e)
         return 0.0
 
     try:
@@ -83,7 +84,7 @@ def record_usage(
             not model_rate_response.get("Items")
             or len(model_rate_response["Items"]) == 0
         ):
-            print(f"No model rate found for ModelID: {model_id}")
+            logger.warning("No model rate found for ModelID: %s", model_id)
             return 0.0
 
         model_rate = model_rate_response["Items"][0]
@@ -102,7 +103,7 @@ def record_usage(
         cached_cost = (cached_tokens / 1000) * cached_cost_per_thousand_tokens
         total_cost = input_cost + output_cost + cached_cost
 
-        print(f"-- Total cost -- {total_cost}")
+        logger.info("-- Total cost -- %s", total_cost)
 
         now = datetime.now()
         current_hour = now.hour
@@ -132,10 +133,10 @@ def record_usage(
             UpdateExpression=f"SET dailyCost = dailyCost + :totalCost ADD hourlyCost[{current_hour}] :totalCost",
             ExpressionAttributeValues={":totalCost": {"N": str(total_cost)}},
         )
-        print(f"Updated dailyCost and hourlyCost")
+        logger.info("Updated dailyCost and hourlyCost")
         return total_cost
     except Exception as e:
-        print(f"Error calculating or updating cost: {e}")
+        logger.error("Error calculating or updating cost: %s", e)
     return 0.0
 
 

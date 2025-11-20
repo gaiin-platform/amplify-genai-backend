@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-embedding
+service: amplify-${self:custom.depName}-embedding
 
 frameworkVersion: '3'
 
@@ -21,8 +21,11 @@ custom:
     slim: false
 
 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
+
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -30,11 +33,14 @@ custom:
     includeLayers: true
     number: 5
 
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+ 
   stages:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
   deploymentBucket:
     versioning: true
@@ -63,52 +69,55 @@ provider:
   
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    #Local Resources Created
-    RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-${self:service}-rag-cluster
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    API_VERSION: ${ssm:/amplify/${sls:stage}/API_VERSION}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
+    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/COGNITO_USER_POOL_ID}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    MAX_ACU: ${ssm:/amplify/${sls:stage}/MAX_ACU}
+    MIN_ACU: ${ssm:/amplify/${sls:stage}/MIN_ACU}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_TWO}
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
+    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
-    # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
-    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
-    OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
-    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
-    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    ASSISTANT_LOOKUP_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-lookup
-    EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-
-        #Stand Alone Vars references from local vars file
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    MIN_ACU: ${self:custom.stageVars.MIN_ACU}
-    MAX_ACU: ${self:custom.stageVars.MAX_ACU}
-    VPC_ID: ${self:custom.stageVars.VPC_ID}
-    PRIVATE_SUBNET_ONE: ${self:custom.stageVars.PRIVATE_SUBNET_ONE}
-    PRIVATE_SUBNET_TWO: ${self:custom.stageVars.PRIVATE_SUBNET_TWO}
-    VPC_CIDR: ${self:custom.stageVars.VPC_CIDR}
-    API_VERSION: ${self:custom.stageVars.API_VERSION}
-    OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
-    ENDPOINTS_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    SERVICE_NAME: ${self:service}
+    VPC_CIDR: ${ssm:/amplify/${sls:stage}/VPC_CIDR}
+    VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID}
+    # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
-    
+
+    # Locally Defined Variables
+    EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
+    RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-${self:service}-rag-cluster
+
+    # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
+    ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    S3_FILE_TEXT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_FILE_TEXT_BUCKET_NAME}
+    S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
+    S3_RAG_CHUNKS_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_CHUNKS_BUCKET_NAME}
     
   iam:
     role:
@@ -135,7 +144,7 @@ functions:
       RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
-      OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+      OPS_DYNAMODB_TABLE: amplify-${self:custom.depName}-lambda-ops-${sls:stage}-ops
 
 
   process_chunk_for_embedding:
@@ -160,9 +169,9 @@ functions:
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-        ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-        MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+        LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+        MODEL_RATE_TABLE: amplify-${self:custom.depName}-chat-billing-${sls:stage}-model-rates
+        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs
         API_VERSION: ${self:provider.environment.API_VERSION}
         EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
         REGION: ${self:provider.region}
@@ -306,8 +315,8 @@ resources:
                 - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -318,8 +327,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
@@ -327,20 +336,21 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
 
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource:
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-document-chunk-queue"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-lambda-${sls:stage}-rag-document-chunk-queue"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -350,6 +360,22 @@ resources:
               Resource: 
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup

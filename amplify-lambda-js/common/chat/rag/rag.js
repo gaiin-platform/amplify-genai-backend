@@ -5,8 +5,8 @@ import axios from "axios";
 import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
-import {LLM} from "../../llm.js";
-import {getChatFn, getModelByType, ModelTypes} from "../../params.js";
+import {getModelByType, ModelTypes} from "../../params.js";
+import { promptUnifiedLLMForData } from "../../../llm/UnifiedLLMClient.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 
@@ -53,16 +53,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
     const model = getModelByType(params, ModelTypes.CHEAPEST);
-    const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
-
-    const chatFn = async (body, writable, context) => {
-        return await getChatFn(model, body, writable, context);
-    }
-
-    const llm = new LLM(
-        chatFn,
-        ragLLMParams,
-        null);
+    logger.debug("🔍 RAG: Using CHEAPEST model:", model.id, "vs user model:", params.model?.id || "unknown");
 
     const updatedBody = {
         ...chatBody,
@@ -78,7 +69,7 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
         }
     }
 
-    return await getContextMessagesWithLLM(llm, params, updatedBody, dataSources);
+    return await getContextMessagesWithLLM(model, params, updatedBody, dataSources);
 }
 
 function createSuperset(arrayOfObjects) {
@@ -103,7 +94,7 @@ function createSuperset(arrayOfObjects) {
     return superset;
 }
 
-export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSources) => {
+export const getContextMessagesWithLLM = async (model, params, chatBody, dataSources) => {
 
     try {
         const token = getAccessToken(params);
@@ -146,9 +137,13 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
             keyLookup[key] = ds;
         });
         
-        const searches = await llm.promptForData(
-            chatBody, [],
-            `
+        logger.debug("🔍 RAG: About to call promptUnifiedLLMForData with", dataSources.length, "dataSources");
+        
+        const promptMessages = [
+            ...chatBody.messages,
+            {
+                role: "user",
+                content: `
             Imagine that you are looking through a frequently asked questions (FAQ) page on a website.
             The FAQ is based on the documents in this conversation.
 
@@ -158,16 +153,41 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
             ${search}
 
             Please explain what questions you need to look for in the FAQ.
-            `,
+            `
+            }
+        ];
+        
+        const searches = await promptUnifiedLLMForData(
             {
-                "firstQuestion": "First specific FAQ question to look for.",
-                "secondQuestion": "Second specific FAQ question to look for.",
-                "thirdQuestion": "Third specific FAQ question to look for.",
+                account: params.account,
+                options: {
+                    model,
+                    requestId: params.requestId
+                }
             },
-            null,
-            (r)=>{
-                return r.firstQuestion
-            }, 3);
+            promptMessages,
+            {
+                type: "object",
+                properties: {
+                    firstQuestion: {
+                        type: "string",
+                        description: "First specific FAQ question to look for."
+                    },
+                    secondQuestion: {
+                        type: "string",
+                        description: "Second specific FAQ question to look for."
+                    },
+                    thirdQuestion: {
+                        type: "string",
+                        description: "Third specific FAQ question to look for."
+                    }
+                },
+                required: ["firstQuestion", "secondQuestion", "thirdQuestion"]
+            },
+            null // No streaming
+        );
+        
+        logger.debug("✅ RAG: promptUnifiedLLMForData completed, result:", searches ? Object.keys(searches) : "null");
 
         const result = {
             ideas: [
@@ -216,8 +236,8 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                             const responseMessage = e.response.data;
 
                             // Log the status code and message
-                            console.error(`Error: Request failed with status code ${statusCode}`);
-                            console.error(`Response Message: ${JSON.stringify(responseMessage)}`);
+                            logger.error(`Error: Request failed with status code ${statusCode}`);
+                            logger.error(`Response Message: ${JSON.stringify(responseMessage)}`);
                         }
                         else {
                             logger.error("Error getting RAG results", e);
@@ -229,6 +249,8 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
         }
 
         const sources = (await Promise.all(ragPromises)).flat();
+        
+        logger.debug("🔍 RAG: Raw results returned:", sources.length, "sources");
 
         // Sort the sources by score
         sources.sort((a, b) => -1 * (b.score - a.score));
@@ -275,6 +297,8 @@ ${content}
             })];
 
         trace(params.requestId, ["rag", "result"], {sources: uniqueSources});
+        
+        logger.debug("🔍 RAG: Final return - sources:", uniqueSources.length, "messages:", messages.length);
 
         return {messages, sources:uniqueSources};
     } catch (e) {

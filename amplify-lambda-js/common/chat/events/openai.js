@@ -25,7 +25,7 @@ export const openAiTransform = (event, responseStream = null) => {
         
         // Handle text delta from assistant response
         if (event.type === "response.output_text.delta" && event.delta) {
-            return {d: event.delta};
+            return event.delta;  // Return raw text, sendDeltaToStream will wrap it
         }
         
     }
@@ -34,17 +34,17 @@ export const openAiTransform = (event, responseStream = null) => {
     if (event && event.choices && event.choices.length > 0) {
         if (event.choices[0].delta && event.choices[0].delta.tool_calls){
             const calls = event.choices[0].delta.tool_calls;
-            return {d: {tool_calls:calls}};
+            return {tool_calls:calls};  // Return raw object, sendDeltaToStream will wrap it
         }
         else if (event.choices[0].delta && event.choices[0].delta.content) {
-            return {d: event.choices[0].delta.content};
+            return event.choices[0].delta.content;  // Return raw text, sendDeltaToStream will wrap it
         } else if (event.choices[0].message && event.choices[0].message.content) {
-            return {d: event.choices[0].message.content};
+            return event.choices[0].message.content;  // Return raw text, sendDeltaToStream will wrap it
         } 
     } else if (event && event.d && event.d.delta && event.d.delta.text) { // for error message
-        return {d: event.d.delta.text}
+        return event.d.delta.text;  // Return raw text, sendDeltaToStream will wrap it
     }
-    console.log("----NO MATCH---", event , "\n\n")
+
     return null;
     
 }
@@ -60,10 +60,19 @@ export const openaiUsageTransform = (event) => {
             usage.completion_tokens = usage.output_tokens;
             // Add reasoning tokens if present
             usage.completion_tokens += usage.output_tokens_details?.reasoning_tokens ?? 0;
+            // Extract reasoning tokens for separate tracking
+            usage.reasoning_tokens = usage.output_tokens_details?.reasoning_tokens ?? 0;
         } else {
             // Handle legacy completions endpoint format
-            usage.completion_tokens += usage.completion_tokens_details?.reasoning_tokens ?? 0;
+            const reasoningTokens = usage.reasoning_tokens ?? 0;
+            usage.completion_tokens += reasoningTokens;
+            // Extract reasoning tokens for separate tracking
+            usage.reasoning_tokens = reasoningTokens;
         }
+        
+        // Extract cached tokens from OpenAI format
+        // Input cached tokens: from prompt_tokens_details.cached_tokens
+        usage.inputCachedTokens = (usage.inputCachedTokens ?? usage.prompt_tokens_details?.cached_tokens) ?? 0;
         
         return usage;
     } else {
