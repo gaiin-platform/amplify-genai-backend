@@ -117,15 +117,28 @@ functions:
     timeout: 30
     events:
       - http:
-          path: integrations/email/webhook
+          path: integrations/email/webhook/{token}
           method: post
           cors: false
+          private: false
+          authorizer: {}
+          request:
+            parameters:
+              paths:
+                token: true
       - http:
-          path: integrations/email/webhook
+          path: integrations/email/webhook/{token}
           method: get
           cors: false
+          private: false
+          authorizer: {}
+          request:
+            parameters:
+              paths:
+                token: true
     environment:
       EMAIL_NOTIFICATIONS_QUEUE_URL: !Ref EmailNotificationsQueue
+      EMAIL_WEBHOOK_TOKEN: ${ssm:/oauth/integrations/microsoft/${sls:stage}/email-webhook-token}
 
   emailProcessor:
     handler: integrations/email_webhooks.email_processor
@@ -144,6 +157,8 @@ functions:
           path: integrations/email/subscription/create
           method: post
           cors: false
+    environment:
+      EMAIL_WEBHOOK_TOKEN: ${ssm:/oauth/integrations/microsoft/${sls:stage}/email-webhook-token}
 
   # Phase 2: Programmatic User GUID Functions
   getUserGuid:
