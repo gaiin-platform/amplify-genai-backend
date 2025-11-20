@@ -2,6 +2,10 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
+import { 
+    withEnvVarsTracking, 
+    DynamoDBOperation 
+} from '../common/envVarsTracking.js';
 
 const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
@@ -11,7 +15,7 @@ const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 const historyCostDynamoTableName = process.env.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE;
 const apiKeysTableName = process.env.API_KEYS_DYNAMODB_TABLE;
 
-export const handler = async (event, context, callback) => {
+const mtdHandler = async (event, context, callback) => {
     try {
         logger.debug("Extracting params from event");
         const params = await extractParams(event);
@@ -19,17 +23,16 @@ export const handler = async (event, context, callback) => {
         if (params.statusCode) {
             return params; // This is an error response from extractParams
         }
-
-        const { body } = params;
-
-        if (!body || !body.data || !body.data.email) {
+        
+        const { body, user } = params;
+        if (!user) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Email is required' }),
             };
         }
 
-        const email = body.data.email;
+        const email = user;
 
         const queryParams = {
             TableName: costDynamoTableName,
@@ -44,8 +47,13 @@ export const handler = async (event, context, callback) => {
 
         if (result.Items.length === 0) {
             return {
-                statusCode: 404,
-                body: JSON.stringify({ error: 'No cost data found for the given email' }),
+                statusCode: 200,
+                body: JSON.stringify({
+                    email: email,
+                    dailyCost: 0,
+                    monthlyCost: 0,
+                    'MTD Cost': 0,
+                }),
             };
         }
 
@@ -193,13 +201,13 @@ const processAccountInfo = async (accountInfo) => {
     return `${newAccount}#${id}`;
 };
 
-export const apiKeyUserCostHandler = async (event, context, callback) => {
+const internalApiKeyUserCostHandler = async (event, context, callback) => {
     try {
         const params = await extractParams(event);
         if (params.statusCode) return params;
 
-        const { body } = params;
-        if (!body?.data?.apiKeys || !Array.isArray(body.data.apiKeys) || !body.data.email) {
+        const { body, user } = params;
+        if (!body?.data?.apiKeys || !Array.isArray(body.data.apiKeys) || !user) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'API keys array and email are required' }),
@@ -207,7 +215,7 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
         }
 
         const apiKeys = body.data.apiKeys;
-        const email = body.data.email;
+        const email = user;
 
         if (!historyCostDynamoTableName || !costDynamoTableName) {
             logger.error("Missing required table names");
@@ -365,7 +373,7 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
     }
 };
 
-export const listAllUserMtdCostsHandler = async (event, context, callback) => {
+const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== LIST ALL USER MTD COSTS REQUEST STARTED ===");
     
@@ -384,11 +392,11 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
         user = params.user; // Assign user from params
         logger.info("Request initiated by user", { user, requestBody: body });
 
-        // Check if user is in Admin group by querying ADMIN_DYNAMODB_TABLE
+        // Check if user is in Admin group by querying AMPLIFY_ADMIN_DYNAMODB_TABLE
         logger.info("Starting admin privilege verification");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -458,17 +466,17 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
             };
         }
 
-        // Extract pagination parameters
-        const pageSize = body?.data?.pageSize || 50;
+        // Extract pagination parameters with optimized defaults for auto-loading
+        const pageSize = body?.data?.pageSize || 100;
         const lastEvaluatedKey = body?.data?.lastEvaluatedKey || null;
         
         logger.info("Pagination parameters", { pageSize, hasLastEvaluatedKey: !!lastEvaluatedKey });
 
-        if (pageSize > 100) {
+        if (pageSize > 500) {
             logger.warn("Page size too large", { pageSize });
             return {
                 statusCode: 400,
-                body: JSON.stringify({ error: 'Page size cannot exceed 100' }),
+                body: JSON.stringify({ error: 'Page size cannot exceed 500' }),
             };
         }
 
@@ -487,7 +495,7 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 ExpressionAttributeValues: {
                     ':type': 'cost'
                 },
-                Limit: pageSize * 10, // Get more records to ensure we have enough users after aggregation
+                Limit: Math.min(pageSize * 15, 5000), // Optimized: Get more records to aggregate users efficiently
             };
 
             if (lastEvaluatedKey) {
@@ -730,7 +738,7 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
     }
 };
 
-export const billingGroupsCostsHandler = async (event, context, callback) => {
+const internalBillingGroupsCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== BILLING GROUPS COSTS REQUEST STARTED ===");
     
@@ -751,9 +759,9 @@ export const billingGroupsCostsHandler = async (event, context, callback) => {
 
         // Step 1: Check admin privileges
         logger.info("Verifying admin privileges");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -1222,7 +1230,7 @@ export const billingGroupsCostsHandler = async (event, context, callback) => {
     }
 };
 
-export const listUserMtdCostsHandler = async (event, context, callback) => {
+const internalListUserMtdCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== LIST USER MTD COSTS REQUEST STARTED ===");
     
@@ -1268,14 +1276,15 @@ export const listUserMtdCostsHandler = async (event, context, callback) => {
         if (!result.Items || result.Items.length === 0) {
             logger.info("No cost data found for user", { user });
             return {
-                statusCode: 404,
+                statusCode: 200,
                 body: JSON.stringify({ 
-                    error: 'No cost data found for user',
                     email: user,
                     dailyCost: 0,
                     monthlyCost: 0,
                     totalCost: 0,
-                    accounts: []
+                    accounts: [],
+                    lastUpdated: null,
+                    timestamp: new Date().toISOString()
                 }),
             };
         }
@@ -1419,3 +1428,279 @@ export const listUserMtdCostsHandler = async (event, context, callback) => {
         };
     }
 };
+
+const internalGetUserCostHistoryHandler = async (event, context, callback) => {
+    const startTime = Date.now();
+    logger.info("=== GET USER COST HISTORY REQUEST STARTED ===");
+    
+    let user = 'unknown';
+    
+    try {
+        logger.info("Extracting params from event");
+        const params = await extractParams(event);
+
+        if (params.statusCode) {
+            logger.error("Failed to extract params", { statusCode: params.statusCode });
+            return params;
+        }
+
+        const { body } = params;
+        user = params.user;
+        const requestedEmail = body?.data?.email || user;
+        const monthsBack = body?.data?.monthsBack || 12;
+        
+        logger.info("Request initiated by user", { user, requestedEmail, monthsBack });
+
+        // Check admin privileges if requesting another user's history
+        if (requestedEmail !== user) {
+            logger.info("Verifying admin privileges for cross-user history request");
+            const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
+            
+            if (!adminTableName) {
+                logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
+                return {
+                    statusCode: 500,
+                    body: JSON.stringify({ error: 'Server configuration error' }),
+                };
+            }
+
+            try {
+                const adminParams = {
+                    TableName: adminTableName,
+                    Key: {
+                        config_id: { S: 'admins' }
+                    }
+                };
+
+                const adminCommand = new GetItemCommand(adminParams);
+                const adminResult = await client.send(adminCommand);
+
+                if (!adminResult.Item) {
+                    logger.error("No admin configuration found");
+                    return {
+                        statusCode: 500,
+                        body: JSON.stringify({ error: 'Admin configuration not found' }),
+                    };
+                }
+
+                const adminEmails = adminResult.Item.data?.L || [];
+                const isAdmin = adminEmails.some(emailObj => 
+                    emailObj.S && emailObj.S.toLowerCase() === user.toLowerCase()
+                );
+
+                if (!isAdmin) {
+                    logger.warn("Unauthorized access attempt to user history", { user, requestedEmail });
+                    return {
+                        statusCode: 403,
+                        body: JSON.stringify({ error: 'Access denied. Admin privileges required.' }),
+                    };
+                }
+                
+                logger.info("Admin privileges verified", { user });
+            } catch (error) {
+                logger.error("Error verifying admin privileges", { error: error.message });
+                return {
+                    statusCode: 500,
+                    body: JSON.stringify({ error: 'Authorization check failed' }),
+                };
+            }
+        }
+
+        // Calculate date range
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setMonth(startDate.getMonth() - monthsBack);
+        
+        const startMonth = startDate.toISOString().slice(0, 7);
+        const endMonth = endDate.toISOString().slice(0, 7);
+        
+        logger.info("Querying history table", { 
+            requestedEmail, 
+            startMonth, 
+            endMonth,
+            tableName: historyCostDynamoTableName 
+        });
+
+        // Query history table using Scan with filter (since we need to match userDate prefix)
+        const scanParams = {
+            TableName: historyCostDynamoTableName,
+            FilterExpression: 'begins_with(userDate, :emailPrefix)',
+            ExpressionAttributeValues: {
+                ':emailPrefix': `${requestedEmail}#`
+            }
+        };
+
+        let allHistoryItems = [];
+        let lastEvaluatedKey = null;
+
+        do {
+            if (lastEvaluatedKey) {
+                scanParams.ExclusiveStartKey = lastEvaluatedKey;
+            }
+
+            const scanCommand = new ScanCommand(scanParams);
+            const result = await dynamoDB.send(scanCommand);
+            
+            if (result.Items && result.Items.length > 0) {
+                allHistoryItems = allHistoryItems.concat(result.Items);
+            }
+            
+            lastEvaluatedKey = result.LastEvaluatedKey;
+        } while (lastEvaluatedKey);
+
+        logger.info("History records retrieved", { count: allHistoryItems.length });
+
+        // Group by month and aggregate
+        const monthlyData = {};
+        
+        for (const item of allHistoryItems) {
+            const userDate = item.userDate || '';
+            const datePart = userDate.split('#')[1];
+            
+            if (!datePart) continue;
+            
+            // Extract month (YYYY-MM or YYYY-MM-DD)
+            const month = datePart.length === 7 ? datePart : datePart.slice(0, 7);
+            
+            if (!monthlyData[month]) {
+                monthlyData[month] = {
+                    month,
+                    dailyCostSum: 0,
+                    monthlyCostSum: 0,
+                    totalCost: 0,
+                    accountsMap: new Map(),
+                    daysInMonth: new Set()
+                };
+            }
+            
+            const accountInfo = await processAccountInfo(item.accountInfo || 'Unknown Account');
+            const dailyCost = parseFloat(item.dailyCost) || 0;
+            const monthlyCost = parseFloat(item.monthlyCost) || 0;
+            const cost = dailyCost + monthlyCost;
+            
+            monthlyData[month].dailyCostSum += dailyCost;
+            monthlyData[month].monthlyCostSum += monthlyCost;
+            monthlyData[month].totalCost += cost;
+            
+            // Track unique days
+            if (datePart.length === 10) {
+                monthlyData[month].daysInMonth.add(datePart);
+            }
+            
+            // Aggregate by account
+            if (monthlyData[month].accountsMap.has(accountInfo)) {
+                monthlyData[month].accountsMap.set(
+                    accountInfo,
+                    monthlyData[month].accountsMap.get(accountInfo) + cost
+                );
+            } else {
+                monthlyData[month].accountsMap.set(accountInfo, cost);
+            }
+        }
+
+        // Convert to array and sort by date (newest first)
+        const history = Object.values(monthlyData)
+            .map(monthData => ({
+                month: monthData.month,
+                displayMonth: new Date(monthData.month + '-01').toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'short' 
+                }),
+                totalCost: monthData.totalCost,
+                dailyCostSum: monthData.dailyCostSum,
+                monthlyCostSum: monthData.monthlyCostSum,
+                accounts: Array.from(monthData.accountsMap.entries())
+                    .map(([accountInfo, cost]) => ({ accountInfo, cost }))
+                    .sort((a, b) => b.cost - a.cost),
+                daysInMonth: monthData.daysInMonth.size,
+                isCurrent: monthData.month === endMonth
+            }))
+            .sort((a, b) => b.month.localeCompare(a.month));
+
+        // Calculate summary statistics
+        const totalSpendAllTime = history.reduce((sum, m) => sum + m.totalCost, 0);
+        const avgMonthlySpend = history.length > 0 ? totalSpendAllTime / history.length : 0;
+        
+        let trend = { direction: 'flat', percentage: 0, comparison: '' };
+        if (history.length >= 2) {
+            const current = history[0].totalCost;
+            const previous = history[1].totalCost;
+            
+            if (previous > 0) {
+                const change = ((current - previous) / previous) * 100;
+                trend = {
+                    direction: change > 0 ? 'up' : change < 0 ? 'down' : 'flat',
+                    percentage: Math.abs(change),
+                    comparison: `${history[0].displayMonth}: ${formatCurrency(current)} vs ${history[1].displayMonth}: ${formatCurrency(previous)}`
+                };
+            }
+        }
+
+        const response = {
+            statusCode: 200,
+            body: JSON.stringify({
+                email: requestedEmail,
+                history,
+                summary: {
+                    totalSpendAllTime,
+                    avgMonthlySpend,
+                    monthCount: history.length,
+                    firstMonth: history.length > 0 ? history[history.length - 1].month : null,
+                    lastMonth: history.length > 0 ? history[0].month : null,
+                    trend
+                }
+            }),
+        };
+
+        const totalDuration = Date.now() - startTime;
+        logger.info("=== GET USER COST HISTORY REQUEST COMPLETED ===", {
+            totalDuration,
+            requestedEmail,
+            monthsReturned: history.length,
+            totalRecordsProcessed: allHistoryItems.length,
+            requestedBy: user
+        });
+
+        return response;
+
+    } catch (error) {
+        const totalDuration = Date.now() - startTime;
+        logger.error("=== GET USER COST HISTORY REQUEST FAILED ===", { 
+            error: error.message, 
+            stack: error.stack,
+            totalDuration,
+            requestedBy: user
+        });
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: 'Internal server error' }),
+        };
+    }
+};
+
+// Helper function for currency formatting (if not already defined)
+const formatCurrency = (amount) => {
+    return `$${amount.toFixed(2)}`;
+};
+
+// Environment variable configuration for billing handlers
+const billingEnvConfig = {
+    // DynamoDB tables - require IAM permissions
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
+    
+    // Configuration-only variables (no AWS permissions needed):
+    // "SERVICE_NAME": [], // Tracking metadata only
+    // "STAGE": [], // Tracking metadata only
+};
+
+// Export all handlers with environment variable tracking (using original names)
+export const handler = withEnvVarsTracking(billingEnvConfig, mtdHandler);
+export const apiKeyUserCostHandler = withEnvVarsTracking(billingEnvConfig, internalApiKeyUserCostHandler);
+export const listAllUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListAllUserMtdCostsHandler);
+export const billingGroupsCostsHandler = withEnvVarsTracking(billingEnvConfig, internalBillingGroupsCostsHandler);
+export const listUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListUserMtdCostsHandler);
+export const getUserCostHistoryHandler = withEnvVarsTracking(billingEnvConfig, internalGetUserCostHistoryHandler);

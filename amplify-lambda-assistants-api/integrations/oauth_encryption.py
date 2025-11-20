@@ -5,6 +5,8 @@ from datetime import datetime
 import json
 import base64
 
+from pycommon.logger import getLogger
+logger = getLogger("oauth_encryption")
 
 def create_and_store_fernet_key():
     # Read the parameter name from environment variable
@@ -26,11 +28,11 @@ def create_and_store_fernet_key():
             Type="SecureString",
             Overwrite=False,  # Allow overwriting the main parameter
         )
-        print(f"Fernet key successfully stored in {ssm_parameter_name}")
+        logger.info("Fernet key successfully stored in %s", ssm_parameter_name)
 
         # Create a backup parameter name with a timestamp
         backup_parameter_name = f"{parameter_name}_backup_{timestamp}"
-        print(f"Creating backup parameter {backup_parameter_name}")
+        logger.info("Creating backup parameter %s", backup_parameter_name)
 
         backup_response = ssm_client.put_parameter(
             Name=backup_parameter_name,
@@ -38,12 +40,12 @@ def create_and_store_fernet_key():
             Type="SecureString",
             Overwrite=False,  # Do not allow overwriting the backup parameter
         )
-        print(f"Backup Fernet key successfully stored in {backup_parameter_name}")
+        logger.info("Backup Fernet key successfully stored in %s", backup_parameter_name)
 
         return response, backup_response
 
     except Exception as e:
-        print(f"Error storing the Fernet key: {str(e)}")
+        logger.error("Error storing the Fernet key: %s", str(e))
         raise
 
 
@@ -62,7 +64,7 @@ def verify_oauth_encryption_parameter():
     parameter_name = get_oauth_param_env_var()
     # Check if the parameter exists
     if not parameter_exists(parameter_name):
-        print(f"Parameter {parameter_name} does not exist. Creating it now.")
+        logger.info("Parameter %s does not exist. Creating it now.", parameter_name)
         create_and_store_fernet_key()
 
 
@@ -96,8 +98,8 @@ def encrypt_oauth_data(data):
         return encrypted_data_b64
 
     except Exception as e:
-        print(
-            f"Error during parameter retrieval or encryption for {parameter_name}: {str(e)}"
+        logger.error(
+            "Error during parameter retrieval or encryption for %s: %s", parameter_name, str(e)
         )
         return None
 
@@ -105,7 +107,7 @@ def encrypt_oauth_data(data):
 def decrypt_oauth_data(data):
     ssm_client = boto3.client("ssm")
     parameter_name = os.getenv("OAUTH_ENCRYPTION_PARAMETER")
-    print("Parameter name being accessed:", parameter_name)
+    logger.debug("Parameter name being accessed: %s", parameter_name)
     if not parameter_name:
         raise ValueError(
             "The environment variable OAUTH_ENCRYPTION_PARAMETER is not set"
@@ -131,7 +133,7 @@ def decrypt_oauth_data(data):
         return oauth_data
 
     except Exception as e:
-        print(
-            f"Error during parameter retrieval or decryption for {parameter_name}: {str(e)}"
+        logger.error(
+            "Error during parameter retrieval or decryption for %s: %s", parameter_name, str(e)
         )
         return None

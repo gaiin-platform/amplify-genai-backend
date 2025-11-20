@@ -25,19 +25,20 @@ export const mistralTransform = (event) => {
 
 
 export const bedrockConverseTransform = (event, responseStream = null) => { 
-    if (event && event.d && event.d.delta && event.d.delta.text) { 
-        return {d: event.d.delta.text}
-    } else if (responseStream && event && event.d && event.d.delta && event.d.delta.reasoningContent.text && event.d.delta.reasoningContent.text) {
-        const reasoning = event.d.delta.reasoningContent.text;
+    // Bedrock sends raw event without 'd' wrapper
+    if (event && event.delta && event.delta.text) { 
+        return event.delta.text;  // Return just the text, sendDeltaToStream will wrap it
+    } else if (responseStream && event && event.delta && event.delta.reasoningContent && event.delta.reasoningContent.text) {
+        const reasoning = event.delta.reasoningContent.text;
         sendStatusEventToStream(responseStream, newStatus( {id: "reasoning", summary: "Thinking Details:", message: reasoning, icon: "bolt", inProgress: true, animated: true} ));
-    } else if (event && event.d && event.d && event.d.stopReason) {
-        switch (event.d.stopReason) {
+    } else if (event && event.stopReason) {
+        switch (event.stopReason) {
             case "content_filtered":
                 console.log("Bedrock Content_filtered Stop Reason");
-                return {d: "\nYour request was blocked by an AWS content filter."}
+                return "\nYour request was blocked by an AWS content filter.";
             case "guardrail_intervened":
                 console.log("Bedrock Guardrail_intervened Stop Reason");
-                return {d: "\nYour request was blocked by your organization's guardrails."}
+                return "\nYour request was blocked by your organization's guardrails.";
             default:
                 return null;
         }
@@ -47,8 +48,19 @@ export const bedrockConverseTransform = (event, responseStream = null) => {
 }
 
 export const bedrockTokenUsageTransform = (event) => {
-    if (event && event.d && event.d.usage) {
-        return event.d.usage;
+    // Bedrock sends raw event without 'd' wrapper
+    if (event && event.usage) {
+        const usage = event.usage;
+        
+        // Extract cached tokens from Claude/Anthropic format
+        usage.inputCachedTokens = usage.cache_read_input_tokens || 0;
+        usage.inputWriteCachedTokens = usage.cache_creation_input_tokens || 0;
+        
+        // Convert Bedrock snake_case to standard format  
+        usage.prompt_tokens = usage.input_tokens || 0;
+        usage.completion_tokens = usage.output_tokens || 0;
+        
+        return usage;
     } else {
         return null;
     }

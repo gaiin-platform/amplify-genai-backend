@@ -7,8 +7,11 @@ import { promisify } from 'util';
 import { extractParams } from "./common/handlers.js";  
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
-import { debug } from 'console';
-import AWSXRay from 'aws-xray-sdk';
+// Removed AWS X-Ray for performance optimization
+// Removed Python LiteLLM - now using native JS providers
+// 🛡️ COST PROTECTION
+import { withCircuitBreaker, withTimeout } from "./common/circuitBreaker.js";
+import { withCostMonitoring } from "./common/defensiveRouting.js";
 
 const pipelineAsync = promisify(pipeline);
 const logger = getLogger("index");
@@ -86,30 +89,77 @@ const returnResponse = async (responseStream, response) => {
 };
 
 
-export const handler = awslambda.streamifyResponse(async (event, responseStream, context) => {
-
-    const segment = AWSXRay.getSegment();
-    const subSegment = segment.addNewSubsegment('chat-js.index.handler');
+// 🛡️ PER-USER COST PROTECTION: Extract params first, then apply per-user circuit breaker
+const protectedHandler = withCostMonitoring(async (event, responseStream, context) => {
+    // 🚀 NATIVE JS PROVIDERS: No Python process needed - direct JS execution
 
     const effectiveStream = streamEnabled ? responseStream : new AggregatorStream();
 
     try {
-      logger.debug("Extracting params from event");
-      const params = await extractParams(event);
-      await routeRequest(params, returnResponse, effectiveStream);
-  
-      // If we are not streaming, send the final aggregated response now
-      if (!streamEnabled) {
-        effectiveStream.sendFinalDataResponse(responseStream);
-      }
+        logger.debug("Extracting params from event");
+        
+        // 🛡️ TIMEOUT PROTECTION: Prevent expensive hangs during param extraction
+        const params = await withTimeout(30000)(extractParams(event));
+        
+        // 🔑 PER-USER CIRCUIT BREAKER: Now we have user info for proper isolation
+        const functionName = context.functionName || process.env.SERVICE_NAME || 'amplify-lambda-js';
+        const userId = params?.user || null;
+        
+        if (userId) {
+            logger.debug(`🔑 Applying per-user circuit breaker for user ${userId.substring(0, 10)}...`);
+        } else {
+            logger.warn("⚠️ No user found - applying function-wide circuit breaker");
+        }
+        
+        // Apply per-user circuit breaker protection to the main routing
+        const perUserProtectedRouting = withCircuitBreaker(functionName, {
+            userId: userId, // 🔑 KEY ADDITION: Per-user isolation
+            maxErrorRate: 0.20, // 20% error rate threshold  
+            maxCostPerHour: 30,  // $30/hour cost threshold
+            cooldownPeriod: 300  // 5-minute cooldown
+        })(async (_event, _context, params) => {
+            // 🛡️ TIMEOUT PROTECTION: Main routing with 3-minute timeout (down from 15 min)
+            return await withTimeout(180000)(routeRequest(params, returnResponse, effectiveStream));
+        });
+        
+        // Execute the protected routing with user context
+        await perUserProtectedRouting(event, context, params);
+    
+        // If we are not streaming, send the final aggregated response now
+        if (!streamEnabled) {
+            effectiveStream.sendFinalDataResponse(responseStream);
+        }
     } catch (e) {
         logger.error("Error processing request: " + e.message, e);
-        await returnResponse(responseStream, {
-            statusCode: 400,
-            body: { error: e.message }
-        });
+        
+        // Enhanced error response with debugging info
+        const errorResponse = {
+            statusCode: 500,
+            body: { 
+                error: e.message,
+                timestamp: new Date().toISOString(),
+                requestId: context.awsRequestId
+            }
+        };
+        
+        // Special handling for timeout errors
+        if (e.message.includes('timed out')) {
+            errorResponse.statusCode = 408;
+            errorResponse.body.error = 'Request timeout - operation took too long';
+            logger.error("⏰ REQUEST TIMEOUT - prevented expensive hang:", {
+                duration: context.getRemainingTimeInMillis ? (900000 - context.getRemainingTimeInMillis()) : 'unknown',
+                requestId: context.awsRequestId
+            });
+        }
+        
+        await returnResponse(responseStream, errorResponse);
+        
+        // Re-throw for upstream error handling
+        throw e;
     } finally {
-        subSegment.close();
+        // Removed X-Ray tracing for performance optimization
     }
-  });
+});
+
+export const handler = awslambda.streamifyResponse(protectedHandler);
 

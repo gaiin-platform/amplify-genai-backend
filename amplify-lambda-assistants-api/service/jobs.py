@@ -5,6 +5,8 @@ import boto3
 import os
 import json
 
+from pycommon.logger import getLogger
+logger = getLogger("jobs")
 
 def stop_job(current_user, job_id):
     set_job_result(current_user, job_id, {"status": "stopped"})
@@ -18,7 +20,7 @@ def is_job_stopped(current_user, job_id):
 def init_job_status(current_user, initial_status):
 
     job_id = str(uuid.uuid4())
-    print(f"Initializing job status for {current_user}/{job_id} with status {initial_status}")
+    logger.info("Initializing job status for %s/%s with status %s", current_user, job_id, initial_status)
     table_name = os.getenv("JOB_STATUS_TABLE")
     if not table_name:
         raise ValueError("Environment variable JOB_STATUS_TABLE is not set")
@@ -37,16 +39,16 @@ def init_job_status(current_user, initial_status):
                 "updated_at": int(time.time()),
             }
         )
-        print(f"Job status initialized for {current_user}/{job_id}")
+        logger.info("Job status initialized for %s/%s", current_user, job_id)
         return job_id
     except Exception as e:
-        print(f"Error initializing job status: {e}")
+        logger.error("Error initializing job status: %s", e)
         raise RuntimeError(f"Error initializing job status: {e}")
 
 
 def update_job_status(current_user, job_id, status):
 
-    print(f"Updating job status for {current_user}/{job_id} to {status}")
+    logger.info("Updating job status for %s/%s to %s", current_user, job_id, status)
     # Environment variable for DynamoDB table
     table_name = os.getenv("JOB_STATUS_TABLE")
     if not table_name:
@@ -69,10 +71,10 @@ def update_job_status(current_user, job_id, status):
                 ":timestamp": int(time.time()),
             },
         )
-        print(f"Job status updated for {current_user}/{job_id} to {status}")
+        logger.info("Job status updated for %s/%s to %s", current_user, job_id, status)
         return {"message": "Job status updated successfully"}
     except Exception as e:
-        print(f"Error updating job status: {e}")
+        logger.error("Error updating job status: %s", e)
         raise RuntimeError(f"Error updating job status: {e}")
 
 
@@ -92,7 +94,7 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
     try:
         # Check if we need to store the result in S3
         if store_in_s3:
-            print(f"Storing result in S3 for {current_user}/{job_id}")
+            logger.info("Storing result in S3 for %s/%s", current_user, job_id)
             # Environment variable for S3 bucket
             bucket_name = os.getenv("JOB_RESULTS_BUCKET")
             if not bucket_name:
@@ -101,7 +103,7 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
             # Generate an S3 key
             s3_key = f"{current_user}/{job_id}/result.json"
 
-            print(f"Uploading result to S3: {bucket_name}/{s3_key}")
+            logger.info("Uploading result to S3: %s/%s", bucket_name, s3_key)
 
             # Upload result to S3
             s3.put_object(
@@ -111,7 +113,7 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
                 ContentType="application/json",
             )
 
-            print(f"Result uploaded to S3: {bucket_name}/{s3_key}")
+            logger.info("Result uploaded to S3: %s/%s", bucket_name, s3_key)
 
             # Update DynamoDB with S3 result reference
             table.update_item(
@@ -125,11 +127,11 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
                 },
             )
 
-            print(f"Stored result reference in DynamoDB for {current_user}/{job_id}")
+            logger.info("Stored result reference in DynamoDB for %s/%s", current_user, job_id)
 
             return {"message": "Result stored in S3 and reference updated in DynamoDB"}
 
-        print(f"Storing result directly in DynamoDB for {current_user}/{job_id}")
+        logger.info("Storing result directly in DynamoDB for %s/%s", current_user, job_id)
 
         # If result fits in DynamoDB, store it directly
         table.update_item(
@@ -143,12 +145,12 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
             },
         )
 
-        print(f"Result stored directly in DynamoDB for {current_user}/{job_id}")
+        logger.info("Result stored directly in DynamoDB for %s/%s", current_user, job_id)
 
         return {"message": "Result stored directly in DynamoDB"}
 
     except Exception as e:
-        print(f"Error setting job result: {e}")
+        logger.error("Error setting job result: %s", e)
         raise RuntimeError(f"Error setting job result: {e}")
 
 

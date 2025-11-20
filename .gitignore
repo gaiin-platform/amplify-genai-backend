@@ -31,7 +31,7 @@ internal/
 .requirements.zip*
 requirements.in
 .*venv
-
+claude.md
 
 # Serverless
 .serverless

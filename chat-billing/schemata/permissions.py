@@ -1,12 +1,14 @@
+from pycommon.logger import getLogger
+logger = getLogger("permissions")
+
 def can_generate_report(user, data):
     return True
 
 
 def get_permission_checker(user, type, op, data):
-    print(
-        "Checking permissions for user: {} and type: {} and op: {}".format(
-            user, type, op
-        )
+    logger.debug(
+        "Checking permissions for user: %s and type: %s and op: %s",
+        user, type, op
     )
     return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
 

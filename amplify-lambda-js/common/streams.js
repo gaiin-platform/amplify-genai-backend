@@ -4,6 +4,9 @@
 import { Writable } from "stream";
 import { TextDecoder } from "util";
 import { newStatus } from "./status.js";
+import { getLogger } from "./logging.js";
+
+const logger = getLogger("streams");
 
 export class TraceStream extends Writable {
     constructor(options, targetStream) {
@@ -39,7 +42,7 @@ export class TraceStream extends Writable {
             }
         }
         catch (e) {
-            console.log(e);
+            logger.error(e);
         }
     }
 
@@ -136,7 +139,7 @@ export class StatusOutputStream extends Writable {
                     });
                 }
             } catch (e) {
-                console.log(e);
+                logger.error(e);
             }
 
         }
@@ -284,14 +287,6 @@ export const sendOutOfOrderModeEventToStream = (resultStream) => {
     resultStream.write(`data: ${JSON.stringify({ s: "meta", m: "out_of_order" })}\n\n`);
 }
 
-export const forceFlush = (resultStream) => {
-    sendStateEventToStream(resultStream, newStatus(
-        {
-            inProgress: false,
-            message: " ".repeat(100000)
-        }));
-}
-
 export const sendStatusEventToStream = (resultStream, statusEvent) => {
     resultStream.write(`data: ${JSON.stringify({ s: "meta", st: statusEvent })}\n\n`);
 }
@@ -324,6 +319,14 @@ export const endStream = (resultStream) => {
     resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
 }
 
+export const forceFlush = (resultStream) => {
+    // Send invisible status with large payload to trigger AWS Lambda stream flush  
+    sendStatusEventToStream(resultStream, newStatus({
+        inProgress: false,
+        message: " ".repeat(100000)  // Large payload forces flush
+    }));
+}
+
 export const findResultKey = (result) => {
     const resultKey = Object.keys(result).find((k) => !k.startsWith("__tokens_"));
     return resultKey;
@@ -338,12 +341,12 @@ export const findResult = (result) => {
 export const sendErrorMessage = (writable, statusCode, code=null) => {
 
     if (!writable || writable.writableEnded) {
-        console.log('Stream already ended, cannot send error message');
+        logger.debug('Stream already ended, cannot send error message');
         return;
     }
 
-    console.log("-- Error Message Response Status -- ", statusCode);
-    console.log("-- Error Message Response Code -- ", code);
+    logger.debug("-- Error Message Response Status -- ", statusCode);
+    logger.debug("-- Error Message Response Code -- ", code);
 
     const waitMessage = " Please try another model or wait a few minutes before trying again.";
     let errorMessage = "Error retrieving response. Please try again."
@@ -364,7 +367,7 @@ export const sendErrorMessage = (writable, statusCode, code=null) => {
             writable.end();
         }
     } catch (err) {
-        console.error('Error while sending error message:', err);
+        logger.error('Error while sending error message:', err);
     }
 
 }

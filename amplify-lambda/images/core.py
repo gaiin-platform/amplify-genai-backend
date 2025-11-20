@@ -12,6 +12,8 @@ from pycommon.const import IMAGE_FILE_TYPES
 
 s3 = boto3.client("s3")
 
+from pycommon.logger import getLogger
+logger = getLogger("images")
 
 def is_base64_image(file_content):
     """
@@ -39,11 +41,11 @@ def resize_image(image):
     max_short_edge = 768
 
     width, height = image.size
-    print(f"Original image size: {width}x{height}")
+    logger.debug("Original image size: %dx%d", width, height)
 
     # Check if resizing up is needed
     if width < min_edge_size or height < min_edge_size:
-        print("Sizing image up")
+        logger.info("Sizing image up")
         scale_factor = max(min_edge_size / width, min_edge_size / height)
         width = int(width * scale_factor)
         height = int(height * scale_factor)
@@ -56,7 +58,7 @@ def resize_image(image):
         or width > max_short_edge
         or height > max_short_edge
     ):
-        print("Sizing image down")
+        logger.info("Sizing image down")
         if width > height:
             # Landscape
             scale_factor = min(max_long_edge / width, max_short_edge / height)
@@ -66,7 +68,7 @@ def resize_image(image):
 
         new_width = int(width * scale_factor)
         new_height = int(height * scale_factor)
-        print("Files new size: ", new_width, ", ", new_height)
+        logger.debug("Files new size: %d, %d", new_width, new_height)
         image = image.resize((new_width, new_height), Image.LANCZOS)
 
     return image
@@ -104,8 +106,8 @@ def process_images_for_chat(event, context):
             # Check if this is a base64-encoded image (already processed)
             file_content = response["Body"].read()
             if is_base64_image(file_content):
-                print(
-                    f"File {file_key} is already a base64-encoded image, skipping processing"
+                logger.info(
+                    "File %s is already a base64-encoded image, skipping processing", file_key
                 )
                 return {
                     "statusCode": 200,
@@ -119,8 +121,8 @@ def process_images_for_chat(event, context):
 
         elif content_type in IMAGE_FILE_TYPES:
             # This is a new image file that needs processing
-            print(
-                f"Processing new image file: {file_key} with content type: {content_type}"
+            logger.info(
+                "Processing new image file: %s with content type: %s", file_key, content_type
             )
             image_data = response["Body"].read()
         else:
@@ -131,7 +133,7 @@ def process_images_for_chat(event, context):
 
         image = resize_image(Image.open(BytesIO(image_data)))
 
-        print("Get entry in Files Dynamo Table using key ", file_key)
+        logger.debug("Get entry in Files Dynamo Table using key %s", file_key)
         dynamodb = boto3.resource("dynamodb")
         files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
 
@@ -149,7 +151,7 @@ def process_images_for_chat(event, context):
         createdAt = item.get("createdAt", datetime.now().isoformat())
 
         # Convert image to base64
-        print("Convert image to base64")
+        logger.debug("Convert image to base64")
         buffered = BytesIO()
 
         image.save(buffered, format=file_type.split("/")[1].upper())
@@ -163,10 +165,10 @@ def process_images_for_chat(event, context):
             ContentType="text/plain",
         )
 
-        print(f"Base64 encoded image saved as {file_key}")
+        logger.info("Base64 encoded image saved as %s", file_key)
 
         # update permissions
-        print("Update permissions")
+        logger.debug("Update permissions")
         user = file_key.split("/")[0]
 
         permissions_update = {
@@ -192,10 +194,10 @@ def process_images_for_chat(event, context):
                     ":totalTokens": image_metadata["totalTokens"]
                 },
             )
-            print(f"Updated file total tokens for {file_key}")
+            logger.info("Updated file total tokens for %s", file_key)
 
         except Exception as e:
-            print(f"Error updating file total tokens for {file_key}: {str(e)}")
+            logger.error("Error updating file total tokens for %s: %s", file_key, str(e))
             # continue
 
         return {
@@ -204,7 +206,7 @@ def process_images_for_chat(event, context):
         }
 
     except Exception as e:
-        print(f"Error processing image: {str(e)}")
+        logger.error("Error processing image: %s", str(e))
         return {
             "statusCode": 500,
             "body": json.dumps(f"Error processing image: {str(e)}"),
@@ -227,9 +229,9 @@ def put_image_file_metadata(bucket_name, key, name, tags, image_size, createdAt)
         "width": width,
         "isImage": True,
     }
-    print("Image metadata: ", image_metadata)
+    logger.debug("Image metadata: %s", image_metadata)
 
     s3.put_object(Bucket=bucket_name, Key=metadata_key, Body=json.dumps(image_metadata))
-    print(f"Uploaded metadata to {bucket_name}/{metadata_key}")
+    logger.info("Uploaded metadata to %s/%s", bucket_name, metadata_key)
 
     return image_metadata

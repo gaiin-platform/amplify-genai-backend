@@ -11,7 +11,8 @@ from agent.components.tool import register_tool
 from agent.core import Capability, ActionContext, Memory, ActionRegistry, Action
 from agent.prompt import Prompt
 from agent.tools.prompt_tools import prompt_llm_with_messages
-
+from pycommon.logger import getLogger
+logger = getLogger("agent_workflows")
 
 def update_schema_descriptions(schema: dict, args: dict) -> dict:
     properties = schema.get("properties", {})
@@ -149,7 +150,7 @@ class WorkflowCapability(Capability):
                     else self._should_skip_step(next_step, action_context)
                 )
                 if should_skip:
-                    print(f"-- skipping step in workflow -- {next_step.tool}")
+                    logger.info("-- skipping step in workflow -- %s", next_step.tool)
                     # Recursively call start_agent_loop to process the next step
                     return self.start_agent_loop(agent, action_context)
 
@@ -160,8 +161,8 @@ class WorkflowCapability(Capability):
                 self.action_registry.parameterize_actions(
                     [self._convert_step_to_action(next_step)]
                 )
-            print(
-                "-- remaining steps -- ",
+            logger.info(
+                "-- remaining steps -- %s",
                 [step.tool for step in self.remaining_steps[::-1]],
             )
         return True
@@ -198,7 +199,7 @@ class WorkflowCapability(Capability):
         result: any,
     ) -> any:
         if isinstance(action, dict) and action.get("error", None):
-            print("Terminating Workflow: ", action.get("error"))
+            logger.warning("Terminating Workflow: %s", action.get("error"))
             self.terminate_early = True
             return result
         # Enhanced error detection covering multiple error scenarios
@@ -233,8 +234,8 @@ class WorkflowCapability(Capability):
             error_message = "Unknown error"
 
             if self.retry_count[step_id] < self.max_retries:
-                print(
-                    f"-- Retrying step {self.current_step.tool} ({self.retry_count[step_id]}/{self.max_retries}) due to error --"
+                logger.info(
+                    "-- Retrying step %s (%s/%s) due to error --", self.current_step.tool, self.retry_count[step_id], self.max_retries
                 )
                 self.retry_count[step_id] += 1
                 self.remaining_steps.append(self.current_step)
@@ -317,7 +318,7 @@ class WorkflowCapability(Capability):
         return {}
 
     def _convert_step_to_action(self, step: Step) -> dict:
-        print("-- next step -- ", step.tool)
+        logger.info("-- next step -- %s", step.tool)
         return {
             "tool": step.tool,
             "args": step.args,

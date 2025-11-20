@@ -18,7 +18,12 @@ from pycommon.encoders import SmartDecimalEncoder
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
+from pycommon.logger import getLogger
+logger = getLogger("assistants_websites")
+
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -81,7 +86,7 @@ def is_supported_file_type(content_type, url):
     
     # Check if extension is disallowed
     if extension.lower() in DISALLOWED_EXTENSIONS:
-        print(f"Skipping disallowed file type: {extension} for URL: {url}")
+        logger.info("Skipping disallowed file type: %s for URL: %s", extension, url)
         return False
     
     return True
@@ -96,7 +101,7 @@ def apply_exclusions(urls, exclusions=None):
     # Apply excludedUrls (exact matches)
     if exclusions.get("excludedUrls"):
         filtered_urls = [url for url in filtered_urls if url not in exclusions["excludedUrls"]]
-        print(f"  Excluded {len(urls) - len(filtered_urls)} URLs via excludedUrls")
+        logger.debug("  Excluded %s URLs via excludedUrls", len(urls) - len(filtered_urls))
     
     # Apply excludeKeywords (case-insensitive substring matching)
     if exclusions.get("excludeKeywords"):
@@ -105,7 +110,7 @@ def apply_exclusions(urls, exclusions=None):
             url for url in filtered_urls 
             if not any(keyword.lower() in url.lower() for keyword in exclusions["excludeKeywords"])
         ]
-        print(f"  Excluded {original_count - len(filtered_urls)} URLs via excludeKeywords")
+        logger.debug("  Excluded %s URLs via excludeKeywords", original_count - len(filtered_urls))
     
     # Apply excludePatterns (wildcard patterns)
     if exclusions.get("excludePatterns"):
@@ -113,7 +118,7 @@ def apply_exclusions(urls, exclusions=None):
         for pattern in exclusions["excludePatterns"]:
             regex_pattern = pattern.replace("*", ".*")
             filtered_urls = [url for url in filtered_urls if not re.match(regex_pattern, url)]
-        print(f"  Excluded {original_count - len(filtered_urls)} URLs via excludePatterns")
+        logger.debug("  Excluded %s URLs via excludePatterns", original_count - len(filtered_urls))
     
     return filtered_urls
 
@@ -178,7 +183,7 @@ def sanitize_and_validate_url(url):
             sanitized_url += f"?{parsed.query}"
         if parsed.fragment:
             sanitized_url += f"#{parsed.fragment}"
-        print(f"Url is valid: {sanitized_url}")
+        logger.debug("Url is valid: %s", sanitized_url)
         return True, sanitized_url, None
         
     except Exception as e:
@@ -190,7 +195,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
         # Ensure max_pages is an integer or None for unlimited
         if max_pages is not None:
             max_pages = int(max_pages)
-        print(f"Attempting to scrape {'sitemap' if is_sitemap else 'website'}: {url}")
+        logger.info("Attempting to scrape %s: %s", 'sitemap' if is_sitemap else 'website', url)
         
         # Validate and sanitize the URL first
         is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
@@ -203,13 +208,13 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
         
         # Use the sanitized URL for scraping
         url = sanitized_url
-        print(f"Using sanitized URL: {url}")
+        logger.debug("Using sanitized URL: %s", url)
 
         # Determine if single URL or sitemap
         urls_to_scrape = []
         if is_sitemap:
             urls_to_scrape = extract_urls_from_sitemap(url, max_pages, exclusions)
-            print(f"Extracted {len(urls_to_scrape)} URLs from sitemap")
+            logger.info("Extracted %s URLs from sitemap", len(urls_to_scrape))
             if not urls_to_scrape:
                 return {
                     "success": False,
@@ -218,16 +223,16 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
                 }
         else:
             urls_to_scrape = [url]
-            print(f"Set up to scrape single URL: {url}")
+            logger.debug("Set up to scrape single URL: %s", url)
 
         # Scrape content from URLs - each URL gets its own data source
         scraped_ds = []
         for url_to_scrape in urls_to_scrape:
             # Note: URLs from sitemaps are already validated during extraction
-            print(f"Fetching and parsing URL: {url_to_scrape}")
+            logger.debug("Fetching and parsing URL: %s", url_to_scrape)
             content = fetch_and_parse_url(url_to_scrape)
             if content:
-                print(f"Successfully parsed content from {url_to_scrape}")
+                logger.debug("Successfully parsed content from %s", url_to_scrape)
                 
                 current_data = {
                     "url": url_to_scrape, 
@@ -241,24 +246,24 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
                 try:
                     data_source_data = save_scraped_content(current_data, access_token)
                     scraped_ds.append(data_source_data)
-                    print(f"Saved data source for {url_to_scrape} with ID: {data_source_data.get('id')}")
+                    logger.info("Saved data source for %s with ID: %s", url_to_scrape, data_source_data.get('id'))
                 except Exception as save_error:
-                    print(f"Error saving scraped content for {url_to_scrape}: {save_error}")
+                    logger.error("Error saving scraped content for %s: %s", url_to_scrape, save_error)
                     # Continue with other URLs even if one fails
                     continue
             else:
-                print(f"Failed to parse content from {url_to_scrape}")
+                logger.warning("Failed to parse content from %s", url_to_scrape)
 
         # Check if any URLs were successfully scraped
         if not scraped_ds:
-            print("No content was successfully scraped from any URL")
+            logger.warning("No content was successfully scraped from any URL")
             return {
                 "success": False,
                 "message": "Failed to scrape any content from the provided URLs",
                 "error": "All URL requests failed or returned no content",
             }
 
-        print(f"Successfully scraped {len(scraped_ds)} URLs, each saved as individual data sources")
+        logger.info("Successfully scraped %s URLs, each saved as individual data sources", len(scraped_ds))
 
         return {
             "success": True,
@@ -271,7 +276,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
         }
 
     except Exception as e:
-        print(f"Error scraping website: {e}")
+        logger.error("Error scraping website: %s", e)
         return {
             "success": False,
             "message": f"Failed to scrape website: {str(e)}",
@@ -315,7 +320,7 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=None, exclusions=None):
                 if is_valid:
                     urls.append(sanitized_url)
                 else:
-                    print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
+                    logger.warning("Skipping invalid URL from sitemap: %s - %s", url_loc, error_msg)
             else:
                 entries_to_process = url_entries if max_pages is None else url_entries[:max_pages]
                 for url_entry in entries_to_process:
@@ -325,14 +330,14 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=None, exclusions=None):
                     if is_valid:
                         urls.append(sanitized_url)
                     else:
-                        print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
+                        logger.warning("Skipping invalid URL from sitemap: %s - %s", url_loc, error_msg)
 
         # Apply exclusions before limiting by max_pages
         urls = apply_exclusions(urls, exclusions)
         return urls if max_pages is None else urls[:max_pages]
 
     except Exception as e:
-        print(f"Error extracting URLs from sitemap: {e}")
+        logger.error("Error extracting URLs from sitemap: %s", e)
         return []
 
 
@@ -354,7 +359,7 @@ def fetch_and_parse_url(url):
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            print(f"Error fetching URL {url}: {e}")
+            logger.error("Error fetching URL %s: %s", url, e)
             return None
 
         # Check if content is HTML
@@ -363,11 +368,11 @@ def fetch_and_parse_url(url):
             "text/html" not in content_type
             and "application/xhtml+xml" not in content_type
         ):
-            print(f"URL {url} returned non-HTML content: {content_type}")
+            logger.info("URL %s returned non-HTML content: %s", url, content_type)
 
             # Check if this is a supported file type
             if is_supported_file_type(content_type, url):
-                print(f"Processing supported file type: {content_type}")
+                logger.debug("Processing supported file type: %s", content_type)
                 return {
                     "metadata": {
                         "title": url.split("/")[-1],
@@ -380,7 +385,7 @@ def fetch_and_parse_url(url):
                 }
             else:
                 # Unsupported file type - skip it gracefully
-                print(f"Skipping unsupported file type: {content_type} for URL: {url}")
+                logger.info("Skipping unsupported file type: %s for URL: %s", content_type, url)
                 return None
 
         # Parse HTML
@@ -417,7 +422,7 @@ def fetch_and_parse_url(url):
                 # Get the content of the section
                 main_content = section.get_text(separator=" ", strip=True)
             else:
-                print(f"Could not find section with fragment: {fragment}")
+                logger.warning("Could not find section with fragment: %s", fragment)
 
         # If no specific section was found or no fragment was provided, get the main content
         if not main_content:
@@ -461,14 +466,14 @@ def fetch_and_parse_url(url):
         }
 
     except Exception as e:
-        print(f"Error processing URL {url}: {e}")
+        logger.error("Error processing URL %s: %s", url, e)
         return None
 
 def save_scraped_content(scraped_data, access_token):
-    print(f"Saving scraped content as DS: {scraped_data['url']}")
+    logger.info("Saving scraped content as DS: %s", scraped_data['url'])
     timestamp = scraped_data["scrapedAt"]
     
-    print(f"Scraped data keys: {list(scraped_data.keys())}")
+    logger.debug("Scraped data keys: %s", list(scraped_data.keys()))
     
     # Ensure all data passed to upload_file is JSON-safe using SmartDecimalEncoder
     safe_data_props = json.loads(json.dumps({
@@ -503,10 +508,10 @@ def save_scraped_content(scraped_data, access_token):
         groupId = None, # note: group system user would be the one making the request, no need to provide the groupId in this case
     )
     if not file_resp or not file_resp.get('id'):
-        print(f"Upload failed for scraped content. Response: {file_resp}")
+        logger.error("Upload failed for scraped content. Response: %s", file_resp)
         raise Exception("Failed to upload scraped content as a file")
     
-    print("DS content saved to s3 with key: ", file_resp['id'])
+    logger.info("DS content saved to s3 with key: %s", file_resp['id'])
     return {"id": "s3://" + file_resp['id'], # Mark as already processed with s3:// prefix
             "name": file_resp['name'],
             "metadata": {**file_resp['data'], "userDataSourceId": file_resp['id']}, # Preserve original ID
@@ -562,6 +567,9 @@ def save_scraped_content(scraped_data, access_token):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="rescan_websites")
 def rescan_websites(event, context, current_user, name, data=None):
     """
@@ -575,7 +583,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         assistant_public_id = data["data"]["assistantId"]
         force_rescan = data["data"].get("forceRescan", False)
         if force_rescan:
-            print("Force rescanning all websites for assistant: ", assistant_public_id)
+            logger.info("Force rescanning all websites for assistant: %s", assistant_public_id)
         
         # Get the most recent version of the assistant using public ID
         latest_assistant = get_most_recent_assistant_version(
@@ -594,7 +602,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         }
 
     except Exception as e:
-        print(f"Error rescanning websites: {e}")
+        logger.error("Error rescanning websites: %s", e)
         return {"success": False, "message": f"Failed to rescan websites: {str(e)}"}
 
 
@@ -602,7 +610,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
     """Process websites for an assistant and update data sources with proper cleanup."""
     try:
         website_urls = assistant.get("data", {}).get("websiteUrls", [])
-        print(f"Found {len(website_urls)} website URLs to check for rescanning")
+        logger.info("Found %s website URLs to check for rescanning", len(website_urls))
         if not website_urls:
             return {
                 "success": True,
@@ -615,7 +623,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
             ds for ds in existing_data_sources
             if ds.get("metadata", {}).get("type") == "assistant-web-content"
         ]
-        print(f"Found {len(existing_web_ds)} existing web data sources")
+        logger.debug("Found %s existing web data sources", len(existing_web_ds))
         
         # Determine which URLs need rescanning based on frequency
         urls_to_rescan = []
@@ -626,18 +634,18 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
             scan_frequency = website_url_entry.get("scanFrequency")
             last_scanned = website_url_entry.get("lastScanned")
             
-            print(f"Checking URL: {url}")
-            print(f"  scanFrequency: {scan_frequency}")
-            print(f"  lastScanned: {last_scanned}")
+            logger.debug("Checking URL: %s", url)
+            logger.debug("  scanFrequency: %s", scan_frequency)
+            logger.debug("  lastScanned: %s", last_scanned)
             
             # If force rescan is enabled, rescan all URLs regardless of scanFrequency
             if force_rescan:
                 needs_rescan = True
-                print(f"  -> Needs rescan: {needs_rescan} (force rescan enabled)")
+                logger.debug("  -> Needs rescan: %s (force rescan enabled)", needs_rescan)
             else:
                 # Skip if no scanFrequency is defined (only when not force rescanning)
                 if scan_frequency is None:
-                    print(f"  -> Skipping (no scanFrequency defined)")
+                    logger.debug("  -> Skipping (no scanFrequency defined)")
                     updated_website_urls.append(website_url_entry)
                     continue
                 
@@ -647,18 +655,18 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                     last_scan_date = datetime.fromisoformat(last_scanned)
                     time_since_scan = datetime.now() - last_scan_date
                     needs_rescan = time_since_scan >= timedelta(days=int(scan_frequency))
-                    print(f"  -> Time since last scan: {time_since_scan.days} days")
-                    print(f"  -> Needs rescan: {needs_rescan} (frequency: {scan_frequency} days)")
+                    logger.debug("  -> Time since last scan: %s days", time_since_scan.days)
+                    logger.debug("  -> Needs rescan: %s (frequency: %s days)", needs_rescan, scan_frequency)
                 else:
-                    print(f"  -> Needs rescan: {needs_rescan} (never scanned)")
+                    logger.debug("  -> Needs rescan: %s (never scanned)", needs_rescan)
             
             if needs_rescan:
                 urls_to_rescan.append(website_url_entry)
-                print(f"  -> Added to rescan queue")
+                logger.debug("  -> Added to rescan queue")
             
             updated_website_urls.append(website_url_entry)
         
-        print(f"URLs to rescan: {len(urls_to_rescan)}")
+        logger.info("URLs to rescan: %s", len(urls_to_rescan))
         if not urls_to_rescan:
             return {
                 "success": True,
@@ -667,7 +675,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
         
         # Get existing data sources that might need deletion (but don't delete yet)
         urls_being_rescanned = [entry["url"] for entry in urls_to_rescan]
-        print(f"URLs being rescanned: {urls_being_rescanned}")
+        logger.debug("URLs being rescanned: %s", urls_being_rescanned)
         old_ds_to_delete = []
         
         for ds in existing_web_ds:
@@ -685,16 +693,16 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
             
             if should_delete:
                 old_ds_to_delete.append(ds)
-                print(f"  Marked for deletion: {ds['id']} (sourceUrl: {ds_source_url}, fromSitemap: {ds_from_sitemap})")
+                logger.debug("  Marked for deletion: %s (sourceUrl: %s, fromSitemap: %s)", ds['id'], ds_source_url, ds_from_sitemap)
             else:
-                print(f"  Keeping: {ds['id']} (sourceUrl: {ds_source_url}, fromSitemap: {ds_from_sitemap})")
+                logger.debug("  Keeping: %s (sourceUrl: %s, fromSitemap: %s)", ds['id'], ds_source_url, ds_from_sitemap)
         
-        print(f"Found {len(old_ds_to_delete)} old data sources that will be deleted if scraping succeeds")
+        logger.info("Found %s old data sources that will be deleted if scraping succeeds", len(old_ds_to_delete))
         
         # Scrape content from URLs that need rescanning
         scraped_ds = []
         successful_urls = []  # Track which URLs were successfully scraped
-        print(f"Starting scraping process for {len(urls_to_rescan)} URLs")
+        logger.info("Starting scraping process for %s URLs", len(urls_to_rescan))
         for website_url_entry in urls_to_rescan:
             url = website_url_entry["url"]
             is_sitemap = website_url_entry.get("type") == "website/sitemap"
@@ -702,17 +710,17 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
             if max_pages is not None:
                 max_pages = int(max_pages)
             
-            print(f"Processing URL: {url} (sitemap: {is_sitemap}, maxPages: {max_pages})")
+            logger.debug("Processing URL: %s (sitemap: %s, maxPages: %s)", url, is_sitemap, max_pages)
             
             # Validate and sanitize the URL first
             is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
             if not is_valid:
-                print(f"Skipping invalid URL: {url} - {error_msg}")
+                logger.warning("Skipping invalid URL: %s - %s", url, error_msg)
                 continue
             
             # Use the sanitized URL for scraping
             url = sanitized_url
-            print(f"Using sanitized URL: {url}")
+            logger.debug("Using sanitized URL: %s", url)
             
             # Track scraped data sources for this specific URL
             url_scraped_ds = []
@@ -721,7 +729,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 # For sitemaps, extract all sub-URLs and create separate data sources for each
                 exclusions = website_url_entry.get("exclusions")
                 urls = extract_urls_from_sitemap(url, max_pages, exclusions)
-                print(f"  Extracted {len(urls)} URLs from sitemap")
+                logger.debug("  Extracted %s URLs from sitemap", len(urls))
                 for sub_url in urls:
                     # Note: URLs from sitemaps are already validated during extraction
                     content = fetch_and_parse_url(sub_url)
@@ -750,12 +758,12 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                             data_source_data.get("metadata", {}).update(metadata_updates)
                             scraped_ds.append(data_source_data)
                             url_scraped_ds.append(data_source_data)
-                            print(f"  Saved data source for: {sub_url}")
+                            logger.debug("  Saved data source for: %s", sub_url)
                         except Exception as save_error:
-                            print(f"Error saving scraped content for {sub_url}: {save_error}")
+                            logger.error("Error saving scraped content for %s: %s", sub_url, save_error)
                             continue
                     else:
-                        print(f"  Failed to fetch content from: {sub_url}")
+                        logger.warning("  Failed to fetch content from: %s", sub_url)
             else:
                 # For single URLs, create one data source
                 content = fetch_and_parse_url(url)
@@ -778,12 +786,12 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                         })
                         scraped_ds.append(data_source_data)
                         url_scraped_ds.append(data_source_data)
-                        print(f"  Saved data source for: {url}")
+                        logger.debug("  Saved data source for: %s", url)
                     except Exception as save_error:
-                        print(f"Error saving scraped content for {url}: {save_error}")
+                        logger.error("Error saving scraped content for %s: %s", url, save_error)
                         continue
                 else:
-                    print(f"  Failed to fetch content from: {url}")
+                    logger.warning("  Failed to fetch content from: %s", url)
             
             # Track successful URLs and update their lastScanned timestamp
             if url_scraped_ds:
@@ -793,20 +801,20 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 for entry in updated_website_urls:
                     if entry["url"] == url:
                         entry["lastScanned"] = latest_scraped_at
-                        print(f"  Updated lastScanned for {url} to {latest_scraped_at}")
+                        logger.debug("  Updated lastScanned for %s to %s", url, latest_scraped_at)
                         break
             else:
-                print(f"  No data sources created for {url} - keeping existing data")
+                logger.info("  No data sources created for %s - keeping existing data", url)
 
         if not scraped_ds:
-            print("No new content was successfully scraped - keeping all existing data sources")
+            logger.warning("No new content was successfully scraped - keeping all existing data sources")
             return {
                 "success": False,
                 "message": "Failed to scrape any content from the websites",
             }
         
         # Only delete old data sources for URLs that were successfully rescraped
-        print(f"Deleting old data sources for {len(successful_urls)} successfully rescraped URLs")
+        logger.info("Deleting old data sources for %s successfully rescraped URLs", len(successful_urls))
         for old_ds in old_ds_to_delete:
             ds_metadata = old_ds.get("metadata", {})
             old_ds_source_url = ds_metadata.get("sourceUrl")
@@ -823,11 +831,11 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
             if should_delete:
                 try:
                     delete_file(access_token, old_ds["id"])
-                    print(f"Deleted old web data source: {old_ds['id']} (sourceUrl: {old_ds_source_url}, fromSitemap: {old_ds_from_sitemap})")
+                    logger.info("Deleted old web data source: %s (sourceUrl: %s, fromSitemap: %s)", old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
                 except Exception as e:
-                    print(f"Error deleting old web data source: {e}")
+                    logger.error("Error deleting old web data source: %s", e)
             else:
-                print(f"Keeping old data source: {old_ds['id']} (sourceUrl: {old_ds_source_url}, fromSitemap: {old_ds_from_sitemap}) - parent URL rescraping failed")
+                logger.debug("Keeping old data source: %s (sourceUrl: %s, fromSitemap: %s) - parent URL rescraping failed", old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
 
         # Keep non-web data sources + web data sources not being rescanned
         non_web_data_sources = [
@@ -842,7 +850,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
         for ds in existing_web_ds:
             if ds["id"] not in old_ds_ids_to_delete:
                 kept_web_ds.append(ds)
-                print(f"  Keeping existing web data source: {ds['id']} (not being rescanned)")
+                logger.debug("  Keeping existing web data source: %s (not being rescanned)", ds['id'])
         
         # Combine: non-web + kept web + new scraped
         final_data_sources = non_web_data_sources + kept_web_ds + scraped_ds
@@ -869,7 +877,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
         }
 
     except Exception as e:
-        print(f"Error processing assistant websites: {e}")
+        logger.error("Error processing assistant websites: %s", e)
         return {
             "success": False,
             "message": f"Failed to process assistant websites: {str(e)}",
@@ -911,7 +919,7 @@ def extract_sitemap_urls(event, context, current_user, name, data):
         }
         
     except Exception as e:
-        print(f"Error extracting URLs from sitemap: {e}")
+        logger.error("Error extracting URLs from sitemap: %s", e)
     
     return {
             "success": False,

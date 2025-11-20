@@ -6,15 +6,20 @@ import {
     sendDeltaToStream,
     sendStateEventToStream,
     sendStatusEventToStream,
+    forceFlush,
     StatusOutputStream
 } from "../../common/streams.js";
-import {getChatFn, getModelByType, ModelTypes} from "../../common/params.js";
+import {getModelByType, ModelTypes} from "../../common/params.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
 import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
 import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
+import {getInternalLLM} from "../../llm/InternalLLM.js";
+import {getLogger} from "../../common/logging.js";
+
+const logger = getLogger("assistants.statemachine.states");
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -76,8 +81,7 @@ const formatContextInformationItem = (source) => {
 
         return `${source[0]}: ${source ? value.replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
     } catch (e) {
-        console.error("Error formatting context information item", source);
-        console.error(e);
+        logger.error("Error formatting context information item:", source, e);
         return "";
     }
 }
@@ -191,8 +195,8 @@ export const outputToStatus = (status, action) => {
             }
 
             statusLLM.responseStream = context.responseStream;
-            statusLLM.sendStatus(status);
-            statusLLM.forceFlush();
+            sendStatusEventToStream(statusLLM.responseStream, status);
+            forceFlush(statusLLM.responseStream);
             
 
 
@@ -205,8 +209,8 @@ export const outputToStatus = (status, action) => {
             } finally {
                 status.inProgress = false;
                 statusLLM.responseStream = context.responseStream;
-                llm.sendStatus(status);
-                llm.forceFlush();
+                sendStatusEventToStream(context.responseStream, status);
+                forceFlush(context.responseStream);
             }
         }
     };
@@ -446,25 +450,12 @@ export const ragAction = (config = {
                 context.history;
             
             const model = getModelByType(llm.params, ModelTypes.CHEAPEST);
-            const chatFn = async (body, writable, context) => {
-                return await getChatFn(model, body, writable, context);
-            }
-
-            const ragLLM = llm.clone(chatFn);
-            ragLLM.params = {
-                ...llm.params,
-                messages,
-                options: {
-                    ...llm.defaultBody,
-                    model:  model, 
-                    skipRag: true
-                }
-            };
+            // ✅ ELIMINATED: Dead getChatFn and ragLLM code replaced by InternalLLM
 
             const result = await getContextMessagesWithLLM(
-                ragLLM,
-                ragLLM.params,
-                {...ragLLM.defaultBody, messages: context.history},
+                model,
+                {...llm.params, messages, options: {...llm.defaultBody, model: model, skipRag: true}},
+                {...llm.defaultBody, messages: context.history},
                 ragDataSources)
 
             if (getParam(config, "addQueryToHistory", true) && filledInQuery) {
@@ -572,7 +563,7 @@ function matchKeys(context, keyRegex) {
         });
         return matches;
     } catch (e) {
-        console.error(e);
+        logger.error("Error in getContextMessages:", e);
         return [];
     }
 }
@@ -647,7 +638,7 @@ function fillInTemplate(templateStr, contextData) {
         result = template(contextData);
 
     } catch (e) {
-        console.error(e);
+        logger.error("Error in processAction:", e);
     }
 
     return result;
@@ -809,7 +800,8 @@ export class PromptAction {
             dataSources,
             null,
             (this.streamResults) ? llm.responseStream : null,
-            this.retries
+            this.retries,
+            this.streamResults // Enable streaming to user when streamResults is true
         );
 
         if (result) {
@@ -917,8 +909,7 @@ export class AssistantState {
                 }
                 
             } catch (e) {
-                console.error("Error invoking entry action in state: " + this.name);
-                console.error(e);
+                logger.error("Error invoking entry action in state:", this.name, e);
 
                 if (this.failOnError) {
                     throw e;
@@ -929,8 +920,8 @@ export class AssistantState {
         if (this.stream.target === STATUS_STREAM) {
             status.inProgress = false;
             actionLLM.responseStream = context.responseStream;
-            actionLLM.sendStatus(status);
-            actionLLM.forceFlush();
+            sendStatusEventToStream(context.responseStream, status);
+            forceFlush(context.responseStream);
         }
     }
 
@@ -1101,7 +1092,7 @@ export class StateBasedAssistant {
             this.initialState);
     }
 
-    async handler(llm, params, body, dataSources, responseStream) {
+    async handler(originalLLM, params, body, dataSources, responseStream) {
 
         const user = getUser(params).split("@")[0];
         const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
@@ -1109,6 +1100,18 @@ export class StateBasedAssistant {
         const convoDataSources = await translateUserDataSourcesToHashDataSources(
             getDataSourcesInConversation(body, true)
         );
+
+        // 🚀 BREAKTHROUGH: Create InternalLLM for massive performance gains
+        // This bypasses the expensive chatWithDataStateless pipeline for internal operations
+        // Keep original LLM for any operations that might need the full RAG pipeline
+        const internalLLM = getInternalLLM(params.options.model, params.account, responseStream);
+        // Merge params with body.options to include trackConversations and other flags
+        internalLLM.params = { 
+            ...params, 
+            options: { ...params.options, ...body.options } 
+        };
+        
+        logger.info(`🚀 StateBasedAssistant using InternalLLM for ${this.displayName}`);
 
         const context = {
             data: {
@@ -1129,13 +1132,15 @@ export class StateBasedAssistant {
             params,
             body,
             history: body.messages,
+            originalLLM // Keep reference to original LLM for fallback if needed
         };
 
         const stateMachine = this.createAssistantStateMachine();
 
-        llm.enablePassThrough();
+        // Use InternalLLM for internal operations
+        internalLLM.enablePassThrough();
 
-        await stateMachine.on(llm, context, dataSources);
+        await stateMachine.on(internalLLM, context, dataSources);
 
         responseStream.end();
     }

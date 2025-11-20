@@ -4,6 +4,9 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 from delegation.api_keys import create_agent_event_api_key
 from pycommon.api.api_key import deactivate_key
+from pycommon.logger import getLogger
+logger = getLogger("agent_event_templates")
+
 # Initialize AWS resources
 dynamodb = boto3.resource("dynamodb")
 
@@ -54,7 +57,7 @@ def get_assistant_by_alias(user, assistant_alias):
         }
 
     except ClientError as e:
-        print(f"Error retrieving assistant by alias: {e}")
+        logger.error("Error retrieving assistant by alias: %s", e)
         return {
             "success": False,
             "message": "Server error: Unable to retrieve assistant at this time. Please try again later.",
@@ -133,7 +136,7 @@ def add_event_template(
         }
 
     except ClientError as e:
-        print(f"Error adding event template: {e}")
+        logger.error("Error adding event template: %s", e)
         return {
             "success": False,
             "message": "Server error: Unable to add event template. Please try again later.",
@@ -168,7 +171,7 @@ def remove_event_template(user, tag, access_token):
         }
 
     except ClientError as e:
-        print(f"Error removing event template: {e}")
+        logger.error("Error removing event template: %s", e)
         return {
             "success": False,
             "message": "Server error: Unable to remove event template. Please try again later.",
@@ -220,7 +223,7 @@ def get_event_template(user, tag):
         }
 
     except ClientError as e:
-        print(f"Error retrieving event template: {e}")
+        logger.error("Error retrieving event template: %s", e)
         return {
             "success": False,
             "message": "Server error: Unable to retrieve event template. Please try again later.",
@@ -264,7 +267,7 @@ def list_event_templates_for_user(user):
         }
 
     except ClientError as e:
-        print(f"Error listing event templates: {e}")
+        logger.error("Error listing event templates: %s", e)
         return {
             "success": False,
             "data": None,
@@ -301,7 +304,7 @@ def list_event_templates_tags_for_user(user):
         }
 
     except ClientError as e:
-        print(f"Error listing event template tags: {e}")
+        logger.error("Error listing event template tags: %s", e)
         return {
             "success": False,
             "message": "Server error: Unable to list event template tags. Please try again later.",
@@ -339,7 +342,7 @@ def is_event_template_tag_available(user, tag, assistant_id=None):
         }
 
     except ClientError as e:
-        print(f"Error checking event template tag availability: {e}")
+        logger.error("Error checking event template tag availability: %s", e)
         return {
             "success": False,
             "data": None,

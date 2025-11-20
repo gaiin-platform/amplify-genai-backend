@@ -2,6 +2,10 @@ from decimal import Decimal
 from requests.auth import HTTPBasicAuth
 from pycommon.encoders import SafeDecimalEncoder
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -23,6 +27,8 @@ from service.jobs import check_job_status, set_job_result
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["OP_LOG_DYNAMO_TABLE"])
 
+from pycommon.logger import getLogger
+logger = getLogger("assistants_api")
 
 def log_execution(current_user, data, code, message, result, metadata={}):
     try:
@@ -85,7 +91,7 @@ def log_execution(current_user, data, code, message, result, metadata={}):
 
         table.put_item(Item=log_item)
     except Exception as e:
-        print(f"Error logging execution: {str(e)}")
+        logger.error("Error logging execution: %s", str(e))
 
 
 def build_amplify_api_action(current_user, token, data, method="POST"):
@@ -102,10 +108,10 @@ def build_amplify_api_action(current_user, token, data, method="POST"):
 
     def send_request():
         if method.upper() == "GET":
-            print(f"Sending GET request to {url} with query params: {payload}")
+            logger.debug("Sending GET request to %s with query params: %s", url, payload)
             response = requests.get(url, headers=headers, params=payload)
         else:
-            print(f"Sending POST request to {url} with payload: {payload}")
+            logger.debug("Sending POST request to %s with payload: %s", url, payload)
             response = requests.post(
                 url, headers=headers, data=json.dumps({"data": payload})
             )
@@ -134,8 +140,8 @@ def print_curl_command(method, url, headers, body, auth_instance):
     if isinstance(auth_instance, HTTPBasicAuth):
         curl_command += f' -u "{auth_instance.username}:{auth_instance.password}"'
 
-    print("cURL command:")
-    print(curl_command)
+    logger.debug("cURL command:")
+    logger.debug("%s", curl_command)
 
 
 def replace_placeholders(
@@ -182,35 +188,33 @@ def build_http_action(current_user, data):
     )
     auth = operation_definition.get("auth", None)
 
-    # print everything
-    print(f"Operation definition: {operation_definition}")
-    print(f"Action: {action}")
-    print(f"Building HTTP action for URL: {url}")
-    print(f"Method: {method}")
-    print(f"Body: {body}")
-    print(f"Headers: {headers}")
-    print(f"Auth: {auth}")
+    # Debug logging
+    logger.debug("Operation definition: %s", operation_definition)
+    logger.debug("Action: %s", action)
+    logger.debug("Building HTTP action for URL: %s", url)
+    logger.debug("Method: %s", method)
+    logger.debug("Body: %s", body)
+    logger.debug("Headers: %s", headers)
+    logger.debug("Auth: %s", auth)
 
     # Set up authentication if provided
     auth_instance = None
     if auth:
         if auth["type"].lower() == "bearer":
-            print("Setting up bearer token authentication.")
+            logger.debug("Setting up bearer token authentication.")
             headers["Authorization"] = f"Bearer {auth['token']}"
         elif auth["type"].lower() == "basic":
             auth_instance = HTTPBasicAuth(auth["username"], auth["password"])
 
     def action():
 
-        # print everything going into the request in a nice format similar to the function call
-        debug = True
-        if debug:
-            print(f"Final HTTP action for URL: {url}")
-            print(f"Method: {method}")
-            print(f"Body: {body}")
-            print(f"Headers: {headers}")
-            print(f"Auth: {auth_instance}")
-            print_curl_command(method, url, headers, body, auth_instance)
+        # Debug logging for the final request
+        logger.debug("Final HTTP action for URL: %s", url)
+        logger.debug("Method: %s", method)
+        logger.debug("Body: %s", body)
+        logger.debug("Headers: %s", headers)
+        logger.debug("Auth: %s", auth_instance)
+        print_curl_command(method, url, headers, body, auth_instance)
 
         # Make the request
         response = requests.request(
@@ -224,7 +228,7 @@ def build_http_action(current_user, data):
         if response.status_code == 200:
             return response.status_code, response.reason, response.json()
 
-        print(f"HTTP request failed with status code {response.status_code} and reason {response.reason}")
+        logger.error("HTTP request failed with status code %s and reason %s", response.status_code, response.reason)
         return response.status_code, response.reason, None
 
     return action
@@ -233,7 +237,7 @@ def build_http_action(current_user, data):
 def resolve_op_definition(current_user, token, action_name, data):
     op_def = data.get("operationDefinition", None)
     if not op_def:
-        print(f"Operation definition not found in data, resolving...")
+        logger.debug("Operation definition not found in data, resolving...")
 
         api_base = os.environ.get("API_BASE_URL", None)
         # make a call to API_BASE_URL + /ops/get with {data:{tag:default}} as the payload and the token as a
@@ -250,22 +254,22 @@ def resolve_op_definition(current_user, token, action_name, data):
             response.raise_for_status()
             result = response.json()
 
-            print(f"Result: {result}")
+            logger.debug("Result: %s", result)
             # convert to dict
             ops = result.get("data", [])
-            print(f"Ops: {ops}")
+            logger.debug("Ops: %s", ops)
             # find the operation definition with the name action_name
             op_def = next(
                 (op for op in ops if op.get("name", None) == action_name), None
             )
         except Exception as e:
-            print(f"Failed to resolve operation definition: {str(e)}")
+            logger.error("Failed to resolve operation definition: %s", str(e))
             return None
 
     if op_def and not data.get("operationDefinition", None):
         data["operationDefinition"] = op_def
 
-    print(f"Op def: {op_def}")
+    logger.debug("Op def: %s", op_def)
     return op_def
 
 
@@ -274,19 +278,19 @@ def build_action(current_user, token, action_name, data):
     op_def = resolve_op_definition(current_user, token, action_name, data)
 
     if not op_def:
-        print(f"No operation definition found for {action_name}.")
+        logger.error("No operation definition found for %s.", action_name)
         raise ValueError(f"No operation definition found for {action_name}.")
 
     action_type = op_def.get("type", "custom")
 
     if action_type != "http":
-        print("Building Amplify API action.")
+        logger.debug("Building Amplify API action.")
         return build_amplify_api_action(current_user, token, data, op_def.get("method", "POST"))
     else:
-        print("Building HTTP action.")
+        logger.debug("Building HTTP action.")
         return build_http_action(current_user, data)
 
-    print("Unknown operation type.")
+    logger.warning("Unknown operation type.")
     return lambda: (
         200,
         "Unknown operation type.",
@@ -294,6 +298,10 @@ def build_action(current_user, token, action_name, data):
     )
 
 
+@required_env_vars({
+    "OP_LOG_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+
+})
 @validated("execute_custom_auto")
 def execute_custom_auto(event, context, current_user, name, data):
     try:
@@ -307,26 +315,26 @@ def execute_custom_auto(event, context, current_user, name, data):
 
         # Log the conversation and message IDs
         action_name = nested_data.get("action", {}).get("name", "unknown")
-        print(f"Executing action: {action_name}")
-        print(f"Payload keys: {nested_data.get('action', {}).get('payload', {}).keys()}")
-        print(f"Conversation ID: {conversation_id}")
-        print(f"Message ID: {message_id}")
-        print(f"Assistant ID: {assistant_id}")
+        logger.info("Executing action: %s", action_name)
+        logger.debug("Payload keys: %s", list(nested_data.get('action', {}).get('payload', {}).keys()))
+        logger.debug("Conversation ID: %s", conversation_id)
+        logger.debug("Message ID: %s", message_id)
+        logger.debug("Assistant ID: %s", assistant_id)
 
         action = build_action(current_user, token, action_name, nested_data)
 
         if action is None:
-            print("The specified operation was not found.")
+            logger.error("The specified operation was not found.")
             return 404, "The specified operation was not found. Double check the name and ID of the action.", None
 
         try:
             # Log the execution time
-            print("Executing action...")
+            logger.info("Executing action...")
             start_time = datetime.now()
             code, message, result = action()
             end_time = datetime.now()
 
-            print(f"Execution time: {end_time - start_time}")
+            logger.info("Execution time: %s", end_time - start_time)
 
             # Create metadata that captures start_time and end_time in camel case and converts to isoformat
             metadata = {
@@ -359,7 +367,7 @@ def execute_custom_auto(event, context, current_user, name, data):
                 error_result,
             )
 
-            print(f"An error occurred while executing the action: {str(e)}")
+            logger.error("An error occurred while executing the action: %s", str(e))
             return {"success": False, "error": str(e)}
 
     except Exception as e:
@@ -379,6 +387,7 @@ def execute_custom_auto(event, context, current_user, name, data):
             error_result,
         )
 
+        logger.error("An unexpected error occurred: %s", str(e))
         return f"An unexpected error occurred: {str(e)}"
 
 
@@ -425,6 +434,10 @@ def execute_custom_auto(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "JOBS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_JOBS_BUCKET": [S3Operation.GET_OBJECT],
+})
 @validated("get_result")
 def get_job_result(event, context, current_user, name, data):
     try:
@@ -440,6 +453,10 @@ def get_job_result(event, context, current_user, name, data):
         return {"success": False, "error": str(e)}
 
 
+@required_env_vars({
+    "JOBS_DYNAMODB_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_JOBS_BUCKET": [S3Operation.PUT_OBJECT],
+})
 @validated("set_result")
 def update_job_result(event, context, current_user, name, data):
     try:

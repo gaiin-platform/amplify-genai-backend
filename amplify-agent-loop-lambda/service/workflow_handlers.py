@@ -6,8 +6,17 @@ from workflow.workflow_template_registry import (
     update_workflow_template,
 )
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
+from pycommon.logger import getLogger
+logger = getLogger("workflow_handlers")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @api_tool(
     path="/vu-agent/register-workflow-template",
     tags=["workflows"],
@@ -107,15 +116,19 @@ def register_workflow_template_handler(
                 output_schema=output_schema,
                 is_base_template=is_base_template,
                 is_public=is_public,
+                access_token=access_token,
             )
         )
-        print(f"Registered workflow template: {template_id}")
+        logger.info("Registered workflow template: %s", template_id)
         return {"templateId": template_id}  # Use camel case in response
     except Exception as e:
-        print(f"Error registering workflow template: {e}")
+        logger.error("Error registering workflow template: %s", e)
         raise RuntimeError(f"Failed to register workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
 @api_tool(
     path="/vu-agent/delete-workflow-template",
     tags=["workflows"],
@@ -145,13 +158,16 @@ def register_workflow_template_handler(
 )
 def delete_workflow_template_handler(current_user, access_token, template_id):
     try:
-        return delete_workflow_template(current_user, template_id)
+        return delete_workflow_template(current_user, template_id, access_token)
 
     except Exception as e:
-        print(f"Error deleting workflow template: {e}")
+        logger.error("Error deleting workflow template: %s", e)
         raise RuntimeError(f"Failed to delete workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @api_tool(
     path="/vu-agent/get-workflow-template",
     tags=["workflows"],
@@ -233,7 +249,7 @@ def delete_workflow_template_handler(current_user, access_token, template_id):
 )
 def get_workflow_template_handler(current_user, access_token, template_id):
     try:
-        template = get_workflow_template(current_user, template_id)
+        template = get_workflow_template(current_user, template_id, access_token)
         if template is None:
             raise ValueError("Template not found")
         return template  # No need for conversion; already uses templateId
@@ -241,6 +257,9 @@ def get_workflow_template_handler(current_user, access_token, template_id):
         raise RuntimeError(f"Failed to get workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-workflow-templates",
     tags=["workflows"],
@@ -325,6 +344,9 @@ def list_workflow_templates_handler(current_user, access_token, filter_base_temp
         raise RuntimeError(f"Failed to list workflow templates: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @api_tool(
     path="/vu-agent/update-workflow-template",
     tags=["workflows"],
@@ -441,8 +463,9 @@ def update_workflow_template_handler(
             output_schema=output_schema,
             is_base_template=is_base_template,
             is_public=is_public,
+            access_token=access_token,
         )
 
     except Exception as e:
-        print(f"Error updating workflow template: {e}")
+        logger.error("Error updating workflow template: %s", e)
         raise RuntimeError(f"Failed to update workflow template: {str(e)}")
