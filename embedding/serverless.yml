@@ -12,7 +12,7 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-deployment-bucket
-  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
 
 custom:
   pythonRequirements:
