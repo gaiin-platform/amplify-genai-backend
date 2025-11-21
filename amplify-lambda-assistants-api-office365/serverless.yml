@@ -11,8 +11,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-  - serverless-cloudformation-changesets
-
+  - serverless-cloudformation-changesets-v3
 custom:
   pythonRequirements:
     dockerizePip: non-linux
