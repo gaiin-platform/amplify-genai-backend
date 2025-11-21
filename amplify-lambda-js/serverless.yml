@@ -4,7 +4,7 @@ frameworkVersion: '3'
 plugins:
   - serverless-offline
   - serverless-prune-plugin 
-  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
 
 custom:
   serverless-offline: 
