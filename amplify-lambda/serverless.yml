@@ -12,8 +12,8 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-domain-manager
-  - serverless-cloudformation-changesets  
-
+  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
 layers:
   markitdown:
     path: markitdown
