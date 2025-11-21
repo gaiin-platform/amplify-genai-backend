@@ -388,11 +388,11 @@ const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
         user = params.user; // Assign user from params
         logger.info("Request initiated by user", { user, requestBody: body });
 
-        // Check if user is in Admin group by querying AMPLIFY_ADMIN_DYNAMODB_TABLE
+        // Check if user is in Admin group by querying ADMIN_DYNAMODB_TABLE
         logger.info("Starting admin privilege verification");
-        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -755,9 +755,9 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
 
         // Step 1: Check admin privileges
         logger.info("Verifying admin privileges");
-        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -1450,10 +1450,10 @@ const internalGetUserCostHistoryHandler = async (event, context, callback) => {
         // Check admin privileges if requesting another user's history
         if (requestedEmail !== user) {
             logger.info("Verifying admin privileges for cross-user history request");
-            const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
+            const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
             
             if (!adminTableName) {
-                logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
+                logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
                 return {
                     statusCode: 500,
                     body: JSON.stringify({ error: 'Server configuration error' }),
