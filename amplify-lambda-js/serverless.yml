@@ -185,7 +185,16 @@ functions:
           path: billing/list-user-mtd-costs
           method: post
           cors: true
-
+ 
+  user_cost_history:
+    handler: billing/mtd.getUserCostHistoryHandler
+    memorySize: 256
+    timeout: 30
+    events:
+      - http:
+          path: billing/user-cost-history
+          method: post
+          cors: true
 
 resources:
   Resources:
