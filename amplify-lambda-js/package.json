@@ -4,7 +4,8 @@
   "devDependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "serverless-offline": "^13.3.2"
+    "serverless-offline": "^13.3.2",
+    "serverless-cloudformation-changesets-v3": "^0.1.0"    
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.714.0",
