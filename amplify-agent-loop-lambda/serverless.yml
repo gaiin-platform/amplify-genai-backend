@@ -27,7 +27,7 @@ custom:
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   # Using your existing repository
-  ecrRepository: 654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
+  ecrRepository: ${aws:accountId}.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
   # Add timestamp to image tags from build script
   deployTimestamp: ${env:DEPLOY_TIMESTAMP, ""}
 
@@ -275,7 +275,7 @@ resources:
                 - bedrock:InvokeModelWithResponseStream
               Resource:
                 - arn:aws:bedrock:*::foundation-model/*
-                - arn:aws:bedrock:*:654654422653:inference-profile/*
+                - arn:aws:bedrock:*:${aws:accountId}:inference-profile/*
 
             # Add permission to pull from your specific ECR repository
             - Effect: Allow
@@ -283,7 +283,7 @@ resources:
                 - ecr:BatchGetImage
                 - ecr:GetDownloadUrlForLayer
               Resource:
-                - arn:aws:ecr:us-east-1:654654422653:repository/dev-amplifygenai-repo
+                - arn:aws:ecr:us-east-1:${aws:accountId}:repository/dev-amplifygenai-repo
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
