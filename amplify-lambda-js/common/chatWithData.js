@@ -311,8 +311,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             
         } else if (model.provider === 'Bedrock') {
             const usage = bedrockTokenUsageTransform(event);
-            if (usage) {                                                                     // currently no cached tokens 
-                recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
+            if (usage) {
+                recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, usage.cached_tokens || 0, details);
             }
             result = bedrockConverseTransform(event, responseStream);
         } else if (isGeminiModel(model.id)) {            

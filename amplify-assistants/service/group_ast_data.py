@@ -298,7 +298,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             )
 
             # Determine categories
-            category = conv.get("category", "").strip()
+            category = (conv.get("category") or "").strip()
             if category:  # Only add non-empty categories
                 categories[category] = categories.get(category, 0) + 1
 
