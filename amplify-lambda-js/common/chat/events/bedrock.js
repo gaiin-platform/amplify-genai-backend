@@ -49,6 +49,11 @@ export const bedrockConverseTransform = (event, responseStream = null) => {
 export const bedrockTokenUsageTransform = (event) => {
     if (event && event.d && event.d.usage) {
         return event.d.usage;
+    } else if (event && event.usage) {
+        const usage = event.usage;
+        // Calculate total cached tokens from both input cached fields
+        usage.cached_tokens = (usage.inputCachedTokens || 0) + (usage.inputWriteCachedTokens || 0);
+        return usage;
     } else {
         return null;
     }
