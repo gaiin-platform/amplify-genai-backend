@@ -1,7 +1,7 @@
 import os
 import uuid
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 from pycommon.logger import getLogger
 logger = getLogger("accounting")
 
@@ -105,7 +105,7 @@ def record_usage(
 
         logger.info("-- Total cost -- %s", total_cost)
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         current_hour = now.hour
 
         # Create the accountInfo (secondary key)
@@ -119,10 +119,11 @@ def record_usage(
         dynamodb.update_item(
             TableName=costDynamoTableName,
             Key={"id": {"S": account["user"]}, "accountInfo": {"S": account_info}},
-            UpdateExpression="SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList)",
+            UpdateExpression="SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), record_type = if_not_exists(record_type, :recordType)",
             ExpressionAttributeValues={
                 ":zero": {"N": "0"},
                 ":emptyList": {"L": empty_list},
+                ":recordType": {"S": "cost"},
             },
         )
 
