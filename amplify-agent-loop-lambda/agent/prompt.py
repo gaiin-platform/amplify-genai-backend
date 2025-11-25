@@ -210,6 +210,7 @@ def get_model_provider(model_id):
         return None
     
     try:
+        dynamodb = boto3.client("dynamodb")
         model_rate_response = dynamodb.query(
             TableName=model_rate_table,
             KeyConditionExpression="ModelID = :modelId",
