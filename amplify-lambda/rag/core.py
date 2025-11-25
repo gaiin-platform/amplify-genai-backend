@@ -688,10 +688,7 @@ def process_document_for_rag(event, context):
                             logger.info("RAG enabled: %s", rag_enabled)
 
                             if not rag_enabled:
-                                logger.info(
-                                    "RAG chunking is disabled, skipping chunk queue..."
-                                )
-                                delete_rag_secrets_for_document(key)
+                                logger.info( "RAG chunking is disabled, skipping chunk queue...")
                             else:
                                 chunk_queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
                                 logger.info("Sending message to chunking queue")
