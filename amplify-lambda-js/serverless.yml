@@ -3,8 +3,8 @@ frameworkVersion: '3'
 
 plugins:
   - serverless-offline
-  - serverless-prune-plugin
-  - serverless-cloudformation-changesets
+  - serverless-prune-plugin 
+  - serverless-cloudformation-changesets-v3
 
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
