@@ -70,10 +70,7 @@ export const getBudgetTokens = (params, maxTokens) => {
 }
 
 
-// getChatFn function removed - functionality moved to UnifiedLLMClient.js
-
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
 }
 
-// isGeminiModel function removed - now defined locally in UnifiedLLMClient.js where it's used
