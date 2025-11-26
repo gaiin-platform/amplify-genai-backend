@@ -103,6 +103,13 @@ from integrations.o365.sharepoint import (
     list_site_lists,
     list_sites,
     update_list_item,
+    delete_list_item,
+    list_document_libraries,
+    list_library_files,
+    get_file_download_url,
+    get_drive_item_metadata,
+    upload_file_to_library,
+    get_all_library_files_recursively,
 )
 from integrations.o365.teams import (
     create_channel,
@@ -1293,6 +1300,220 @@ def delete_list_item_handler(current_user, data):
     return common_handler(delete_list_item, site_id=None, list_id=None, item_id=None)(
         current_user, data
     )
+
+
+### sharepoint document libraries ###
+
+
+@api_tool(
+    path="/microsoft/integrations/list_document_libraries",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_read",
+        "microsoft_drive",
+    ],
+    name="microsoftListDocumentLibraries",
+    description="Lists document libraries in a SharePoint site.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum number of libraries to retrieve",
+                "default": 25,
+            },
+            "skip": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of libraries to skip",
+                "default": 0,
+            },
+        },
+        "required": ["site_id"],
+    },
+)
+def list_document_libraries_handler(current_user, data):
+    return common_handler(list_document_libraries, site_id=None, top=25, skip=0)(
+        current_user, data
+    )
+
+
+@api_tool(
+    path="/microsoft/integrations/list_library_files",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_read",
+        "microsoft_drive",
+    ],
+    name="microsoftListLibraryFiles",
+    description="Lists files in a SharePoint document library folder.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "drive_id": {"type": "string", "description": "Document library (drive) ID (required)"},
+            "folder_path": {
+                "type": "string",
+                "description": "Folder path or 'root' for root folder",
+                "default": "root",
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum number of files to retrieve",
+                "default": 100,
+            },
+            "skip": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of files to skip",
+                "default": 0,
+            },
+        },
+        "required": ["site_id", "drive_id"],
+    },
+)
+def list_library_files_handler(current_user, data):
+    return common_handler(
+        list_library_files, site_id=None, drive_id=None, folder_path="root", top=100, skip=0
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_sharepoint_file_download_url",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_read",
+        "microsoft_drive",
+    ],
+    name="microsoftGetSharepointFileDownloadUrl",
+    description="Gets download URL for a SharePoint file.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "drive_id": {"type": "string", "description": "Document library (drive) ID (required)"},
+            "item_id": {"type": "string", "description": "File item ID (required)"},
+        },
+        "required": ["site_id", "drive_id", "item_id"],
+    },
+)
+def get_sharepoint_file_download_url_handler(current_user, data):
+    return common_handler(
+        get_file_download_url, site_id=None, drive_id=None, item_id=None
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_sharepoint_drive_item_metadata",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_read",
+        "microsoft_drive",
+    ],
+    name="microsoftGetSharepointDriveItemMetadata",
+    description="Gets metadata for a SharePoint drive item.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "drive_id": {"type": "string", "description": "Document library (drive) ID (required)"},
+            "item_id": {"type": "string", "description": "Item ID (required)"},
+        },
+        "required": ["site_id", "drive_id", "item_id"],
+    },
+)
+def get_sharepoint_drive_item_metadata_handler(current_user, data):
+    return common_handler(
+        get_drive_item_metadata, site_id=None, drive_id=None, item_id=None
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/upload_file_to_sharepoint_library",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_write",
+        "microsoft_drive",
+    ],
+    name="microsoftUploadFileToSharepointLibrary",
+    description="Uploads a file to a SharePoint document library.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "drive_id": {"type": "string", "description": "Document library (drive) ID (required)"},
+            "file_name": {"type": "string", "description": "Name for the uploaded file (required)"},
+            "file_content": {
+                "type": "string",
+                "description": "File content as base64 encoded string (required)",
+            },
+            "folder_path": {
+                "type": "string",
+                "description": "Target folder path or 'root' for root folder",
+                "default": "root",
+            },
+        },
+        "required": ["site_id", "drive_id", "file_name", "file_content"],
+    },
+)
+def upload_file_to_sharepoint_library_handler(current_user, data):
+    return common_handler(
+        upload_file_to_library,
+        site_id=None,
+        drive_id=None,
+        file_name=None,
+        file_content=None,
+        folder_path="root",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_all_sharepoint_library_files_recursively",
+    tags=[
+        "default",
+        "integration",
+        "microsoft_sharepoint",
+        "microsoft_sharepoint_read",
+        "microsoft_drive",
+    ],
+    name="microsoftGetAllSharepointLibraryFilesRecursively",
+    description="Recursively gets all files from a SharePoint document library folder and subfolders.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "string", "description": "Site ID (required)"},
+            "drive_id": {"type": "string", "description": "Document library (drive) ID (required)"},
+            "folder_path": {
+                "type": "string",
+                "description": "Starting folder path or 'root'",
+                "default": "root",
+            },
+        },
+        "required": ["site_id", "drive_id"],
+    },
+)
+def get_all_sharepoint_library_files_recursively_handler(current_user, data):
+    return common_handler(
+        get_all_library_files_recursively,
+        site_id=None,
+        drive_id=None,
+        folder_path="root",
+    )(current_user, data)
 
 
 ### teams ###
