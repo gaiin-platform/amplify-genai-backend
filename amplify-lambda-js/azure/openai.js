@@ -103,10 +103,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             return (m.role === 'system') ? {...m, role: 'user'} : m}
         );
     }
-    if (!options.dataSourceOptions?.disableDataSources) {
-        data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
-    }
-    
 
     if (tools) data.tools = tools;
     if (tool_choice) data.tool_choice = tool_choice;
@@ -122,6 +118,11 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
     const isCompletionEndpoint = isCompletionsEndpoint(url);
+
+    if (!options.dataSourceOptions?.disableDataSources) {
+        const isNonStandardOpenAI = isOpenAiEndpoint && !isCompletionEndpoint && !url.includes('/chat/completions');
+        data.messages = await includeImageSources(body.imageSources, data.messages, model, writable, isNonStandardOpenAI);
+    }
 
     const headers = isOpenAiEndpoint ?
         {
@@ -287,27 +288,40 @@ const containsUrlQuery = (messages) => {
         return urlPattern.test(text);
     };
 
-    return messages.some((message) => {
+    let hasUrl = false;
+    let hasImageOnly = false;
+
+    messages.forEach((message) => {
         const content = message && message.content;
         if (typeof content === 'string') {
-            return isLikelyUrl(content);
+            if (isLikelyUrl(content)) hasUrl = true;
         }
         if (Array.isArray(content)) {
-            return content.some((part) => {
-                if (!part) return false;
-                if (typeof part === 'string') return isLikelyUrl(part);
-                // Only look at text-bearing parts
-                if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
-                    return isLikelyUrl(part.text);
+            let hasTextUrl = false;
+            let hasImage = false;
+            
+            content.forEach((part) => {
+                if (!part) return;
+                if (typeof part === 'string' && isLikelyUrl(part)) {
+                    hasTextUrl = true;
                 }
-                return false;
+                if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
+                    if (isLikelyUrl(part.text)) hasTextUrl = true;
+                }
+                if (part.type === 'image' || part.type === 'input_image' || part.type === 'image_url') {
+                    hasImage = true;
+                }
             });
+            
+            if (hasTextUrl) hasUrl = true;
+            if (hasImage && !hasTextUrl) hasImageOnly = true;
         }
-        return false;
     });
+
+    return hasUrl && !hasImageOnly;
 }
 
-async function includeImageSources(dataSources, messages, model, responseStream) {
+async function includeImageSources(dataSources, messages, model, responseStream, isNonStandardOpenAI = false) {
     if (!dataSources || dataSources.length === 0)  return messages;
     const msgLen = messages.length - 1;
     // does not support images
@@ -334,11 +348,18 @@ async function includeImageSources(dataSources, messages, model, responseStream)
         const encoded_image = await getImageBase64Content(ds);
         if (encoded_image) {
             retrievedImages.push({...ds, contentKey: extractKey(ds.id)});
-            imageMessageContent.push( 
-                { "type": "image_url",
-                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
-                } 
-            )
+            if (isNonStandardOpenAI) {
+                imageMessageContent.push({
+                    "type": "input_image",
+                    "image_url": `data:${ds.type};base64,${encoded_image}`
+                });
+            } else {
+                imageMessageContent.push( 
+                    { "type": "image_url",
+                      "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
+                    } 
+                );
+            }
         }
     }
     
@@ -349,11 +370,12 @@ async function includeImageSources(dataSources, messages, model, responseStream)
     }
 
     // message must be a user message
-    messages[msgLen]['content'] = [{ "type": "text",
+    const textType = isNonStandardOpenAI ? "input_text" : "text";
+    messages[msgLen]['content'] = [{ "type": textType,
                                      "text": additionalImageInstruction
                                     }, 
                                     ...imageMessageContent, 
-                                    { "type": "text",
+                                    { "type": textType,
                                         "text": messages[msgLen]['content']
                                     }
                                   ]
