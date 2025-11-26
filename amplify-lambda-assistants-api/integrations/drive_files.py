@@ -42,15 +42,15 @@ def list_integration_files(event, context, current_user, name, data):
     integration_provider = provider_case(integration)
     folder_id = data.get("folder_id")
 
-    logger.info("Listing files for integration: %s", integration_provider)
-    result = list_files(integration_provider, token, folder_id)
+    logger.info(f"Listing files for integration: {integration_provider}")
+    result = list_files(integration_provider, token, folder_id, integration)
     if result:
         return {"success": True, "data": result}
 
     return {"success": False, "error": "No integration files found"}
 
 
-def list_files(integration_provider, token, folder_id=None):
+def list_files(integration_provider, token, folder_id=None, integration=None):
     """
     Creates an OAuth client for either Google or Microsoft integrations.
     Returns a tuple of (client, is_google_flow) where is_google_flow is used to determine
@@ -234,7 +234,7 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
         return {"success": False, "error": "Failed to get download link for file"}
 
 
-def request_download_link(integration_provider, file_id, token):
+def request_download_link(integration_provider, file_id, token, integration=None):
     """
     Downloads a file from the integration.
     """
@@ -299,6 +299,111 @@ def get_file_contents(integration_provider, credentials, file_id, download_url):
             "Error getting file contents for integration: %s - error: %s", integration_provider, e
         )
         return None
+
+
+def parse_sharepoint_folder_id(folder_id):
+    """Parse SharePoint folder_id for multi-level navigation.
+    
+    Navigation levels:
+    - Empty/"root": List sites
+    - "site_id": List document libraries in site
+    - "site_id:drive_id": List files in library root
+    - "site_id:drive_id:folder_path": List files in specific folder
+    """
+    if not folder_id or folder_id == "root":
+        return "sites", None, None, None
+    
+    parts = folder_id.split(":", 2)
+    if len(parts) == 1:
+        # Just site_id -> list document libraries
+        return "libraries", parts[0], None, None
+    elif len(parts) == 2:
+        # site_id:drive_id -> list files in library root
+        return "files", parts[0], parts[1], "root"
+    elif len(parts) >= 3:
+        # site_id:drive_id:folder_path -> list files in folder
+        return "files", parts[0], parts[1], parts[2]
+    
+    return None, None, None, None
+
+
+def parse_sharepoint_file_id(file_id):
+    """Parse SharePoint file_id in format 'site_id:drive_id:item_id'."""
+    if not file_id:
+        return None, None, None, "SharePoint file_id cannot be empty"
+    
+    parts = file_id.split(":", 2)
+    if len(parts) >= 3:
+        site_id = parts[0]
+        drive_id = parts[1]
+        item_id = parts[2]
+        if not site_id or not drive_id or not item_id:
+            return None, None, None, "SharePoint site_id, drive_id, and item_id cannot be empty"
+        return site_id, drive_id, item_id, None
+    return None, None, None, f"Invalid SharePoint file_id format: '{file_id}'. Expected: 'site_id:drive_id:item_id'"
+
+
+def format_sites_as_folders(sites):
+    """Format SharePoint sites as folders for navigation."""
+    formatted = []
+    for site in sites:
+        formatted.append({
+            "id": site["id"],  # This becomes the folder_id for next level
+            "name": site.get("displayName", site.get("name", "Unknown Site")),
+            "mimeType": "application/vnd.google-apps.folder",  # Mimic folder type
+            "size": "N/A",
+            "downloadLink": None
+        })
+    return formatted
+
+
+def format_libraries_as_folders(libraries, site_id):
+    """Format SharePoint document libraries as folders for navigation."""
+    formatted = []
+    for library in libraries:
+        formatted.append({
+            "id": f"{site_id}:{library['id']}",  # site_id:drive_id format
+            "name": library.get("name", "Unknown Library"),
+            "mimeType": "application/vnd.google-apps.folder",  # Mimic folder type
+            "size": "N/A", 
+            "downloadLink": None
+        })
+    return formatted
+
+
+def format_sharepoint_files_with_folder_context(files, site_id, drive_id, current_folder_path="root"):
+    """Format SharePoint files to include proper folder_id context for subfolders."""
+    if not files:
+        return files
+        
+    formatted = []
+    for file in files:
+        formatted_file = dict(file)  # Copy original file data
+        
+        # If it's a folder, update the id to include the full path context
+        if file.get("mimeType") and "folder" in file.get("mimeType", "").lower():
+            # Construct the full folder path for navigation
+            folder_name = file.get("name", "")
+            if current_folder_path == "root":
+                new_path = folder_name
+            else:
+                new_path = f"{current_folder_path}/{folder_name}"
+            formatted_file["id"] = f"{site_id}:{drive_id}:{new_path}"
+        elif file.get("folder"):  # SharePoint API format check
+            folder_name = file.get("name", "")
+            if current_folder_path == "root":
+                new_path = folder_name
+            else:
+                new_path = f"{current_folder_path}/{folder_name}"
+            formatted_file["id"] = f"{site_id}:{drive_id}:{new_path}"
+        else:
+            # For files, keep the original id but we'll need site_id:drive_id:item_id for downloads
+            original_id = file.get("id", "")
+            formatted_file["id"] = f"{site_id}:{drive_id}:{original_id}"
+            
+        formatted.append(formatted_file)
+    
+    return formatted
 
 
 def execute_request(access_token, url_path, data):
@@ -537,7 +642,7 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
             logger.debug("[FILE CHECK] %s - %s", file_id, file_metadata.get('lastCaptured', 'Never captured'))
             
             # Check if file needs to be processed
-            needs_update = should_update_file(file_metadata, file_id, provider_type, token)
+            needs_update = should_update_file(file_metadata, file_id, provider_type, token, integration_provider)
             
             if needs_update:
                 logger.info("[FILE %s/%s] Updating %s", processed_count, total_files, file_id)
@@ -565,7 +670,7 @@ def process_files_with_cache(files_data, provider_type, token, current_user, int
                 
                 if file_contents:
                     # Get file metadata for proper naming and typing
-                    file_info = get_file_metadata_from_provider(file_id, provider_type, token)
+                    file_info = get_file_metadata_from_provider(file_id, provider_type, token, integration_provider)
                     
                     if file_info:
                         # Upload to our datasource
@@ -633,7 +738,7 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
             logger.info("[FOLDER %s/%s] Processing: %s", processed_count, total_folders, folder_id)
             
             # Get ALL files from folder and subfolders (flattened)
-            current_folder_files = get_all_files_recursively(folder_id, provider_type, token)
+            current_folder_files = get_all_files_recursively(folder_id, provider_type, token, None, integration_provider)
             
             if current_folder_files is None:
                 logger.error("[FOLDER ERROR] Could not list files in folder %s", folder_id)
@@ -673,7 +778,7 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
                 if file_id in folder_files:
                     # Existing file - check if needs update
                     existing_metadata = folder_files[file_id]
-                    needs_update = should_update_file(existing_metadata, file_id, provider_type, token)
+                    needs_update = should_update_file(existing_metadata, file_id, provider_type, token, integration_provider)
                     
                     if needs_update:
                         updated_file = process_single_file_with_cache(
@@ -800,7 +905,7 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
         return file_metadata
 
 
-def should_update_file(file_metadata, file_id, provider_type, token):
+def should_update_file(file_metadata, file_id, provider_type, token, integration=None):
     """Check if a file needs to be updated based on lastCaptured vs lastModified."""
     if not file_metadata.get("lastCaptured"):
         logger.debug("[FILE CHECK] %s - Never captured, needs update", file_id)
@@ -843,7 +948,7 @@ def should_update_file(file_metadata, file_id, provider_type, token):
     return False  # Default to no update if can't determine
 
 
-def list_files_in_folder(folder_id, provider_type, token):
+def list_files_in_folder(folder_id, provider_type, token, integration=None):
     """Get list of files in a folder from the provider."""
     try:
         if provider_type == IntegrationType.GOOGLE:
@@ -870,7 +975,7 @@ def list_files_in_folder(folder_id, provider_type, token):
     return None
 
 
-def get_file_metadata_from_provider(file_id, provider_type, token):
+def get_file_metadata_from_provider(file_id, provider_type, token, integration=None):
     """Get file metadata from provider for lastModified comparison."""
     try:
         if provider_type == IntegrationType.GOOGLE:
@@ -1053,7 +1158,7 @@ def get_file_id(provider_file):
     return None
 
 
-def get_all_files_recursively(folder_id, provider_type, token, visited_folders=None):
+def get_all_files_recursively(folder_id, provider_type, token, visited_folders=None, integration=None):
     """
     Recursively get all files from folder and subfolders, flattened.
     Returns a flat list of all files (no nested folder structure).
