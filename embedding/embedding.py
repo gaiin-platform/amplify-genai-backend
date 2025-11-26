@@ -529,7 +529,6 @@ db_connection = None
 
 # AWS Lambda handler function
 def lambda_handler(event, context):
-    logger.basicConfig(level=logger.INFO)
 
     logger.info(
         f"[LAMBDA_START] 🚀 Lambda function started - processing {len(event['Records'])} SQS messages"
