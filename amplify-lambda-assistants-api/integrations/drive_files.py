@@ -88,13 +88,52 @@ def list_files(integration_provider, token, folder_id=None):
                 return files
 
         case IntegrationType.MICROSOFT:
-            return execute_request(
-                token,
-                "/microsoft/integrations/list_drive_items",
-                {"folder_id": folder_id if folder_id else "root", "page_size": 100},
-            )
+            # Handle both microsoft_drive and microsoft_sharepoint
+            if integration == "microsoft_drive":
+                return execute_request(
+                    token,
+                    "/microsoft/integrations/list_drive_items",
+                    {"folder_id": folder_id if folder_id else "root", "page_size": 100},
+                )
+            elif integration == "microsoft_sharepoint":
+                level, site_id, drive_id, folder_path = parse_sharepoint_folder_id(folder_id)
+                
+                if level == "sites":
+                    # Root level - list SharePoint sites as "folders"
+                    sites = execute_request(token, "/microsoft/integrations/list_sites", {"top": 50})
+                    if sites:
+                        return format_sites_as_folders(sites)
+                    return None
+                    
+                elif level == "libraries":
+                    # Site level - list document libraries as "folders"
+                    libraries = execute_request(token, "/microsoft/integrations/list_document_libraries", 
+                                              {"site_id": site_id, "top": 50})
+                    if libraries:
+                        return format_libraries_as_folders(libraries, site_id)
+                    return None
+                    
+                elif level == "files":
+                    # Library level - list actual files and folders
+                    files = execute_request(
+                        token,
+                        "/microsoft/integrations/list_library_files",
+                        {"site_id": site_id, "drive_id": drive_id, "folder_path": folder_path, "top": 100},
+                    )
+                    if files:
+                        return format_sharepoint_files_with_folder_context(files, site_id, drive_id, folder_path)
+                    return None
+                    
+                return None
+            else:
+                # Default to drive for backwards compatibility
+                return execute_request(
+                    token,
+                    "/microsoft/integrations/list_drive_items",
+                    {"folder_id": folder_id if folder_id else "root", "page_size": 100},
+                )
 
-    logger.warning("No result from list_files for integration: %s", integration_provider)
+    logger.info(f"No result from list_files for integration: {integration_provider}")
     return None
 
 
@@ -112,9 +151,9 @@ def download_integration_file(event, context, current_user, name, data):
     return prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download)
 
 def prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download=False):
-    logger.info("Starting download for integration %s, file %s", integration_provider, file_id)
-    result = request_download_link(integration_provider, file_id, token)
-    logger.debug("Download link result: %s", result)
+    logger.info(f"Starting download for integration {integration_provider}, file {file_id}")
+    result = request_download_link(integration_provider, file_id, token, integration)
+    logger.debug(f"Download link result: {result}")
 
     if result and "downloadLink" in result:
         try:
@@ -205,9 +244,21 @@ def request_download_link(integration_provider, file_id, token):
                 token, "/google/integrations/get_download_link", {"fileId": file_id}
             )
         case IntegrationType.MICROSOFT:
-            return execute_request(
-                token, "/microsoft/integrations/download_file", {"item_id": file_id}
-            )
+            # Handle both microsoft_drive and microsoft_sharepoint
+            if integration == "microsoft_sharepoint":
+                site_id, drive_id, item_id, error = parse_sharepoint_file_id(file_id)
+                if error:
+                    logger.error(f"SharePoint file_id error: {error}")
+                    return None
+                return execute_request(
+                    token, "/microsoft/integrations/get_sharepoint_file_download_url", 
+                    {"site_id": site_id, "drive_id": drive_id, "item_id": item_id}
+                )
+            else:
+                # Default to drive (microsoft_drive or backwards compatibility)
+                return execute_request(
+                    token, "/microsoft/integrations/download_file", {"item_id": file_id}
+                )
 
 
 def get_file_contents(integration_provider, credentials, file_id, download_url):
@@ -757,9 +808,9 @@ def should_update_file(file_metadata, file_id, provider_type, token):
     
     try:
         # Get file's last modified date from provider
-        logger.debug("[TIMESTAMP DEBUG] %s - Getting metadata from %s", file_id, provider_type)
-        provider_file_info = get_file_metadata_from_provider(file_id, provider_type, token)
-        logger.debug("[TIMESTAMP DEBUG] %s - Raw provider response: %s", file_id, provider_file_info)
+        logger.debug(f"[TIMESTAMP DEBUG] {file_id} - Getting metadata from {provider_type}")
+        provider_file_info = get_file_metadata_from_provider(file_id, provider_type, token, integration)
+        logger.debug(f"[TIMESTAMP DEBUG] {file_id} - Raw provider response: {provider_file_info}")
         
         if provider_file_info and (provider_file_info.get("lastModified") or provider_file_info.get("modifiedTime") or provider_file_info.get("lastModifiedDateTime")):
             last_captured = datetime.fromisoformat(file_metadata["lastCaptured"].replace('Z', '+00:00'))
@@ -798,8 +849,21 @@ def list_files_in_folder(folder_id, provider_type, token):
         if provider_type == IntegrationType.GOOGLE:
             return execute_request(token, "/google/integrations/list_files", {"folderId": folder_id})
         elif provider_type == IntegrationType.MICROSOFT:
-            return execute_request(token, "/microsoft/integrations/list_drive_items", 
-                                 {"folder_id": folder_id, "page_size": 100})
+            # Handle both microsoft_drive and microsoft_sharepoint
+            if integration == "microsoft_sharepoint":
+                level, site_id, drive_id, folder_path = parse_sharepoint_folder_id(folder_id)
+                
+                if level == "files" and site_id and drive_id:
+                    files = execute_request(token, "/microsoft/integrations/list_library_files", 
+                                          {"site_id": site_id, "drive_id": drive_id, "folder_path": folder_path, "top": 100})
+                    if files:
+                        return format_sharepoint_files_with_folder_context(files, site_id, drive_id, folder_path)
+                logger.debug(f"Cannot list files for SharePoint navigation level: {level}")
+                return None
+            else:
+                # Default to drive (microsoft_drive or backwards compatibility)
+                return execute_request(token, "/microsoft/integrations/list_drive_items", 
+                                     {"folder_id": folder_id, "page_size": 100})
     except Exception as e:
         logger.error("Error listing files in folder %s: %s", folder_id, e)
     
@@ -812,7 +876,17 @@ def get_file_metadata_from_provider(file_id, provider_type, token):
         if provider_type == IntegrationType.GOOGLE:
             result = execute_request(token, "/google/integrations/get_file_metadata", {"fileId": file_id})
         elif provider_type == IntegrationType.MICROSOFT:
-            result = execute_request(token, "/microsoft/integrations/get_drive_item", {"item_id": file_id})
+            # Handle both microsoft_drive and microsoft_sharepoint
+            if integration == "microsoft_sharepoint":
+                site_id, drive_id, item_id, error = parse_sharepoint_file_id(file_id)
+                if error:
+                    logger.error(f"SharePoint file_id error: {error}")
+                    return None
+                result = execute_request(token, "/microsoft/integrations/get_sharepoint_drive_item_metadata", 
+                                       {"site_id": site_id, "drive_id": drive_id, "item_id": item_id})
+            else:
+                # Default to drive (microsoft_drive or backwards compatibility)
+                result = execute_request(token, "/microsoft/integrations/get_drive_item", {"item_id": file_id})
         else:
             return None
         
@@ -996,8 +1070,8 @@ def get_all_files_recursively(folder_id, provider_type, token, visited_folders=N
     all_files = []
     
     try:
-        logger.debug("[FOLDER] Listing contents of folder: %s", folder_id)
-        folder_contents = list_files_in_folder(folder_id, provider_type, token)
+        logger.debug(f"[FOLDER] Listing contents of folder: {folder_id}")
+        folder_contents = list_files_in_folder(folder_id, provider_type, token, integration)
         
         if folder_contents:
             folders_found = 0
@@ -1009,10 +1083,27 @@ def get_all_files_recursively(folder_id, provider_type, token, visited_folders=N
                     # Recursively get files from subfolder
                     subfolder_id = get_file_id(item)
                     if subfolder_id:
-                        logger.debug("[FOLDER] Processing nested folder: %s", subfolder_id)
-                        subfolder_files = get_all_files_recursively(
-                            subfolder_id, provider_type, token, visited_folders
-                        )
+                        logger.debug(f"[FOLDER] Processing nested folder: {subfolder_id}")
+                        # For SharePoint, we need to build the proper path
+                        if integration == "microsoft_sharepoint":
+                            # Extract site_id and drive_id from current folder context
+                            level, current_site_id, current_drive_id, current_folder_path = parse_sharepoint_folder_id(folder_id)
+                            if level == "files" and current_site_id and current_drive_id:
+                                # Build subfolder path
+                                if current_folder_path == "root":
+                                    subfolder_path = item['name']
+                                else:
+                                    subfolder_path = f"{current_folder_path}/{item['name']}"
+                                subfolder_full_id = f"{current_site_id}:{current_drive_id}:{subfolder_path}"
+                                subfolder_files = get_all_files_recursively(
+                                    subfolder_full_id, provider_type, token, visited_folders, integration
+                                )
+                            else:
+                                subfolder_files = []
+                        else:
+                            subfolder_files = get_all_files_recursively(
+                                subfolder_id, provider_type, token, visited_folders, integration
+                            )
                         all_files.extend(subfolder_files)
                         logger.debug("[FOLDER] Found %s files in nested folder %s", len(subfolder_files), subfolder_id)
                 else:
