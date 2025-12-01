@@ -104,6 +104,15 @@ provider:
     COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
     STAGE: ${sls:stage}
 
+    # MCP Integration Configuration
+    MCP_SERVERS_CONFIG_TABLE: ${self:service}-${sls:stage}-mcp-server-configs
+    MCP_AUTH_TABLE: ${self:service}-${sls:stage}-mcp-auth
+    MCP_CACHE_TTL: 300
+    MCP_GITHUB_TOKEN: ${env:MCP_GITHUB_TOKEN, ''}
+    MCP_SQLITE_PATH: /tmp/mcp_test.db
+    MCP_BRAVE_API_KEY: ${env:MCP_BRAVE_API_KEY, ''}
+    MCP_MASTER_KEY: ${env:MCP_MASTER_KEY, 'default-mcp-key-${sls:stage}'}
+
 
   iam:
     role:
@@ -125,13 +134,116 @@ functions:
           cors: true
 
   chat_endpoint:
-    handler: chat/service.chat_endpoint
+    handler: chat/service.chat_endpoint_raw
     timeout: 180
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: chat
+          method: post
+          cors: true
+
+  mcp_test_endpoint:
+    handler: mcp_integration/standalone_endpoints.test_mcp_endpoint
+    timeout: 60
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/test
+          method: get
+          cors: true
+
+  # MCP Management API Endpoints (Standalone versions for local dev)
+  mcp_get_servers:
+    handler: mcp_integration/standalone_endpoints.get_servers
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers
+          method: get
+          cors: true
+  mcp_add_server:
+    handler: mcp_integration/standalone_endpoints.add_server
+    timeout: 60
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers
+          method: post
+          cors: true
+  mcp_update_server:
+    handler: mcp_integration/standalone_endpoints.update_server
+    timeout: 60
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers/{serverName}
+          method: put
+          cors: true
+  mcp_delete_server:
+    handler: mcp_integration/standalone_endpoints.delete_server
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers/{serverName}
+          method: delete
+          cors: true
+  mcp_test_server:
+    handler: mcp_integration/standalone_endpoints.test_server
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers/{serverName}/test
+          method: post
+          cors: true
+  mcp_get_all_tools:
+    handler: mcp_integration/standalone_endpoints.get_all_tools
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/tools
+          method: get
+          cors: true
+  mcp_get_server_tools:
+    handler: mcp_integration/standalone_endpoints.get_server_tools
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/servers/{serverName}/tools
+          method: get
+          cors: true
+  mcp_get_status:
+    handler: mcp_integration/standalone_endpoints.get_mcp_status
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/status
+          method: get
+          cors: true
+  mcp_run_test:
+    handler: mcp_integration/standalone_endpoints.run_mcp_test
+    timeout: 60
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: mcp/run
           method: post
           cors: true
     
@@ -955,6 +1067,51 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL
+
+    # MCP Integration DynamoDB Tables
+    MCPServerConfigsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: server_name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: server_name
+            KeyType: RANGE
+        TableName: ${self:provider.environment.MCP_SERVERS_CONFIG_TABLE}
+
+    MCPAuthTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true  # Enable encryption for sensitive credential data
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: server_name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: server_name
+            KeyType: RANGE
+        TableName: ${self:provider.environment.MCP_AUTH_TABLE}
+        # Add TTL for credential expiration
+        TimeToLiveSpecification:
+          AttributeName: expires_at
+          Enabled: true
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
