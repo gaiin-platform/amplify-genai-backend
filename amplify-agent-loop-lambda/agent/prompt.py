@@ -13,6 +13,8 @@ import boto3
 from pycommon.api.secrets import get_secret_value
 from pycommon.authz import is_rate_limited
 
+dynamodb = boto3.client("dynamodb")
+
 @dataclass
 class Prompt:
     messages: List[dict]
@@ -201,20 +203,69 @@ def is_gemini_model(model):
     return model and "gemini" in model
 
 
+def get_model_provider(model_id):
+    """
+    Lookup the provider for a model from the MODEL_RATE_TABLE
+    """
+    model_rate_table = os.environ.get("MODEL_RATE_TABLE")
+    if not model_rate_table:
+        print("MODEL_RATE_TABLE is not provided in environment variables")
+        return None
+    
+    try:
+        model_rate_response = dynamodb.query(
+            TableName=model_rate_table,
+            KeyConditionExpression="ModelID = :modelId",
+            ExpressionAttributeValues={":modelId": {"S": model_id}},
+        )
+        
+        if (
+            not model_rate_response.get("Items")
+            or len(model_rate_response["Items"]) == 0
+        ):
+            print(f"No model rate found for ModelID: {model_id}")
+            return None
+            
+        model_rate = model_rate_response["Items"][0]
+        provider = model_rate.get("Provider", {}).get("S")
+        print(f"ModelID: {model_id} using provider: {provider}")
+        return provider
+        
+    except Exception as e:
+        print(f"Error looking up model provider: {e}")
+        return None
+
+
 def litellm_model_str(model):
     provider_prefix = ""
     if is_openai_model(model):
-        key, uri = get_llm_config(model)
+        # Lookup the provider from the model rate table to determine if we should use OpenAI or Azure
+        provider = get_model_provider(model)
+        
+        if provider == "OpenAI":
+            # Use direct OpenAI API
+            secret_name = os.environ.get("SECRETS_ARN_NAME")
+            secret_data = get_secret_value(secret_name)
+            parsed_secret = json.loads(secret_data)
+            openai_api_key = parsed_secret.get("OPENAI_API_KEY")
+            if openai_api_key:
+                os.environ["OPENAI_API_KEY"] = openai_api_key
+                provider_prefix = "openai"
+            else:
+                raise ValueError("OPENAI_API_KEY not found in secrets for OpenAI provider")
+        else:
+            # Default to Azure OpenAI for backward compatibility
+            key, uri = get_llm_config(model)
 
-        base, version = uri.split("?")
-        version = version.split("=")[1]
+            base, version = uri.split("?")
+            version = version.split("=")[1]
 
-        base = base.split("/openai")[0]
+            base = base.split("/openai")[0]
 
-        os.environ["AZURE_API_KEY"] = key
-        os.environ["AZURE_API_BASE"] = base
-        os.environ["AZURE_API_VERSION"] = version
-        provider_prefix = "azure"
+            os.environ["AZURE_API_KEY"] = key
+            os.environ["AZURE_API_BASE"] = base
+            os.environ["AZURE_API_VERSION"] = version
+            provider_prefix = "azure"
     elif is_bedrock_model(model):
         region = os.environ.get("AWS_REGION", "us-east-1")
 
