@@ -85,8 +85,8 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
             
             # Log the redirect URI that will be used
             redirect_uri = build_redirect_uri(origin)
-            print(f"Microsoft OAuth - Redirect URI being used: {redirect_uri}")
-            print(f"Microsoft OAuth - Client config redirect_uris: {client_config.get('redirect_uris', [])}")
+            logger.debug("Microsoft OAuth - Redirect URI being used: %s", redirect_uri)
+            logger.debug("Microsoft OAuth - Client config redirect_uris: %s", client_config.get('redirect_uris', []))
             
             app = ConfidentialClientApplication(
                 client_id=client_id,
@@ -121,7 +121,7 @@ def get_authorization_url_and_state(integration, client, scopes=None, retry_with
             redirect_uri = build_redirect_uri()
             auth_params["redirect_uri"] = redirect_uri
             
-            print(f"Microsoft OAuth authorization URL params: {auth_params}")
+            logger.debug("Microsoft OAuth authorization URL params: %s", auth_params)
             authorization_url = client.get_authorization_request_url(**auth_params)
 
     return authorization_url, state
@@ -145,7 +145,7 @@ def acquire_token_from_code(integration, client, scopes, authorization_code):
         case IntegrationType.MICROSOFT:
             # For Microsoft, we need to pass the redirect_uri that was used in authorization
             redirect_uri = build_redirect_uri()
-            print(f"Microsoft token acquisition - using redirect_uri: {redirect_uri}")
+            logger.debug("Microsoft token acquisition - using redirect_uri: %s", redirect_uri)
             result = client.acquire_token_by_authorization_code(
                 code=authorization_code, scopes=scopes, redirect_uri=redirect_uri
             )
@@ -298,17 +298,17 @@ def detect_request_origin(event):
     Returns the origin URL or None if not detectable.
     """
     headers = event.get("headers", {})
-
+    
     # Print all headers for debugging
-    print(f"Available headers: {list(headers.keys())}")
-
+    logger.debug("Available headers: %s", list(headers.keys()))
+    
     # Check various header formats (case-insensitive)
     origin = None
     for key, value in headers.items():
         key_lower = key.lower()
         if key_lower in ["origin", "referer", "host"]:
-            print(f"Found header {key}: {value}")
-
+            logger.debug("Found header %s: %s", key, value)
+            
         if key_lower == "origin":
             origin = value
             break
@@ -323,27 +323,25 @@ def detect_request_origin(event):
             # Determine protocol based on environment
             protocol = "https" if "amazonaws.com" in value or "dev-amplify" in value else "http"
             origin = f"{protocol}://{value}"
-
+    
     # If still no origin detected and we're in local dev, assume localhost frontend
     if not origin:
         # Check if API_BASE_URL suggests local development
         api_base = os.environ.get("API_BASE_URL", "")
         if "localhost" in api_base:
             origin = "http://localhost:3000"  # Common frontend port
-            print(f"No origin detected, assuming local frontend: {origin}")
-
-    print(f"Detected request origin: {origin}")
+            logger.info("No origin detected, assuming local frontend: %s", origin)
+    
+    logger.info("Detected request origin: %s", origin)
     return origin
 
 
-@required_env_vars(
-    {
-        "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
-        "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-        "API_BASE_URL": [],
-        "OAUTH_AUDIENCE": [],
-    }
-)
+@required_env_vars({
+    "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
+    "API_BASE_URL": [],
+    "OAUTH_AUDIENCE": [],
+})
 @validated("start_oauth")
 def start_auth(event, context, current_user, name, data):
 
@@ -361,7 +359,10 @@ def start_auth(event, context, current_user, name, data):
     # For Microsoft, try without consent first (will retry with consent if needed)
     retry_with_consent = False
     logger.debug("Obtained client.")
-    logger.debug("Creating client redirect url...")
+    logger.info("Creating client redirect url...")
+    
+    # For Microsoft, try without consent first (will retry with consent if needed)
+    retry_with_consent = False
     authorization_url, state = get_authorization_url_and_state(
         integration, auth_client, scopes, retry_with_consent
     )
@@ -379,6 +380,7 @@ def start_auth(event, context, current_user, name, data):
                 "timestamp": int(time.time()),
                 "origin": origin,  # Store origin for callback handling
                 "retry_with_consent": retry_with_consent,
+                "ttl": current_timestamp + 3600,  # Expire in 1 hour (3600 seconds)
             }
         )
     except ClientError as e:
@@ -445,7 +447,7 @@ def handle_oauth_error_retry(current_user, integration, origin, error_descriptio
     # Check if this is an approval required error for Microsoft
     if provider_case(integration) == IntegrationType.MICROSOFT:
         if "approval" in error_description.lower() or "consent" in error_description.lower():
-            print(f"Approval required error detected, retrying with consent prompt")
+            logger.error("Approval required error detected, retrying with consent prompt")
             
             # Create new OAuth client with consent prompt
             auth_client, scopes = get_oauth_client_for_integration(integration, origin)
@@ -471,28 +473,28 @@ def handle_oauth_error_retry(current_user, integration, origin, error_descriptio
                 )
                 return authorization_url
             except ClientError as e:
-                print(f"Error storing retry state in DynamoDB: {e}")
+                logger.error(f"Error storing retry state in DynamoDB: {e}")
     
     return None
 
 
 def auth_callback(event, context):
     try:
-        print(f"OAuth callback received - Event: {json.dumps(event, default=str, indent=2)}")
+        logger.debug("OAuth callback received - Event: %s", json.dumps(event, default=str, indent=2))
         
         query_params = event.get("queryStringParameters", {})
         if not query_params:
-            print("No query parameters found in callback")
+            logger.error("No query parameters found in callback")
             return return_html_failed_auth("No parameters received in OAuth callback.")
         
-        print(f"Query parameters: {query_params}")
+        logger.debug("Query parameters: %s", query_params)
         
         # Check for OAuth errors first
         error = query_params.get("error")
         error_description = query_params.get("error_description", "")
         
         if error:
-            print(f"OAuth error received: {error} - {error_description}")
+            logger.error("OAuth error received: %s - %s", error, error_description)
             
             # Try to get state to retrieve user and integration info for retry
             state = query_params.get("state")
@@ -518,14 +520,14 @@ def auth_callback(event, context):
                                 "body": {"Location": retry_url},
                             }
                 except ClientError as e:
-                    print(f"Error retrieving state for retry: {e}")
+                    logger.error("Error retrieving state for retry: %s", e)
             
             # If retry is not possible or appropriate, return error
             return return_html_failed_auth(f"OAuth error: {error_description or error}")
     except Exception as e:
-        print(f"Unexpected error in auth_callback: {str(e)}")
+        logger.error("Unexpected error in auth_callback: %s", str(e))
         import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        logger.error("Traceback: %s", traceback.format_exc())
         return return_html_failed_auth(f"Internal server error: {str(e)}")
 
     state = query_params.get("state")
@@ -569,8 +571,8 @@ def auth_callback(event, context):
             """,
         }
 
-    print("Current user:", current_user)
-    print("Integration:", integration)
+    logger.debug("Current user: %s", current_user)
+    logger.debug("Integration: %s", integration)
     authorization_code = query_params.get("code")
     
     if not authorization_code:
@@ -928,7 +930,7 @@ def build_redirect_uri(origin=None):
     
     callback_url = f"{api_base_url}/integrations/oauth/callback"
     
-    print(f"Building redirect URI - Origin: {origin}, API_BASE_URL: {api_base_url}, Callback: {callback_url}")
+    logger.debug("Building redirect URI - Origin: %s, API_BASE_URL: %s, Callback: %s", origin, api_base_url, callback_url)
     
     return callback_url
 
@@ -955,7 +957,7 @@ def format_integration_param(
             if dev_callback_url not in redirect_uris:
                 redirect_uris.append(dev_callback_url)
     
-    print(f"Configured redirect URIs for {integration_provider}: {redirect_uris}")
+    logger.debug("Configured redirect URIs for %s: %s", integration_provider, redirect_uris)
 
     param_data = {
         "client_id": client_id,

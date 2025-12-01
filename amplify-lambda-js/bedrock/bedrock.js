@@ -28,7 +28,8 @@ export const chatBedrock = async (chatBody, writable) => {
     delete body.options; 
     const currentModel = options.model;
 
-    const systemPrompts = [{"text": options.prompt?.trim() || BLANK_MSG}];
+    const prompt = typeof options.prompt === 'string' ? options.prompt : '';
+    const systemPrompts = [{"text": prompt.trim() || BLANK_MSG}];
     if (currentModel.systemPrompt?.trim()) {
         systemPrompts.push({ "text": currentModel.systemPrompt });
     }
@@ -38,7 +39,7 @@ export const chatBedrock = async (chatBody, writable) => {
     for (const msg of body.messages) {
         if (msg.role === "system") {
                                       // avoid duplicate system prompts
-            if (msg.content.trim() && msg.content !== options.prompt) systemPrompts.push({ "text": msg.content });
+            if (msg.content.trim() && msg.content !== prompt) systemPrompts.push({ "text": msg.content });
         } else {
             withoutSystemMessages.push(msg);
         }
@@ -47,7 +48,7 @@ export const chatBedrock = async (chatBody, writable) => {
     
     // Parallelize ALL processing for faster execution
     const client = getBedrockClient();  // Get client immediately (already cached)
-    const combinedMessages = combineMessages(withoutSystemMessages, options.prompt);
+    const combinedMessages = combineMessages(withoutSystemMessages, prompt || BLANK_MSG);
     const sanitizedMessages = await sanitizeMessages(combinedMessages, imageSources, currentModel, writable);
     
     try {
