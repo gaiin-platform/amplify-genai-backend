@@ -26,6 +26,7 @@ setup_validated(rules, get_permission_checker)
 
 import asyncio
 import aiohttp
+import concurrent.futures
 
 
 # Setup AWS DynamoDB access
@@ -735,19 +736,67 @@ def list_groups(event, context, current_user, name, data):
         return groups_result
     groups = groups_result["data"]
 
-    group_info = []
-    failed_to_list = []
-    for group in groups:
-        group_name = group["groupName"]
-        api_key_result = retrieve_api_key(group["group_id"])
+    # Run the async processing
+    return asyncio.run(process_groups_async(groups, current_user))
 
+
+async def process_groups_async(groups, current_user):
+    """
+    Process groups concurrently by making all list_assistants calls in parallel
+    """
+    if not groups:
+        return {"success": True, "data": [], "incompleteGroupData": []}
+
+    # First, collect all API keys for all groups
+    group_api_data = []
+    for group in groups:
+        api_key_result = retrieve_api_key(group["group_id"])
         if not api_key_result["success"]:
             return api_key_result
+        group_api_data.append({
+            "group": group,
+            "api_key": api_key_result["apiKey"]
+        })
 
-        # use api key to call list ast
-        ast_result = list_assistants(api_key_result["apiKey"])
+    # Since list_assistants is synchronous, we'll use concurrent.futures for parallel execution
+    
+    # Execute all list_assistants calls in parallel using ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Create future tasks for each group
+        future_to_group = {
+            executor.submit(list_assistants, group_data["api_key"]): group_data["group"]
+            for group_data in group_api_data
+        }
+        
+        # Collect results as they complete
+        group_results = []
+        for future in concurrent.futures.as_completed(future_to_group):
+            group = future_to_group[future]
+            try:
+                ast_result = future.result()
+                group_results.append({
+                    "group": group,
+                    "ast_result": ast_result,
+                    "success": True
+                })
+            except Exception as e:
+                print(f"Error fetching assistants for group {group['groupName']}: {str(e)}")
+                group_results.append({
+                    "group": group,
+                    "ast_result": None,
+                    "success": False,
+                    "error": str(e)
+                })
 
-        if not ast_result["success"]:
+    # Process results and build response
+    group_info = []
+    failed_to_list = []
+    
+    for result in group_results:
+        group = result["group"]
+        group_name = group["groupName"]
+        
+        if not result["success"] or not result["ast_result"]["success"]:
             failed_to_list.append(group_name)
             continue
 
@@ -756,7 +805,7 @@ def list_groups(event, context, current_user, name, data):
         hasAdminInterfaceAccess = ast_access in ["write", "admin"]
 
         # filter old versions
-        assistants = get_latest_assistants(ast_result["data"])
+        assistants = get_latest_assistants(result["ast_result"]["data"])
         print(f"{group_name} - {len(assistants)} Assistant Count")
         published_assistants = []
         # append groupId and correct permissions if published
