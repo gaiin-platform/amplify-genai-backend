@@ -41,6 +41,18 @@ class ExcelHandler(TextExtractionHandler):
         with io.BytesIO(file_content) as f:
             workbook = openpyxl.load_workbook(f, data_only=True)
 
+            # Check if workbook has any sheets (handle corrupted files)
+            if not workbook.sheetnames:
+                raise ValueError("Excel file contains no visible sheets. The file may be corrupted or all sheets are hidden.")
+            
+            # Check if all sheets are hidden
+            visible_sheets = [name for name in workbook.sheetnames if workbook[name].sheet_state == 'visible']
+            if not visible_sheets:
+                # Attempt to unhide the first sheet for processing
+                first_sheet = workbook[workbook.sheetnames[0]]
+                first_sheet.sheet_state = 'visible'
+                logger.warning(f"All sheets were hidden. Unhid sheet '{first_sheet.title}' for processing.")
+
             # Preprocess visual_map to group visuals by sheet name for efficient lookup
             visuals_by_sheet = {}
             for visual_marker, visual_data in visual_map.items():

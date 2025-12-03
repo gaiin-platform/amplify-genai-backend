@@ -449,7 +449,7 @@ def get_supported_models():
                 if model_id and transformed_model:
                     supported_models_config[model_id] = transformed_model
             except Exception as e:
-                print(f"Error in parallel model processing: {str(e)}")
+                logger.error(f"Error in parallel model processing: {str(e)}")
     
 
     return {"success": True, "data": supported_models_config}

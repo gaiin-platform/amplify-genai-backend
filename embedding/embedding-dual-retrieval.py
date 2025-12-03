@@ -199,7 +199,6 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
             assert isinstance(
                 query_embedding, list
             ), "Expected query_embedding to be a list of floats"
-            # print(f"here is the query embedding {query_embedding}")
 
             # Convert the query_embedding list to a PostgreSQL array literal
             embedding_literal = "[" + ",".join(map(str, query_embedding)) + "]"
@@ -252,7 +251,6 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
         register_vector(conn)
         with conn.cursor() as cur:
 
-            # print(f"Here is the query embedding {query_embedding}")
             # Ensure the query_embedding is a list of floats
             assert isinstance(
                 query_embedding, list

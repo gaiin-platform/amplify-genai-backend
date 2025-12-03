@@ -193,9 +193,28 @@ def split_text(sent_tokenize, content):
         return [content]
 
 
-def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_reprocess=False):
-    logger.info("Saving %d chunks to %s/%s-%d.chunks.json", len(chunks), chunks_bucket, key, split_count)
+def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_reprocess=False, chunks_needing_reprocessing=None):
+    # Check if this chunk actually needs processing (applies to reprocessing AND retries after failures)
+    if chunks_needing_reprocessing is not None:
+        if len(chunks_needing_reprocessing) > 0:
+            # Specific chunks need processing - check if this is one of them
+            if split_count not in chunks_needing_reprocessing:
+                logger.info("[SELECTIVE_SKIP] ⏭️ Chunk %d already completed - skipping upload (no SQS message needed)", split_count)
+                return
+            else:
+                logger.info("[SELECTIVE_UPLOAD] 🔄 Chunk %d needs processing - resetting to starting status before upload", split_count)
+                # Reset this chunk to "starting" status so embedding service can process it
+                reset_chunk_to_starting_status(key, split_count)
+        else:
+            # Empty list means no progress data exists - process all chunks
+            logger.info("[SELECTIVE_UPLOAD] 🆕 No progress data - uploading chunk %d for initial processing", split_count)
+    else:
+        # Fallback: selective logic failed, process all chunks for safety
+        logger.info("[SELECTIVE_FALLBACK] 🛡️ Selective logic unavailable - uploading chunk %d for safety (processing all chunks)", split_count)
+    
+    # Upload the chunk
     chunks_key = f"{key}-{split_count}.chunks.json"
+    logger.info("Saving %d local chunks to %s", len(chunks), chunks_key)
     
     # Prepare metadata for S3 object
     metadata = {}
@@ -213,7 +232,7 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_
         Body=json.dumps({"chunks": chunks, "src": key}),
         Metadata=metadata
     )
-    logger.info("Uploaded chunks to %s/%s", chunks_bucket, chunks_key)
+    logger.info("✅ Uploaded chunks to %s/%s (will generate SQS message)", chunks_bucket, chunks_key)
     if object_key:
         logger.debug("Stored object_key metadata: %s", object_key)
 
@@ -224,6 +243,21 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
     nltk.data.path.append("/tmp")
     nltk.download("punkt", download_dir="/tmp")
     # Normalize whitespace once at the start.
+
+    # Get chunk reprocessing status once per document (avoid redundant DynamoDB calls)
+    chunks_needing_reprocessing = None
+    try:
+        chunks_needing_reprocessing = get_chunks_needing_reprocessing(key)
+        if chunks_needing_reprocessing is not None:
+            if len(chunks_needing_reprocessing) > 0:
+                logger.info("[CHUNK_REPROCESS_CHECK] Document %s needs reprocessing for chunks: %s", key, sorted(chunks_needing_reprocessing))
+            else:
+                logger.info("[CHUNK_REPROCESS_CHECK] Document %s has no progress data - processing all chunks", key)
+        else:
+            logger.warning("[CHUNK_REPROCESS_CHECK] Could not determine chunk status for %s - processing all chunks for safety", key)
+    except Exception as e:
+        logger.error("[CHUNK_REPROCESS_CHECK] Error getting chunk status for %s: %s - FALLING BACK TO PROCESS ALL CHUNKS", key, e)
+        chunks_needing_reprocessing = None  # Explicit fallback to process all
 
     chunks = []
     current_chunk = []
@@ -247,11 +281,107 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
     index = 0
 
     total_chunks = 0  # Initialize total_chunks
+    # HARD LIMIT: 26,000 chars = ~6,500 tokens (20% safety buffer from 8,192 token API limit)
+    max_sentence_chars = 30000
+    
+    # Track sentence splitting for reprocessing logic
+    has_sentence_splits = False
+    first_split_chunk_index = None
+    current_sentence_index = 0
 
     for content_part in flattened_list:
         sentence = content_part["content"]
         location = content_part["location"]
         sentence_length = len(sentence)
+
+        # HARD LIMIT: Handle massive sentences inline (rare edge case)
+        if sentence_length > max_sentence_chars:
+            logger.warning(
+                "HARD_CHUNK_LIMIT: Massive sentence detected (%d chars) for %s - splitting at word boundaries to prevent token overflow", 
+                sentence_length, key
+            )
+            
+            # REPROCESSING DETECTION: Track that we're splitting sentences
+            if not has_sentence_splits:
+                has_sentence_splits = True
+                first_split_chunk_index = total_chunks
+                logger.info("[REPROCESS_DETECTION] First sentence split detected at chunk index %d - will invalidate chunks from this point forward", first_split_chunk_index)
+            # Force current chunk completion if it exists
+            if current_chunk:
+                chunk_text = " ".join(current_chunk)
+                chunks.append({
+                    "content": chunk_text,
+                    "locations": locations,
+                    "indexes": indexes,
+                    "char_index": char_index,
+                })
+                # Update char_index for completed chunk
+                char_index += len(chunk_text) + 1
+                current_chunk = []
+                current_chunk_size = 0
+                locations = []
+                indexes = []
+                total_chunks += 1
+                
+                # Check if we need to save this batch
+                if len(chunks) == split_increment:
+                    split_count += 1
+                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                    chunks = []
+            
+            # Split massive sentence at word boundaries (NO DATA LOSS)
+            words = sentence.split()
+            current_split = ""
+            split_count_for_sentence = 0
+            
+            for word in words:
+                test_length = len(current_split + " " + word if current_split else word)
+                if test_length > max_sentence_chars and current_split:
+                    # Create chunk for current split
+                    chunks.append({
+                        "content": current_split.strip(),
+                        "locations": [location],
+                        "indexes": [index],  # All splits share the same original sentence index
+                        "char_index": char_index,
+                    })
+                    char_index += len(current_split.strip()) + 1
+                    total_chunks += 1
+                    split_count_for_sentence += 1
+                    
+                    # Check batch save
+                    if len(chunks) == split_increment:
+                        split_count += 1
+                        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                        chunks = []
+                    
+                    current_split = word
+                else:
+                    current_split = current_split + " " + word if current_split else word
+            
+            # Handle final split
+            if current_split:
+                chunks.append({
+                    "content": current_split.strip(),
+                    "locations": [location],
+                    "indexes": [index],  # All splits share the same original sentence index
+                    "char_index": char_index,
+                })
+                char_index += len(current_split.strip()) + 1
+                total_chunks += 1
+                split_count_for_sentence += 1
+                
+                # Check batch save
+                if len(chunks) == split_increment:
+                    split_count += 1
+                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                    chunks = []
+            
+            logger.info("HARD_CHUNK_LIMIT: Split massive sentence into %d chunks, all sharing index %d", split_count_for_sentence, index)
+            
+            # Update index to reflect processed sentence (only increment by 1 since we processed 1 sentence)
+            index += 1
+            current_sentence_index += 1
+            continue  # Skip normal chunking logic for this massive sentence
 
         if total_chunks >= max_chunks:
             logger.warning("Reached maximum chunks %d for %s", max_chunks, key)
@@ -287,13 +417,14 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
             if len(chunks) == split_increment:
                 split_count += 1
-                save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess)
+                save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
                 chunks = []
 
         else:
             locations.append(location)
             indexes.append(index)
             index += 1
+            current_sentence_index += 1
             if current_chunk:
                 current_chunk.append(sentence)
                 current_chunk_size += sentence_length + 1
@@ -314,9 +445,48 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
         )
         total_chunks += 1  # Increment the count for the last chunk
 
+    # SMART REPROCESSING: Override reprocessing logic when sentence splits detected
+    if has_sentence_splits and chunks_needing_reprocessing is not None:
+        # Calculate all chunk indexes that need reprocessing due to index misalignment
+        chunks_from_split_onward = list(range(first_split_chunk_index, total_chunks))
+        
+        if len(chunks_needing_reprocessing) > 0:
+            # Combine originally failed chunks with chunks after first split
+            original_failed = [chunk for chunk in chunks_needing_reprocessing if chunk < first_split_chunk_index]
+            combined_reprocess_chunks = original_failed + chunks_from_split_onward
+            logger.info(
+                "[SMART_REPROCESS] Sentence splits detected! Original failed chunks: %s, Split invalidated chunks: %s, Combined reprocessing: %s",
+                sorted(chunks_needing_reprocessing), 
+                chunks_from_split_onward,
+                sorted(combined_reprocess_chunks)
+            )
+        else:
+            # Only chunks from split point need reprocessing
+            combined_reprocess_chunks = chunks_from_split_onward
+            logger.info(
+                "[SMART_REPROCESS] Sentence splits detected! No original failures, but invalidating chunks from split point: %s",
+                chunks_from_split_onward
+            )
+        
+        chunks_needing_reprocessing = combined_reprocess_chunks
+        
+        # Calculate computation savings
+        chunks_saved = first_split_chunk_index
+        chunks_reprocessed = len(chunks_from_split_onward)
+        logger.info(
+            "[COMPUTATION_SAVINGS] Preserving %d chunks before split, reprocessing %d chunks after split",
+            chunks_saved, chunks_reprocessed
+        )
+    elif has_sentence_splits:
+        # Force reprocess all if we can't determine previous state
+        logger.warning(
+            "[SMART_REPROCESS] Sentence splits detected but no reprocessing data available - forcing full reprocess for safety"
+        )
+        chunks_needing_reprocessing = None  # Forces full reprocess
+
     if chunks:  # If there are unfinished chunks, save them
         split_count += 1
-        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess)
+        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
 
     logger.debug("In Chunk Content Function")
     logger.debug(
@@ -863,12 +1033,56 @@ def get_original_creator(key):
     return original_creator
 
 
+def get_embedding_progress_by_global_id(global_id):
+    """
+    Get embedding progress data for a document using global ID directly.
+    
+    Args:
+        global_id: The global hash ID (already translated)
+        
+    Returns:
+        dict: Progress data with keys: item, parent_status, terminated, child_chunks
+              Returns None if any error occurs
+    """
+    try:
+        # Check embedding progress table
+        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
+        if not progress_table:
+            logger.warning("[EMBEDDING_PROGRESS] EMBEDDING_PROGRESS_TABLE not configured")
+            return None
+            
+        dynamodb = boto3.resource("dynamodb")
+        table = dynamodb.Table(progress_table)
+        
+        response = table.get_item(Key={"object_id": global_id})
+        item = response.get("Item")
+        
+        if not item:
+            logger.info("[EMBEDDING_PROGRESS] No embedding progress found for %s", global_id)
+            return {"item": None, "parent_status": None, "terminated": False, "child_chunks": {}}
+        
+        parent_status = item.get("parentChunkStatus")
+        terminated = item.get("terminated", False)
+        child_chunks = item.get("data", {}).get("childChunks", {})
+        
+        return {
+            "item": item, 
+            "parent_status": parent_status, 
+            "terminated": terminated,
+            "child_chunks": child_chunks
+        }
+            
+    except Exception as e:
+        logger.error("[EMBEDDING_PROGRESS] Error getting progress data for %s: %s", global_id, e)
+        return None
+
+
 def is_embedding_successful(document_key):
     """
     Check if embedding process was successful for a document.
     
     Args:
-        document_key: The document key to check embedding status for
+        document_key: The document key to check embedding status for (needs translation)
         
     Returns:
         bool: True if embedding completed successfully, False otherwise
@@ -884,39 +1098,165 @@ def is_embedding_successful(document_key):
             
         global_id = translated_sources[0]["id"]
         
-        # Check embedding progress table
-        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
-        if not progress_table:
-            logger.warning("[EMBEDDING_CHECK] EMBEDDING_PROGRESS_TABLE not configured")
-            return False
-            
-        dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table(progress_table)
+        # Use shared function
+        progress_data = get_embedding_progress_by_global_id(global_id)
         
-        response = table.get_item(Key={"object_id": global_id})
-        item = response.get("Item")
-        
-        if not item:
-            logger.info("[EMBEDDING_CHECK] No embedding progress found for %s", document_key)
+        if not progress_data:
+            logger.info("[EMBEDDING_CHECK] Could not get progress data for %s", document_key)
             return False
         
         # Check if terminated
-        if item.get("terminated", False):
+        if progress_data["terminated"]:
             logger.warning("[EMBEDDING_CHECK] Embedding process terminated for %s", document_key)
             return False
         
         # Check parent chunk status
-        parent_status = item.get("parentChunkStatus")
-        if parent_status == "completed":
+        if progress_data["parent_status"] == "completed":
             logger.info("[EMBEDDING_CHECK] ✅ Embedding completed successfully for %s", document_key)
             return True
         else:
-            logger.info("[EMBEDDING_CHECK] Embedding not completed for %s (status: %s)", document_key, parent_status)
+            logger.info("[EMBEDDING_CHECK] Embedding not completed for %s (status: %s)", document_key, progress_data["parent_status"])
             return False
             
     except Exception as e:
         logger.error("[EMBEDDING_CHECK] Error checking embedding status for %s: %s", document_key, e)
         # On error, return False to trigger reprocessing for safety
+        return False
+
+
+def get_chunks_needing_reprocessing(global_id):
+    """
+    Get list of chunk numbers that need reprocessing for a document using global ID.
+    
+    Args:
+        global_id: The global hash ID (already available in chunking context)
+        
+    Returns:
+        list: List of chunk numbers (integers) that need reprocessing
+              Returns empty list if document has no progress data (all chunks need processing)
+              Returns None if error occurs
+    """
+    try:
+        progress_data = get_embedding_progress_by_global_id(global_id)
+        
+        if not progress_data:
+            logger.warning("[CHUNK_REPROCESS_CHECK] Could not get progress data for %s", global_id)
+            return None
+        
+        # If no progress data exists, all chunks need processing
+        if not progress_data["item"]:
+            logger.info("[CHUNK_REPROCESS_CHECK] No progress data - all chunks need processing for %s", global_id)
+            return []  # Empty list means process all chunks
+        
+        # If terminated, don't process any chunks
+        if progress_data["terminated"]:
+            logger.info("[CHUNK_REPROCESS_CHECK] Document terminated - no chunks need processing for %s", global_id)
+            return []
+        
+        child_chunks = progress_data["child_chunks"]
+        
+        if not child_chunks:
+            logger.info("[CHUNK_REPROCESS_CHECK] No child chunks data - all chunks need processing for %s", global_id)
+            return []  # Empty list means process all chunks
+        
+        # Find chunks that need reprocessing (not completed)
+        chunks_needing_reprocessing = []
+        completed_chunks = []
+        
+        for chunk_id, chunk_info in child_chunks.items():
+            chunk_status = chunk_info.get("status", "starting")
+            chunk_num = int(chunk_id)
+            
+            if chunk_status == "completed":
+                completed_chunks.append(chunk_num)
+            else:
+                chunks_needing_reprocessing.append(chunk_num)
+        
+        logger.info("[CHUNK_REPROCESS_CHECK] For document %s:", global_id)
+        logger.info("[CHUNK_REPROCESS_CHECK]   ✅ Completed chunks: %s", sorted(completed_chunks))
+        logger.info("[CHUNK_REPROCESS_CHECK]   🔄 Need reprocessing: %s", sorted(chunks_needing_reprocessing))
+        
+        return chunks_needing_reprocessing
+        
+    except Exception as e:
+        logger.error("[CHUNK_REPROCESS_CHECK] Error checking chunks for %s: %s", global_id, e)
+        return None
+
+
+def reset_chunk_to_starting_status(global_id, chunk_number):
+    """
+    Reset a specific chunk to 'starting' status in DynamoDB before reprocessing.
+    This ensures the embedding service can process the chunk without terminal state blocking.
+    
+    Args:
+        global_id: The global hash ID (document identifier)
+        chunk_number: The chunk number to reset
+    """
+    try:
+        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
+        if not progress_table:
+            logger.error("[CHUNK_RESET] EMBEDDING_PROGRESS_TABLE not configured")
+            return False
+            
+        dynamodb = boto3.resource("dynamodb")
+        table = dynamodb.Table(progress_table)
+        
+        logger.info("[CHUNK_RESET] 🔄 Resetting chunk %d to 'starting' status for %s", chunk_number, global_id)
+        
+        # Update the specific child chunk to starting status
+        import datetime
+        current_time = datetime.datetime.now().isoformat()
+        
+        update_expression = """
+            SET #data.#childChunks.#chunkId.#status = :starting_status,
+                #data.#childChunks.#chunkId.#lastUpdated = :timestamp,
+                #data.#childChunks.#chunkId.#version = if_not_exists(#data.#childChunks.#chunkId.#version, :zero) + :one,
+                #data.#childChunks.#chunkId.#resetBy = :reset_source
+        """
+        
+        expression_attribute_names = {
+            "#data": "data",
+            "#childChunks": "childChunks",
+            "#chunkId": str(chunk_number),
+            "#status": "status", 
+            "#lastUpdated": "lastUpdated",
+            "#version": "version",
+            "#resetBy": "resetBy"
+        }
+        
+        expression_attribute_values = {
+            ":starting_status": "starting",
+            ":timestamp": current_time,
+            ":zero": 0,
+            ":one": 1,
+            ":reset_source": "RAG_CHUNKING_REPROCESS"
+        }
+        
+        # Use condition to ensure we don't overwrite completed chunks accidentally
+        condition_expression = (
+            "attribute_exists(#data.#childChunks.#chunkId) AND "
+            "#data.#childChunks.#chunkId.#status <> :completed"
+        )
+        expression_attribute_values[":completed"] = "completed"
+        
+        result = table.update_item(
+            Key={"object_id": global_id},
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+            ConditionExpression=condition_expression,
+            ReturnValues="UPDATED_NEW"
+        )
+        
+        logger.info("[CHUNK_RESET] ✅ Successfully reset chunk %d to 'starting' status", chunk_number)
+        return True
+        
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        logger.info("[CHUNK_RESET] Chunk %d is already completed - not resetting", chunk_number)
+        return True  # Consider this success since chunk shouldn't be reprocessed anyway
+        
+    except Exception as e:
+        logger.error("[CHUNK_RESET] ❌ Failed to reset chunk %d status: %s", chunk_number, e)
         return False
 
 

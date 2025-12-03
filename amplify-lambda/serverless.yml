@@ -1062,6 +1062,7 @@ resources:
       Type: "AWS::SQS::Queue"
       Properties:
         QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
+        VisibilityTimeout: 120
 
     RagDocumentIndexDLQ:
       Type: "AWS::SQS::Queue"
@@ -1375,3 +1376,10 @@ resources:
       Export:
         Name:
           Fn::Sub: "${sls:stage}-EmbeddingChunksIndexQueueUrl"
+
+    EmbeddingChunksIndexDlqArn:
+      Description: "The ARN of the embedding chunks index dead letter queue"
+      Value: !GetAtt EmbeddingChunksIndexDLQ.Arn
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-EmbeddingChunksIndexDlqArn"
