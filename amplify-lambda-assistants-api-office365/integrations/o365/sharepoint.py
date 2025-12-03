@@ -103,7 +103,7 @@ def list_sites(
                 if root_response.ok:
                     sites.append(root_response.json())
             except Exception as e:
-                print(f"Could not fetch root site: {e}")
+                logger.error(f"Could not fetch root site: {e}")
 
             # Also try to get followed/frequently used sites using search with wildcard
             try:
@@ -114,7 +114,7 @@ def list_sites(
                     search_sites = search_response.json().get("value", [])
                     sites.extend(search_sites)
             except Exception as e:
-                print(f"Could not fetch additional sites: {e}")
+                logger.error(f"Could not fetch additional sites: {e}")
 
             return [format_site(site) for site in sites]
 
@@ -737,7 +737,7 @@ def get_all_library_files_recursively(
         
     except Exception as e:
         # Log error but don't fail completely
-        print(f"Error processing folder {folder_path}: {e}")
+        logger.error(f"Error processing folder {folder_path}: {e}")
     
     return all_files
 
