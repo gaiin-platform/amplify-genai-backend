@@ -124,20 +124,18 @@ async def transcribe_visual_content(key, visual_type="image/png", account_data=N
     Args:
         key: S3 key where visual content is stored
         visual_type: MIME type of the visual content
+        account_data: Account data with access_token and 'model'
 
     Returns:
         Text transcription of the visual content
     """
     try:
-        # Get required environment variables
-
         if not CHAT_ENDPOINT or not account_data:
             logger.error("CHAT_ENDPOINT environment variable or account_data not set")
             raise Exception("CHAT_ENDPOINT environment variable or account_data not set")
         access_token = account_data['access_token']
+        model = account_data.get('model')
         
-        model = get_default_models(access_token).get("cheapest_model")
-
         if not model:
             logger.error("No model found")
             raise Exception("No model found")
@@ -427,6 +425,25 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
     if not account_data or 'access_token' not in account_data:
         logger.warning("No account data provided, can not process visuals")
         return {}
+    
+    # Fetch model once with retry for network issues (502 Bad Gateway, etc)
+    access_token = account_data['access_token']
+    model = None
+    for attempt in range(3):
+        try:
+            model = get_default_models(access_token).get("cheapest_model")
+            if model:
+                break
+            logger.info(f"Attempt {attempt + 1}/3: No cheapest_model in response")
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1}/3 failed: {str(e)}")
+    
+    if not model:
+        logger.error("Failed to fetch model after 3 attempts")
+        return visual_map
+    
+    logger.info(f"Using model '{model}' for batch of {len(visual_map)} visuals")
+    account_data_with_model = {**account_data, 'model': model}
     # Single pass: separate unique hashed visuals from non-hashed ones
     unique_visuals = {}  # marker -> visual_data (visuals to process)
     hash_to_markers = {}  # hash -> [all markers with this hash]
@@ -452,9 +469,9 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
         unique_count, total_count - unique_count
     )
 
-    # Process all unique visuals
+    # Process all unique visuals with cached model
     tasks = [
-        process_visual_for_llm(visual_data, current_user, account_data)
+        process_visual_for_llm(visual_data, current_user, account_data_with_model)
         for visual_data in unique_visuals.values()
     ]
     markers = list(unique_visuals.keys())
