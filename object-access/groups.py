@@ -321,7 +321,7 @@ def update_members_permission(event, context, current_user, name, data):
 
     # Update the permission of the specified member
     current_members = item.get("members", [])
-    # print("before updates members: ", current_members)
+    logger.debug("Before updates members: ", current_members)
     for affected_user, new_permission in affected_user_dict.items():
         memberPerms = current_members.get(affected_user, None)
         if not memberPerms:
@@ -373,7 +373,7 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
     ]
     ds_selector_ds.extend(ds for ds in ast_ds if not is_ds_owner(ds, group_id))
 
-    # print("Updating permissions for the following ds prior to translation: ", ds_selector_ds)
+    logger.debug("Updating permissions for the following ds prior to translation: %s", ds_selector_ds)
 
     # Validate that all data sources have required 'id' field and filter out invalid ones
     valid_ds = [ds for ds in ds_selector_ds if isinstance(ds, dict) and 'id' in ds]

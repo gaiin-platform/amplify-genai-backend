@@ -426,8 +426,6 @@ def get_configs(event, context, current_user, name, data):
             except ClientError as e:
                 logger.error("Error retrieving %s: %s", config_type.value, str(e))
         # dyanmo table rows
-
-        # print(data)
         token = data["access_token"]
 
         supported_models_result = get_supported_models(token)
@@ -638,7 +636,7 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
-    # print("users: ", user_feature_flags)
+    logger.debug("users: ", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
 
