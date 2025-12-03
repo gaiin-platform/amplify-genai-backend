@@ -247,6 +247,20 @@ functions:
     environment:
       EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
 
+  process_dlq_chunks:
+    runtime: python3.11
+    handler: embedding-dlq-handler.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 60
+    events:
+      - sqs:
+          batchSize: 10
+          arn: !ImportValue "${sls:stage}-EmbeddingChunksIndexDlqArn"
+    environment:
+      EMBEDDING_PROGRESS_TABLE: ${self:provider.environment.EMBEDDING_PROGRESS_TABLE}
+      REGION: ${self:provider.region}
+
   delete_embeddings:
     runtime: python3.11
     handler: embedding-delete.delete_embeddings

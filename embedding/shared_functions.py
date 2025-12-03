@@ -36,6 +36,7 @@ embedding_model_name = None
 embedding_provider = None
 qa_provider = None
 qa_model_name = None
+qa_input_context_window = 8192  # Default fallback
 model_result = get_embedding_models()
 logger.debug("Model_result: %s", model_result)
 if model_result["success"]:
@@ -44,6 +45,7 @@ if model_result["success"]:
     embedding_provider = data["embedding"]["provider"]
     qa_model_name = data["qa"]["model_id"]
     qa_provider = data["qa"]["provider"]
+    qa_input_context_window = data["qa"]["input_context_window"]
 
 
 # Get embedding token count from tiktoken
@@ -61,6 +63,17 @@ def clean_text(text):
     # Remove extra spaces using regex
     cleaned_text = re.sub(r"\s+", " ", text_without_punctuation)
     return cleaned_text.strip()
+
+
+def extract_base_key_from_chunk(text_location_key):
+    """Extract base key by removing chunk number suffix (e.g., -6.chunks.json)"""
+    return re.sub(r'-\d+\.chunks\.json$', '', text_location_key)
+
+
+def extract_chunk_number(text_location_key):
+    """Extract chunk number from key (e.g., returns 6 from key ending with -6.chunks.json)"""
+    chunk_match = re.search(r'-(\d+)\.chunks\.json$', text_location_key)
+    return int(chunk_match.group(1)) if chunk_match else None
 
 
 def preprocess_text(text):
@@ -146,6 +159,33 @@ def generate_openai_embeddings(content):
     return {"success": True, "data": embedding, "token_count": token_count}
 
 
+def truncate_content_for_model(content, model_name, max_tokens):
+    """Truncate content to fit within model's token limit"""
+    try:
+        encoding = tiktoken.encoding_for_model(model_name)
+        tokens = encoding.encode(content)
+        
+        if len(tokens) <= max_tokens:
+            return content
+        
+        # Truncate to max_tokens and decode back to text
+        truncated_tokens = tokens[:max_tokens]
+        truncated_content = encoding.decode(truncated_tokens)
+        
+        logger.warning(f"[TOKEN_LIMIT] Content truncated from {len(tokens)} to {max_tokens} tokens for model {model_name}")
+        return truncated_content
+        
+    except Exception as e:
+        logger.error(f"[TOKEN_LIMIT] Error truncating content: {e}")
+        # Fallback: truncate by character count (rough estimate)
+        char_limit = max_tokens * 4  # Rough estimate of 4 chars per token
+        if len(content) > char_limit:
+            truncated = content[:char_limit]
+            logger.warning(f"[TOKEN_LIMIT] Fallback truncation from {len(content)} to {char_limit} characters")
+            return truncated
+        return content
+
+
 def generate_questions(content, account_data = None):
     chat_endpoint = get_chat_endpoint(EndpointType.CHAT_ENDPOINT)
 
@@ -155,13 +195,20 @@ def generate_questions(content, account_data = None):
     
     logger.info(f"Generating questions with {qa_provider}")
     
+    # Reserve tokens for system prompt and response
+    reserved_tokens = 200  # Conservative estimate for system prompt + response space
+    max_content_tokens = qa_input_context_window - reserved_tokens
+    
+    # Truncate content to fit within model's token limit
+    truncated_content = truncate_content_for_model(content, qa_model_name, max_content_tokens)
+    
     system_prompt = "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."
     payload = {
             "temperature": 0.1,  
             "dataSources": [],
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
+                {"role": "user", "content": truncated_content},
             ],
             "options": {
                 "ragOnly": False,
@@ -169,7 +216,8 @@ def generate_questions(content, account_data = None):
                 "model": {"id": qa_model_name}, 
                 "prompt": "Do not include any preambles or comments. Respond only with the questions.",
                 "accountId": account_data.get("account"),
-                "rateLimit": account_data.get("rate_limit")
+                "rateLimit": account_data.get("rate_limit"),
+                "max_tokens": 1000  # Reasonable limit for question generation
             },
         }
 

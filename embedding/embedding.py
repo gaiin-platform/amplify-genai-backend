@@ -1,5 +1,6 @@
 import psycopg2
 from psycopg2.extras import Json
+from psycopg2 import errors
 import json
 import os
 import boto3
@@ -12,10 +13,11 @@ from shared_functions import (
     generate_embeddings,
     generate_questions,
     preprocess_text,
+    embedding_model_name,
+    qa_model_name,
 )
 import urllib
 from create_table import create_table
-from embedding_models import get_embedding_models
 import datetime
 import time
 from rag.rag_secrets import get_rag_secrets_for_document
@@ -41,15 +43,7 @@ pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 
-embedding_model_name = None
-qa_model_name = None
-model_result = get_embedding_models()
-logger.debug("Model_result: %s", model_result)
-
-if model_result["success"]:
-    data = model_result["data"]
-    embedding_model_name = data["embedding"]["model_id"]
-    qa_model_name = data["qa"]["model_id"]
+# Model names imported from shared_functions to avoid duplicate get_embedding_models() calls
 
 
 endpoints_arn = os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"]
@@ -412,24 +406,50 @@ def table_exists(cursor, table_name):
 
 
 def ensure_child_chunk_column_exists(cursor):
-    """Check if child_chunk column exists, add it if not."""
+    """Ensure child_chunk column exists using atomic operations (race condition safe)."""
     try:
-        # Check if column exists
+        logger.info("[SCHEMA_UPDATE] 🔧 Starting child_chunk column verification")
+        logger.info(f"[SCHEMA_UPDATE] Database connection ID: {id(cursor.connection)}")
+        
+        # Check if column already exists first (for better logging)
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
             WHERE table_name = 'embeddings' AND column_name = 'child_chunk'
         """)
+        existing_column = cursor.fetchone()
         
-        if not cursor.fetchone():
-            logger.info("[SCHEMA_UPDATE] Adding child_chunk column to embeddings table")
-            cursor.execute("ALTER TABLE embeddings ADD COLUMN child_chunk VARCHAR(10)")
-            cursor.execute("CREATE INDEX idx_src_child_chunk ON embeddings (src, child_chunk)")
-            logger.info("[SCHEMA_UPDATE] ✅ child_chunk column and index added successfully")
+        if existing_column:
+            logger.info("[SCHEMA_UPDATE] ✅ child_chunk column already exists")
         else:
-            logger.info("[SCHEMA_UPDATE] child_chunk column already exists")
+            logger.info("[SCHEMA_UPDATE] 🔨 Creating child_chunk column (atomic operation)")
+            
+        # Atomic operation - no race condition possible
+        cursor.execute("ALTER TABLE embeddings ADD COLUMN IF NOT EXISTS child_chunk VARCHAR(10)")
+        logger.info("[SCHEMA_UPDATE] ✅ ALTER TABLE command completed successfully")
+        
+        # Check if index already exists
+        cursor.execute("""
+            SELECT indexname 
+            FROM pg_indexes 
+            WHERE tablename = 'embeddings' AND indexname = 'idx_src_child_chunk'
+        """)
+        existing_index = cursor.fetchone()
+        
+        if existing_index:
+            logger.info("[SCHEMA_UPDATE] ✅ idx_src_child_chunk index already exists")
+        else:
+            logger.info("[SCHEMA_UPDATE] 🔨 Creating idx_src_child_chunk index")
+            
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_src_child_chunk ON embeddings (src, child_chunk)")
+        logger.info("[SCHEMA_UPDATE] ✅ CREATE INDEX command completed successfully")
+        
+        logger.info("[SCHEMA_UPDATE] ✅ child_chunk column and index verification complete")
     except Exception as e:
-        logger.error(f"[SCHEMA_UPDATE] ❌ Error checking/adding child_chunk column: {e}")
+        logger.error(f"[SCHEMA_UPDATE] ❌ CRITICAL ERROR ensuring child_chunk column: {e}")
+        logger.error(f"[SCHEMA_UPDATE] Error type: {type(e).__name__}")
+        logger.error(f"[SCHEMA_UPDATE] Database connection state: {cursor.connection.closed}")
+        logger.exception("[SCHEMA_UPDATE] Full stack trace:")
         raise
 
 
@@ -441,14 +461,8 @@ db_connection = None
 def get_db_connection():
     global db_connection
     if db_connection is None or db_connection.closed:
-        admin_conn_params = {
-            "dbname": pg_database,
-            "user": pg_user,
-            "password": pg_password,
-            "host": pg_host,
-            "port": 3306,  # ensure the port matches the PostgreSQL port which is 5432 by default
-        }
         try:
+            logger.debug(f"[DIAGNOSTIC] 🔌 Connecting to database - host: {pg_host}, db: {pg_database}, user: {pg_user}")
             db_connection = psycopg2.connect(
                 host=pg_host,
                 database=pg_database,
@@ -456,9 +470,11 @@ def get_db_connection():
                 password=pg_password,
                 port=3306,  # ensure the port matches the PostgreSQL port which is 5432 by default
             )
-            logger.info("Database connection established.")
+            logger.debug(f"[DIAGNOSTIC] ✅ Database connection successful - connection ID: {id(db_connection)}")
         except psycopg2.Error as e:
-            logger.error(f"Failed to connect to the database: {e}")
+            logger.error(f"[DIAGNOSTIC] ❌ Database connection failed: {e}")
+            logger.error(f"[DIAGNOSTIC] Error type: {type(e).__name__}")
+            logger.error(f"[DIAGNOSTIC] SQLSTATE: {e.pgcode if hasattr(e, 'pgcode') else 'unknown'}")
             raise
 
         # Once the database connection is established, check if the table exists
@@ -533,6 +549,17 @@ def lambda_handler(event, context):
     logger.info(
         f"[LAMBDA_START] 🚀 Lambda function started - processing {len(event['Records'])} SQS messages"
     )
+    
+    # Enhanced logging for debugging
+    for i, record in enumerate(event['Records']):
+        try:
+            s3_event = json.loads(record["body"])
+            s3_record = s3_event["Records"][0]
+            object_key = urllib.parse.unquote(s3_record["s3"]["object"]["key"])
+            chunk_num = extract_child_chunk_number_from_src(object_key)
+            logger.info(f"[LAMBDA_QUEUE_ANALYSIS] Message {i+1}: chunk {chunk_num}, key: {object_key}")
+        except Exception as e:
+            logger.warning(f"[LAMBDA_QUEUE_ANALYSIS] Failed to parse message {i+1}: {e}")
 
     account_data = None
 
@@ -555,6 +582,10 @@ def lambda_handler(event, context):
             # Extract these early so we can mark parent as failed if needed
             childChunk = extract_child_chunk_number_from_src(object_key)
             trimmed_src = trim_src(object_key)
+            
+            logger.debug(f"[DIAGNOSTIC] 🔍 Processing chunk {childChunk} of document {trimmed_src}")
+            logger.debug(f"[DIAGNOSTIC] Lambda ID: {context.aws_request_id if context else 'unknown'}")
+            logger.debug(f"[DIAGNOSTIC] Message ID: {record.get('messageId', 'unknown')}")
             
             # Get object_key and force_reprocess flag from S3 object metadata
             is_force_reprocess = False
@@ -630,7 +661,9 @@ def lambda_handler(event, context):
                 update_parent_chunk_status(trimmed_src, "processing")
 
                 # Get database connection
+                logger.debug(f"[DIAGNOSTIC] 🔌 Establishing database connection for chunk {childChunk}")
                 db_connection = get_db_connection()
+                logger.debug(f"[DIAGNOSTIC] ✅ Database connection established for chunk {childChunk}")
 
                 success, src, error_msg = embed_chunks(data, childChunk, embedding_progress_table, db_connection, account_data)
 
@@ -670,12 +703,34 @@ def lambda_handler(event, context):
                     )
 
             except Exception as e:
-                logger.exception(
-                    f"[PROCESSING_ERROR] ❌ Error processing S3 object for message {record['messageId']}: {str(e)}"
-                )
-                # Mark parent as failed in case of unhandled exceptions
-                if "trimmed_src" in locals():
-                    update_parent_chunk_status(trimmed_src, "failed", str(e))
+                error_type = type(e).__name__
+                error_message = str(e)
+                
+                logger.error(f"[PROCESSING_ERROR] ❌ CRITICAL ERROR processing message {record['messageId']}")
+                logger.error(f"[PROCESSING_ERROR] Error type: {error_type}")
+                logger.error(f"[PROCESSING_ERROR] Error message: {error_message}")
+                logger.exception(f"[PROCESSING_ERROR] Full stack trace:")
+                
+                # Enhanced error categorization for better debugging
+                if "DuplicateColumn" in error_message:
+                    logger.error("[PROCESSING_ERROR] 🔥 DATABASE RACE CONDITION detected - DuplicateColumn error")
+                elif "psycopg2" in error_message or "database" in error_message.lower():
+                    logger.error("[PROCESSING_ERROR] 🔥 DATABASE CONNECTION/QUERY error")
+                elif "RAG secrets" in error_message:
+                    logger.error("[PROCESSING_ERROR] 🔥 RAG SECRETS error")
+                elif "S3" in error_message or "bucket" in error_message.lower():
+                    logger.error("[PROCESSING_ERROR] 🔥 S3 ACCESS error")
+                else:
+                    logger.error("[PROCESSING_ERROR] 🔥 UNKNOWN ERROR TYPE")
+                
+                # Mark parent and child chunk as failed in case of unhandled exceptions
+                if "trimmed_src" in locals() and "childChunk" in locals():
+                    logger.info(f"[ERROR_CLEANUP] Marking chunk {childChunk} and parent as failed")
+                    update_child_chunk_status(trimmed_src, childChunk, "failed", f"{error_type}: {error_message}")
+                    update_parent_chunk_status(trimmed_src, "failed", f"{error_type}: {error_message}")
+                elif "trimmed_src" in locals():
+                    logger.info(f"[ERROR_CLEANUP] Marking parent as failed (no chunk extracted)")
+                    update_parent_chunk_status(trimmed_src, "failed", f"{error_type}: {error_message}")
 
                 # Delete message to prevent infinite retries
                 receipt_handle = record["receiptHandle"]
@@ -761,6 +816,9 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
         logger.info(
             f"[EMBED_CHUNKS_INFO] Processing {len(local_chunks)} local chunks within child chunk {childChunk}"
         )
+        logger.debug(f"[DIAGNOSTIC] 🧪 Embed chunks function entry - chunk {childChunk}, connection ID: {id(db_connection)}")
+        logger.debug(f"[DIAGNOSTIC] Account data present: {account_data is not None}")
+        logger.debug(f"[DIAGNOSTIC] Embedding model: {embedding_model_name}, QA model: {qa_model_name}")
 
         # Mark this child chunk as processing
         update_child_chunk_status(trimmed_src, childChunk, "processing")
@@ -808,45 +866,60 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
         )
         current_local_chunk_index = 0
 
+        logger.debug(f"[DIAGNOSTIC] 🔄 Starting local chunk processing loop for child chunk {childChunk}")
         with db_connection.cursor() as cursor:
             db_connection.commit()
+            logger.debug(f"[DIAGNOSTIC] 📊 Processing {len(local_chunks)} local chunks in child chunk {childChunk}")
             for local_chunk_index, chunk in enumerate(
                 local_chunks[current_local_chunk_index:],
                 start=current_local_chunk_index + 1,
             ):
                 try:
+                    logger.debug(f"[DIAGNOSTIC] 🔍 Processing local chunk {local_chunk_index} of child chunk {childChunk}")
                     content = chunk["content"]
                     locations = chunk["locations"]
                     orig_indexes = chunk["indexes"]
                     char_index = chunk["char_index"]
 
+                    logger.debug(f"[DIAGNOSTIC] 📝 Preprocessing text for local chunk {local_chunk_index}")
                     response_clean_text = preprocess_text(content)
                     if not response_clean_text["success"]:
+                        logger.error(f"[DIAGNOSTIC] ❌ Text preprocessing failed for local chunk {local_chunk_index}: {response_clean_text['error']}")
                         raise Exception(
                             f"Text preprocessing failed: {response_clean_text['error']}"
                         )
                     clean_text = response_clean_text["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ Text preprocessing successful for local chunk {local_chunk_index}")
 
+                    logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
                     response_vector_embedding = generate_embeddings(clean_text)
                     if not response_vector_embedding["success"]:
+                        logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
                         raise Exception(
                             f"Vector embedding generation failed: {response_vector_embedding['error']}"
                         )
                     vector_embedding = response_vector_embedding["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ Vector embedding successful for local chunk {local_chunk_index}")
 
+                    logger.debug(f"[DIAGNOSTIC] ❓ Generating QA summary for local chunk {local_chunk_index}")
                     response_qa_summary = generate_questions(clean_text, account_data)
                     if not response_qa_summary["success"]:
+                        logger.error(f"[DIAGNOSTIC] ❌ QA summary failed for local chunk {local_chunk_index}: {response_qa_summary['error']}")
                         raise Exception(
                             f"QA summary generation failed: {response_qa_summary['error']}"
                         )
                     qa_summary = response_qa_summary["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
+                    logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
                     response_qa_embedding = generate_embeddings(content=qa_summary)
                     if not response_qa_embedding["success"]:
+                        logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
                         raise Exception(
                             f"QA embedding generation failed: {response_qa_embedding['error']}"
                         )
                     qa_vector_embedding = response_qa_embedding["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ QA embedding successful for local chunk {local_chunk_index}")
 
                     vector_token_count = response_vector_embedding["token_count"]
                     qa_vector_token_count = response_qa_embedding["token_count"]
@@ -1093,26 +1166,18 @@ def perform_selective_reprocessing_setup(trimmed_src):
             db_connection = get_db_connection()
             try:
                 with db_connection.cursor() as cursor:
-                    # Check if child_chunk column exists
-                    cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name='embeddings' AND column_name='child_chunk'
-                    """)
-                    has_child_chunk = cursor.fetchone() is not None
+                    # Try selective delete first (race-condition safe)
+                    failed_chunks_str = [str(chunk) for chunk in failed_chunks]
+                    placeholders = ','.join(['%s'] * len(failed_chunks_str))
+                    delete_query = f"DELETE FROM embeddings WHERE src = %s AND child_chunk IN ({placeholders})"
                     
-                    if has_child_chunk:
-                        # Selective delete - convert integers to strings for VARCHAR column
-                        failed_chunks_str = [str(chunk) for chunk in failed_chunks]
-                        placeholders = ','.join(['%s'] * len(failed_chunks_str))
-                        delete_query = f"DELETE FROM embeddings WHERE src = %s AND child_chunk IN ({placeholders})"
+                    try:
                         cursor.execute(delete_query, [trimmed_src] + failed_chunks_str)
                         rows_deleted = cursor.rowcount
                         db_connection.commit()
-                        logger.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} failed embeddings")
-                    else:
-                        # Without child_chunk column, we can't do selective cleanup
-                        # Delete all and reprocess all
+                        logger.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} failed embeddings (selective)")
+                    except errors.UndefinedColumn:
+                        # child_chunk column doesn't exist - fall back to full delete
                         logger.info(f"[SELECTIVE_SETUP] No child_chunk column - deleting all embeddings")
                         logger.info(f"[TEST_CASE] 📝 FULL_REPROCESS_FALLBACK - No child_chunk column for selective delete")
                         cursor.execute("DELETE FROM embeddings WHERE src = %s", [trimmed_src])
@@ -1457,7 +1522,7 @@ async def _check_image_status_async(ds_key, image_bucket, executor):
 
 
 async def _check_text_status_async(original_key, global_id, progress_table, executor):
-    """Async helper to check individual text status"""
+    """Async helper to check individual text status and metadata"""
     try:
         loop = asyncio.get_event_loop()
         dynamodb = boto3.resource("dynamodb")
@@ -1470,28 +1535,51 @@ async def _check_text_status_async(original_key, global_id, progress_table, exec
         item = response.get("Item")
         
         if not item:
-            return original_key, "not_found"
+            return original_key, "not_found", None
+        
+        # Build metadata object
+        metadata = {}
+        
+        # Add lastUpdated if available
+        if "lastUpdated" in item:
+            metadata["lastUpdated"] = item["lastUpdated"]
+        
+        # Add total chunks from parent level if available
+        if item.get("data", {}).get("totalChunks"):
+            metadata["totalChunks"] = item["data"]["totalChunks"]
+        
+        # Analyze child chunks for failed chunk count
+        child_chunks = item.get("data", {}).get("childChunks", {})
+        if child_chunks:
+            failed_chunks = sum(1 for chunk in child_chunks.values() 
+                              if chunk.get("status") == "failed")
+            if failed_chunks > 0:
+                metadata["failedChunks"] = failed_chunks
+            
+            # Override totalChunks with actual child chunk count if we have child chunks
+            metadata["totalChunks"] = len(child_chunks)
         
         # Check if terminated first
         if item.get("terminated", False):
-            return original_key, "terminated"
+            return original_key, "terminated", metadata if metadata else None
         
         # Get parent chunk status
         parent_status = item.get("parentChunkStatus")
         if parent_status:
-            return original_key, parent_status
+            return original_key, parent_status, metadata if metadata else None
         else:
             # If no parent status set, default to starting
-            return original_key, "starting"
+            return original_key, "starting", metadata if metadata else None
             
     except Exception as e:
         logger.error(f"[GET_STATUS] Error getting status for global_id {global_id} (original: {original_key}): {e}")
-        return original_key, None
+        return original_key, None, None
 
 
 async def _get_embedding_status_async(data_sources_input):
     """Async helper function to process status lookups in parallel"""
     status_map = {}
+    metadata_map = {}
     
     # Initialize all with None
     for ds in data_sources_input:
@@ -1563,7 +1651,15 @@ async def _get_embedding_status_async(data_sources_input):
                 if isinstance(result, Exception):
                     logger.error(f"[GET_STATUS] Task failed with exception: {result}")
                     continue
-                if result and len(result) == 2:
+                # Handle 3-tuple (key, status, metadata) from _check_text_status_async
+                if result and len(result) == 3:
+                    key, status, metadata = result
+                    if key and key in status_map:
+                        status_map[key] = status
+                        if metadata:
+                            metadata_map[key] = metadata
+                # Handle 2-tuple (key, status) from _check_image_status_async
+                elif result and len(result) == 2:
                     key, status = result
                     if key and key in status_map:
                         status_map[key] = status
@@ -1584,7 +1680,7 @@ async def _get_embedding_status_async(data_sources_input):
     if failed_items:
         logger.warning(f"[GET_STATUS] FAILED ({len(failed_items)}): {failed_items}")
     
-    return status_map
+    return status_map, metadata_map
 
 
 @required_env_vars({
@@ -1618,10 +1714,16 @@ def get_embedding_status(event, context, current_user, name, data):
     
     try:
         # Run the async function
-        status_map = asyncio.run(_get_embedding_status_async(data_sources_input))
+        status_map, metadata_map = asyncio.run(_get_embedding_status_async(data_sources_input))
         
         logger.info(f"[GET_STATUS] ✅ Completed lookup for {len(status_map)} data sources")
-        return {"success": True, "data": status_map}
+        
+        # Build response with metadata if any exists
+        response = {"success": True, "data": status_map}
+        if metadata_map:
+            response["metadata"] = metadata_map
+        
+        return response
         
     except Exception as e:
         logger.error(f"[GET_STATUS] ❌ Error processing data sources: {e}")
