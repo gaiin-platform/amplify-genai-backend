@@ -1,6 +1,11 @@
 import copy
 import re
 
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
+logger = getLogger("office365")
+
 from integrations.o365.calendar import (
     add_attachment,
     check_event_conflicts,
@@ -265,12 +270,44 @@ def common_handler(operation, *required_params, **optional_params):
             params["access_token"] = data["access_token"]
             response = operation(current_user, **params)
             logger.debug("Integration Response: %s", response)
+            
+            # Check if operation returned failure
+            if isinstance(response, dict) and not response.get("success", True):
+                # CRITICAL: Integration operation reported failure
+                log_critical_error(
+                    function_name="common_handler",
+                    error_type="Office365IntegrationOperationFailure",
+                    error_message=f"Office365 operation returned failure: {response.get('error', 'Unknown error')}",
+                    current_user=current_user,
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                        "response": str(response)[:500]
+                    }
+                )
+            
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
             logger.error("Missing Credentials Error: %s", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
             logger.error("Error: %s", str(e))
+            
+            # CRITICAL: Office365 integration operation failure = user can't access Microsoft services
+            log_critical_error(
+                function_name="common_handler",
+                error_type="Office365IntegrationFailure",
+                error_message=f"Failed to execute Office365 integration operation: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "data_keys": list(data.get('data', {}).keys())
+                }
+            )
+            
             return {"success": False, "error": str(e)}
 
     return handler

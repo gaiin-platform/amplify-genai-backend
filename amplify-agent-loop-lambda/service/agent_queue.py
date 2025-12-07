@@ -92,6 +92,23 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error("Error processing message: %s", e)
+            
+            # CRITICAL: Message processing failure = agent workflow blocked
+            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            import traceback
+            log_critical_error(
+                function_name="process_queue_messages",
+                error_type="AgentQueueMessageProcessingFailure",
+                error_message=f"Failed to process SQS message: {str(e)}",
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "message_id": record.get('messageId'),
+                    "receipt_handle": receipt_handle[:50] if receipt_handle else 'unknown',
+                    "error_details": str(e)
+                }
+            )
+            
             # Only call onFailure if we have a handler that can process this message
             for handler in _handlers:
                 if handler.can_handle(message_body):
@@ -171,6 +188,25 @@ def process_and_invoke_agent(event: dict):
                 return resp.get("data", {"handled": False})
 
             logger.warning("Fat container returned status %d: %s", response.status_code, response.text)
+            
+            # CRITICAL: Fat container failure = agent cannot execute
+            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            import traceback
+            log_critical_error(
+                function_name="process_and_invoke_agent",
+                error_type="FatContainerHTTPFailure",
+                error_message=f"Fat container returned HTTP {response.status_code}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "http_status": response.status_code,
+                    "response_text": response.text[:500] if response.text else 'empty',
+                    "session_id": session_id,
+                    "prompt_length": len(prompt) if prompt else 0
+                }
+            )
+            
             return {"handled": False, "error": f"HTTP {response.status_code}: {response.text}"}
         else:
             # Fallback to direct function call if URL not available
@@ -189,6 +225,24 @@ def process_and_invoke_agent(event: dict):
         return {"handled": False, "error": f"Request failed: {str(e)}"}
     except Exception as e:
         logger.error("Error processing event: %s", e)
+        
+        # CRITICAL: General agent invocation failure
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="process_and_invoke_agent",
+            error_type="AgentInvocationFailure",
+            error_message=f"Failed to invoke agent: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "session_id": session_id,
+                "has_prompt": bool(prompt),
+                "error_details": str(e)
+            }
+        )
+        
         return {"handled": False, "error": str(e)}
 
 

@@ -1,5 +1,6 @@
 import {sendStateEventToStream, sendErrorMessage} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import { getBudgetTokens } from "../common/params.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
@@ -129,6 +130,26 @@ export const chatBedrock = async (chatBody, writable) => {
     } catch (error) {
         if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
+        
+        // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
+        logCriticalError({
+            functionName: 'chatBedrock',
+            errorType: 'BedrockAPIFailure',
+            errorMessage: `Bedrock API failed: ${error.message || error.$response?.message || "Unknown error"}`,
+            currentUser: options?.accountId || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestId: options?.requestId || 'unknown',
+                modelId: currentModel?.id || 'unknown',
+                httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
+                awsReason: error.$response?.reason || 'N/A',
+                awsMessage: error.$response?.message || 'N/A',
+                errorCode: error.code || error.name || 'N/A',
+                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION)
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
     }
 }

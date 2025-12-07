@@ -25,41 +25,13 @@ echo "Extracting minimal pycommon modules..."
 mkdir -p python/pycommon/api
 mkdir -p python/pycommon/llm
 
-# Copy only the specific files we need
+# Copy all API modules
 if [ -d "./tmp_pycommon/pycommon/api" ]; then
-    echo "Copying API modules..."
-    # Copy only the API modules we need
-    cp ./tmp_pycommon/pycommon/api/secrets.py python/pycommon/api/ 2>/dev/null || echo "secrets.py not found"
-    cp ./tmp_pycommon/pycommon/api/models.py python/pycommon/api/ 2>/dev/null || echo "models.py not found"
-    cp ./tmp_pycommon/pycommon/api/get_endpoint.py python/pycommon/api/ 2>/dev/null || echo "get_endpoint.py not found"
-    cp ./tmp_pycommon/pycommon/api/data_sources.py python/pycommon/api/ 2>/dev/null || echo "data_sources.py not found"
-    
-    # Create minimal __init__.py for api module (overwrite the one from GitHub)
-    cat > python/pycommon/api/__init__.py << 'EOF'
-# Minimal API module exports for RAG functionality
-# Only import the modules that were actually copied
-
-from .secrets import (
-    delete_secret_parameter,
-    get_secret_parameter,
-    store_secret_parameter,
-)
-
-# Import other copied modules
-from . import models
-from . import get_endpoint
-from . import data_sources
-
-__all__ = [
-    "get_secret_parameter",
-    "store_secret_parameter", 
-    "delete_secret_parameter",
-    "models",
-    "get_endpoint",
-    "data_sources",
-]
-EOF
-    echo "API modules copied with minimal __init__.py"
+    echo "Copying all API modules..."
+    # Copy the entire api folder to get all modules including critical_logging
+    cp -r ./tmp_pycommon/pycommon/api/* python/pycommon/api/ 2>/dev/null || echo "api folder not found"
+    # Ensure __init__.py exists (keep the one from GitHub with all exports)
+    echo "All API modules copied (including critical_logging)"
 fi
 
 if [ -d "./tmp_pycommon/pycommon/llm" ]; then

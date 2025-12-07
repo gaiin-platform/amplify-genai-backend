@@ -4,6 +4,7 @@
 import { DynamoDBClient, PutItemCommand, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import {getLogger} from "./logging.js";
+import {logCriticalError} from "./criticalLogger.js";
 
 const logger = getLogger("accounting");
 const dynamodbClient = new DynamoDBClient({});
@@ -66,6 +67,26 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     } catch (e) {
         logger.error("Error recording usage:", e);
+        
+        // CRITICAL: Usage recording failed - billing data loss
+        logCriticalError({
+            functionName: 'recordUsage',
+            errorType: 'UsageRecordingFailure',
+            errorMessage: `Failed to record usage to DynamoDB: ${e.message || "Unknown error"}`,
+            currentUser: account?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: e.stack || '',
+            context: {
+                requestId: requestId || 'unknown',
+                modelId: model?.id || 'unknown',
+                accountId: account?.accountId || 'general_account',
+                inputTokens,
+                outputTokens,
+                apiKeyId: apiKeyId || 'N/A',
+                tableName: dynamoTableName
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         return false;
     }
 
@@ -172,6 +193,29 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         
     } catch (e) {
         logger.error("Error calculating or updating cost:", e);
+        
+        // CRITICAL: Cost calculation/update failed - billing/cost tracking data loss
+        logCriticalError({
+            functionName: 'recordUsage_costCalculation',
+            errorType: 'CostCalculationFailure',
+            errorMessage: `Failed to calculate or update cost in DynamoDB: ${e.message || "Unknown error"}`,
+            currentUser: account?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: e.stack || '',
+            context: {
+                requestId: requestId || 'unknown',
+                modelId: model?.id || 'unknown',
+                accountId: account?.accountId || 'general_account',
+                inputTokens,
+                outputTokens,
+                inputCachedTokens,
+                inputWriteCachedTokens,
+                apiKeyId: apiKeyId || 'N/A',
+                costTableName: costDynamoTableName,
+                modelRateTable: modelRateDynamoTable
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         return false;
     }
 

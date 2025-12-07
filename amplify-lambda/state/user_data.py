@@ -23,6 +23,8 @@ set_route_data(route_data)
 set_permissions_by_state(permissions)
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("user-data")
 
 USER_DATA_TABLE = os.environ["USER_STORAGE_TABLE"]
@@ -101,6 +103,21 @@ def common_handler(operation, func_schema, **optional_params):
                 return {"success": True, "data": response}
         except Exception as e:
             logger.error("Unexpected error in common_handler operation: %s", str(e), exc_info=True)
+            
+            # CRITICAL: User data operation failure = broken user experience
+            log_critical_error(
+                function_name="common_handler",
+                error_type="UserDataOperationFailure",
+                error_message=f"Failed to execute user data operation: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "schema": str(func_schema)[:200]  # Truncate for readability
+                }
+            )
+            
             return {"success": False, "error": "Unexpected error."}
 
     return handler

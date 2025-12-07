@@ -3,6 +3,7 @@
 
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
@@ -178,6 +179,26 @@ export const chat = async (chatBody, writable) => {
         return streamAxiosResponseToWritable(url, writable, null, data, headers);
     } catch (error) {
         console.error('Exception in chat function:', error);
+        
+        // CRITICAL: Gemini API failure - capture full axios error details before re-throwing
+        logCriticalError({
+            functionName: 'gemini_chat',
+            errorType: 'GeminiAPIFailure',
+            errorMessage: `Gemini API failed: ${error.message || "Unknown error"}`,
+            currentUser: options?.accountId || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestId: options?.requestId || 'unknown',
+                modelId: modelId || 'unknown',
+                httpStatus: error.response?.status || 'N/A',
+                httpStatusText: error.response?.statusText || 'N/A',
+                apiError: error.response?.data?.error || 'N/A',
+                apiErrorMessage: error.response?.data?.error?.message || error.response?.data?.message || 'N/A',
+                errorCode: error.code || 'N/A',
+                axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A'
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
         
         try {
             if (writable.writable && !writable.writableEnded) {
