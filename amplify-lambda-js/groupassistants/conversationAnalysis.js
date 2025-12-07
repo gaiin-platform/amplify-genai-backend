@@ -6,6 +6,7 @@ import { getLogger } from "../common/logging.js";
 import { StreamResultCollector } from "../common/streams.js";
 import { createHash } from 'crypto';
 import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
+import { logCriticalError } from "../common/criticalLogger.js";
 
 const logger = getLogger("conversationAnalysis");
 
@@ -546,6 +547,22 @@ export async function queueConversationAnalysisWithFallback(chatRequest, llmResp
                 conversationId: chatRequest?.options?.conversationId,
                 user: account?.user
             });
+            
+            // CRITICAL: Both queue and fallback failed - conversation analysis completely lost
+            await logCriticalError({
+                functionName: 'queueConversationAnalysisWithFallback',
+                errorType: 'ConversationAnalysisFallbackFailure',
+                errorMessage: `Both queue and fallback conversation analysis failed: ${fallbackError.message}`,
+                currentUser: account?.user || 'unknown',
+                severity: 'HIGH',
+                stackTrace: fallbackError.stack || '',
+                context: {
+                    conversationId: chatRequest?.options?.conversationId || 'unknown',
+                    assistantId: chatRequest?.options?.assistantId || 'unknown',
+                    queueFailed: true,
+                    fallbackFailed: true
+                }
+            });
         }
     }
 }
@@ -657,6 +674,21 @@ export const sqsProcessorHandler = async (event) => {
                 processingTimeMs: recordProcessingTime,
                 totalErrors: errorCount,
                 errorType: error.constructor.name
+            });
+            
+            // CRITICAL: Conversation analysis failed - will retry via SQS
+            await logCriticalError({
+                functionName: 'conversationAnalysis_sqsHandler',
+                errorType: 'ConversationAnalysisFailure',
+                errorMessage: `Conversation analysis failed: ${error.message || "Unknown error"}`,
+                currentUser: 'system',
+                severity: 'HIGH',
+                stackTrace: error.stack || '',
+                context: {
+                    messageId: record.messageId,
+                    recordIndex: event.Records.indexOf(record),
+                    totalRecords: event.Records.length
+                }
             });
             
             results.push({

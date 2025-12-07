@@ -71,6 +71,26 @@ def record_usage(
 
     except Exception as e:
         logger.error("Error recording usage: %s", e)
+        
+        # CRITICAL: Usage recording failure = billing data loss
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_CRITICAL
+        import traceback
+        log_critical_error(
+            function_name="record_usage",
+            error_type="AgentAccountingUsageRecordingFailure",
+            error_message=f"Failed to record agent usage to DynamoDB: {str(e)}",
+            current_user=account.get('user') if account else 'system',
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "accountId": account.get('account_id') if account else 'unknown',
+                "model_id": model_id,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "error_details": str(e)
+            }
+        )
+        
         return 0.0
 
     try:
@@ -138,6 +158,25 @@ def record_usage(
         return total_cost
     except Exception as e:
         logger.error("Error calculating or updating cost: %s", e)
+        
+        # CRITICAL: Cost calculation failure = billing data loss
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_CRITICAL
+        import traceback
+        log_critical_error(
+            function_name="record_usage_cost_calculation",
+            error_type="AgentAccountingCostCalculationFailure",
+            error_message=f"Failed to calculate or update cost in DynamoDB: {str(e)}",
+            current_user=account.get('user') if account else 'system',
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "accountId": account.get('account_id') if account else 'unknown',
+                "model_id": model_id,
+                "api_key_id": api_key_id if api_key_id else 'N/A',
+                "error_details": str(e)
+            }
+        )
+        
     return 0.0
 
 

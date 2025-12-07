@@ -12,6 +12,7 @@ import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation
 import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
+import {logCriticalError} from "./common/criticalLogger.js";
 import {CacheManager} from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
@@ -329,6 +330,23 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 processingError = true;
                 logger.error(`Request processing failed for user ${params.user}:`, error);
                 
+                // CRITICAL: Assistant handler failure = user cannot get LLM response
+                await logCriticalError({
+                    functionName: 'routeRequest_assistantHandler',
+                    errorType: 'AssistantHandlerFailure',
+                    errorMessage: `Assistant handler failed: ${error.message || "Unknown error"}`,
+                    currentUser: params.user,
+                    severity: 'HIGH',
+                    stackTrace: error.stack || '',
+                    context: {
+                        requestId: requestId || 'unknown',
+                        modelId: model?.id || 'unknown',
+                        assistantType: selectedAssistant?.constructor?.name || 'unknown',
+                        conversationId: options?.conversationId || 'N/A',
+                        hasDataSources: dataSources?.length > 0
+                    }
+                });
+                
                 // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
                 // Return error response instead of throwing
                 return returnResponse(responseStream, {
@@ -392,7 +410,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
         
         logger.error("Error processing request:", e.message);
         logger.error("Full error:", e);
-
+        
+        // CRITICAL: Router failure = user cannot access chat/LLM functionality
+        await logCriticalError({
+            functionName: 'routeRequest_mainRouter',
+            errorType: 'RouterFailure',
+            errorMessage: `Main router failed: ${e.message || "Unknown error"}`,
+            currentUser: params?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: e.stack || '',
+            context: {
+                hasUser: !!params?.user,
+                hasBody: !!params?.body,
+                bodyKeys: params?.body ? Object.keys(params.body).join(',') : 'N/A',
+                errorName: e.name || 'Error'
+            }
+        });
 
         returnResponse(responseStream, {
             statusCode: 400,
@@ -431,7 +464,8 @@ const routeRequestWrapper = requiredEnvVars({
     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
+    "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
+    "CRITICAL_ERRORS_SQS_QUEUE_NAME": [SQSOperation.SEND_MESSAGE]
 })(routeRequestCore);
 
 

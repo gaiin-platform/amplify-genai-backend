@@ -4,6 +4,7 @@
 
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
@@ -251,6 +252,27 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             .catch(reject);
                         return;
                     }
+                    
+                    // CRITICAL: OpenAI/Azure API failure - capture full axios error details
+                    logCriticalError({
+                        functionName: 'openai_streamAxiosResponseToWritable',
+                        errorType: 'OpenAIAPIFailure',
+                        errorMessage: `OpenAI/Azure API failed: ${e.message || "Unknown error"}`,
+                        currentUser: 'unknown', // No user context in this function
+                        severity: 'HIGH',
+                        stackTrace: e.stack || '',
+                        context: {
+                            httpStatus: e.response?.status || 'N/A',
+                            httpStatusText: e.response?.statusText || 'N/A',
+                            apiError: e.response?.data?.error || 'N/A',
+                            apiErrorMessage: e.response?.data?.error?.message || 'N/A',
+                            errorCode: e.code || 'N/A',
+                            url: url || 'unknown',
+                            modelId: data?.model || 'unknown',
+                            hasTools: !!(data?.tools && data.tools.length > 0),
+                            isRetry: !!retryWithoutTools
+                        }
+                    }).catch(err => logger.error('Failed to log critical error:', err));
                     
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
                     if (e.response && e.response.data) {

@@ -144,6 +144,24 @@ def generate_response(
             for tool in tools:
                 logger.error("Tool: %s", tool)
         logger.error("Model: %s", model)
+        
+        # CRITICAL: LLM prompting failure = agent cannot function
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="generate_response",
+            error_type="LLMPromptingFailure",
+            error_message=f"Failed to generate LLM response: {str(e)}",
+            current_user=account_details.get('user') if account_details else 'system',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "model": model,
+                "num_messages": len(messages),
+                "has_tools": bool(tools),
+                "error_details": str(e)
+            }
+        )
 
         raise e
 

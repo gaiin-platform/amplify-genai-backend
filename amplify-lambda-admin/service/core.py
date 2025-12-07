@@ -39,6 +39,24 @@ logger = getLogger("admin")
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
 
+# Setup AWS SNS client for critical error notifications
+sns_client = boto3.client("sns")
+sts_client = boto3.client("sts")
+
+def get_sns_topic_arn(topic_name: str) -> str:
+    """
+    Construct SNS topic ARN from topic name using AWS account ID and region.
+    
+    Args:
+        topic_name: Name of the SNS topic
+    
+    Returns:
+        str: Full ARN of the SNS topic
+    """
+    account_id = sts_client.get_caller_identity()["Account"]
+    region = sns_client.meta.region_name
+    return f"arn:aws:sns:{region}:{account_id}:{topic_name}"
+
 
 class AdminConfigTypes(Enum):
     ADMINS = "admins"
@@ -59,6 +77,7 @@ class AdminConfigTypes(Enum):
     EMAIL_SUPPORT = "emailSupport"
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
     AI_EMAIL_DOMAIN = 'aiEmailDomain'
+    CRITICAL_ERRORS = "criticalErrors"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -187,6 +206,293 @@ def validate_and_filter_users_in_config(config_type, update_data, invalid_users_
     return update_data
 
 
+def get_sns_subscription_status(email: str, topic_arn: str) -> dict:
+    """
+    Check the current subscription status for an email.
+    
+    Args:
+        email: Email address to check
+        topic_arn: ARN of the SNS topic
+    
+    Returns:
+        dict: Status information with keys:
+            - status: 'confirmed' | 'pending' | 'not_subscribed'
+            - subscription_arn: The ARN if subscribed
+            - message: Human-readable status message
+    """
+    try:
+        existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+        
+        for sub in existing_subscriptions.get("Subscriptions", []):
+            if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                subscription_arn = sub.get("SubscriptionArn")
+                
+                if subscription_arn == "PendingConfirmation":
+                    return {
+                        "status": "pending",
+                        "subscription_arn": None,
+                        "message": "Subscription pending email confirmation"
+                    }
+                else:
+                    return {
+                        "status": "confirmed",
+                        "subscription_arn": subscription_arn,
+                        "message": "Subscription confirmed and active"
+                    }
+        
+        return {
+            "status": "not_subscribed",
+            "subscription_arn": None,
+            "message": "Email not subscribed"
+        }
+        
+    except ClientError as e:
+        logger.error("Error checking SNS subscription status: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Error checking status: {str(e)}"
+        }
+    except Exception as e:
+        logger.error("Unexpected error checking SNS subscription: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Unexpected error: {str(e)}"
+        }
+
+
+def manage_sns_subscription(email: str, topic_arn: str, action: str) -> dict:
+    """
+    Subscribe or unsubscribe an email to/from an SNS topic.
+    
+    Args:
+        email: Email address to subscribe/unsubscribe
+        topic_arn: ARN of the SNS topic
+        action: Either 'subscribe' or 'unsubscribe'
+    
+    Returns:
+        dict: Success status and message
+    """
+    try:
+        if action == "subscribe":
+            # Check if email is already subscribed
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    if sub.get("SubscriptionArn") != "PendingConfirmation":
+                        logger.info("Email %s already subscribed to topic", email)
+                        return {"success": True, "message": "Email already subscribed"}
+                    else:
+                        logger.info("Email %s has pending confirmation", email)
+                        return {"success": True, "message": "Subscription pending confirmation"}
+            
+            # Subscribe new email
+            response = sns_client.subscribe(
+                TopicArn=topic_arn,
+                Protocol="email",
+                Endpoint=email,
+                ReturnSubscriptionArn=True
+            )
+            
+            logger.info("Subscribed %s to critical errors notifications (pending confirmation)", email)
+            return {
+                "success": True,
+                "message": f"Subscription email sent to {email}. Please check inbox to confirm.",
+                "subscription_arn": response.get("SubscriptionArn")
+            }
+            
+        elif action == "unsubscribe":
+            # Find and unsubscribe the email
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    subscription_arn = sub.get("SubscriptionArn")
+                    
+                    if subscription_arn and subscription_arn != "PendingConfirmation":
+                        sns_client.unsubscribe(SubscriptionArn=subscription_arn)
+                        logger.info("Unsubscribed %s from critical errors notifications", email)
+                        return {"success": True, "message": f"Unsubscribed {email} from notifications"}
+                    else:
+                        logger.info("Subscription for %s is pending, cannot unsubscribe", email)
+                        return {"success": True, "message": "Subscription pending, cannot unsubscribe"}
+            
+            logger.warning("No subscription found for %s", email)
+            return {"success": True, "message": "No active subscription found"}
+        
+        else:
+            return {"success": False, "message": f"Invalid action: {action}"}
+            
+    except ClientError as e:
+        error_msg = f"SNS error: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+    except Exception as e:
+        error_msg = f"Error managing SNS subscription: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+
+
+def handle_critical_errors_config_update(update_data: dict) -> dict:
+    """
+    Handle critical errors configuration updates with sophisticated SNS subscription management.
+    
+    Handles all state transitions:
+    - Activating notifications: Subscribe new email
+    - Deactivating notifications: Unsubscribe current email
+    - Changing email: Unsubscribe old, subscribe new
+    - Email change while inactive: Just update config
+    
+    Args:
+        update_data: Dictionary with 'isActive' and 'email' keys
+    
+    Returns:
+        dict: Success status, message, and subscription_status object
+    """
+    is_active = update_data.get("isActive", False)
+    new_email = update_data.get("email", "").strip() if is_active else ""
+    
+    # Validation: Email required if activating
+    if is_active and not new_email:
+        return {"success": False, "message": "Email address is required for active notifications"}
+    
+    # Get SNS topic ARN from environment
+    topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+    if not topic_arn:
+        logger.error("CRITICAL_ERRORS_SNS_TOPIC_ARN not set")
+        return {"success": False, "message": "SNS topic ARN not configured"}
+    
+    # Get previous config to compare state changes
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.CRITICAL_ERRORS.value})
+        previous_config = response.get("Item", {}).get("data", {})
+        previous_active = previous_config.get("isActive", False)
+        previous_email = previous_config.get("email", "").strip()
+    except Exception as e:
+        logger.warning("Could not retrieve previous critical errors config: %s", str(e))
+        previous_active = False
+        previous_email = ""
+    
+    logger.info("🔄 Critical errors config update: active %s→%s, email '%s'→'%s'", 
+                previous_active, is_active, previous_email, new_email)
+    
+    # Determine subscription status based on state transition
+    subscription_status = None
+    sns_result = None
+    
+    # STATE TRANSITION 1: ACTIVATING (was off, now on)
+    if is_active and not previous_active:
+        logger.info("✅ ACTIVATING notifications for %s", new_email)
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation"
+            }
+            logger.info("📧 Subscription email sent to %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe %s: %s", new_email, sns_result.get("message"))
+    
+    # STATE TRANSITION 2: DEACTIVATING (was on, now off)
+    elif not is_active and previous_active:
+        logger.info("🛑 DEACTIVATING notifications for %s", previous_email)
+        
+        if previous_email:
+            sns_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if sns_result.get("success"):
+                logger.info("✅ Unsubscribed %s successfully", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe %s: %s", previous_email, sns_result.get("message"))
+        
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Notifications deactivated"
+        }
+    
+    # STATE TRANSITION 3: EMAIL CHANGED (while active)
+    elif is_active and previous_active and new_email != previous_email:
+        logger.info("🔄 CHANGING email from %s to %s", previous_email, new_email)
+        
+        # Unsubscribe old email
+        if previous_email:
+            unsubscribe_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if unsubscribe_result.get("success"):
+                logger.info("✅ Unsubscribed old email %s", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe old email %s", previous_email)
+        
+        # Subscribe new email
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation for new address"
+            }
+            logger.info("📧 Subscription email sent to new address %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe new email: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe new email %s", new_email)
+    
+    # STATE TRANSITION 4: EMAIL CHANGED (while inactive)
+    elif not is_active and new_email != previous_email:
+        logger.info("ℹ️ Email changed while inactive: %s → %s (no SNS action)", previous_email, new_email)
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Email updated but notifications are inactive"
+        }
+        sns_result = {"success": True, "message": "Email updated (inactive)"}
+    
+    # STATE TRANSITION 5: NO CHANGES
+    else:
+        logger.info("ℹ️ No subscription changes needed")
+        # Don't touch subscription_status - let it be rechecked on next load
+        subscription_status = None  # Will be checked in real-time on next GET
+        sns_result = {"success": True, "message": "No subscription changes needed"}
+    
+    # Prepare data for DynamoDB (include subscription_status only if changed)
+    if subscription_status:
+        update_data_with_status = {**update_data, "subscription_status": subscription_status}
+    else:
+        # Remove subscription_status if present (will be rechecked on load)
+        update_data_with_status = {k: v for k, v in update_data.items() if k != "subscription_status"}
+    
+    # Update DynamoDB
+    db_result = update_admin_config_data(AdminConfigTypes.CRITICAL_ERRORS.value, update_data_with_status)
+    
+    if not db_result.get("success"):
+        logger.error("❌ Failed to update DynamoDB: %s", db_result.get("message"))
+        return db_result
+    
+    logger.info("✅ Critical errors config updated successfully")
+    
+    # Return combined result
+    if sns_result and not sns_result.get("success"):
+        logger.warning("⚠️ SNS operation failed but config saved: %s", sns_result.get("message"))
+        return {
+            "success": True,
+            "message": f"Config saved but SNS operation failed: {sns_result.get('message')}",
+            "warning": sns_result.get("message"),
+            "subscription_status": subscription_status
+        }
+    
+    return {
+        "success": True,
+        "message": sns_result.get("message", "Critical errors configuration updated successfully"),
+        "subscription_status": subscription_status
+    }
+
+
 def handle_update_config(config_type, update_data, token, invalid_users_set):
     """
     Handle configuration updates with pre-computed invalid users set.
@@ -223,6 +529,9 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
 
         case AdminConfigTypes.PPTX_TEMPLATES:
             return update_pptx_data(config_type.value, update_data)
+
+        case AdminConfigTypes.CRITICAL_ERRORS:
+            return handle_critical_errors_config_update(update_data)
 
         case (AdminConfigTypes.APP_VARS
             | AdminConfigTypes.APP_SECRETS
@@ -383,6 +692,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.AI_EMAIL_DOMAIN,
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
+            AdminConfigTypes.CRITICAL_ERRORS,
         ]
 
         for config_type in dynamo_config_types:
@@ -402,6 +712,46 @@ def get_configs(event, context, current_user, name, data):
                             logger.info(
                                 "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
+                    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+                        # Check real-time SNS subscription status
+                        logger.info("🔍 Checking critical errors config - isActive: %s, email: %s", 
+                                   new_data.get("isActive"), new_data.get("email"))
+                        
+                        if new_data.get("isActive") and new_data.get("email"):
+                            try:
+                                topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+                                logger.info("📧 Topic ARN from env: %s", topic_arn[:50] + "..." if topic_arn else "NOT SET")
+                                
+                                if topic_arn:
+                                    logger.info("✅ Checking SNS subscription for %s against topic %s", 
+                                               new_data["email"], topic_arn[-20:])
+                                    sns_status = get_sns_subscription_status(new_data["email"], topic_arn)
+                                    new_data["subscription_status"] = sns_status
+                                    logger.info("📊 SNS subscription status for %s: %s - %s", 
+                                               new_data["email"], 
+                                               sns_status.get("status"), 
+                                               sns_status.get("message"))
+                                else:
+                                    logger.error("❌ CRITICAL_ERRORS_SNS_TOPIC_ARN environment variable not set! Cannot check subscription status.")
+                                    logger.error("💡 This should be set in serverless.yml as: CRITICAL_ERRORS_SNS_TOPIC_ARN: !Ref CriticalErrorsNotificationTopic")
+                                    new_data["subscription_status"] = {
+                                        "status": "error",
+                                        "message": "SNS topic ARN not configured - check Lambda environment variables"
+                                    }
+                            except Exception as e:
+                                logger.error("⚠️ Exception while checking SNS status: %s", str(e), exc_info=True)
+                                new_data["subscription_status"] = {
+                                    "status": "error",
+                                    "message": f"Error checking subscription: {str(e)}"
+                                }
+                        else:
+                            # Not active or no email configured
+                            logger.info("ℹ️ Critical errors not active or no email - isActive: %s, email: %s", 
+                                       new_data.get("isActive"), new_data.get("email"))
+                            new_data["subscription_status"] = {
+                                "status": "not_subscribed",
+                                "message": "Critical error notifications not enabled"
+                            }
                 else:
                     # Configuration does not exist, initialize it
                     new_data = initialize_config(config_type)
@@ -551,6 +901,8 @@ def initialize_config(config_type):
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
         item["data"] = ""
+    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+        item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     else:

@@ -106,6 +106,21 @@ def get_all_amplify_groups():
             logger.warning("No Amplify Groups Found")
     except Exception as e:
         logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
+        
+        # CRITICAL: Cannot retrieve amplify groups = access control broken
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="get_all_amplify_groups",
+            error_type="AmplifyGroupsRetrievalFailure",
+            error_message=f"Failed to retrieve amplify groups from DynamoDB: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "config_type": AdminConfigTypes.AMPLIFY_GROUPS.value,
+                "error_details": str(e)
+            }
+        )
     return None
 
 
@@ -120,6 +135,22 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
     except Exception as e:
         logger.error("Error retrieving user affiliated groups: %s", str(e))
+        
+        # CRITICAL: Cannot retrieve user groups = access control broken
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="get_user_affiliated_groups",
+            error_type="UserAffiliatedGroupsRetrievalFailure",
+            error_message=f"Failed to retrieve user's affiliated groups: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_details": str(e)
+            }
+        )
+        
         return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
 
 

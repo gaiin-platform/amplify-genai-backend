@@ -27,5 +27,15 @@ FEATURE_FLAGS = {
     "websiteUrls": False,
     "accounts": True,
     "cachedDocuments": False,
-    "modelPricing": False
+    "modelPricing": False,
+    "integrations": False, 
+    "agentTools": False,
+    "actionSets": False,
+    "agentAssistantType": False,
+    "assistantApis": False,
+    "assistantEmailEvents": False,
+    "assistantWorkflows": False,
+    "createAssistantWorkflows": False,
+    "scheduledTasks": False,
+    "criticalErrorTracking": False,
 }

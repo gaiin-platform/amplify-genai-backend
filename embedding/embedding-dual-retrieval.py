@@ -30,6 +30,8 @@ from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 
 add_api_access_types([APIAccessType.CHAT.value, APIAccessType.DUAL_EMBEDDING.value])
 setup_validated(rules, get_permission_checker)
@@ -234,6 +236,22 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
                     f"An error occurred while fetching top similar QAs: {e}",
                     exc_info=True,
                 )
+                
+                # CRITICAL: PostgreSQL query failure for QA embeddings - user cannot retrieve data
+                log_critical_error(
+                    function_name="get_top_similar_qas",
+                    error_type="PostgreSQLQAQueryFailure",
+                    error_message=f"Failed to fetch top similar QAs from PostgreSQL: {str(e)}",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "src_ids_count": len(src_ids) if src_ids else 0,
+                        "limit": limit,
+                        "pg_host": pg_host,
+                        "pg_database": pg_database
+                    }
+                )
+                
                 raise
     return top_docs
 
@@ -283,6 +301,22 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
                 logger.info(f"Top similar docs retrieved: {top_docs}")
             except Exception as e:
                 logger.error(f"An error occurred while fetching top similar docs: {e}", exc_info=True)
+                
+                # CRITICAL: PostgreSQL query failure for doc embeddings - user cannot retrieve data
+                log_critical_error(
+                    function_name="get_top_similar_docs",
+                    error_type="PostgreSQLDocQueryFailure",
+                    error_message=f"Failed to fetch top similar docs from PostgreSQL: {str(e)}",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "src_ids_count": len(src_ids) if src_ids else 0,
+                        "limit": limit,
+                        "pg_host": pg_host,
+                        "pg_database": pg_database
+                    }
+                )
+                
                 raise
     return top_docs
 
@@ -829,6 +863,22 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     else:
         error = response_embeddings["error"]
         logger.error(f"Embedding generation failed: {error}")
+        
+        # CRITICAL: Embedding generation failure - user cannot perform dual retrieval
+        log_critical_error(
+            function_name="_async_process_input_with_dual_retrieval_embedding_gen",
+            error_type="EmbeddingGenerationFailure",
+            error_message=f"Failed to generate embeddings for user input: {error}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace="",
+            context={
+                "user_input_length": len(content) if content else 0,
+                "src_ids_count": len(src_ids) if src_ids else 0,
+                "limit": limit
+            }
+        )
+        
         return {"error": error}
     
     def get_similar_docs():
@@ -1212,6 +1262,21 @@ def manually_queue_embedding(src_id, account_data):
             # Check if it's an SQS permission error - no point retrying
             if 'AccessDenied' in error_str and 'sqs:sendmessage' in error_str.lower():
                 logger.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id}: {error_str}")
+                
+                # CRITICAL: SQS permission failure - cannot queue documents for embedding
+                log_critical_error(
+                    function_name="manually_queue_embedding_sqs_permission",
+                    error_type="SQSPermissionFailure",
+                    error_message=f"Lambda lacks SQS SendMessage permission: {error_str}",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "src_id": src_id,
+                        "queue_url": queue_url,
+                        "account_user": account_data.get("user", "unknown")
+                    }
+                )
+                
                 # Cache this as a permanent failure with special TTL
                 performance_cache.mark_document_failed(src_id, f"SQS Permission Error: {error_str}")
                 return {"success": False, "message": "Missing SQS permissions"}
@@ -1295,4 +1360,18 @@ def reset_embedding_status_to_starting(src_id):
             
     except Exception as e:
         logger.error(f"[RESET_STATUS] ❌ Failed to reset embedding status for {src_id}: {str(e)}")
+        
+        # CRITICAL: Failed to reset embedding status - document cannot be requeued
+        log_critical_error(
+            function_name="reset_embedding_status_to_starting",
+            error_type="ResetEmbeddingStatusFailure",
+            error_message=f"Failed to reset embedding status for document: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src_id": src_id,
+                "embedding_progress_table": os.environ.get("EMBEDDING_PROGRESS_TABLE", "unknown")
+            }
+        )
+        
         raise e

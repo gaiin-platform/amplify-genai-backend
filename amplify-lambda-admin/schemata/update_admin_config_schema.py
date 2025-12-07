@@ -480,6 +480,29 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    {
+                        # Configuration for 'criticalErrors'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "criticalErrors"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "email": {
+                                        "type": "string"
+                                    },
+                                },
+                                "required": ["isActive", "email"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }

@@ -33,6 +33,8 @@ from pycommon.api.ops import api_tool, set_permissions_by_state
 set_permissions_by_state(permissions)
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("oauth")
 
 # Define a custom error for missing credentials
@@ -170,12 +172,56 @@ def serialize_credentials(integration, credentials):
                     credentials_dict["expires_at"] = int(dt.timestamp())
                 except Exception as e:
                     logger.error("Error parsing Google expiry date: %s", e)
+                    
+                    # CRITICAL: Google credentials expiry parsing failure
+                    log_critical_error(
+                        function_name="serialize_credentials_google_expiry",
+                        error_type="GoogleCredentialsExpiryParsingFailure",
+                        error_message=f"Failed to parse Google expiry date: {str(e)}",
+                        severity=SEVERITY_HIGH,
+                        stack_trace=traceback.format_exc(),
+                        context={
+                            "integration": integration,
+                            "expiry_str": credentials_dict.get("expiry", "N/A"),
+                            "credentials_keys": list(credentials_dict.keys())
+                        }
+                    )
+                    
                     raise e
             else:
+                # CRITICAL: Google credentials missing required expiry field
+                log_critical_error(
+                    function_name="serialize_credentials_google_missing_expiry",
+                    error_type="GoogleCredentialsMissingExpiryFailure",
+                    error_message=f"Google credentials missing required expiry field",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "integration": integration,
+                        "credentials_keys": list(credentials_dict.keys()),
+                        "credentials_dict": str(credentials_dict)
+                    }
+                )
+                
                 raise Exception("Google credentials missing required fields:", credentials_dict)
         case IntegrationType.MICROSOFT:
             if ("error" in credentials or "error_description" in credentials):
                 logger.error("Error serializing Microsoft credentials: %s", credentials)
+                
+                # CRITICAL: OAuth credential serialization failure = user can't connect integrations
+                log_critical_error(
+                    function_name="serialize_credentials",
+                    error_type="OAuthCredentialSerializationFailure",
+                    error_message=f"Failed to serialize OAuth credentials: {credentials.get('error_description', str(credentials))}",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "integration": integration,
+                        "error": credentials.get('error'),
+                        "error_description": credentials.get('error_description')
+                    }
+                )
+                
                 raise Exception(f"Error serializing Microsoft credentials: {credentials}")
                 
             credentials_dict = {
@@ -187,6 +233,19 @@ def serialize_credentials(integration, credentials):
                 credentials_dict["expires_in"]
             )
         case _:
+            # CRITICAL: Unsupported integration type - user can't connect integration
+            log_critical_error(
+                function_name="serialize_credentials_unsupported_type",
+                error_type="UnsupportedIntegrationTypeFailure",
+                error_message=f"Unsupported integration type: {integration}",
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "integration": integration,
+                    "integration_type": type(integration).__name__
+                }
+            )
+            
             raise ValueError(f"Unsupported integration type: {integration}")
     return credentials_dict
 
@@ -241,6 +300,23 @@ def get_user_credentials(current_user, integration):
         )
     except Exception as e:
         logger.error("Error retrieving credentials from DynamoDB: %s", str(e))
+        
+        # CRITICAL: User credentials retrieval failure - user cannot access integrations
+        log_critical_error(
+            function_name="get_user_credentials",
+            error_type="OAuthCredentialsRetrievalFailure",
+            error_message=f"Failed to retrieve OAuth credentials: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key,
+                "error_type": type(e).__name__
+            }
+        )
+        
         raise e
 
 
@@ -380,6 +456,23 @@ def start_auth(event, context, current_user, name, data):
         )
     except ClientError as e:
         logger.error("Error storing state in DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth state storage failure - user cannot start OAuth flow
+        log_critical_error(
+            function_name="start_auth",
+            error_type="OAuthStateStorageFailure",
+            error_message=f"Failed to store OAuth state in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "state": state,
+                "origin": origin,
+                "table": os.environ.get("OAUTH_STATE_TABLE", "unknown")
+            }
+        )
+        
         raise
 
     return {
@@ -409,6 +502,22 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
             logger.debug("No record found; initializing a new integrations map.")
     except Exception as e:
         logger.error("Error retrieving item %s from DynamoDB: %s", item_key, e)
+        
+        # CRITICAL: OAuth credentials retrieval failure during update
+        log_critical_error(
+            function_name="update_oauth_user_credentials_retrieve",
+            error_type="OAuthCredentialsUpdateRetrievalFailure",
+            error_message=f"Failed to retrieve existing OAuth credentials during update: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key
+            }
+        )
+        
         return {
             "success": False,
             "message": f"Error retrieving existing OAuth credentials",
@@ -431,6 +540,22 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
         return {"success": True}
     except Exception as e:
         logger.error("Error storing token in DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth credentials storage failure - user loses integration connection
+        log_critical_error(
+            function_name="update_oauth_user_credentials_store",
+            error_type="OAuthCredentialsStorageFailure",
+            error_message=f"Failed to store OAuth credentials in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key
+            }
+        )
+        
         return {"success": False, "message": f"Error storing OAuth credentials."}
 
 
@@ -521,8 +646,22 @@ def auth_callback(event, context):
             return return_html_failed_auth(f"OAuth error: {error_description or error}")
     except Exception as e:
         logger.error("Unexpected error in auth_callback: %s", str(e))
-        import traceback
         logger.error("Traceback: %s", traceback.format_exc())
+        
+        # CRITICAL: OAuth callback unexpected failure - user OAuth flow completely broken
+        log_critical_error(
+            function_name="auth_callback",
+            error_type="OAuthCallbackUnexpectedFailure",
+            error_message=f"Unexpected error in OAuth callback: {str(e)}",
+            current_user="unknown",  # User context not available at this point
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_type": type(e).__name__,
+                "has_query_params": bool(event.get("queryStringParameters"))
+            }
+        )
+        
         return return_html_failed_auth(f"Internal server error: {str(e)}")
 
     state = query_params.get("state")
@@ -543,6 +682,21 @@ def auth_callback(event, context):
             raise ValueError("Invalid OAuth callback.")
     except ClientError as e:
         logger.error("Error retrieving state from DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth state retrieval failure - callback cannot complete
+        log_critical_error(
+            function_name="auth_callback_state_retrieval",
+            error_type="OAuthStateRetrievalFailure",
+            error_message=f"Failed to retrieve OAuth state from DynamoDB: {str(e)}",
+            current_user="unknown",  # User context not available yet
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "state": state,
+                "table": os.environ.get("OAUTH_STATE_TABLE", "unknown")
+            }
+        )
+        
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "text/html"},

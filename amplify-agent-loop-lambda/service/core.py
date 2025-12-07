@@ -90,8 +90,43 @@ def common_handler(operation, func_schema, **optional_params):
 
             success = response.get("success", True)
             logger.debug("Returning response success: %s", success)
+            
+            # CRITICAL: Agent operation returned success=False - workflow failed
+            if not success:
+                from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+                import traceback
+                log_critical_error(
+                    function_name="common_handler_operation_failed",
+                    error_type="AgentOperationReturnedFailure",
+                    error_message=f"Agent operation returned success=False: {response.get('error', 'No error message')}",
+                    current_user=current_user,
+                    severity=SEVERITY_HIGH,
+                    stack_trace="",
+                    context={
+                        "operation_name": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                        "response_error": response.get('error', 'No error message'),
+                        "response_message": response.get('message', 'No message'),
+                        "response_keys": list(response.keys())
+                    }
+                )
+            
             return {"success": success, "data": response}
         except Exception as e:
+            # CRITICAL: Agent operation failure = user workflow blocked
+            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            import traceback
+            log_critical_error(
+                function_name="common_handler",
+                error_type="AgentOperationFailure",
+                error_message=f"Agent operation failed: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation_name": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "error_details": str(e)
+                }
+            )
             return {"success": False, "error": str(e)}
 
     return handler
@@ -120,6 +155,21 @@ def route(event, context, current_user, name, data):
             event, context, current_user, name, data
         )
     except Exception as e:
+        # CRITICAL: Route handler exception - agent routing failed
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="route_handler",
+            error_type="AgentRouteHandlerFailure",
+            error_message=f"Agent route handler failed: {str(e)}",
+            current_user=current_user if 'current_user' in locals() else 'unknown',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "target_path": event.get("path", event.get("rawPath", "unknown")),
+                "error_details": str(e)
+            }
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -204,4 +254,18 @@ def get_builtin_tools(event, context, current_user, name, data):
 
         return {"success": True, "data": serializable_tools}
     except Exception as e:
+        # CRITICAL: Get builtin tools failed
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="get_builtin_tools",
+            error_type="GetBuiltinToolsFailure",
+            error_message=f"Failed to get builtin tools: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "tools_count": len(tools) if 'tools' in locals() else 0
+            }
+        )
         return {"success": False, "error": str(e)}

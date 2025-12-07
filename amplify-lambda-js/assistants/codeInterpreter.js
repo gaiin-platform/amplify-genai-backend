@@ -6,6 +6,7 @@ import {sendDeltaToStream, sendStatusEventToStream, sendStateEventToStream, forc
 import {newStatus} from "../common/status.js";
 import {getLogger} from "../common/logging.js";
 import {isKilled} from "../requests/requestState.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -117,7 +118,7 @@ const sendStatusMessage = (responseStream, message, inProgress=true, summary='',
     forceFlush(responseStream); // 🚨 CRITICAL: Force flush for real-time status updates
 }
 
-const handleUserErrorMessage = (responseStream, responseErrorMessage) => {
+const handleUserErrorMessage = (responseStream, responseErrorMessage, account, options, assistantId) => {
     if (responseErrorMessage) {
         sendStatusMessage(responseStream, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
         logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
@@ -126,6 +127,24 @@ const handleUserErrorMessage = (responseStream, responseErrorMessage) => {
     } else {
         sendStateEventToStream(responseStream, { codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
     }
+    
+    // CRITICAL: Code interpreter execution failed - user blocked from executing code (fire-and-forget)
+    logCriticalError({
+        functionName: 'codeInterpreter_executionFailure',
+        errorType: 'CodeInterpreterExecutionFailure',
+        errorMessage: `Code interpreter execution failed: ${responseErrorMessage || "Unknown error"}`,
+        currentUser: account?.user || 'unknown',
+        severity: 'HIGH',
+        stackTrace: '',
+        context: {
+            requestId: options?.requestId || 'unknown',
+            assistantId: assistantId || 'N/A',
+            hasAssistantId: !!assistantId,
+            errorDetails: responseErrorMessage || 'No error details',
+            accountId: account?.accountId || 'general_account'
+        }
+    }).catch(err => logger.error('Failed to log critical error:', err));
+    
     sendStatusMessage(responseStream, "Amplify Assistant is responding...");
 }
 
@@ -181,7 +200,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     sendStatusMessage(responseStream, "Code interpreter is making progress on your request...");
                     logger.debug("Code Interpreter Assistant Created...");
                 } else {
-                    handleUserErrorMessage(responseStream, String(responseData && responseData.error));
+                    handleUserErrorMessage(responseStream, String(responseData && responseData.error), account, options, null);
                 }
 
             }
@@ -207,7 +226,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                         codeInterpreterResponse = textContent;
                         sendStateEventToStream(responseStream, { codeInterpreter: messageData });
                     } else {
-                        handleUserErrorMessage(responseStream, String(responseData && responseData.error));
+                        handleUserErrorMessage(responseStream, String(responseData && responseData.error), account, options, assistantId);
                     }
 
             } 
