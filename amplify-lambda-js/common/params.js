@@ -1,5 +1,6 @@
-//Copyright (c) 2024 Vanderbilt University  
+//Copyright (c) 2025 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+//Contibutors: Jason Bradley (AWS)
 
 import {chat as openaiChat} from "../azure/openai.js";
 import {chat as geminiChat} from "../gemini/gemini.js";
@@ -73,19 +74,15 @@ export const getBudgetTokens = (params, maxTokens) => {
 }
 
 export const getChatFn = (model, body, writable, context) => {
-
-    if (isOpenAIModel(model.id)) {
-        return openaiChat(getLLMConfig, body, writable, context);
-    } else if (model.provider === 'Bedrock') {
-        return chatBedrock(body, writable, context);
-    } else if (isGeminiModel(model.id)) {
-        return geminiChat(body, writable, context);
-    } else {
-        console.log(`Error: Model ${model} does not have a corresponding chatFn`)
-        return null;
-    }
+    const chatFunctions = {
+        'Bedrock': () => chatBedrock(body, writable, context),
+        'OpenAI': () => openaiChat(getLLMConfig, body, writable, context),
+        'Gemini': () => geminiChat(body, writable, context)
+    };
+    
+    return chatFunctions[model.provider]?.() ?? 
+        (console.log(`Error: Model ${model} does not have a corresponding chatFn`), null);
 }
-
 
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
