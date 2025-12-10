@@ -30,4 +30,17 @@ permissions_by_state_type = {
     "/microsoft/integrations": {
         "get": lambda for_user, with_data: True,
     },
+    "/integrations/email/webhook": {
+        "post": lambda for_user, with_data: True,
+        "get": lambda for_user, with_data: True,
+    },
+    "/integrations/email/subscription/create": {
+        "post": lambda for_user, with_data: True,
+    },
+    "/integrations/email/user-guid": {
+        "get": lambda for_user, with_data: True,
+    },
+    "/integrations/email/organization/users": {
+        "get": lambda for_user, with_data: True,
+    },
 }

@@ -213,6 +213,68 @@ def get_user_guid_from_email(user_email: str) -> Optional[str]:
         return None
 
 
+def get_user_guid_from_email_internal(user_email: str) -> Optional[str]:
+    """
+    Internal function to get Azure AD User GUID from email address.
+    Used by create_subscription function.
+    """
+    try:
+        headers = get_graph_headers()
+        url = f"{GRAPH_ENDPOINT}/users/{user_email}"
+        params = {"$select": "id"}
+        
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            return user_data.get("id")
+        else:
+            logger.error(f"Failed to get user GUID for {user_email}: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error getting user GUID for {user_email}: {str(e)}")
+        return None
+
+
+def get_all_organization_users_internal(top: int = 100, skip: int = 0, filter_query: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    Internal function to get all organization users for bulk operations.
+    Used in Phase 2 for automated subscription management.
+    """
+    try:
+        headers = get_graph_headers()
+        url = f"{GRAPH_ENDPOINT}/users"
+        params = {
+            "$select": "id,userPrincipalName,displayName",
+            "$top": top,
+            "$skip": skip
+        }
+        
+        if filter_query:
+            params["$filter"] = filter_query
+        
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        users_data = response.json()
+        users = []
+        
+        for user in users_data.get("value", []):
+            users.append({
+                "userId": user.get("id"),
+                "userEmail": user.get("userPrincipalName"),
+                "displayName": user.get("displayName")
+            })
+        
+        logger.info(f"Retrieved {len(users)} organization users (top={top}, skip={skip})")
+        return users
+        
+    except Exception as e:
+        logger.error(f"Failed to get organization users: {str(e)}")
+        return []
+
+
 def get_all_organization_users(page_size: int = 100) -> List[Dict[str, str]]:
     """
     Get all users in the organization with their GUIDs and email addresses.
@@ -262,10 +324,93 @@ def get_all_organization_users(page_size: int = 100) -> List[Dict[str, str]]:
         return []
 
 
+def process_webhook_notifications(notifications: List[Dict]) -> Dict[str, Any]:
+    """
+    Process Microsoft Graph webhook notifications by forwarding to SQS.
+    
+    Args:
+        notifications: List of notification objects from Microsoft Graph
+        
+    Returns:
+        Response indicating success/failure of processing
+    """
+    try:
+        if not PRODUCTION_MODE:
+            logger.info(f"Local mode: Would process {len(notifications)} notifications")
+            return {"success": True, "message": f"Local mode: {len(notifications)} notifications processed"}
+        
+        # Get SQS queue URL
+        queue_name = os.environ.get("EMAIL_PROCESSING_QUEUE_NAME", "email-webhook-processing")
+        stage = os.environ.get("INTEGRATION_STAGE", "dev")
+        
+        sqs = boto3.client('sqs')
+        
+        # Get queue URL
+        try:
+            response = sqs.get_queue_url(QueueName=f"{queue_name}-{stage}")
+            queue_url = response['QueueUrl']
+        except Exception as e:
+            logger.error(f"Failed to get SQS queue URL: {str(e)}")
+            return {"success": False, "error": "Queue not available"}
+        
+        # Forward each notification to SQS
+        processed_count = 0
+        for notification in notifications:
+            try:
+                message_body = {
+                    "notification": notification,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "source": "graph-webhook"
+                }
+                
+                sqs.send_message(
+                    QueueUrl=queue_url,
+                    MessageBody=json.dumps(message_body)
+                )
+                processed_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to send notification to SQS: {str(e)}")
+                continue
+        
+        logger.info(f"Successfully processed {processed_count}/{len(notifications)} notifications")
+        return {
+            "success": True, 
+            "message": f"Processed {processed_count}/{len(notifications)} notifications"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to process webhook notifications: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+def webhook_handler_public(current_user, **kwargs):
+    """
+    Microsoft Graph webhook handler for @api_tool() system.
+    Processes webhook notifications from Microsoft Graph for email events.
+    """
+    # Extract data from kwargs - could be from event body or query parameters
+    validation_token = kwargs.get("validationToken")
+    notifications = kwargs.get("value", [])
+    
+    # Handle subscription validation
+    if validation_token:
+        logger.info("Webhook validation request received")
+        return {"success": True, "data": validation_token}
+    
+    # Process webhook notifications
+    if notifications:
+        logger.info(f"Processing {len(notifications)} webhook notifications")
+        return process_webhook_notifications(notifications)
+    
+    # No validation token or notifications - invalid request
+    logger.warning("Invalid webhook request - no validation token or notifications")
+    return {"success": False, "error": "Invalid webhook request"}
+
 @required_env_vars({
     "EMAIL_WEBHOOK_CLIENT_STATE": [SSMOperation.GET_PARAMETER],
 })
-def webhook_handler(event, context):
+def webhook_handler_internal(event, context):
     """
     Secure Microsoft Graph webhook handler with token-based authentication.
     
@@ -624,16 +769,18 @@ def _store_email_notification(notification_data: Dict[str, Any], email_data: Dic
         logger.error(f"Failed to store notification in DynamoDB: {str(e)}")
 
 
-@required_env_vars({
-    "EMAIL_WEBHOOK_CLIENT_STATE": [SSMOperation.GET_PARAMETER],
-    "EMAIL_SUBSCRIPTIONS_TABLE": [DynamoDBOperation.PUT_ITEM],
-})
-@validated("post")
-def create_subscription(event, context, current_user, name, data):
+def create_subscription(current_user, user_email=None, resource=None, change_type=None, expiration_hours=None, **kwargs):
     """
     Create a Microsoft Graph webhook subscription for a user's inbox.
     
-    Expected request body:
+    Args:
+        current_user: User context (from @api_tool)
+        user_email: Email address to create subscription for
+        resource: Graph resource to monitor
+        change_type: Type of changes to monitor
+        expiration_hours: Subscription expiration in hours
+    
+    Expected request body via @api_tool():
     {
         "userId": "user-guid-or-email", 
         "userEmail": "user@example.com"
@@ -644,38 +791,34 @@ def create_subscription(event, context, current_user, name, data):
     Phase 2: Automated subscription management
     """
     try:
-        logger.info(f"Creating email subscription for user: {current_user}")
+        logger.info(f"Creating email subscription for user: {current_user}, email: {user_email}")
         
-        # Parse request body
-        request_body = json.loads(event.get("body", "{}"))
-        user_id = request_body.get("userId")
-        user_email = request_body.get("userEmail")
+        # Set defaults if not provided
+        if not resource:
+            resource = "me/mailFolders('Inbox')/messages"
+        if not change_type:
+            change_type = "created"
+        if not expiration_hours:
+            expiration_hours = 4320
         
         # Validate inputs
         if not user_email:
             return {
-                "statusCode": 400,
-                "body": json.dumps({
-                    "success": False,
-                    "error": "userEmail is required."
-                })
+                "success": False,
+                "error": "user_email is required."
             }
         
-        # If no userId provided, automatically get it from email address
+        # Automatically get user GUID from email address
+        logger.info(f"Looking up GUID for email: {user_email}")
+        user_id = get_user_guid_from_email_internal(user_email)
+        
         if not user_id:
-            logger.info(f"No userId provided, looking up GUID for email: {user_email}")
-            user_id = get_user_guid_from_email(user_email)
-            
-            if not user_id:
-                return {
-                    "statusCode": 404,
-                    "body": json.dumps({
-                        "success": False,
-                        "error": f"User not found in Azure AD: {user_email}"
-                    })
-                }
-            
-            logger.info(f"Automatically found User GUID: {user_id} for {user_email}")
+            return {
+                "success": False,
+                "error": f"User not found in Azure AD: {user_email}"
+            }
+        
+        logger.info(f"Found User GUID: {user_id} for {user_email}")
         
         # Create webhook subscription
         subscription_data = _create_graph_subscription(user_id, user_email)
@@ -687,36 +830,27 @@ def create_subscription(event, context, current_user, name, data):
             logger.info(f"Successfully created subscription {subscription_data['id']} for user {user_id}")
             
             return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "success": True,
-                    "data": {
-                        "subscriptionId": subscription_data["id"],
-                        "userId": user_id,
-                        "userEmail": user_email,
-                        "resource": subscription_data["resource"],
-                        "expirationDateTime": subscription_data["expirationDateTime"],
-                        "notificationUrl": subscription_data["notificationUrl"]
-                    }
-                })
+                "success": True,
+                "data": {
+                    "subscriptionId": subscription_data["id"],
+                    "userId": user_id,
+                    "userEmail": user_email,
+                    "resource": subscription_data["resource"],
+                    "expirationDateTime": subscription_data["expirationDateTime"],
+                    "notificationUrl": subscription_data["notificationUrl"]
+                }
             }
         else:
             return {
-                "statusCode": 500,
-                "body": json.dumps({
-                    "success": False,
-                    "error": "Failed to create subscription"
-                })
+                "success": False,
+                "error": "Failed to create subscription"
             }
             
     except Exception as e:
         logger.error(f"Create subscription error: {str(e)}")
         return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            "success": False,
+            "error": str(e)
         }
 
 
@@ -770,15 +904,13 @@ def _create_graph_subscription(user_id: str, user_email: str) -> Optional[Dict[s
         return None
 
 
-@required_env_vars({
-    "EMAIL_SUBSCRIPTIONS_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
-})
-@validated("get")
-def get_user_guid_api(event, context, current_user, name, data):
+def get_user_guid_from_email(current_user, user_email=None, **kwargs):
     """
     API endpoint to get Azure AD User GUID from email address.
     
-    GET /integrations/email/user-guid?email=user@example.com
+    Args:
+        current_user: User context (from @api_tool)
+        user_email: Email address to lookup GUID for
     
     Returns:
         {
@@ -791,16 +923,10 @@ def get_user_guid_api(event, context, current_user, name, data):
         }
     """
     try:
-        query_params = event.get("queryStringParameters") or {}
-        user_email = query_params.get("email")
-        
         if not user_email:
             return {
-                "statusCode": 400,
-                "body": json.dumps({
-                    "success": False,
-                    "error": "email parameter is required"
-                })
+                "success": False,
+                "error": "user_email parameter is required"
             }
         
         # Get user info from Azure AD
@@ -813,85 +939,71 @@ def get_user_guid_api(event, context, current_user, name, data):
         if response.status_code == 200:
             user_data = response.json()
             return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "success": True,
-                    "data": {
-                        "userEmail": user_data.get("userPrincipalName"),
-                        "userId": user_data.get("id"),
-                        "displayName": user_data.get("displayName")
-                    }
-                })
+                "success": True,
+                "data": {
+                    "userEmail": user_data.get("userPrincipalName"),
+                    "userId": user_data.get("id"),
+                    "displayName": user_data.get("displayName")
+                }
             }
         elif response.status_code == 404:
             return {
-                "statusCode": 404,
-                "body": json.dumps({
-                    "success": False,
-                    "error": f"User not found: {user_email}"
-                })
+                "success": False,
+                "error": f"User not found: {user_email}"
             }
         else:
             return {
-                "statusCode": 500,
-                "body": json.dumps({
-                    "success": False,
-                    "error": "Failed to query Azure AD"
-                })
+                "success": False,
+                "error": "Failed to query Azure AD"
             }
             
     except Exception as e:
         logger.error(f"Get user GUID API error: {str(e)}")
         return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            "success": False,
+            "error": str(e)
         }
 
 
-@required_env_vars({
-    "EMAIL_SUBSCRIPTIONS_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
-})
-@validated("get")
-def list_organization_users(event, context, current_user, name, data):
+def list_organization_users(current_user, top=None, skip=None, filter=None, **kwargs):
     """
     API endpoint to get all users in the organization for bulk operations.
     
-    GET /integrations/email/organization/users?page_size=100
+    Args:
+        current_user: User context (from @api_tool)
+        top: Maximum number of users to retrieve
+        skip: Number of users to skip for pagination
+        filter: OData filter query
     
     Phase 2: Use this for bulk subscription creation
     """
     try:
-        query_params = event.get("queryStringParameters") or {}
-        page_size = int(query_params.get("page_size", 100))
+        # Set defaults if not provided
+        if not top:
+            top = 100
+        if not skip:
+            skip = 0
         
-        # Limit page size to prevent timeouts
-        page_size = min(page_size, 500)
+        # Limit to prevent timeouts
+        top = min(top, 999)
         
-        users = get_all_organization_users(page_size)
+        users = get_all_organization_users_internal(top, skip, filter)
         
         return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "success": True,
-                "data": {
-                    "users": users,
-                    "count": len(users),
-                    "pageSize": page_size
-                }
-            })
+            "success": True,
+            "data": {
+                "users": users,
+                "count": len(users),
+                "top": top,
+                "skip": skip
+            }
         }
         
     except Exception as e:
         logger.error(f"List organization users API error: {str(e)}")
         return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            "success": False,
+            "error": str(e)
         }
 
 

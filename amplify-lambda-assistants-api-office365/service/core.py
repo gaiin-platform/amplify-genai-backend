@@ -153,6 +153,12 @@ from integrations.o365.word_doc import (
 )
 from integrations.o365.word_doc import create_table as create_table_word
 from integrations.oauth import MissingCredentialsError
+from integrations.email_webhooks import (
+    webhook_handler_public,
+    create_subscription,
+    get_user_guid_from_email,
+    list_organization_users,
+)
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from pycommon.api.ops import api_tool, set_op_type, set_route_data
@@ -3754,3 +3760,126 @@ def create_document_handler(current_user, data):
     return common_handler(create_document, name=None, content=None, folder_path=None)(
         current_user, data
     )
+
+
+### email webhooks ###
+
+
+@api_tool(
+    path="/microsoft/integrations/email_webhook",
+    tags=["default", "integration", "microsoft_email", "microsoft_email_webhook"],
+    name="microsoftEmailWebhook",
+    description="Handles Microsoft Graph email webhook notifications.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "validationToken": {
+                "type": "string",
+                "description": "Validation token for webhook subscription (optional)",
+            },
+            "value": {
+                "type": "array",
+                "description": "Array of notification objects (optional)",
+            },
+        },
+    },
+)
+def email_webhook_handler(current_user, data):
+    return common_handler(webhook_handler_public)(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/email_subscription_create",
+    tags=["default", "integration", "microsoft_email", "microsoft_email_write"],
+    name="microsoftCreateEmailSubscription",
+    description="Creates a Microsoft Graph email subscription for a user.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "user_email": {
+                "type": "string",
+                "description": "Email address of the user to create subscription for",
+            },
+            "resource": {
+                "type": "string",
+                "description": "Graph resource to monitor (default: me/mailFolders('Inbox')/messages)",
+                "default": "me/mailFolders('Inbox')/messages",
+            },
+            "change_type": {
+                "type": "string",
+                "description": "Type of changes to monitor (default: created)",
+                "default": "created",
+            },
+            "expiration_hours": {
+                "type": "integer",
+                "description": "Subscription expiration in hours (default: 4320, max: 4230)",
+                "default": 4320,
+                "minimum": 1,
+                "maximum": 4230,
+            },
+        },
+        "required": ["user_email"],
+    },
+)
+def create_email_subscription_handler(current_user, data):
+    return common_handler(
+        create_subscription,
+        user_email=None,
+        resource="me/mailFolders('Inbox')/messages",
+        change_type="created",
+        expiration_hours=4320,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/email_user_guid",
+    tags=["default", "integration", "microsoft_email", "microsoft_email_read"],
+    name="microsoftGetUserGuid",
+    description="Gets Azure AD User GUID from email address.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "user_email": {
+                "type": "string",
+                "description": "Email address to look up the Azure AD User GUID for",
+            }
+        },
+        "required": ["user_email"],
+    },
+)
+def get_user_guid_handler(current_user, data):
+    return common_handler(get_user_guid_from_email, user_email=None)(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/email_organization_users",
+    tags=["default", "integration", "microsoft_email", "microsoft_email_read"],
+    name="microsoftListOrganizationUsers",
+    description="Lists users in the organization with pagination support.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 999,
+                "description": "Maximum number of users to retrieve (default: 100)",
+                "default": 100,
+            },
+            "skip": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of users to skip for pagination (default: 0)",
+                "default": 0,
+            },
+            "filter": {
+                "type": "string",
+                "description": "OData filter query (optional)",
+            },
+        },
+    },
+)
+def list_organization_users_handler(current_user, data):
+    return common_handler(
+        list_organization_users, top=100, skip=0, filter=None
+    )(current_user, data)
