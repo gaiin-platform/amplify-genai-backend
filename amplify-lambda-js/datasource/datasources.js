@@ -18,6 +18,11 @@ const dynamodbClient = new DynamoDBClient();
 
 export const additionalImageInstruction = "\n\n Additional Image Instructions:\n If given an encode image, describe the image in vivid detail, capturing every element, including the subjects, colors, textures, and emotions. Provide enough information so that someone can visualize the image perfectly without seeing it, using precise and rich language. This should be its own block of text."
 
+// Threshold for massive documents (2000+ pages = ~500,000 tokens)
+// Using 400,000 tokens to catch documents approaching the 2000-page mark
+// Massive documents will be routed to document cache with extractRelevantContext
+const MASSIVE_DOCUMENT_TOKEN_THRESHOLD = 400000;
+
 const dataSourcesQueryEndpoint = process.env.API_BASE_URL + "/files/query";
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
@@ -194,6 +199,31 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     );
 
     dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
+
+    // 📊 MASSIVE DOCUMENT DETECTION: Check if any documents exceed the threshold
+    // Massive documents should bypass RAG and go to document cache with extractRelevantContext
+    const massiveDocuments = [];
+    const normalDataSources = [];
+
+    dataSources.forEach(ds => {
+        const totalTokens = ds.metadata?.totalTokens || 0;
+        if (totalTokens >= MASSIVE_DOCUMENT_TOKEN_THRESHOLD) {
+            logger.info(`🔥 [MASSIVE DOC DETECTED] Document "${ds.name}" has ${totalTokens} tokens (threshold: ${MASSIVE_DOCUMENT_TOKEN_THRESHOLD})`);
+            logger.info(`🔥 [MASSIVE DOC ROUTING] Moving "${ds.name}" to conversationDataSources for document cache processing`);
+            massiveDocuments.push(ds);
+        } else {
+            normalDataSources.push(ds);
+        }
+    });
+
+    // Replace dataSources with only normal-sized documents
+    dataSources = normalDataSources;
+
+    // Add massive documents to convoDataSources so they get processed with extractRelevantContext
+    if (massiveDocuments.length > 0) {
+        logger.info(`🔥 [MASSIVE DOC ROUTING] Adding ${massiveDocuments.length} massive document(s) to conversationDataSources`);
+        convoDataSources.push(...massiveDocuments);
+    }
 
     const getRagOnly = sources => sources.filter(ds =>
         chatRequestOrig.options?.ragOnly || (ds.metadata?.ragOnly));
@@ -458,15 +488,20 @@ export const resolveDataSources = async (params, body, dataSources) => {
         !extractKey(ds.id).startsWith(params.user + "/")
     );
 
-    if (nonUserSources && nonUserSources.length > 0  || 
-        (body.imageSources && body.imageSources.length > 0)) {
-        //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
+    // Skip permission checks in local development mode
+    const isLocalDevelopment = process.env.LOCAL_DEVELOPMENT === 'true';
+
+    if (!isLocalDevelopment && (nonUserSources && nonUserSources.length > 0  ||
+        (body.imageSources && body.imageSources.length > 0))) {
+        //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
         logger.debug("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
+    } else if (isLocalDevelopment) {
+        logger.info("🔧 [LOCAL DEV] Skipping data source permission checks");
     }
 
     return dataSources;
@@ -837,6 +872,7 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
 
 /**
  * Extracts the relevant context from the document.
+ * For massive documents, splits the extraction into multiple sections if needed.
  * @param resolutionEnv
  * @param context
  * @param dataSource
@@ -849,23 +885,43 @@ const getExtractedRelevantContext = async (resolutionEnv, context) => {
     // Use a cheaper model for document analysis with built-in caching
     const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
 
+    // 🔥 [PART 3] Check if document needs to be split for extraction
+    // Calculate total tokens in the document
+    const totalDocTokens = context.content.reduce((acc, item) => acc + (item.tokens || 0), 0);
+
+    // Get the model's output token limit for comparison
+    // We use a safety margin of 50% to account for prompt overhead and response formatting
+    const modelOutputLimit = model.outputTokenLimit || 16384; // Default to 16k if not specified
+    const safeOutputLimit = Math.floor(modelOutputLimit * 0.5); // Use 50% of limit for document content
+
+    logger.info(`🔥 [EXTRACTION CHECK] Document has ${totalDocTokens} tokens, model output limit: ${modelOutputLimit}, safe limit for document: ${safeOutputLimit}`);
+
+    // If document exceeds safe limit, we need to split it into sections
+    if (totalDocTokens > safeOutputLimit) {
+        logger.info(`🔥 [SPLITTING REQUIRED] Document exceeds safe limit - splitting into sections for extraction`);
+        return await getExtractedRelevantContextWithSplitting(resolutionEnv, context, model, safeOutputLimit);
+    }
+
+    // 🔥 [NO SPLIT NEEDED] Process entire document in one pass
+    logger.info(`🔥 [NO SPLIT NEEDED] Document fits within safe limit - processing in single pass`);
+
     // Create a mapped version of the context content for easier lookups
     const contentByIndex = {};
     context.content.forEach((c, idx) => {
         contentByIndex[idx] = c;
     });
-    
+
     // Create a clean representation of the document for the LLM
-    const documentLines = context.content.map((item, idx) => 
+    const documentLines = context.content.map((item, idx) =>
         `[${idx}] ${item.content.replace(/\n/g, ' ')}`
     ).join('\n');
-    
+
     // Create a clear, structured prompt for the LLM
     const updatedBody = {
         ...chatBody,
         messages: [{
             role: 'system',
-            content: `You are a precise document analyzer specializing in finding only the most relevant information. 
+            content: `You are a precise document analyzer specializing in finding only the most relevant information.
 Your task is to identify the exact indexes of document fragments that would help answer a user's question.
 
 IMPORTANT INSTRUCTIONS:
@@ -925,7 +981,7 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         },
         null // No streaming
     );
- 
+
     // Parse and validate the extraction result
     let indexes = [];
     try {
@@ -943,11 +999,13 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         logger.debug("Dumping entire document context as a fallback...");
         return context;
     }
-    
+
+    logger.info(`🔥 [EXTRACTION RESULT] Found ${indexes.length} relevant fragments out of ${context.content.length} total`);
+
     // Handle case where no relevant content was found
     if (!indexes || indexes.length === 0) {
         logger.debug("No datasource content was relevant to the query - providing full context with relevance flag");
-        
+
         // Instead of returning null, provide full context with a flag for LLM to handle gracefully
         return {
             ...context,
@@ -965,10 +1023,218 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         originalContent: context.content,
         totalTokens: filteredContent.reduce((acc, item) => acc + item.tokens, 0)
     };
-    
+
+    logger.info(`🔥 [EXTRACTION COMPLETE] Filtered to ${filteredContext.totalTokens} tokens (${Math.round(filteredContext.totalTokens/totalDocTokens*100)}% of original)`);
+
     // Pass the filtered content through the standard formatting/chunking process
     return filteredContext;
 
+}
+
+/**
+ * Processes massive documents by splitting them into sections and extracting relevant
+ * context from each section separately, then combining the results.
+ *
+ * @param resolutionEnv
+ * @param context
+ * @param model
+ * @param safeOutputLimit - Max tokens per section
+ * @returns {Promise<*>}
+ */
+const getExtractedRelevantContextWithSplitting = async (resolutionEnv, context, model, safeOutputLimit) => {
+    const chatBody = resolutionEnv.chatRequest;
+    const userMessage = chatBody.messages.slice(-1)[0].content;
+
+    logger.info(`🔥 [SPLITTING START] Processing massive document with ${context.content.length} fragments`);
+
+    // Split content into sections that fit within the safe output limit
+    const sections = [];
+    let currentSection = [];
+    let currentSectionTokens = 0;
+    let sectionStartIdx = 0;
+
+    for (let i = 0; i < context.content.length; i++) {
+        const item = context.content[i];
+        const itemTokens = item.tokens || 0;
+
+        // Check if adding this item would exceed the limit
+        if (currentSectionTokens + itemTokens > safeOutputLimit && currentSection.length > 0) {
+            // Save current section and start a new one
+            sections.push({
+                content: currentSection,
+                startIdx: sectionStartIdx,
+                endIdx: i - 1,
+                tokens: currentSectionTokens
+            });
+
+            logger.info(`🔥 [SECTION CREATED] Section ${sections.length}: indexes ${sectionStartIdx}-${i-1}, ${currentSectionTokens} tokens, ${currentSection.length} fragments`);
+
+            currentSection = [item];
+            currentSectionTokens = itemTokens;
+            sectionStartIdx = i;
+        } else {
+            currentSection.push(item);
+            currentSectionTokens += itemTokens;
+        }
+    }
+
+    // Add the last section if it has content
+    if (currentSection.length > 0) {
+        sections.push({
+            content: currentSection,
+            startIdx: sectionStartIdx,
+            endIdx: context.content.length - 1,
+            tokens: currentSectionTokens
+        });
+        logger.info(`🔥 [SECTION CREATED] Section ${sections.length}: indexes ${sectionStartIdx}-${context.content.length - 1}, ${currentSectionTokens} tokens, ${currentSection.length} fragments`);
+    }
+
+    logger.info(`🔥 [SPLITTING COMPLETE] Created ${sections.length} sections for parallel extraction`);
+
+    // Process each section in parallel to extract relevant indexes
+    const sectionExtractionPromises = sections.map(async (section, sectionNum) => {
+        logger.info(`🔥 [SECTION ${sectionNum + 1}/${sections.length}] Starting extraction (indexes ${section.startIdx}-${section.endIdx})`);
+
+        // Create document lines for this section with adjusted indexes
+        const documentLines = section.content.map((item, idx) =>
+            `[${idx}] ${item.content.replace(/\n/g, ' ')}`
+        ).join('\n');
+
+        const updatedBody = {
+            ...chatBody,
+            messages: [{
+                role: 'system',
+                content: `You are a precise document analyzer specializing in finding only the most relevant information.
+Your task is to identify the exact indexes of document fragments that would help answer a user's question.
+
+IMPORTANT INSTRUCTIONS:
+1. The document fragments are labeled with indexes like [0], [1], [2], etc.
+2. Only select fragments that contain information DIRECTLY relevant to answering the user's question.
+3. Output ONLY a JSON array of index numbers (as integers), nothing else.
+4. If no fragments are relevant, return an empty array: []
+5. DO NOT explain your reasoning - provide ONLY the array of indexes.
+
+Example outputs:
+- For relevant fragments: [3, 4, 7, 12]
+- For no relevant fragments: []`
+            },{
+                role: 'user',
+                content: `USER QUESTION:
+${userMessage}
+
+DOCUMENT FRAGMENTS (with indexes):
+${documentLines}
+
+Return ONLY the indexes of fragments that contain information directly relevant to answering the question.
+Expected format: [0, 1, 5] or [] if nothing is relevant.`
+            }],
+            imageSources: [],
+            model: model.id,
+            max_tokens: 300,
+            options: {
+                ...chatBody.options,
+                model,
+                skipRag: true,
+                ragOnly: false,
+                skipDocumentCache: true,
+                prompt: `Return ONLY a list with indexes: ex. [0, 1, 5] or [] if nothing is relevant.`
+            }
+        };
+
+        try {
+            // Use direct native provider call for document analysis
+            const extraction = await promptUnifiedLLMForData(
+                {
+                    account: resolutionEnv.params.account,
+                    options: {
+                        model,
+                        requestId: resolutionEnv.params.requestId
+                    }
+                },
+                updatedBody.messages,
+                {
+                    type: "object",
+                    properties: {
+                        relevantIndexes: {
+                            type: "array",
+                            items: { type: "integer" },
+                            description: "Array of integer indexes indicating relevant document fragments"
+                        }
+                    },
+                    required: ["relevantIndexes"]
+                },
+                null // No streaming
+            );
+
+            // Parse the result
+            let sectionIndexes = [];
+            if (extraction.relevantIndexes) {
+                if (typeof extraction.relevantIndexes === 'string') {
+                    sectionIndexes = JSON.parse(extraction.relevantIndexes);
+                } else if (Array.isArray(extraction.relevantIndexes)) {
+                    sectionIndexes = extraction.relevantIndexes;
+                }
+                // Filter to ensure valid indexes within this section
+                sectionIndexes = sectionIndexes.filter(idx =>
+                    typeof idx === 'number' && idx >= 0 && idx < section.content.length
+                );
+            }
+
+            // Convert section-relative indexes to global indexes
+            const globalIndexes = sectionIndexes.map(idx => idx + section.startIdx);
+
+            logger.info(`🔥 [SECTION ${sectionNum + 1}/${sections.length}] Found ${globalIndexes.length} relevant fragments`);
+
+            return globalIndexes;
+
+        } catch (e) {
+            logger.error(`🔥 [SECTION ${sectionNum + 1}/${sections.length}] Error during extraction:`, e);
+            return [];
+        }
+    });
+
+    // Wait for all sections to complete
+    const allSectionResults = await Promise.all(sectionExtractionPromises);
+
+    // Combine all indexes from all sections and remove duplicates
+    const allIndexes = [...new Set(allSectionResults.flat())].sort((a, b) => a - b);
+
+    logger.info(`🔥 [COMBINING RESULTS] Total relevant fragments across all sections: ${allIndexes.length}`);
+
+    // Handle case where no relevant content was found
+    if (!allIndexes || allIndexes.length === 0) {
+        logger.debug("No datasource content was relevant to the query - providing full context with relevance flag");
+
+        return {
+            ...context,
+            noRelevantContent: true,
+            totalTokens: context.content.reduce((acc, item) => acc + (item.tokens || 0), 0)
+        };
+    }
+
+    // Create a mapped version of the context content for easier lookups
+    const contentByIndex = {};
+    context.content.forEach((c, idx) => {
+        contentByIndex[idx] = c;
+    });
+
+    // Filter the content to only include relevant items
+    const filteredContent = allIndexes.map(idx => contentByIndex[idx]).filter(Boolean);
+
+    const totalTokens = filteredContent.reduce((acc, item) => acc + item.tokens, 0);
+    const originalTokens = context.content.reduce((acc, item) => acc + (item.tokens || 0), 0);
+
+    logger.info(`🔥 [SPLIT EXTRACTION COMPLETE] Filtered to ${totalTokens} tokens (${Math.round(totalTokens/originalTokens*100)}% of original) from ${filteredContent.length} fragments`);
+
+    // Create a new context with only the relevant content
+    const filteredContext = {
+        ...context,
+        content: filteredContent,
+        originalContent: context.content,
+        totalTokens: totalTokens
+    };
+
+    return filteredContext;
 }
 
 /**

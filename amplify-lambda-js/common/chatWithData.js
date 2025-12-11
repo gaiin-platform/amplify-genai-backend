@@ -84,8 +84,23 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     // Extract categorized data sources
     const categorizedDataSources = dataSourcesByUse.dataSources || [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
-    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
+    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ?
         (dataSourcesByUse.conversationDataSources || []) : [];
+
+    // 🔥 LOG ROUTING DECISION
+    if (conversationDataSources.length > 0) {
+        logger.info(`🔥 [DOCUMENT CACHE ROUTING] Processing ${conversationDataSources.length} document(s) through document cache with extractRelevantContext`);
+        conversationDataSources.forEach(ds => {
+            const tokens = ds.metadata?.totalTokens || 0;
+            logger.info(`🔥   - "${ds.name}": ${tokens.toLocaleString()} tokens`);
+        });
+    }
+    if (ragDataSources.length > 0) {
+        logger.info(`🔍 [RAG ROUTING] Processing ${ragDataSources.length} document(s) through RAG`);
+    }
+    if (categorizedDataSources.length > 0) {
+        logger.info(`📄 [DIRECT INSERT ROUTING] Processing ${categorizedDataSources.length} document(s) for direct insertion`);
+    }
 
 
     // Build lookup table for data source details
@@ -224,12 +239,17 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
             }),
             ...conversationDataSources.map(async ds => {
-                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
+                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext
                 // depends on the user's current message! Each query needs fresh extraction.
                 // Only the raw document content should be cached (inside getContent).
-                
+
+                logger.info(`🔥 [PROCESSING DOCUMENT CACHE] Calling getContexts with extractRelevantContext=true for "${ds.name}"`);
+
                 // Always fetch fresh - extraction depends on current user message
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
+
+                logger.info(`🔥 [DOCUMENT CACHE RESULT] Extracted ${results?.length || 0} relevant context(s) from "${ds.name}"`);
+
                 return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
             })
         ]);
