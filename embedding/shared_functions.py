@@ -142,21 +142,39 @@ def generate_azure_embeddings(content):
 
 
 def generate_openai_embeddings(content):
-    logger.info("Getting Embedding Endpoints")
-    endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
-    logger.info(f"Endpoint: {endpoint}")
-
-    client = OpenAI(api_key=api_key)
+    logger.info("Getting OpenAI API key from secrets")
     try:
+        # Get the secret name from environment
+        secret_name = os.environ.get("SECRETS_ARN_NAME")
+        if not secret_name:
+            raise ValueError("SECRETS_ARN_NAME environment variable not set")
+
+        # Retrieve secrets from AWS Secrets Manager
+        secrets_client = boto3.client("secretsmanager")
+        secret_response = secrets_client.get_secret_value(SecretId=secret_name)
+        secret_data = json.loads(secret_response["SecretString"])
+
+        # Extract OpenAI API key
+        openai_api_key = secret_data.get("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY not found in secrets")
+
+        logger.info("Successfully retrieved OpenAI API key")
+
+        # Create OpenAI client with direct API key
+        client = OpenAI(api_key=openai_api_key)
+
+        # Create embedding using OpenAI API
         response = client.embeddings.create(input=content, model=embedding_model_name)
         embedding = response.data[0].embedding
         token_count = num_tokens_from_text(content, embedding_model_name)
+
+        logger.info(f"Successfully generated embedding with {token_count} tokens")
+        return {"success": True, "data": embedding, "token_count": token_count}
+
     except Exception as e:
         logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
         return {"success": False, "error": f"An error occurred with OpenAI: {str(e)}"}
-
-    logger.info(f"Embedding: {embedding}")
-    return {"success": True, "data": embedding, "token_count": token_count}
 
 
 def truncate_content_for_model(content, model_name, max_tokens):
