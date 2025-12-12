@@ -30,8 +30,11 @@ custom:
     - dev
     - staging
     - prod
+  booleanMap:
+    "true": true
+    "false": false
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
   # Using your existing repository
   ecrRepository: ${aws:accountId}.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
   # Add timestamp to image tags from build script
