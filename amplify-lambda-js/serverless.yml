@@ -10,13 +10,16 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
 
-  serverless-offline: 
+  serverless-offline:
     custom:
-      config: ${file(../var/${self:provider.stage}-var.yml)} 
- 
+      config: ${file(../var/${self:provider.stage}-var.yml)}
+
+  booleanMap:
+    "true": true
+    "false": false
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
 
   stages:
     - dev
@@ -64,7 +67,6 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
-    TRACING_ENABLED: false
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 

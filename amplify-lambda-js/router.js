@@ -27,7 +27,7 @@ import {
 } from "./common/defensiveRouting.js";
 
 
-const doTrace = process.env.TRACING_ENABLED === 'true';
+const doTrace = false; // Enable or disable tracing
 
 const logger = getLogger("router");
 

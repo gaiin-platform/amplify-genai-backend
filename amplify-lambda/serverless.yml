@@ -38,8 +38,12 @@ custom:
     includeLayers: true
     number: 20
 
+  booleanMap:
+    "true": true
+    "false": false
+
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
 
   stages:
     - dev

@@ -24,8 +24,12 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
 
+  booleanMap:
+    "true": true
+    "false": false
+
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
     
 
   prune:
