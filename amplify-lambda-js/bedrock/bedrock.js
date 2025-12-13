@@ -92,9 +92,10 @@ export const chatBedrock = async (chatBody, writable) => {
             // Gather all text values from the system prompts list
             const systemPromptsText = systemPrompts.map(sp => sp.text).join("\n\n");
             const sanitizedMessagesCopy = [...sanitizedMessages];
-
-            sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
-            `Recall your custom instructions are: ${systemPromptsText}`;
+            
+            // May not need anymore, testing for a while 
+            // sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
+            // `Recall your custom instructions are: ${systemPromptsText}`;
 
             input.messages = sanitizedMessagesCopy;
         }

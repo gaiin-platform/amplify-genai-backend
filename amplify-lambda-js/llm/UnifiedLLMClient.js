@@ -483,11 +483,14 @@ export async function promptUnifiedLLMForData(
 
     // Determine if model supports function calling based on provider and model type
     // OpenAI and Gemini models support functions, regardless of which provider serves them
-    const supportsFunctions = model.provider === 'OpenAI' || 
-                            model.provider === 'Azure' || 
-                            model.provider === 'Gemini' || 
-                            (model.provider === 'Bedrock' && (isOpenAIModel(model.id) || isGeminiModel(model.id)));
+    // DISABLED: Function calling has parsing issues with Azure OpenAI SSE responses, always use JSON schema
+    //  const supportsFunctions = model.provider === 'OpenAI' || 
+    //                         model.provider === 'Azure' || 
+    //                         model.provider === 'Gemini' || 
+    //                         (model.provider === 'Bedrock' && (isOpenAIModel(model.id) || isGeminiModel(model.id)));
     
+    const supportsFunctions = false; // Was: model.provider === 'OpenAI' || model.provider === 'Azure' || ...
+
     if (supportsFunctions) {
         // Use function calling
         const result = await callUnifiedLLM(
@@ -504,21 +507,32 @@ export async function promptUnifiedLLMForData(
         if (result.content) {
             try {
                 // Check if response contains tool calls
-                const response = typeof result.content === 'string' 
-                    ? JSON.parse(result.content) 
+                const response = typeof result.content === 'string'
+                    ? JSON.parse(result.content)
                     : result.content;
-                    
+
                 if (response.tool_calls?.[0]?.function?.arguments) {
-                    return JSON.parse(response.tool_calls[0].function.arguments);
+                    const parsed = JSON.parse(response.tool_calls[0].function.arguments);
+                    logger.debug('✅ [promptUnifiedLLMForData] Function calling succeeded, returning parsed result');
+                    return parsed;
                 }
-                
+
                 // Sometimes the response is directly in the content
                 if (typeof response === 'object' && !response.choices) {
+                    logger.debug('✅ [promptUnifiedLLMForData] Direct object response, returning as-is');
                     return response;
                 }
+
+                logger.warn('⚠️ [promptUnifiedLLMForData] Function call response format unexpected, falling back to JSON schema', {
+                    hasToolCalls: !!response.tool_calls,
+                    responseType: typeof response,
+                    hasChoices: !!response.choices
+                });
             } catch (e) {
-                // Failed to parse function response, trying fallback
+                logger.error('❌ [promptUnifiedLLMForData] Failed to parse function call response, falling back to JSON schema:', e.message);
             }
+        } else {
+            logger.warn('⚠️ [promptUnifiedLLMForData] No content in function call result, falling back to JSON schema');
         }
     }
 

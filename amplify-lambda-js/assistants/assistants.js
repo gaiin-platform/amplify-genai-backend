@@ -255,16 +255,10 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
     }
     if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
-    
     sendStateEventToStream(responseStream, stateInfo);
 
-    sendStatusEventToStream(responseStream, newStatus(
-        {
-            inProgress: false,
-            message: "The \"" + selected.displayName + " Assistant\" is responding.",
-            icon: "assistant",
-            sticky: true
-        }));
+    // Note: "Assistant is responding" status message moved to router (after smart messages)
+
     forceFlush(responseStream);
 
     return selected;
