@@ -4,7 +4,7 @@
 import {getLogger} from "./common/logging.js";
 import {ModelTypes, getModelByType} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch, localKill} from "./requests/requestState.js";
-import {sendStateEventToStream, TraceStream} from "./common/streams.js";
+import {sendStateEventToStream, TraceStream, sendStatusEventToStream} from "./common/streams.js";
 import {resolveDataSources, getDataSourcesByUse} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
@@ -16,7 +16,8 @@ import {logCriticalError} from "./common/criticalLogger.js";
 import {CacheManager} from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
-import {StateBasedAssistant} from "./assistants/statemachine/states.js";
+import {processSmartMessages} from "./common/conversations.js";
+import {newStatus} from "./common/status.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
 
 // 🛡️ DEFENSIVE ROUTING
@@ -38,6 +39,9 @@ function getRequestId(params) {
 
 const routeRequestCore = async (params, returnResponse, responseStream) => {
     // 🚀 NATIVE JS PROVIDERS: No Python process needed - direct JS execution
+
+    // Check if running locally
+    const isLocal = process.env.LOCAL_DEVELOPMENT === 'true';
 
     try {
 
@@ -303,49 +307,134 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 body: params.body  // ✅ INCLUDE MODIFIED BODY: Contains imageSources from resolveDataSources()
             };
 
-            // Removed X-Ray tracing for performance
 
-            // ✅ ALWAYS USE LITELLM: Feature flags removed, migration complete
             const requestStartTime = Date.now();
             let processingError = false;
 
             try {
-               
+                // 🚀 ASYNC OPTIMIZATION: Start smart messages processing while assistant loads
+                let smartMessagesPromise = null;
+
+                // Log what we're checking
+
+                if (options.options?.smartMessages || options.options?.artifacts) {
+
+                    sendStatusEventToStream(responseStream, newStatus({
+                        summary: "Analyzing conversation context...",
+                        inProgress: true,
+                        type: "info"
+                    }));
+
+
+                    smartMessagesPromise = processSmartMessages({
+                        messages: body.messages || [],
+                        options: options,
+                        account: assistantParams.account,
+                        requestId: assistantParams.requestId,
+                        params
+                    }).catch(error => {
+                        logger.error("❌ [Smart Messages] ROUTER - processSmartMessages failed:", error.message, {
+                            stack: error.stack,
+                            source: "ROUTER"
+                        });
+                        logger.warn("Smart messages processing failed, continuing with original messages:", error.message);
+                        return {
+                            filteredMessages: body.messages || [],
+                            metadata: {
+                                processed: false,
+                                reason: "processing_error",
+                                error: error.message
+                            }
+                        };
+                    });
+                }
+
                 // 🚀 BREAKTHROUGH: Direct assistant execution without LLM dependency
                 // Assistants now create their own InternalLLM internally for massive performance gains
                 const selectedAssistant = await chooseAssistantForRequest(assistantParams.account, model, body, dataSources, responseStream);
-                
-                // Different assistant types have different handler signatures
-                if (selectedAssistant instanceof StateBasedAssistant) {
-                    // StateBasedAssistant expects: (originalLLM, params, body, dataSources, responseStream)
-                    await selectedAssistant.handler(model, assistantParams, body, dataSources, responseStream);
-                } else {
-                    // Regular assistant expects: (params, body, dataSources, responseStream)
-                    await selectedAssistant.handler(assistantParams, body, dataSources, responseStream);
+
+                // 🚀 ASYNC OPTIMIZATION: Wait for smart messages if it was started
+                if (smartMessagesPromise) {
+                    const smartMessagesResult = await smartMessagesPromise;
+
+
+                    // ALWAYS send metadata to frontend (even if disabled/failed)
+
+                    sendStateEventToStream(responseStream, {
+                        smartMessages: smartMessagesResult.metadata
+                    });
+
+
+                    // Update body with filtered messages if processing succeeded
+                    if (smartMessagesResult.filteredMessages && smartMessagesResult.metadata.processed) {
+                        body.messages = smartMessagesResult.filteredMessages;
+                        // CRITICAL: Also update assistantParams.body so the assistant gets filtered messages!
+                        assistantParams.body.messages = smartMessagesResult.filteredMessages;
+                        logger.info(`✅ [Processing] Complete:`, smartMessagesResult._internal || {});
+
+                        // 🎨 APPEND ARTIFACT INSTRUCTIONS if backend determined they should be included
+                        if (smartMessagesResult.artifactInstructions) {
+                            const originalPromptLength = body.options.prompt?.length || 0;
+                            body.options.prompt = (body.options.prompt || '') + '\n\n' + smartMessagesResult.artifactInstructions;
+                            assistantParams.body.options.prompt = body.options.prompt;
+
+                            logger.info("✅ [Artifacts] Instructions added", {
+                                added: smartMessagesResult.artifactInstructions.length
+                            });
+                        }
+
+                        // Update status to show completion
+                        sendStatusEventToStream(responseStream, newStatus({
+                            summary: "Context analysis complete",
+                            inProgress: false,
+                            type: "success"
+                        }));
+                    } else {
+                        logger.debug(`⏭️ Smart messages complete: ${smartMessagesResult.filteredMessages?.length || body.messages.length} messages (unfiltered)`,
+                                   smartMessagesResult._internal || {});
+                    }
                 }
+
+                // Send "Assistant is responding" status RIGHT BEFORE prompting
+                // (moved from assistants.js so it appears after smart messages processing)
+                logger.info("🤖 [Router] About to call assistant handler - sending 'Assistant is responding' status");
+                sendStatusEventToStream(responseStream, newStatus({
+                    inProgress: false,
+                    message: `The "${selectedAssistant.displayName || selectedAssistant.name} Assistant" is responding.`,
+                    icon: "assistant",
+                    sticky: true
+                }));
+
+                // All assistants now use the same handler signature
+
+                await selectedAssistant.handler(assistantParams, body, dataSources, responseStream);
+                
                 
                 // Removed X-Ray tracing for performance
 
             } catch (error) {
                 processingError = true;
                 logger.error(`Request processing failed for user ${params.user}:`, error);
-                
+
                 // CRITICAL: Assistant handler failure = user cannot get LLM response
-                await logCriticalError({
-                    functionName: 'routeRequest_assistantHandler',
-                    errorType: 'AssistantHandlerFailure',
-                    errorMessage: `Assistant handler failed: ${error.message || "Unknown error"}`,
-                    currentUser: params.user,
-                    severity: 'HIGH',
-                    stackTrace: error.stack || '',
-                    context: {
-                        requestId: requestId || 'unknown',
-                        modelId: model?.id || 'unknown',
-                        assistantType: selectedAssistant?.constructor?.name || 'unknown',
-                        conversationId: options?.conversationId || 'N/A',
-                        hasDataSources: dataSources?.length > 0
-                    }
-                });
+                // Skip critical error logging in local development
+                if (!isLocal) {
+                    await logCriticalError({
+                        functionName: 'routeRequest_assistantHandler',
+                        errorType: 'AssistantHandlerFailure',
+                        errorMessage: `Assistant handler failed: ${error.message || "Unknown error"}`,
+                        currentUser: params.user,
+                        severity: 'HIGH',
+                        stackTrace: error.stack || '',
+                        context: {
+                            requestId: requestId || 'unknown',
+                            modelId: model?.id || 'unknown',
+                            assistantType: selectedAssistant?.constructor?.name || 'unknown',
+                            conversationId: options?.conversationId || 'N/A',
+                            hasDataSources: dataSources?.length > 0
+                        }
+                    });
+                }
                 
                 // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
                 // Return error response instead of throwing
@@ -407,25 +496,28 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // Strategy 3: Re-throw the critical error to propagate up
             throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
         }
-        
+
         logger.error("Error processing request:", e.message);
         logger.error("Full error:", e);
-        
+
         // CRITICAL: Router failure = user cannot access chat/LLM functionality
-        await logCriticalError({
-            functionName: 'routeRequest_mainRouter',
-            errorType: 'RouterFailure',
-            errorMessage: `Main router failed: ${e.message || "Unknown error"}`,
-            currentUser: params?.user || 'unknown',
-            severity: 'HIGH',
-            stackTrace: e.stack || '',
-            context: {
-                hasUser: !!params?.user,
-                hasBody: !!params?.body,
-                bodyKeys: params?.body ? Object.keys(params.body).join(',') : 'N/A',
-                errorName: e.name || 'Error'
-            }
-        });
+        // Skip critical error logging in local development
+        if (!isLocal) {
+            await logCriticalError({
+                functionName: 'routeRequest_mainRouter',
+                errorType: 'RouterFailure',
+                errorMessage: `Main router failed: ${e.message || "Unknown error"}`,
+                currentUser: params?.user || 'unknown',
+                severity: 'HIGH',
+                stackTrace: e.stack || '',
+                context: {
+                    hasUser: !!params?.user,
+                    hasBody: !!params?.body,
+                    bodyKeys: params?.body ? Object.keys(params.body).join(',') : 'N/A',
+                    errorName: e.name || 'Error'
+                }
+            });
+        }
 
         returnResponse(responseStream, {
             statusCode: 400,
