@@ -13,6 +13,7 @@ import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
+import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 
 const logger = getLogger("assistants");
 
@@ -69,26 +70,14 @@ const defaultAssistant = {
             (body.imageSources && body.imageSources.length > 0) ||
             (params.body?.imageSources && params.body.imageSources.length > 0);
 
-        logger.debug("🎯 Assistant decision logic:", {
+        logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
             hasPreResolvedData,
-            preResolvedSources: preResolvedSources ? {
-                ragDataSources: preResolvedSources.ragDataSources?.length || 0,
-                dataSources: preResolvedSources.dataSources?.length || 0,
-                conversationDataSources: preResolvedSources.conversationDataSources?.length || 0,
-                attachedDataSources: preResolvedSources.attachedDataSources?.length || 0
-            } : "NULL_OR_MISSING",
-            // Show fallback checks
-            rawDataSources_length: dataSources?.length || 0,
-            bodyImageSources_length: body.imageSources?.length || 0,
-            paramsBodyImageSources_length: params.body?.imageSources?.length || 0,
             needsDataProcessing: needsDataProcessingDecision,
-            // Updated routing logic
-            isUserDefinedAssistant: !!body.options?.assistantId,
-            assistantId: body.options?.assistantId || "default",
-            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" : 
+            enableWebSearch: body?.enableWebSearch,
+            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
@@ -121,18 +110,47 @@ const defaultAssistant = {
                 logger.info("→ Using direct native provider (no data sources needed)");
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
+
+                // Check if web search is enabled
+                logger.info("🔍 Web search check:", {
+                    enableWebSearch: body?.enableWebSearch,
+                    optionsEnableWebSearch: body?.options?.enableWebSearch,
+                    optionsOptionsWebSearch: body?.options?.options?.webSearch,
+                    shouldEnable: shouldEnableWebSearch(body)
+                });
+                if (shouldEnableWebSearch(body)) {
+                    logger.info("→ Web search enabled, using tool loop");
+                    return await executeToolLoop(
+                        {
+                            account: params.account,
+                            options: {
+                                ...bodyWithImages.options,
+                                model,
+                                requestId: params.options?.requestId
+                            }
+                        },
+                        bodyWithImages.messages,
+                        model,
+                        responseStream,
+                        {
+                            max_tokens: bodyWithImages.max_tokens || 2000,
+                            imageSources: bodyWithImages.imageSources
+                        }
+                    );
+                }
+
                 return await callUnifiedLLM(
-                    { 
-                        account: params.account, 
-                        options: { 
+                    {
+                        account: params.account,
+                        options: {
                             ...bodyWithImages.options,  // Include all options from body (including trackConversations)
-                            model, 
-                            requestId: params.options?.requestId 
-                        } 
+                            model,
+                            requestId: params.options?.requestId
+                        }
                     },
                     bodyWithImages.messages,
                     responseStream,
-                    { 
+                    {
                         max_tokens: bodyWithImages.max_tokens || 2000,
                         imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
                     }

@@ -52,5 +52,17 @@ permissions_by_state_type = {
     "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
     },
-
+    # Admin web search endpoints
+    "/integrations/web-search/admin/config": {
+        "get_admin_web_search_config": lambda for_user, with_data: True
+    },
+    "/integrations/web-search/admin/register": {
+        "register_admin_web_search_key": lambda for_user, with_data: True
+    },
+    "/integrations/web-search/admin/delete": {
+        "delete_admin_web_search_key": lambda for_user, with_data: True
+    },
+    "/integrations/web-search/admin/test": {
+        "test_admin_web_search_key": lambda for_user, with_data: True
+    },
 }

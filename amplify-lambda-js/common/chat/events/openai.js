@@ -4,7 +4,7 @@
 import { sendStatusEventToStream } from "../../streams.js";
 import { newStatus } from "../../status.js";
 
-export const openAiTransform = (event, responseStream = null) => {
+export const openAiTransform = (event, responseStream = null, capturedContent = null) => {
     // Handle new /responses endpoint format
     if (event && event.type) {
         // Handle streaming reasoning text deltas
@@ -12,41 +12,88 @@ export const openAiTransform = (event, responseStream = null) => {
             if (responseStream) {
                 // Send reasoning text as it streams (frontend should accumulate)
                 sendStatusEventToStream(responseStream, newStatus({
-                    id: "reasoning", 
-                    summary: "Thinking Details:", 
-                    message: event.delta, 
-                    icon: "bolt", 
-                    inProgress: true, 
+                    id: "reasoning",
+                    summary: "Thinking Details:",
+                    message: event.delta,
+                    icon: "bolt",
+                    inProgress: true,
                     animated: true,
                 }));
             }
             return null; // Don't send this as content
         }
-        
+
         // Handle text delta from assistant response
         if (event.type === "response.output_text.delta" && event.delta) {
             return event.delta;  // Return raw text, sendDeltaToStream will wrap it
         }
-        
+
     }
-    
+
     // Handle legacy completions endpoint format
     if (event && event.choices && event.choices.length > 0) {
-        if (event.choices[0].delta && event.choices[0].delta.tool_calls){
-            const calls = event.choices[0].delta.tool_calls;
-            return {tool_calls:calls};  // Return raw object, sendDeltaToStream will wrap it
+        const choice = event.choices[0];
+
+        // Handle tool calls - accumulate in capturedContent
+        if (choice.delta && choice.delta.tool_calls) {
+            const toolCallDeltas = choice.delta.tool_calls;
+
+            if (capturedContent) {
+                if (!capturedContent.toolCalls) capturedContent.toolCalls = [];
+
+                for (const delta of toolCallDeltas) {
+                    const idx = delta.index;
+
+                    // Initialize tool call on first delta (has id and function.name)
+                    if (delta.id && delta.function?.name) {
+                        console.log(`🔧 OpenAI tool call start: index=${idx}, id=${delta.id}, name=${delta.function.name}`);
+                        // Ensure array is large enough
+                        while (capturedContent.toolCalls.length <= idx) {
+                            capturedContent.toolCalls.push(null);
+                        }
+                        capturedContent.toolCalls[idx] = {
+                            id: delta.id,
+                            type: 'function',
+                            function: {
+                                name: delta.function.name,
+                                arguments: delta.function.arguments || ''
+                            }
+                        };
+                    } else if (delta.function?.arguments && capturedContent.toolCalls[idx]) {
+                        // Accumulate arguments
+                        capturedContent.toolCalls[idx].function.arguments += delta.function.arguments;
+                    }
+                }
+            }
+
+            // Still return the tool calls for streaming to frontend
+            return {tool_calls: toolCallDeltas};
         }
-        else if (event.choices[0].delta && event.choices[0].delta.content) {
-            return event.choices[0].delta.content;  // Return raw text, sendDeltaToStream will wrap it
-        } else if (event.choices[0].message && event.choices[0].message.content) {
-            return event.choices[0].message.content;  // Return raw text, sendDeltaToStream will wrap it
-        } 
+
+        // Check for finish_reason to finalize tool calls
+        if (choice.finish_reason === 'tool_calls' && capturedContent) {
+            console.log(`🔧 OpenAI finish_reason=tool_calls, captured ${capturedContent.toolCalls?.length || 0} tool calls`);
+            // Filter out any null entries
+            if (capturedContent.toolCalls) {
+                capturedContent.toolCalls = capturedContent.toolCalls.filter(tc => tc !== null);
+                for (const tc of capturedContent.toolCalls) {
+                    console.log(`🔧 Finalized tool call: ${JSON.stringify(tc)}`);
+                }
+            }
+        }
+
+        // Handle text content
+        if (choice.delta && choice.delta.content) {
+            return choice.delta.content;  // Return raw text, sendDeltaToStream will wrap it
+        } else if (choice.message && choice.message.content) {
+            return choice.message.content;  // Return raw text, sendDeltaToStream will wrap it
+        }
     } else if (event && event.d && event.d.delta && event.d.delta.text) { // for error message
         return event.d.delta.text;  // Return raw text, sendDeltaToStream will wrap it
     }
 
     return null;
-    
+
 }
 
 export const openaiUsageTransform = (event) => {
