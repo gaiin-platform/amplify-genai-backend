@@ -204,6 +204,38 @@ functions:
           path: integrations/oauth/user/delete
           method: post
 
+  # Admin Web Search Endpoints
+  getAdminWebSearchConfig:
+    handler: integrations/admin_web_search.get_admin_web_search_config
+    timeout: 30
+    events:
+      - http:
+          path: integrations/web-search/admin/config
+          method: get
+
+  registerAdminWebSearchKey:
+    handler: integrations/admin_web_search.register_admin_web_search_key
+    timeout: 30
+    events:
+      - http:
+          path: integrations/web-search/admin/register
+          method: post
+
+  deleteAdminWebSearchKey:
+    handler: integrations/admin_web_search.delete_admin_web_search_key
+    timeout: 30
+    events:
+      - http:
+          path: integrations/web-search/admin/delete
+          method: post
+
+  testAdminWebSearchKey:
+    handler: integrations/admin_web_search.test_admin_web_search_key
+    timeout: 30
+    events:
+      - http:
+          path: integrations/web-search/admin/test
+          method: post
 
 
 resources:
@@ -222,6 +254,7 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
                 - s3:GetObject
                 - s3:PutObject
                 - s3:ListBucket
@@ -248,6 +281,18 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*"
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource:
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:alias/aws/ssm"
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:key/*"
+              Condition:
+                StringEquals:
+                  "kms:ViaService": "ssm.${self:provider.region}.amazonaws.com"
             - Effect: Allow
               Action:
                 - ssm:GetParameter

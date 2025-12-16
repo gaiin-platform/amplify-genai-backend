@@ -129,11 +129,14 @@ export const extractParams = async (event) => {
        
         logger.debug("Current user: " + current_user);
 
+        // Extract clean username (without IDP prefix) for services that need it
+        const cleanUsername = extractIdpPrefix();
+
         let requestBody;
         try {
             requestBody = JSON.parse(event.body);
 
-            return {user: current_user, body: requestBody, accessToken: token};
+            return {user: current_user, username: cleanUsername, body: requestBody, accessToken: token};
         } catch (e) {
             // If error occurs during parsing, return an appropriate response
             return {

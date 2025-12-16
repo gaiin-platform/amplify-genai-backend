@@ -25,7 +25,39 @@ export const translateModelToOpenAI = (modelId) => {
 }
 
 export const translateDataToResponseBody = (data) => {
-    const messages = [...data.messages];
+    // Clean messages for responses API format
+    // The responses API doesn't support tool_calls, tool_call_id in the same way as chat completions
+    const messages = data.messages.map(msg => {
+        const cleaned = {
+            role: msg.role,
+            content: msg.content
+        };
+        // Include name if present
+        if (msg.name) cleaned.name = msg.name;
+
+        // Convert tool messages to a format the responses API can understand
+        // Tool results need to be converted to user messages with context
+        if (msg.role === 'tool' && msg.tool_call_id) {
+            return {
+                role: 'user',
+                content: `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`
+            };
+        }
+
+        // For assistant messages with tool_calls, include the tool call info in content
+        if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+            const toolCallInfo = msg.tool_calls.map(tc =>
+                `[Called tool: ${tc.function?.name || tc.name} with args: ${tc.function?.arguments || JSON.stringify(tc.arguments)}]`
+            ).join('\n');
+            return {
+                role: 'assistant',
+                content: (msg.content || '') + '\n' + toolCallInfo
+            };
+        }
+
+        return cleaned;
+    });
+
     data.input = messages;
     data.max_output_tokens = data.max_tokens || data.max_completion_tokens || 1000;
     if (data.max_output_tokens < 16) data.max_output_tokens = 16;
@@ -53,13 +85,15 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const model = options.model;
     const modelId = (model && model.id) || "gpt-4-1106-Preview";
 
-    let tools = options.tools;
+    // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
+    let tools = body.tools || options.tools;
     if(!tools && options.functions){
         tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
         // Removed debug logging for performance
     }
 
-    let tool_choice = options.tool_choice;
+    // Check for tool_choice in both body (from UnifiedLLMClient) and options (legacy)
+    let tool_choice = body.tool_choice || options.tool_choice;
     if(!tool_choice && options.function_call){
         if(options.function_call === 'auto' || options.function_call === 'none'){
             tool_choice = options.function_call;
@@ -116,9 +150,29 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         throw new Error('Failed to get LLM endpoint configuration');
     }
 
-    const url = config.url;
+    let url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
-    const isCompletionEndpoint = isCompletionsEndpoint(url);
+    let isCompletionEndpoint = isCompletionsEndpoint(url);
+
+    // When tools are present, we MUST use the chat completions endpoint
+    // The responses API doesn't support function calling properly
+    if (tools && tools.length > 0 && !isCompletionEndpoint) {
+        // Convert responses API URL to chat completions URL
+        if (url.includes('/responses')) {
+            url = url.replace('/responses', '/chat/completions');
+            isCompletionEndpoint = true;
+            logger.info(`🔧 Converted to chat completions endpoint for tool support: ${url}`);
+        } else if (url.includes('/openai/deployments/')) {
+            // Azure format - append /chat/completions if not present
+            const baseUrl = url.split('?')[0];
+            const queryString = url.includes('?') ? url.substring(url.indexOf('?')) : '';
+            if (!baseUrl.endsWith('/chat/completions')) {
+                url = baseUrl + '/chat/completions' + queryString;
+                isCompletionEndpoint = true;
+                logger.info(`🔧 Appended /chat/completions for tool support: ${url}`);
+            }
+        }
+    }
 
     if (!options.dataSourceOptions?.disableDataSources) {
         const isNonStandardOpenAI = isOpenAiEndpoint && !isCompletionEndpoint && !url.includes('/chat/completions');
@@ -138,13 +192,31 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
 
     const isOmodel = /^o\d/.test(modelId) || /^gpt-5/.test(modelId);
+    const hasTools = tools && tools.length > 0;
 
-    if (isOmodel) {
+    if (isOmodel && !hasTools) {
+        // Only use O-model special handling when no tools are present
+        // When tools are present, use standard chat completions format for function calling support
         data = {[isCompletionEndpoint ? "max_completion_tokens" : "max_output_tokens"]: model.outputTokenLimit,
                 messages: data.messages, model: modelId, stream: true
                 }
+    } else if (isOmodel && hasTools) {
+        // O-model with tools: use chat completions format with max_completion_tokens
+        // The responses API doesn't support function calling properly
+        // Build a clean request with only supported fields
+        data = {
+            model: modelId,
+            messages: data.messages,
+            tools: data.tools,
+            tool_choice: data.tool_choice || 'auto',
+            max_completion_tokens: data.max_tokens || model.outputTokenLimit,
+            stream: true
+        };
+        // Note: stream_options and reasoning_effort are NOT included for O-models with tools
+        // as they may cause 400 errors
     }
-    if (model.supportsReasoning) {
+    // Only add reasoning for non-tool requests (reasoning can conflict with tool calling)
+    if (model.supportsReasoning && !hasTools) {
         const reasoningLvl = options.reasoningLevel ?? "low";
         if (isCompletionEndpoint) {
             data.reasoning_effort = reasoningLvl;
@@ -153,15 +225,23 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         }
     }
     
-    if (!isCompletionEndpoint) {
+    // Only use responses API format when:
+    // 1. Not a completions endpoint AND
+    // 2. No custom tools are present (responses API doesn't support function calling properly)
+    if (!isCompletionEndpoint && !hasTools) {
         data = translateDataToResponseBody(data);
-        // if contains a url the 
+        // if contains a url the
         if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
     }
 
-    // Removed debug logging for performance
+    // Debug logging for tool requests
+    if (hasTools) {
+        logger.info(`🔧 OpenAI request with tools - isOmodel: ${isOmodel}, isCompletionEndpoint: ${isCompletionEndpoint}`);
+        logger.info(`🔧 Request data keys: ${Object.keys(data).join(', ')}`);
+        logger.debug(`🔧 Full request data: ${JSON.stringify(data, null, 2)}`);
+    }
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
@@ -230,8 +310,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
 
                     } else {
-                        response.data.pipe(writableStream);
-                        // Handle the 'finish' event to resolve the promise
+                        // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
+                        response.data.pipe(writableStream, { end: false });
+
+                        // Handle the response data 'end' event to resolve the promise
+                        // (with { end: false }, the pipe won't trigger 'finish' on writableStream)
+                        response.data.on('end', finalizeSuccess);
+
+                        // Handle the 'finish' event as backup
                         writableStream.on('finish', finalizeSuccess);
 
                         // Handle errors

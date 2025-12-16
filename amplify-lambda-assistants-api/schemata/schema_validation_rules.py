@@ -26,6 +26,11 @@ rules = {
         "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/register_secret": oauth_register_secret_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
+        # Admin web search endpoints
+        "/integrations/web-search/admin/config": {"get_admin_web_search_config": {}},
+        "/integrations/web-search/admin/register": {"register_admin_web_search_key": {}},
+        "/integrations/web-search/admin/delete": {"delete_admin_web_search_key": {}},
+        "/integrations/web-search/admin/test": {"test_admin_web_search_key": {}},
     },
     "api_validators": {
         "/assistant-api/execute-custom-auto": {
@@ -40,5 +45,10 @@ rules = {
         "/integrations/user/files/download": integration_user_files_download_schema,
         "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
+        # Admin web search endpoints
+        "/integrations/web-search/admin/config": {"get_admin_web_search_config": {}},
+        "/integrations/web-search/admin/register": {"register_admin_web_search_key": {}},
+        "/integrations/web-search/admin/delete": {"delete_admin_web_search_key": {}},
+        "/integrations/web-search/admin/test": {"test_admin_web_search_key": {}},
     }
 }

@@ -181,8 +181,15 @@ def _decode_app_id(app_id):
 
 
 def _remove_keys(item):
-    """Remove PK and SK from the item"""
+    """Remove PK and SK from the item, extracting itemId from SK if needed"""
     item_copy = item.copy()  # Create a copy to avoid modifying the original
+
+    # Extract itemId from SK for backwards compatibility with items that don't have itemId stored
+    if "itemId" not in item_copy and "SK" in item_copy:
+        sk = item_copy["SK"]
+        # SK format is either "item_id" or "item_id#range_key"
+        item_copy["itemId"] = sk.split("#")[0] if "#" in sk else sk
+
     item_copy.pop("PK", None)  # Remove 'PK' if exists
     item_copy.pop("SK", None)  # Remove 'SK' if exists
 
