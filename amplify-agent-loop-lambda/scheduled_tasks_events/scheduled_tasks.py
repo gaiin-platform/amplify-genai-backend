@@ -50,6 +50,9 @@ def safe_json_dumps(obj):
 
 
 class TasksMessageHandler(MessageHandler):
+    def is_agent_loop_event(self) -> bool:
+        return True
+
     def can_handle(self, message: Dict[str, Any]) -> bool:
         try:
             # Check if this is a scheduled task message
