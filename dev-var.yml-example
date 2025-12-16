@@ -30,6 +30,7 @@ VPC_ID: "" #vpc_id of deployment from IAC output
 #
 API_VERSION: "2024-02-15-preview"
 ASSISTANTS_OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the OpenAI service APIs
+EMBEDDING_DIM: "1024" #Vector dimension for embeddings (1024 recommended for cross-provider compatibility). Only used during initial table creation.
 
 # These Amazon Aurora RDS can be adjusted to suit your deployment needs for scaling.
 #
