@@ -8,6 +8,8 @@ import boto3
 from typing import Dict, Any, List
 
 from events.email_events import SESMessageHandler
+from events.email_scheduling_events import SESSchedulingMessageHandler
+from events.email_note_events import SESNotesMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 from pycommon.logger import getLogger
@@ -37,52 +39,58 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             for handler in _handlers:
                 if handler.can_handle(message_body):
                     logger.info("Found handler to process message")
-                    agent_input_event = handler.process(message_body, context)
+                    input_event = handler.process(message_body, context)
 
-                    if agent_input_event:
-                        # print(f"Agent input event: {agent_input_event}")
-                        response = process_and_invoke_agent(agent_input_event)
-                        logger.info("Agent response: %s", response)
+                    if input_event:
 
-                        if response.get("handled"):
-                            # delete record from sqs
-                            try:
-                                sqs.delete_message(
-                                    QueueUrl=agent_queue, ReceiptHandle=receipt_handle
+                        if handler.is_agent_loop_event():
+                            # print(f"Agent input event: {agent_input_event}")
+                            response = process_and_invoke_agent(input_event)
+                            logger.info("Agent response: %s", response)
+
+                            if response.get("handled"):
+                                # delete record from sqs
+                                try:
+                                    sqs.delete_message(
+                                        QueueUrl=agent_queue, ReceiptHandle=receipt_handle
+                                    )
+                                except Exception as e:
+                                    logger.warning("Error deleting message: %s, continuing", e)
+
+                                result = response.get("result")
+                                if not result:
+                                    logger.error("Agent response missing")
+                                    handler.onFailure(
+                                        input_event,
+                                        Exception(
+                                            "Failed to run the agent: Agent response missing"
+                                        ),
+                                    )
+                                    result = [
+                                        {
+                                            "role": "environment",
+                                            "content": "Failed to run the agent.",
+                                        }
+                                    ]
+                                logger.info(
+                                    "Final agent results: %s", json.dumps(result, separators=(',', ':'))
                                 )
-                            except Exception as e:
-                                logger.warning("Error deleting message: %s, continuing", e)
-
-                            result = response.get("result")
-                            if not result:
-                                logger.error("Agent response missing")
+                                handler.onSuccess(input_event, result)
+                            else:
+                                # Handle case when fat container returns handled=False
+                                error_msg = response.get("error", "Agent failed to handle event")
+                                logger.error("Agent failed to handle event: %s", error_msg)
                                 handler.onFailure(
-                                    agent_input_event,
-                                    Exception(
-                                        "Failed to run the agent: Agent response missing"
-                                    ),
+                                    input_event,
+                                    Exception(f"Agent failed to handle event: {error_msg}")
                                 )
-                                result = [
-                                    {
-                                        "role": "environment",
-                                        "content": "Failed to run the agent.",
-                                    }
-                                ]
-                            logger.info(
-                                "Final agent results: %s", json.dumps(result, separators=(',', ':'))
-                            )
-                            handler.onSuccess(agent_input_event, result)
+
                         else:
-                            # Handle case when fat container returns handled=False
-                            error_msg = response.get("error", "Agent failed to handle event")
-                            logger.error("Agent failed to handle event: %s", error_msg)
-                            handler.onFailure(
-                                agent_input_event,
-                                Exception(f"Agent failed to handle event: {error_msg}")
-                            )
+                            # Non-agent-loop event processing can be handled here if needed
+                            handler.onSuccess(input_event, input_event.get("result"))
                     else:
                         # If agent_input_event is None, pass the original message_body instead
-                        event_for_failure = agent_input_event if agent_input_event is not None else message_body
+                        event_for_failure = input_event if input_event is not None else message_body
                         handler.onFailure(
                             event_for_failure, Exception("No result from handler")
                         )
@@ -247,4 +255,6 @@ def process_and_invoke_agent(event: dict):
 
 
 register_handler(SESMessageHandler())
+register_handler(SESSchedulingMessageHandler())
+register_handler(SESNotesMessageHandler())
 register_handler(TasksMessageHandler())

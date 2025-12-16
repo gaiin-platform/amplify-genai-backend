@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
+from pycommon.logger import getLogger
+
+logger = getLogger("event_handler")
 
 """
 
@@ -8,6 +11,7 @@ Process should return a dictionary with the following structure:
 {
     "currentUser": str,  # Current user identifier
     "sessionId": str,  # Unique identifier for the session
+    "is_agent_loop_event": bool,  # Whether this event should trigger an agent loop execution
     "prompt": [
         {
             "role": str,  # "user" or "assistant"
@@ -45,8 +49,13 @@ Process should return a dictionary with the following structure:
 }
 """
 class MessageHandler(ABC):
+
     @abstractmethod
     def can_handle(self, event: Dict[str, Any]) -> bool:
+        pass
+
+    @abstractmethod
+    def is_agent_loop_event(self) -> bool:
         pass
 
     @abstractmethod
@@ -62,3 +71,54 @@ class MessageHandler(ABC):
         self, agent_input_event: Dict[str, Any], agent_result: Dict[str, Any]
     ) -> None:
         pass
+
+
+# ============================================================================
+# Email Handler Registry - Single source of truth for specialized email handlers
+# ============================================================================
+"""
+Registry of specialized email addresses that are handled by specific handlers
+(not the general SESMessageHandler).
+
+When adding a new specialized email handler:
+1. Add the email address to SPECIALIZED_EMAILS with a descriptive key
+2. Create the handler class that imports and uses SPECIALIZED_EMAILS
+3. The general SESMessageHandler will automatically exclude it
+
+Example:
+    from events.event_handler import SPECIALIZED_EMAILS
+
+    class SESSchedulingMessageHandler(MessageHandler):
+        SCHEDULER_EMAIL = SPECIALIZED_EMAILS["SCHEDULER"]
+"""
+
+# Registry of specialized email addresses
+# Key: Descriptive constant name (use in handlers)
+# Value: Email address
+SPECIALIZED_EMAILS = {
+    "SCHEDULER": "schedule@vanderbilt.edu",
+    "NOTES": "notes@vanderbilt.edu",
+}
+
+
+def get_specialized_emails():
+    """
+    Get list of email addresses handled by specialized handlers.
+
+    Returns:
+        list: List of email addresses (lowercase)
+    """
+    return list(SPECIALIZED_EMAILS.values())
+
+
+def is_specialized_email(email):
+    """
+    Check if an email address is handled by a specialized handler.
+
+    Args:
+        email (str): Email address to check
+
+    Returns:
+        bool: True if handled by specialized handler
+    """
+    return email.lower() in [e.lower() for e in SPECIALIZED_EMAILS.values()]
