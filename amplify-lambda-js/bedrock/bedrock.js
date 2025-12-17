@@ -76,7 +76,14 @@ export const chatBedrock = async (chatBody, writable) => {
             }
        
         }
-        if (currentModel.supportsReasoning && maxTokens > 1024) {
+        // Check if any message has tool content
+        const hasToolContent = sanitizedMessages.some(msg => 
+            Array.isArray(msg.content) && msg.content.some(item => 
+                item.toolResult || item.toolUse || (typeof item === 'object' && item.type && (item.type.includes('tool') || item.type === 'tool_result'))
+            )
+        );
+        
+        if (currentModel.supportsReasoning && maxTokens > 1024 && !hasToolContent) {
             const budget_tokens = getBudgetTokens({options}, maxTokens); 
             input.additionalModelRequestFields={
                 "reasoning_config": {
@@ -207,11 +214,34 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
         messages[messages.length - 1].content += doesNotSupportImagesInstructions(model.name);
     }
 
-    // Direct map without spread for better performance
-    let updatedMessages = messages.map(m => ({
-        role: m.role,
-        content: [{ text: m.content.trim() || BLANK_MSG }]
-    }));
+    let updatedMessages = [
+        ...(messages.map(m => {
+            // Convert 'tool' role to 'user' (Bedrock doesn't support 'tool' role)
+            const role = m['role'] === 'tool' ? 'user' : m['role'];
+            
+            let content;
+            if (typeof m['content'] === 'string') {
+                content = [{ "text": m['content'].trim() || BLANK_MSG }];
+            } else if (Array.isArray(m['content'])) {
+                // Handle tool content structures
+                content = m['content'].map(item => {
+                    if (item.type === 'tool_result') {
+                        return {
+                            "toolResult": {
+                                "toolUseId": item.tool_call_id || item.toolUseId || "missing_id",
+                                "content": [{ "text": typeof item.content === 'string' ? item.content : JSON.stringify(item.content) }]
+                            }
+                        };
+                    }
+                    return { "text": item.text || item.content || JSON.stringify(item) };
+                });
+            } else {
+                content = [{ "text": JSON.stringify(m['content']) }];
+            }
+            
+            return { "role": role, "content": content };
+        }))
+    ];
 
     if (model.supportsImages && containsImages) {
         updatedMessages = await includeImageSources(imageSources, updatedMessages, responseStream); 
