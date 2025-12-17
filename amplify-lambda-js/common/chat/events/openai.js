@@ -50,9 +50,10 @@ export const openAiTransform = (event, responseStream = null) => {
 }
 
 export const openaiUsageTransform = (event) => {
-    if (event.usage) {
-        const usage = event.usage;
-        
+    // Handle response.completed event format
+    const usage = event.usage || (event.response && event.response.usage);
+    
+    if (usage) {
         // Handle new /responses endpoint format
         if (usage.output_tokens !== undefined && usage.input_tokens !== undefined) {
             // Convert to legacy format for compatibility
@@ -60,6 +61,10 @@ export const openaiUsageTransform = (event) => {
             usage.completion_tokens = usage.output_tokens;
             // Add reasoning tokens if present
             usage.completion_tokens += usage.output_tokens_details?.reasoning_tokens ?? 0;
+            // Handle cached tokens
+            if (usage.input_tokens_details?.cached_tokens) {
+                usage.prompt_tokens_details = { cached_tokens: usage.input_tokens_details.cached_tokens };
+            }
         } else {
             // Handle legacy completions endpoint format
             usage.completion_tokens += usage.completion_tokens_details?.reasoning_tokens ?? 0;

@@ -78,7 +78,7 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const modelRate = modelRateResponse.Items[0];
         const inputCostPerThousandTokens = parseFloat(modelRate.InputCostPerThousandTokens.N);
         const outputCostPerThousandTokens = parseFloat(modelRate.OutputCostPerThousandTokens.N);
-        const cachedCostPerThousandTokens = parseFloat(modelRate.CachedCostPerThousandTokens.N);
+        const cachedCostPerThousandTokens = modelRate.CachedCostPerThousandTokens ? parseFloat(modelRate.CachedCostPerThousandTokens.N) : 0;
 
         const inputCost = (inputTokens / 1000) * inputCostPerThousandTokens;
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
