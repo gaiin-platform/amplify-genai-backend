@@ -10,7 +10,7 @@ import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, end
 import { newStatus } from '../common/status.js';
 import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
 import { getUserToolApiKeys } from './userToolKeys.js';
-import { WEB_SEARCH_TOOL_DEFINITION, executeToolCall } from './webSearch.js';
+import { WEB_SEARCH_TOOL_DEFINITION, executeToolCall, getAdminWebSearchApiKey } from './webSearch.js';
 
 const logger = getLogger('toolLoop');
 
@@ -79,10 +79,26 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     logger.debug(`Tool loop using userId for API key lookup: ${userId}`);
 
     // Get user's tool API keys
-    const apiKeys = await getUserToolApiKeys(userId);
+    let apiKeys = await getUserToolApiKeys(userId);
+
+    // Also check for admin-configured API key
+    let hasAdminKey = false;
+    try {
+        const adminKey = await getAdminWebSearchApiKey();
+        if (adminKey && adminKey.provider && adminKey.api_key) {
+            logger.info(`Found admin-configured web search key for provider: ${adminKey.provider}`);
+            apiKeys = {
+                ...apiKeys,
+                [adminKey.provider]: adminKey.api_key
+            };
+            hasAdminKey = true;
+        }
+    } catch (error) {
+        logger.warn('Failed to get admin web search key:', error.message);
+    }
 
     if (Object.keys(apiKeys).length === 0) {
-        logger.warn('No tool API keys configured for user, proceeding without tools');
+        logger.warn('No tool API keys configured (user or admin), proceeding without tools');
         // Continue without tools
         return await callUnifiedLLM(
             { ...params, options: { ...params.options, model } },
@@ -91,6 +107,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
             options
         );
     }
+
+    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ')} (admin key: ${hasAdminKey})`)
 
     // Add tool definitions to options
     const toolOptions = {
