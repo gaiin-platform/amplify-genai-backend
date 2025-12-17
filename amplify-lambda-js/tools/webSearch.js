@@ -290,6 +290,10 @@ export async function executeWebSearch(query, apiKeys = {}, skipAdminKey = false
         }
     }
 
+    // Log available keys for debugging
+    const availableProviders = Object.keys(apiKeys).filter(k => apiKeys[k]);
+    logger.info(`Available web search providers: ${availableProviders.join(', ') || 'none'}`);
+
     for (const provider of providers) {
         const apiKey = apiKeys[provider.name];
         if (apiKey) {
