@@ -1,5 +1,5 @@
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
-from ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails
+from events.ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails
 from pycommon.logger import getLogger
 logger = getLogger("note_email_events")
 
@@ -7,12 +7,12 @@ import json
 from typing import Dict, Any
 
 class SESNotesMessageHandler(MessageHandler):
-    """Handler for emails sent to notes@vanderbilt.edu"""
+    """Handler for emails sent to notes@vanderbilt.ai"""
 
     # Get notes email from registry (single source of truth)
     NOTES_EMAIL = SPECIALIZED_EMAILS["NOTES"]
 
-    def is_agent_loop_event(self, event: Dict[str, Any]) -> bool:
+    def is_agent_loop_event(self) -> bool:
         """Notes events should not trigger agent loop execution"""
         return False
 
@@ -23,7 +23,7 @@ class SESNotesMessageHandler(MessageHandler):
             if not is_ses_message(message):
                 return False
 
-            # Check if destination email is notes@vanderbilt.edu
+            # Check if destination email is notes@vanderbilt.ai
             destination_emails = extract_destination_emails(message)
             if self.NOTES_EMAIL in destination_emails:
                 logger.info("Notes email detected: %s", self.NOTES_EMAIL)
@@ -58,10 +58,53 @@ class SESNotesMessageHandler(MessageHandler):
             sender_username = lookup_username_from_email(source_email)
 
             ### PROCESSING LOGIC  ###
+            # Forward to Notes Ingest Queue for processing
+            import os
+            import boto3
 
-            logger.info("Created notes agent event for user: %s", sender_username)
-            # return must contain result 
-            return {"result" : None}
+            notes_queue_url = os.getenv("NOTES_INGEST_QUEUE_URL")
+            if not notes_queue_url:
+                logger.error("NOTES_INGEST_QUEUE_URL environment variable not set")
+                return {"result": None}
+
+            try:
+                # Get subject
+                subject = common_headers.get("subject", "No Subject")
+
+                # Prepare message for Notes app
+                notes_message = {
+                    "sender": source_email,
+                    "username": sender_username,
+                    "subject": subject,
+                    "body": email_body,
+                    "attachments": [
+                        {
+                            "filename": att["filename"],
+                            "content_type": att["content_type"],
+                            "size": len(att["content"])
+                        }
+                        for att in parsed_email.get("attachments", [])
+                    ],
+                    "raw_email_s3": {
+                        "bucket": ses_content.get("receipt", {}).get("action", {}).get("bucketName"),
+                        "key": ses_content.get("receipt", {}).get("action", {}).get("objectKey")
+                    },
+                    "timestamp": ses_content.get("mail", {}).get("timestamp")
+                }
+
+                # Send to Notes Ingest Queue
+                sqs = boto3.client("sqs")
+                sqs.send_message(
+                    QueueUrl=notes_queue_url,
+                    MessageBody=json.dumps(notes_message)
+                )
+
+                logger.info(f"Forwarded notes email from {source_email} to Notes app queue")
+                return {"result": {"forwarded": True, "username": sender_username}}
+
+            except Exception as e:
+                logger.error(f"Error forwarding to Notes app: {e}")
+                return {"result": None}
 
         except Exception as e:
             logger.error("Error processing notes email: %s", e, exc_info=True)

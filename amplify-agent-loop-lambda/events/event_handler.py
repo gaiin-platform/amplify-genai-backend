@@ -97,7 +97,7 @@ Example:
 # Value: Email address
 SPECIALIZED_EMAILS = {
     "SCHEDULER": "schedule@vanderbilt.edu",
-    "NOTES": "notes@vanderbilt.edu",
+    "NOTES": "notes@dev.vanderbilt.ai",
 }
 
 

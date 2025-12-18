@@ -71,6 +71,7 @@ provider:
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
+    NOTES_INGEST_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/654654422653/amplify-notes-ingest-queue-dev"
 
     # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
@@ -290,6 +291,7 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt AgentQueue.Arn
+                - "arn:aws:sqs:us-east-1:${aws:accountId}:amplify-notes-ingest-queue-dev"
 
             - Effect: Allow
               Action:

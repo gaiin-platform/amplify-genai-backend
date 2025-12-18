@@ -17,7 +17,7 @@ from delegation.api_keys import get_api_key_directly_by_id
 from service.conversations import register_agent_conversation
 from pycommon.const import IMAGE_FILE_TYPES
 
-from ses_message_functions import (
+from events.ses_message_functions import (
     extract_email_body_and_attachments,
     parse_email,
     lookup_username_from_email,
