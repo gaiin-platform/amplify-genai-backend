@@ -35,10 +35,19 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         try:
             message_body = json.loads(record.get("body", "{}"))
 
-            logger.info("Starting handler chain")
-            for handler in _handlers:
+            # Log basic info about the message to help debug
+            message_type = message_body.get("Type", "Unknown")
+            message_subject = message_body.get("Subject", "No subject")
+            logger.info("Processing message: type=%s, subject=%s", message_type, message_subject)
+
+            logger.info("Starting handler chain with %d handlers", len(_handlers))
+            handled_by_any = False
+            for idx, handler in enumerate(_handlers):
+                handler_name = handler.__class__.__name__
+                logger.info("Trying handler %d: %s", idx + 1, handler_name)
                 if handler.can_handle(message_body):
-                    logger.info("Found handler to process message")
+                    logger.info("Handler %s CAN handle this message", handler_name)
+                    handled_by_any = True
                     input_event = handler.process(message_body, context)
 
                     if input_event:
@@ -97,6 +106,11 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         logger.info(
                             "Ignoring event per handler instructions (e.g., return None)"
                         )
+                else:
+                    logger.info("Handler %s cannot handle this message", handler_name)
+
+            if not handled_by_any:
+                logger.warning("No handler could process this message! Type: %s, Subject: %s", message_type, message_subject)
 
         except Exception as e:
             logger.error("Error processing message: %s", e)

@@ -10,7 +10,7 @@ package:
 plugins:
   - serverless-offline
   - serverless-prune-plugin
-  - serverless-cloudformation-changesets
+  # - serverless-cloudformation-changesets  # DISABLED: Causing changeset issues
   - serverless-python-requirements
 
 custom:
@@ -274,6 +274,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"  #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
+                - "arn:aws:s3:::amplify-notes-raw-files-dev"
+                - "arn:aws:s3:::amplify-notes-raw-files-dev/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 
             - Effect: Allow

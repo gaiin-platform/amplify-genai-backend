@@ -13,8 +13,11 @@ def extract_email_body_and_attachments(sns_message):
     # The given steps remain the same, except for the part dealing with content disposition
     encoded_content = sns_message["content"]
 
+    logger.info(f"Email content size (base64): {len(encoded_content)} bytes")
+
     # Decode the Base64-encoded email content
     decoded_content = base64.b64decode(encoded_content)
+    logger.info(f"Email content size (decoded): {len(decoded_content)} bytes")
 
     # Parse the content into an email.message.EmailMessage object
     email_message = email.message_from_bytes(decoded_content, policy=policy.default)
@@ -22,17 +25,24 @@ def extract_email_body_and_attachments(sns_message):
     body_plain = None
     body_html = None
 
+    part_count = 0
     for part in email_message.walk():
+        part_count += 1
         content_type = part.get_content_type()
         content_disposition = part.get("Content-Disposition")
+        filename = part.get_filename()
+
+        logger.info(f"Part {part_count}: type={content_type}, disposition={content_disposition}, filename={filename}")
 
         if content_disposition:  # This part is an attachment or inlined content
             # Use the get_content_disposition() method to check disposition type
             disposition = part.get_content_disposition()
+            logger.info(f"Part {part_count} disposition method: {disposition}")
             if disposition == "attachment" or (
                 disposition == "inline" and part.get_filename()
             ):
                 attachment_data = part.get_payload(decode=True)
+                logger.info(f"Found attachment: {filename}, size: {len(attachment_data) if attachment_data else 0} bytes")
                 attachments.append(
                     {
                         "filename": part.get_filename(),
@@ -42,8 +52,12 @@ def extract_email_body_and_attachments(sns_message):
                 )
         elif content_type == "text/plain" and body_plain is None:  # Plain text body
             body_plain = part.get_payload(decode=True)
+            logger.info(f"Found plain text body: {len(body_plain) if body_plain else 0} bytes")
         elif content_type == "text/html" and body_html is None:  # HTML body
             body_html = part.get_payload(decode=True)
+            logger.info(f"Found HTML body: {len(body_html) if body_html else 0} bytes")
+
+    logger.info(f"Total parts processed: {part_count}, Attachments found: {len(attachments)}")
 
     # Return the extracted content with safe decoding
     return {
