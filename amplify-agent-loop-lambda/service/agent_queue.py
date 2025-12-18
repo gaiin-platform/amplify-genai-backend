@@ -254,7 +254,9 @@ def process_and_invoke_agent(event: dict):
         return {"handled": False, "error": str(e)}
 
 
-register_handler(SESMessageHandler())
+# Register specialized handlers BEFORE general SES handler
+# This ensures specialized emails are handled by their specific handlers
 register_handler(SESSchedulingMessageHandler())
 register_handler(SESNotesMessageHandler())
+register_handler(SESMessageHandler())  # General handler last - catches all other SES emails
 register_handler(TasksMessageHandler())

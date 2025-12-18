@@ -2,7 +2,7 @@
 import json
 from typing import Dict, Any
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
-from ses_message_functions import (
+from events.ses_message_functions import (
     extract_email_body_and_attachments,
     lookup_username_from_email,
     extract_destination_emails,
