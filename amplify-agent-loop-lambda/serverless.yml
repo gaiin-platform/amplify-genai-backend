@@ -10,7 +10,7 @@ package:
 plugins:
   - serverless-offline
   - serverless-prune-plugin
-  # - serverless-cloudformation-changesets  # DISABLED: Causing changeset issues
+  - serverless-cloudformation-changesets
   - serverless-python-requirements
 
 custom:
@@ -71,7 +71,10 @@ provider:
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
-    NOTES_INGEST_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/654654422653/amplify-notes-ingest-queue-dev"
+
+    # Amplify Notes Configuration
+    NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
+    S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
 
     # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
@@ -274,10 +277,12 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"  #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
-                - "arn:aws:s3:::amplify-notes-raw-files-dev"
-                - "arn:aws:s3:::amplify-notes-raw-files-dev/*"
+                # Amplify Notes S3 bucket access
+                - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}
+                - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}/*
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
-                
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
+
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -293,7 +298,7 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt AgentQueue.Arn
-                - "arn:aws:sqs:us-east-1:${aws:accountId}:amplify-notes-ingest-queue-dev"
+                - arn:aws:sqs:${self:provider.region}:${aws:accountId}:amplify-notes-ingest-queue-${sls:stage}
 
             - Effect: Allow
               Action:
