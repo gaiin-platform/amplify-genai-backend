@@ -73,8 +73,14 @@ class SESNotesMessageHandler(MessageHandler):
             import boto3
 
             notes_queue_url = os.getenv("NOTES_INGEST_QUEUE_URL")
+            s3_bucket = os.getenv("S3_NOTES_RAW_FILES_BUCKET")
+
             if not notes_queue_url:
                 logger.error("NOTES_INGEST_QUEUE_URL environment variable not set")
+                return {"result": None}
+
+            if not s3_bucket:
+                logger.error("S3_NOTES_RAW_FILES_BUCKET environment variable not set")
                 return {"result": None}
 
             try:
@@ -83,7 +89,6 @@ class SESNotesMessageHandler(MessageHandler):
 
                 # Upload attachments to S3 and prepare metadata
                 s3 = boto3.client("s3")
-                s3_bucket = "amplify-notes-raw-files-dev"  # Use existing raw files bucket
                 attachments_metadata = []
 
                 import uuid
