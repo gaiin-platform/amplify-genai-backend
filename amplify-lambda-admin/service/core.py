@@ -493,6 +493,97 @@ def handle_critical_errors_config_update(update_data: dict) -> dict:
     }
 
 
+def transform_integrations_data(update_data):
+    """
+    Transform integrations data from nested frontend format to DynamoDB storage format.
+
+    Frontend format:
+    {
+        "integrations": {"Microsoft": [...], "Google": [...]},
+        "provider_settings": {"Microsoft": {...}, "Google": {...}}
+    }
+
+    Storage format (returns dict with 'data' and 'provider_settings'):
+    {
+        "data": {
+            "microsoft": [...],
+            "google": [...]
+        },
+        "provider_settings": {
+            "microsoft": {...},
+            "google": {...}
+        }
+    }
+
+    Args:
+        update_data: Data from frontend with nested structure
+
+    Returns:
+        Dictionary with 'data' and optionally 'provider_settings' keys
+    """
+    result = {}
+
+    # Handle integrations array - convert provider keys to lowercase for data field
+    if "integrations" in update_data:
+        data_field = {}
+        for provider, integrations_list in update_data["integrations"].items():
+            # Store with lowercase key for backwards compatibility
+            data_field[provider.lower()] = integrations_list
+        result["data"] = data_field
+
+    # Handle provider_settings - keep lowercase keys to match data field
+    if "provider_settings" in update_data:
+        provider_settings_field = {}
+        for provider, settings in update_data["provider_settings"].items():
+            # Store with lowercase key to match the data field convention
+            provider_settings_field[provider.lower()] = settings
+        result["provider_settings"] = provider_settings_field
+
+    return result
+
+
+def reverse_transform_integrations_data(storage_data, provider_settings):
+    """
+    Transform integrations data from DynamoDB storage format back to frontend format.
+
+    Storage format:
+    {
+        "data": {
+            "microsoft": [...],
+            "google": [...]
+        },
+        "provider_settings": {
+            "microsoft": {...},
+            "google": {...}
+        }
+    }
+
+    Frontend format (returns nested structure):
+    {
+        "integrations": {"microsoft": [...], "google": [...]},
+        "provider_settings": {"microsoft": {...}, "google": {...}}
+    }
+
+    Args:
+        storage_data: Data field from DynamoDB (integrations by provider)
+        provider_settings: Provider settings field from DynamoDB
+
+    Returns:
+        Dictionary with nested 'integrations' and 'provider_settings' structure
+    """
+    result = {}
+
+    # Convert data field to integrations nested structure
+    # Keep lowercase keys as the frontend should match backend
+    # Always include integrations key, even if empty (for frontend compatibility)
+    result["integrations"] = storage_data if storage_data is not None else {}
+
+    # Add provider_settings, always include it for consistency
+    result["provider_settings"] = provider_settings if provider_settings is not None else {}
+
+    return result
+
+
 def handle_update_config(config_type, update_data, token, invalid_users_set):
     """
     Handle configuration updates with pre-computed invalid users set.
@@ -511,9 +602,13 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             
             return update_admin_config_data(config_type.value, processed_data)
         
+        case AdminConfigTypes.INTEGRATIONS:
+            # Transform nested structure and save both data and provider_settings
+            transformed = transform_integrations_data(update_data)
+            return update_integrations_config(config_type.value, transformed)
+
         case ( AdminConfigTypes.RATE_LIMIT
             | AdminConfigTypes.PROMPT_COST_ALERT
-            | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
@@ -566,7 +661,7 @@ def update_admin_config_data(config_type, update_data):
         type_value = config_type
         # Convert any float values to Decimal for DynamoDB compatibility
         processed_data = convert_floats_to_decimal(update_data)
-        
+
         admin_table.put_item(
             Item={
                 "config_id": type_value,
@@ -578,6 +673,42 @@ def update_admin_config_data(config_type, update_data):
     except Exception as e:
         logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
+
+
+def update_integrations_config(config_type, transformed_data):
+    """
+    Special update function for integrations that handles both data and provider_settings fields.
+
+    Args:
+        config_type: The config type (should be 'integrations')
+        transformed_data: Dictionary containing 'data' and optionally 'provider_settings'
+
+    Returns:
+        Success/failure dictionary
+    """
+    try:
+        # Convert any float values to Decimal for DynamoDB compatibility
+        processed_data = convert_floats_to_decimal(transformed_data)
+
+        # Build the DynamoDB item
+        item = {
+            "config_id": config_type,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Add data field
+        if "data" in processed_data:
+            item["data"] = processed_data["data"]
+
+        # Add provider_settings as a separate top-level field if present
+        if "provider_settings" in processed_data:
+            item["provider_settings"] = processed_data["provider_settings"]
+
+        admin_table.put_item(Item=item)
+        return {"success": True, "data": f"{config_type} updated successfully."}
+    except Exception as e:
+        print(f"Error updating {config_type}: {str(e)}")
+        return {"success": False, "message": f"Error updating {config_type}: {str(e)}"}
 
 
 def get_secret(secret_name, region_name):
@@ -702,7 +833,12 @@ def get_configs(event, context, current_user, name, data):
                 new_data = None
                 if "Item" in config_item:
                     new_data = config_item["Item"]["data"]
-                    if config_type == AdminConfigTypes.FEATURE_FLAGS:
+                    if config_type == AdminConfigTypes.INTEGRATIONS:
+                        storage_data = config_item["Item"].get("data", {})
+                        provider_settings = config_item["Item"].get("provider_settings", {})
+                        # Transform back to frontend format
+                        new_data = reverse_transform_integrations_data(storage_data, provider_settings)
+                    elif config_type == AdminConfigTypes.FEATURE_FLAGS:
                         # Check if any base feature flags are missing and add them
                         missing_base_flags = check_and_update_missing_base_flags(
                             new_data

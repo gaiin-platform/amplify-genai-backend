@@ -1,22 +1,21 @@
-from datetime import datetime, timedelta, timezone
 import json
 import os
 import time
 import uuid
-from msal import ConfidentialClientApplication
-from google_auth_oauthlib.flow import Flow
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-import requests
-from pycommon.api.secrets import store_secret_parameter
 import boto3
+import requests
 from botocore.exceptions import ClientError
-from integrations.scopes import scopes
+from google_auth_oauthlib.flow import Flow
 from integrations.oauth_encryption import (
     decrypt_oauth_data,
     encrypt_oauth_data,
     verify_oauth_encryption_parameter,
 )
+from integrations.scopes import scopes
+from msal import ConfidentialClientApplication
 from pycommon.api.auth_admin import verify_user_as_admin
 
 from pycommon.decorators import required_env_vars
@@ -26,6 +25,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
+from schemata.schema_validation_rules import rules
 
 setup_validated(rules, permissions.get_permission_checker)
 from pycommon.api.ops import api_tool, set_permissions_by_state
@@ -99,25 +99,32 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
     raise ValueError(f"Unsupported integration type: {integration}")
 
 
-def get_authorization_url_and_state(integration, client, scopes=None, retry_with_consent=False):
+def get_authorization_url_and_state(integration, client, scopes=None, admin_consent_provided=False):
     """
     Gets authorization URL and state for either Google or Microsoft clients.
     Args:
         integration: The integration type
         client: OAuth client
         scopes: OAuth scopes
-        retry_with_consent: If True, forces prompt=consent for Microsoft OAuth
+        admin_consent_provided: If True, skips prompt=consent for Microsoft OAuth (admin has pre-consented)
     """
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             authorization_url, state = client.authorization_url(prompt="consent")
         case IntegrationType.MICROSOFT:
             state = str(uuid.uuid4())  # Generate a random state
-            # Only use prompt=consent if explicitly requested (for retry scenarios)
             auth_params = {"scopes": scopes, "state": state}
-            if retry_with_consent:
+
+            # Determine if we should prompt for consent
+            if admin_consent_provided:
+                # Admin has pre-consented, so we don't need to prompt users for consent
+                print("Admin consent provided - skipping user consent prompt")
+                # Don't add prompt parameter - let user sign in without consent
+            else:
+                # Default behavior - request user consent
                 auth_params["prompt"] = "consent"
-                
+                print("Requesting user consent")
+
             # For Microsoft, we need to explicitly pass the redirect_uri
             # The redirect_uri should be determined from the current environment
             redirect_uri = build_redirect_uri()
@@ -415,8 +422,7 @@ def detect_request_origin(event):
 @required_env_vars({
     "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
     "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-    "API_BASE_URL": [],
-    "OAUTH_AUDIENCE": [],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("start_oauth")
 def start_auth(event, context, current_user, name, data):
@@ -426,16 +432,20 @@ def start_auth(event, context, current_user, name, data):
 
     # Detect request origin for dynamic callback URL selection
     origin = detect_request_origin(event)
-    
+
     auth_client, scopes = get_oauth_client_for_integration(integration, origin)
 
-    logger.debug("Obtained client.")
-    logger.info("Creating client redirect url...")
-    
-    # For Microsoft, try without consent first (will retry with consent if needed)
-    retry_with_consent = False
+    print("Obtained client.")
+    print("Creating client redirect url...")
+
+    # Get provider settings to determine if admin consent is provided
+    provider_settings = get_provider_settings(integration)
+    admin_consent_provided = provider_settings.get("azure_admin_consent_provided", False)
+
+    print(f"Admin consent provided: {admin_consent_provided}")
+
     authorization_url, state = get_authorization_url_and_state(
-        integration, auth_client, scopes, retry_with_consent
+        integration, auth_client, scopes, admin_consent_provided
     )
 
     dynamodb = boto3.resource("dynamodb")
@@ -450,7 +460,6 @@ def start_auth(event, context, current_user, name, data):
                 "user": current_user,
                 "timestamp": int(time.time()),
                 "origin": origin,  # Store origin for callback handling
-                "retry_with_consent": retry_with_consent,
                 "ttl": current_timestamp + 3600,  # Expire in 1 hour (3600 seconds)
             }
         )
@@ -561,40 +570,17 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
 
 def handle_oauth_error_retry(current_user, integration, origin, error_description):
     """
-    Handles OAuth errors by retrying with consent prompt if needed.
-    Returns a redirect URL for retry or None if retry is not appropriate.
+    Handles OAuth errors by logging them.
+    With admin consent configuration, retry logic is no longer needed.
+    Returns None as retry is not supported.
     """
-    # Check if this is an approval required error for Microsoft
+    # Log the error for debugging
     if provider_case(integration) == IntegrationType.MICROSOFT:
         if "approval" in error_description.lower() or "consent" in error_description.lower():
-            logger.error("Approval required error detected, retrying with consent prompt")
-            
-            # Create new OAuth client with consent prompt
-            auth_client, scopes = get_oauth_client_for_integration(integration, origin)
-            authorization_url, state = get_authorization_url_and_state(
-                integration, auth_client, scopes, retry_with_consent=True
-            )
-            
-            # Store retry state
-            dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
-            
-            try:
-                table.put_item(
-                    Item={
-                        "state": state,
-                        "integration": integration,
-                        "user": current_user,
-                        "timestamp": int(time.time()),
-                        "origin": origin,
-                        "retry_with_consent": True,
-                        "is_retry": True,
-                    }
-                )
-                return authorization_url
-            except ClientError as e:
-                logger.error(f"Error storing retry state in DynamoDB: {e}")
-    
+            print(f"Approval/consent error detected: {error_description}")
+            print(f"Admin should configure azure_admin_consent_provided setting if admin consent has been granted")
+
+    # No retry logic - admin should configure provider_settings instead
     return None
 
 
@@ -1020,11 +1006,93 @@ def get_available_integrations():
         return None
 
 
+def get_provider_settings(integration):
+    """
+    Retrieve provider settings for a given integration from the admin config.
+
+    Args:
+        integration: Integration identifier (e.g., 'microsoft_calendar', 'google_drive')
+
+    Returns:
+        dict: Provider settings for the integration's provider, or empty dict if not found
+
+    Example return for Microsoft:
+        {"azure_admin_consent_provided": false}
+    """
+    INTEGRATIONS = "integrations"
+
+    try:
+        # Determine the provider from the integration
+        integration_provider = provider_case(integration).value
+        # Use lowercase to match storage format (microsoft, google, etc.)
+        provider_key = integration_provider.lower()
+
+        dynamodb = boto3.resource("dynamodb")
+        admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+        response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
+
+        if "Item" in response:
+            # Provider settings are stored at the top level, not inside data
+            all_provider_settings = response["Item"].get("provider_settings", {})
+            # Get settings for this specific provider (lowercase key)
+            provider_settings = all_provider_settings.get(provider_key, {})
+            print(f"Provider settings for {provider_key}: {provider_settings}")
+            return provider_settings
+
+        print(f"No integrations config found in DynamoDB")
+        return {}
+
+    except Exception as e:
+        print(f"Error retrieving provider settings for {integration}: {str(e)}")
+        return {}
+
+
+def get_provider_settings(integration):
+    """
+    Retrieve provider settings for a given integration from the admin config.
+
+    Args:
+        integration: Integration identifier (e.g., 'microsoft_calendar', 'google_drive')
+
+    Returns:
+        dict: Provider settings for the integration's provider, or empty dict if not found
+
+    Example return for Microsoft:
+        {"azure_admin_consent_provided": false}
+    """
+    INTEGRATIONS = "integrations"
+
+    try:
+        # Determine the provider from the integration
+        integration_provider = provider_case(integration).value
+        # Use lowercase to match storage format (microsoft, google, etc.)
+        provider_key = integration_provider.lower()
+
+        dynamodb = boto3.resource("dynamodb")
+        admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+        response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
+
+        if "Item" in response:
+            # Provider settings are stored at the top level, not inside data
+            all_provider_settings = response["Item"].get("provider_settings", {})
+            # Get settings for this specific provider (lowercase key)
+            provider_settings = all_provider_settings.get(provider_key, {})
+            print(f"Provider settings for {provider_key}: {provider_settings}")
+            return provider_settings
+
+        print(f"No integrations config found in DynamoDB")
+        return {}
+
+    except Exception as e:
+        print(f"Error retrieving provider settings for {integration}: {str(e)}")
+        return {}
+
+
 @required_env_vars({
     "INTEGRATION_STAGE": [SSMOperation.PUT_PARAMETER],
-    "API_BASE_URL": [],
-    "OAUTH_AUDIENCE": [],
-})
+}) 
 @validated("register_secret")
 def regiser_secret(event, context, current_user, name, data):
     integration_provider = data["data"]["integration"]
