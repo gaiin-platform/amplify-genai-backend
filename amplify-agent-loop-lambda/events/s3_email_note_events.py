@@ -1,13 +1,17 @@
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
-from events.ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails
+from events.ses_message_functions import lookup_username_from_email
 from pycommon.logger import getLogger
-logger = getLogger("note_email_events")
+logger = getLogger("s3_email_note_events")
 
 import json
+import os
+import boto3
 from typing import Dict, Any
+from datetime import datetime
+import uuid
 
-class SESNotesMessageHandler(MessageHandler):
-    """Handler for emails sent to notes@vanderbilt.ai"""
+class S3EmailNotesMessageHandler(MessageHandler):
+    """Handler for S3 events triggered by notes@ emails being stored"""
 
     # Get notes email from registry (single source of truth)
     NOTES_EMAIL = SPECIALIZED_EMAILS["NOTES"]
@@ -17,65 +21,58 @@ class SESNotesMessageHandler(MessageHandler):
         return False
 
     def can_handle(self, message: Dict[str, Any]) -> bool:
-        """Check if message is an SES event sent to the notes email"""
+        """Check if message is an S3 event for the raw emails bucket"""
         try:
-            logger.info("Checking if message can be handled by SESNotesMessageHandler")
+            logger.info("Checking if message can be handled by S3EmailNotesMessageHandler")
 
-            # First check if it's a valid SES message
-            if not is_ses_message(message):
-                logger.info("Message is not a valid SES message")
+            # Check if this is an S3 event notification from SNS
+            if message.get("Type") != "Notification":
+                logger.info("Message is not an SNS notification")
                 return False
 
-            # Check if destination email is notes@vanderbilt.ai
-            destination_emails = extract_destination_emails(message)
-            logger.info("Destination emails: %s", destination_emails)
+            # Parse the SNS message
+            sns_message = json.loads(message.get("Message", "{}"))
 
-            if self.NOTES_EMAIL in destination_emails:
-                logger.info("Notes email detected: %s", self.NOTES_EMAIL)
-                return True
+            # Check if it contains S3 event records
+            if "Records" not in sns_message:
+                logger.info("Message does not contain S3 Records")
+                return False
 
-            logger.info("Notes email not in destination list. Looking for: %s", self.NOTES_EMAIL)
+            # Check if it's from our raw emails bucket
+            for record in sns_message.get("Records", []):
+                if record.get("eventSource") == "aws:s3":
+                    bucket = record.get("s3", {}).get("bucket", {}).get("name")
+                    expected_bucket = os.getenv("RAW_EMAILS_BUCKET")
+
+                    if bucket == expected_bucket:
+                        logger.info("S3 email event detected from bucket: %s", bucket)
+                        return True
+
+            logger.info("S3 event not from raw emails bucket")
             return False
 
         except Exception as e:
-            logger.error("Error in SESNotesMessageHandler.can_handle: %s", e, exc_info=True)
+            logger.error("Error in S3EmailNotesMessageHandler.can_handle: %s", e, exc_info=True)
             return False
 
     def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Process notes email by downloading from S3 and extracting attachments"""
-        logger.info("Processing notes email")
+        """Process notes email from S3 event notification"""
+        logger.info("Processing S3 email event for notes@")
 
         try:
-            ses_content = json.loads(message["Message"])
-            mail_data = ses_content["mail"]
-            common_headers = mail_data.get("commonHeaders", {})
-            receipt = ses_content.get("receipt", {})
+            # Parse the SNS message to get S3 event
+            sns_message = json.loads(message.get("Message", "{}"))
+            s3_record = sns_message["Records"][0]  # Should only be one per email
 
-            # Extract basic email info
-            source_email = mail_data["source"].lower()
-            destination_emails = mail_data["destination"]
-            subject = common_headers.get("subject", "No Subject")
-            timestamp = mail_data.get("timestamp")
+            # Extract S3 info
+            s3_info = s3_record["s3"]
+            s3_bucket = s3_info["bucket"]["name"]
+            s3_key = s3_info["object"]["key"]
+            s3_size = s3_info["object"]["size"]
 
-            logger.info("Notes email from: %s to: %s, subject: %s", source_email, destination_emails, subject)
+            logger.info(f"Processing email from S3: s3://{s3_bucket}/{s3_key} ({s3_size} bytes)")
 
-            # NEW: Download email from S3
-            # SES stores emails with messageId as the S3 key
-            import os
-            import boto3
-
-            message_id = mail_data.get("messageId")
-            s3_bucket = os.getenv("RAW_EMAILS_BUCKET")
-            s3_key = f"emails/{message_id}"
-
-            if not s3_bucket or not message_id:
-                logger.error("RAW_EMAILS_BUCKET not configured or messageId missing")
-                logger.error("Bucket: %s, MessageId: %s", s3_bucket, message_id)
-                return {"result": None}
-
-            logger.info(f"Downloading email from S3: s3://{s3_bucket}/{s3_key}")
-
-            # Download email from S3
+            # Download and parse the email
             s3_client = boto3.client("s3")
 
             try:
@@ -88,7 +85,23 @@ class SESNotesMessageHandler(MessageHandler):
                 from email.parser import BytesParser
                 email_message = BytesParser(policy=policy.default).parsebytes(raw_email_bytes)
 
-                # Extract body
+                # Extract email metadata
+                from_header = email_message.get("From", "")
+                to_header = email_message.get("To", "")
+                subject = email_message.get("Subject", "No Subject")
+                date_header = email_message.get("Date")
+
+                logger.info(f"Email metadata: From={from_header}, To={to_header}, Subject={subject}")
+
+                # Parse sender email from "Name <email>" format
+                import re
+                email_match = re.search(r'<(.+?)>', from_header)
+                if email_match:
+                    source_email = email_match.group(1).lower()
+                else:
+                    source_email = from_header.lower().strip()
+
+                # Extract body and attachments
                 body_plain = None
                 body_html = None
                 attachments_data = []
@@ -136,9 +149,6 @@ class SESNotesMessageHandler(MessageHandler):
                 return {"result": None}
 
             try:
-                import uuid
-                from datetime import datetime
-
                 s3 = boto3.client("s3")
                 attachments_metadata = []
 
@@ -146,13 +156,13 @@ class SESNotesMessageHandler(MessageHandler):
                     # Generate unique S3 key
                     attachment_id = str(uuid.uuid4())
                     timestamp_prefix = datetime.utcnow().strftime('%Y/%m/%d')
-                    s3_key = f"email-attachments/{sender_username}/{timestamp_prefix}/{attachment_id}/{att['filename']}"
+                    attachment_s3_key = f"email-attachments/{sender_username}/{timestamp_prefix}/{attachment_id}/{att['filename']}"
 
                     # Upload to Notes S3 bucket
                     try:
                         s3.put_object(
                             Bucket=notes_bucket,
-                            Key=s3_key,
+                            Key=attachment_s3_key,
                             Body=att["content"],
                             ContentType=att["content_type"],
                             Metadata={
@@ -163,14 +173,14 @@ class SESNotesMessageHandler(MessageHandler):
                             }
                         )
 
-                        logger.info(f"Uploaded attachment to S3: {notes_bucket}/{s3_key}")
+                        logger.info(f"Uploaded attachment to S3: {notes_bucket}/{attachment_s3_key}")
 
                         attachments_metadata.append({
                             "filename": att["filename"],
                             "content_type": att["content_type"],
                             "size": len(att["content"]),
                             "s3_bucket": notes_bucket,
-                            "s3_key": s3_key
+                            "s3_key": attachment_s3_key
                         })
                     except Exception as e:
                         logger.error(f"Failed to upload attachment {att['filename']}: {e}")
@@ -183,7 +193,7 @@ class SESNotesMessageHandler(MessageHandler):
                     "subject": subject,
                     "body": email_body,
                     "attachments": attachments_metadata,
-                    "timestamp": timestamp
+                    "timestamp": date_header or datetime.utcnow().isoformat()
                 }
 
                 # Send to Notes Ingest Queue
@@ -201,15 +211,15 @@ class SESNotesMessageHandler(MessageHandler):
                 return {"result": None}
 
         except Exception as e:
-            logger.error("Error processing notes email: %s", e, exc_info=True)
+            logger.error("Error processing S3 email event: %s", e, exc_info=True)
             raise
 
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
-        logger.error("SESNotesMessageHandler onFailure: %s", error)
+        logger.error("S3EmailNotesMessageHandler onFailure: %s", error)
         pass
 
     def onSuccess(
         self, agent_input_event: Dict[str, Any], agent_result: Dict[str, Any]
     ) -> None:
         """Handle successful notes event processing"""
-        logger.info("Notes email processed successfully")
+        logger.info("S3 email event processed successfully")
