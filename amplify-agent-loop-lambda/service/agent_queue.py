@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 from events.email_events import SESMessageHandler
 from events.email_scheduling_events import SESSchedulingMessageHandler
 from events.email_note_events import SESNotesMessageHandler
+from events.s3_email_note_events import S3EmailNotesMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 from pycommon.logger import getLogger
@@ -271,6 +272,7 @@ def process_and_invoke_agent(event: dict):
 # Register specialized handlers BEFORE general SES handler
 # This ensures specialized emails are handled by their specific handlers
 register_handler(SESSchedulingMessageHandler())
-register_handler(SESNotesMessageHandler())
+register_handler(S3EmailNotesMessageHandler())  # S3 events for notes@ (avoids SNS 256KB limit)
+register_handler(SESNotesMessageHandler())  # Fallback for SES direct events
 register_handler(SESMessageHandler())  # General handler last - catches all other SES emails
 register_handler(TasksMessageHandler())

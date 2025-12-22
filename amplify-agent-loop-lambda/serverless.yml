@@ -75,6 +75,7 @@ provider:
     # Amplify Notes Configuration
     NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
     S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
+    RAW_EMAILS_BUCKET: ${ssm:/amplify/${sls:stage}/RAW_EMAILS_BUCKET}
 
     # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
@@ -280,6 +281,18 @@ resources:
                 # Amplify Notes S3 bucket access
                 - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}
                 - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}/*
+            # S3 permissions for raw emails bucket
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
 
@@ -564,3 +577,40 @@ resources:
               AllowedOrigins:
                 - '*'
               MaxAge: 3000
+
+    # S3 Bucket for storing raw emails (fixes SNS 256KB limit for notes@)
+    RawEmailsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.RAW_EMAILS_BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: DeleteOldEmails
+              Status: Enabled
+              ExpirationInDays: 7
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
+    # Bucket policy to allow SES to write emails
+    RawEmailsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref RawEmailsBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ses.amazonaws.com
+              Action: s3:PutObject
+              Resource: !Sub "${RawEmailsBucket.Arn}/*"
+              Condition:
+                StringEquals:
+                  AWS:SourceAccount: !Ref AWS::AccountId
