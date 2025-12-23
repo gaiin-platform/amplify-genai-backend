@@ -187,11 +187,15 @@ class S3EmailNotesMessageHandler(MessageHandler):
                         continue
 
                 # Prepare message for Notes app
+                # Use email body as custom prompt (trimmed), or None if empty
+                custom_prompt = email_body.strip() if email_body else None
+
                 notes_message = {
                     "sender": source_email,
                     "username": sender_username,
                     "subject": subject,
                     "body": email_body,
+                    "custom_prompt": custom_prompt,
                     "attachments": attachments_metadata,
                     "timestamp": date_header or datetime.utcnow().isoformat()
                 }
