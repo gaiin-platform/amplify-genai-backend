@@ -20,7 +20,7 @@ custom:
   depName: ${self:custom.stageVars.DEP_NAME}
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
