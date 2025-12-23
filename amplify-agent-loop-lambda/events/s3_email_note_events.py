@@ -197,7 +197,7 @@ class S3EmailNotesMessageHandler(MessageHandler):
                     "body": email_body,
                     "custom_prompt": custom_prompt,
                     "attachments": attachments_metadata,
-                    "timestamp": date_header or datetime.utcnow().isoformat()
+                    "timestamp": date_header or (datetime.utcnow().isoformat() + 'Z')
                 }
 
                 # Send to Notes Ingest Queue
