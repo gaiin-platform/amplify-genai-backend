@@ -183,7 +183,7 @@ def get_user_available_models(event, context, current_user, name, data):
         return supported_models_result
 
     supported_models = supported_models_result.get("data", {}).items()
-    logger.debug("User affiliated_groups: ", affiliated_groups)
+    logger.debug("User affiliated_groups: %s", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
     available_models = [
@@ -441,7 +441,7 @@ def get_supported_models():
             if is_model_current(transformed_model):
                 return model_id, transformed_model
             else:
-                logger.debug("Skipping outdated model: ", model_id)
+                logger.debug("Skipping outdated model: %s", model_id)
                 return None, None
         except Exception as e:
             logger.error(f"Error processing model {model.get('ModelID', 'unknown')}: {str(e)}")

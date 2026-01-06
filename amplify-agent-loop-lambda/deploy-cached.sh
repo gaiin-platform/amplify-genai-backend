@@ -5,17 +5,27 @@ set -e
 STAGE="${1:-dev}"
 REGION="${2:-$(aws configure get region)}"
 PRUNE=false
+NO_CACHE=false
 
-# Check for --prune flag
+# Check for --prune and --no-cache flags
 if [[ "$1" == "--prune" ]]; then
     PRUNE=true
+    STAGE="${2:-dev}"
+    REGION="${3:-$(aws configure get region)}"
+elif [[ "$1" == "--no-cache" ]]; then
+    NO_CACHE=true
     STAGE="${2:-dev}"
     REGION="${3:-$(aws configure get region)}"
 elif [[ "$2" == "--prune" ]]; then
     PRUNE=true
     REGION="${3:-$(aws configure get region)}"
+elif [[ "$2" == "--no-cache" ]]; then
+    NO_CACHE=true
+    REGION="${3:-$(aws configure get region)}"
 elif [[ "$3" == "--prune" ]]; then
     PRUNE=true
+elif [[ "$3" == "--no-cache" ]]; then
+    NO_CACHE=true
 fi
 
 export STAGE=$STAGE
@@ -25,13 +35,20 @@ echo "Deploying to stage: $STAGE in region: $REGION"
 if [ "$PRUNE" = true ]; then
     echo "Prune option enabled - will clean Docker system before build"
 fi
-
-# Run the cached build script with prune option
-if [ "$PRUNE" = true ]; then
-    ./build-cached.sh $STAGE --prune
-else
-    ./build-cached.sh $STAGE
+if [ "$NO_CACHE" = true ]; then
+    echo "NO_CACHE option enabled - will skip all Docker caching"
 fi
+
+# Run the cached build script with options
+BUILD_OPTS="$STAGE"
+if [ "$PRUNE" = true ]; then
+    BUILD_OPTS="$BUILD_OPTS --prune"
+fi
+if [ "$NO_CACHE" = true ]; then
+    BUILD_OPTS="$BUILD_OPTS --no-cache"
+fi
+
+./build-cached.sh $BUILD_OPTS
 
 # Source the timestamp file to get the DEPLOY_TIMESTAMP variable
 if [ -f deploy-timestamp.env ]; then

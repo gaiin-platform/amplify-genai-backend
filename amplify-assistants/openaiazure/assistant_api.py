@@ -11,6 +11,9 @@ import botocore
 from botocore.exceptions import ClientError, NoCredentialsError
 from pycommon.api.secrets import get_secret_value
 from pycommon.api.credentials import get_endpoint
+from pycommon.api.accounting import record_usage
+from pycommon.api.request_state import request_killed
+
 import os
 from openai import OpenAI
 from openai import AzureOpenAI
@@ -615,6 +618,21 @@ def add_message_to_thread(info, content, file_ids):
 
 def chat(current_user, provider_assistant_id, info):
     openai_thread_id = info["thread_id"]
+    request_id = info.get("request_id")
+
+    # Check kill switch before starting the run
+    if request_killed and request_id:
+        try:
+            if request_killed(current_user, request_id):
+                logger.info("Request %s was cancelled by user %s, aborting chat", request_id, current_user)
+                return {
+                    "success": False,
+                    "error": "Request was cancelled by user",
+                    "cancelled": True
+                }
+        except Exception as e:
+            logger.warning("Failed to check kill switch: %s", e)
+            # Continue execution if kill switch check fails
 
     try:
         logger.info("Running assistant %s on thread %s", provider_assistant_id, openai_thread_id)
@@ -625,6 +643,26 @@ def chat(current_user, provider_assistant_id, info):
 
         tries = 28
         while tries > 0:
+            # Check kill switch in polling loop to catch cancellations during execution
+            if request_killed and request_id:
+                try:
+                    if request_killed(current_user, request_id):
+                        logger.info("Request %s was cancelled during execution, aborting chat", request_id)
+                        # Try to cancel the OpenAI run
+                        try:
+                            client.beta.threads.runs.cancel(thread_id=openai_thread_id, run_id=run.id)
+                            logger.info("Successfully cancelled OpenAI run %s", run.id)
+                        except Exception as cancel_error:
+                            logger.warning("Failed to cancel OpenAI run: %s", cancel_error)
+                        return {
+                            "success": False,
+                            "error": "Request was cancelled by user during execution",
+                            "cancelled": True
+                        }
+                except Exception as e:
+                    logger.warning("Failed to check kill switch during polling: %s", e)
+                    # Continue execution if kill switch check fails
+
             logger.debug("Checking for the result of the run %s", run.id)
             try:
                 status = client.beta.threads.runs.retrieve(
@@ -894,25 +932,80 @@ def record_thread_usage(op_details, info):
             ExpressionAttributeValues={":d": details},
         )
         logger.debug("Updated Entry: %s", usage_table.get_item(Key={"id": entry_key})["Item"])
+
+    # Record token costs to ADDITIONAL_CHARGES_TABLE using record_usage()
+    input_tokens = op_details.get("inputTokens", 0)
+    output_tokens = op_details.get("outputTokens", 0)
+
+    if input_tokens > 0 or output_tokens > 0:
+        try:
+            account = {
+                "user": info["current_user"],
+                "account_id": info["account_id"],
+            }
+
+            token_cost = record_usage(
+                account=account,
+                request_id=info["request_id"],
+                model_id=model,  # "gpt-4o"
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=0,
+                details={
+                    "assistant_id": info["assistant_id"],
+                    "thread_id": info["thread_id"],
+                    "operation_type": op_details["type"]
+                }
+            )
+            logger.debug(f"Token cost recorded: ${token_cost} for {input_tokens} input + {output_tokens} output tokens")
+        except Exception as e:
+            # Never let cost tracking break the main flow
+            logger.error(f"Failed to record token costs: {e}")
+
     logger.debug("Successfully recorded thread usage")
 
 
 def add_session_billing_table(timestamp, info):
+    """Record code interpreter session charges using pycommon.
+
+    OpenAI charges $0.03 per Code Interpreter session (1 hour) in addition
+    to the regular token costs which are recorded separately by record_usage().
+    """
+    from pycommon.api.accounting import record_additional_charge
+
     logger.debug("Recording session to billing")
-    dynamodb = boto3.resource("dynamodb")
-    billing_table = dynamodb.Table(os.environ["ADDITIONAL_CHARGES_TABLE"])
-    billing_table.put_item(
-        Item={
-            "id": f"{str(uuid.uuid4())}",
-            "accountId": info["account_id"],
-            "itemType": "codeInterpreterSession",
-            "modelId": model,
-            "requestId": info["request_id"],
-            "time": timestamp,
+
+    try:
+        # Build account dict in the format expected by pycommon
+        account = {
             "user": info["current_user"],
+            "account_id": info["account_id"],
         }
-    )
-    logger.debug("Billing session recorded")
+
+        # Build details with session information
+        details = {
+            "session_timestamp": timestamp,
+            "assistant_id": info.get("assistant_id"),
+            "thread_id": info.get("thread_id"),
+        }
+
+        # Code interpreter sessions are charged at $0.03 per session (1 hour)
+        # This is a flat fee separate from token costs
+        cost = record_additional_charge(
+            account=account,
+            model_id=model,  # "gpt-4o"
+            token_count=0,  # Not used when flat_cost is provided
+            item_type="codeInterpreterSession",
+            request_id=info["request_id"],
+            details=details,
+            ttl_days=None,  # No TTL - permanent billing records
+            flat_cost=0.03,  # $0.03 per session flat fee
+        )
+
+        logger.debug(f"Billing session recorded with ${cost:.2f} cost")
+    except Exception as e:
+        # Never let cost tracking break the main flow
+        logger.error(f"Failed to record session costs: {e}")
 
 
 def record_thread_run_data(run_data, run_status, info):

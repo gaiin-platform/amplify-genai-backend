@@ -4,9 +4,10 @@
 
 import { Readable, Writable, pipeline } from 'stream';
 import { promisify } from 'util';
-import { extractParams } from "./common/handlers.js";  
+import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
+import { getUsageTracker } from "./common/usageTracking.js";
 // Removed AWS X-Ray for performance optimization
 // Removed Python LiteLLM - now using native JS providers
 // 🛡️ COST PROTECTION
@@ -95,16 +96,34 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
 
     const effectiveStream = streamEnabled ? responseStream : new AggregatorStream();
 
+    // Initialize usage tracker
+    const usageTracker = getUsageTracker();
+    let trackingContext = {};
+    let params = null;
+
     try {
         logger.debug("Extracting params from event");
-        
+
         // 🛡️ TIMEOUT PROTECTION: Prevent expensive hangs during param extraction
-        const params = await withTimeout(30000)(extractParams(event));
-        
+        params = await withTimeout(30000)(extractParams(event));
+
         // 🔑 PER-USER CIRCUIT BREAKER: Now we have user info for proper isolation
         const functionName = context.functionName || process.env.SERVICE_NAME || 'amplify-lambda-js';
         const userId = params?.user || null;
-        
+
+        // 📊 START USAGE TRACKING: Track Lambda execution for cost calculation
+        if (userId && usageTracker.enabled) {
+            const endpoint = event.rawPath || event.path || '/chat';
+            const apiAccessed = params.body?.options?.accountId ? true : false; // API key has accountId
+            trackingContext = usageTracker.startTracking(
+                userId,
+                'chat',
+                endpoint,
+                apiAccessed,
+                context
+            );
+        }
+
         if (userId) {
             logger.debug(`🔑 Applying per-user circuit breaker for user ${userId.substring(0, 10)}...`);
         } else {
@@ -157,7 +176,35 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
         // Re-throw for upstream error handling
         throw e;
     } finally {
-        // Removed X-Ray tracing for performance optimization
+        // 📊 END USAGE TRACKING: Record metrics for cost calculation
+        if (usageTracker.enabled && trackingContext.startTime) {
+            try {
+                const result = { statusCode: 200 }; // Default to success
+                const claims = {
+                    account: params?.body?.options?.accountId || 'oauth',
+                    user: params?.user || 'unknown',
+                    api_key_id: params?.body?.options?.accountId ? 'api_key' : null,
+                    purpose: params?.body?.options?.purpose || null
+                };
+
+                const metrics = usageTracker.endTracking(
+                    trackingContext,
+                    result,
+                    claims,
+                    null  // errorType handled in catch block
+                );
+
+                // Fire and forget - don't await
+                if (metrics) {
+                    usageTracker.recordMetrics(metrics).catch(err =>
+                        logger.error(`Background metrics recording failed: ${err.message}`)
+                    );
+                }
+            } catch (metricsError) {
+                // Never let metrics break the function
+                logger.error(`Metrics tracking failed: ${metricsError.message}`);
+            }
+        }
     }
 });
 

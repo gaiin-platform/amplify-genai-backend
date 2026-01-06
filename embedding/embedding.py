@@ -26,7 +26,7 @@ from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation
 )
@@ -604,6 +604,10 @@ db_connection = None
 
 
 # AWS Lambda handler function
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="embedding_processor", account="system")
 def lambda_handler(event, context):
 
     logger.info(
@@ -952,7 +956,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.debug(f"[DIAGNOSTIC] ✅ Text preprocessing successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
-                    response_vector_embedding = generate_embeddings(clean_text)
+                    response_vector_embedding = generate_embeddings(clean_text, account_data, src)
                     if not response_vector_embedding["success"]:
                         logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
                         
@@ -1006,7 +1010,8 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
-                    response_qa_embedding = generate_embeddings(content=qa_summary)
+                    # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
+                    response_qa_embedding = generate_embeddings(qa_summary, None, src)
                     if not response_qa_embedding["success"]:
                         logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
                         

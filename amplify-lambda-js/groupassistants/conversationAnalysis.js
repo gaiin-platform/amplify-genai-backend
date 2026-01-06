@@ -7,6 +7,7 @@ import { StreamResultCollector } from "../common/streams.js";
 import { createHash } from 'crypto';
 import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 import { logCriticalError } from "../common/criticalLogger.js";
+import { trackExecution } from "../common/usageTracking.js";
 
 const logger = getLogger("conversationAnalysis");
 
@@ -570,7 +571,8 @@ export async function queueConversationAnalysisWithFallback(chatRequest, llmResp
 /**
  * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
  */
-export const sqsProcessorHandler = async (event) => {
+// Wrap with trackExecution for automatic usage tracking
+export const sqsProcessorHandler = trackExecution(async (event, context) => {
     const startTime = Date.now();
     logger.info('🚀 Starting SQS conversation analysis processing', { 
         recordCount: event.Records?.length,
@@ -723,4 +725,4 @@ export const sqsProcessorHandler = async (event) => {
             results
         })
     };
-};
+});

@@ -254,6 +254,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     }
                     
                     // CRITICAL: OpenAI/Azure API failure - capture full axios error details
+                    const sanitizedRequestData = { ...requestData };
+                    delete sanitizedRequestData.messages;
+                    delete sanitizedRequestData.input;
+                    
                     logCriticalError({
                         functionName: 'openai_streamAxiosResponseToWritable',
                         errorType: 'OpenAIAPIFailure',
@@ -270,7 +274,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             url: url || 'unknown',
                             modelId: data?.model || 'unknown',
                             hasTools: !!(data?.tools && data.tools.length > 0),
-                            isRetry: !!retryWithoutTools
+                            isRetry: !!retryWithoutTools,
+                            requestConfig: sanitizedRequestData
                         }
                     }).catch(err => logger.error('Failed to log critical error:', err));
                     

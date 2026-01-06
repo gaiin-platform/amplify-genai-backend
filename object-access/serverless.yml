@@ -80,6 +80,7 @@ provider:
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
@@ -165,12 +166,12 @@ functions:
           method: post
           cors: true
 
-  sync_cognito_users: #TODO NO LONGER NEEDED
-    runtime: python3.11
-    handler: cognito_users_sync.sync_users_to_dynamo
-    timeout: 900
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
+  # sync_cognito_users: #TODO NO LONGER NEEDED
+  #   runtime: python3.11
+  #   handler: cognito_users_sync.sync_users_to_dynamo
+  #   timeout: 900
+  #   layers:
+  #     - Ref: PythonRequirementsLambdaLayer
     # events:
     #   - schedule:
     #       rate: rate(5 minutes)
@@ -413,6 +414,12 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
 
     ObjectAccessTable:

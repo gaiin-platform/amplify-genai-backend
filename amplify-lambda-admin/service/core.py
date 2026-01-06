@@ -21,7 +21,7 @@ from datetime import datetime
 from botocore.config import Config
 from service.user_services import is_in_amp_group
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SecretsManagerOperation
 )
@@ -1124,7 +1124,7 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
-    logger.debug("users: ", user_feature_flags)
+    logger.debug("users: %s", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
 
@@ -1594,6 +1594,10 @@ def log_item(config_type, username, details):
     )
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="sync_assistant_admins", account="system")
 def sync_assistant_admins(event, context):
     logger.info("Syncing Assistant Admin Interface Users...")
     AST_ADMIN_UI_FLAG = "assistantAdminInterface"

@@ -8,6 +8,8 @@ import json
 import os
 from datetime import datetime
 from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from .markdown_to_html import markdown_to_html
 
 logger = getLogger("data_disclosure_convert")
@@ -83,6 +85,10 @@ def convert_pdf_with_markitdown(pdf_local_path):
         return generate_error_response(500, f"PDF conversion failed: {str(e)}")
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="convert_uploaded_data_disclosure", account="system")
 def convert_uploaded_data_disclosure(event, context):
     """
     Lambda handler for converting uploaded data disclosure PDFs.
