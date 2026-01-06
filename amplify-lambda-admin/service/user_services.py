@@ -1,6 +1,7 @@
 
 import os
 import boto3
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -108,7 +109,7 @@ def get_all_amplify_groups():
         logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
         
         # CRITICAL: Cannot retrieve amplify groups = access control broken
-        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        
         import traceback
         log_critical_error(
             function_name="get_all_amplify_groups",
@@ -137,7 +138,7 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         logger.error("Error retrieving user affiliated groups: %s", str(e))
         
         # CRITICAL: Cannot retrieve user groups = access control broken
-        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        
         import traceback
         log_critical_error(
             function_name="get_user_affiliated_groups",

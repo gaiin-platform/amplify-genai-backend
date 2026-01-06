@@ -11,6 +11,9 @@ from events.email_events import SESMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 logger = getLogger("agent_queue")
 
 sqs = boto3.client("sqs")
@@ -24,9 +27,13 @@ def register_handler(handler: MessageHandler):
     _handlers.append(handler)
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="route_queue_event", account="system")
 def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Process messages from SQS queue by trying registered handlers."""
-    logger.info("Processing SQS event: %s", json.dumps(event))
+    logger.info(f"Processing SQS event: {json.dumps(event)}")
 
     for record in event.get("Records", []):
         receipt_handle = record.get("receiptHandle")
@@ -42,7 +49,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     if agent_input_event:
                         # print(f"Agent input event: {agent_input_event}")
                         response = process_and_invoke_agent(agent_input_event)
-                        logger.info("Agent response: %s", response)
+                        logger.info(f"Agent response: {response}")
 
                         if response.get("handled"):
                             # delete record from sqs
@@ -51,7 +58,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                     QueueUrl=agent_queue, ReceiptHandle=receipt_handle
                                 )
                             except Exception as e:
-                                logger.warning("Error deleting message: %s, continuing", e)
+                                logger.warning(f"Error deleting message: {e}, continuing")
 
                             result = response.get("result")
                             if not result:
@@ -69,13 +76,13 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                     }
                                 ]
                             logger.info(
-                                "Final agent results: %s", json.dumps(result, separators=(',', ':'))
+                                f"Final agent results: {json.dumps(result, separators=(',', ':'))}"
                             )
                             handler.onSuccess(agent_input_event, result)
                         else:
                             # Handle case when fat container returns handled=False
                             error_msg = response.get("error", "Agent failed to handle event")
-                            logger.error("Agent failed to handle event: %s", error_msg)
+                            logger.error(f"Agent failed to handle event: {error_msg}")
                             handler.onFailure(
                                 agent_input_event,
                                 Exception(f"Agent failed to handle event: {error_msg}")
@@ -91,10 +98,10 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         )
 
         except Exception as e:
-            logger.error("Error processing message: %s", e)
+            logger.error(f"Error processing message: {e}")
             
             # CRITICAL: Message processing failure = agent workflow blocked
-            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            
             import traceback
             log_critical_error(
                 function_name="process_queue_messages",
@@ -121,7 +128,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     VisibilityTimeout=0,
                 )
             except Exception as e:
-                logger.warning("Error changing message visibility: %s, continuing", e)
+                logger.warning(f"Error changing message visibility: {e}, continuing")
             raise
 
     return {
@@ -141,8 +148,8 @@ def process_and_invoke_agent(event: dict):
         dict: The response from the fat container.
     """
     try:
-        logger.info("Processing event prompt: %s", event.get("prompt"))
-        logger.info("Processing event metadata: %s", event.get("metadata"))
+        logger.info(f"Processing event prompt: {event.get('prompt')}")
+        logger.info(f"Processing event metadata: {event.get('metadata')}")
         # Extract required fields
         current_user = event.get("currentUser")
         session_id = event.get("sessionId")
@@ -169,7 +176,7 @@ def process_and_invoke_agent(event: dict):
         # Make HTTP call to fat container
         if agent_fat_container_url:
             endpoint_url = f"{agent_fat_container_url.rstrip('/')}/vu-agent/handle-event"
-            logger.info("Calling fat container at: %s", endpoint_url)
+            logger.info(f"Calling fat container at: {endpoint_url}")
             
             headers = {
                 "Content-Type": "application/json",
@@ -187,10 +194,10 @@ def process_and_invoke_agent(event: dict):
                 resp = response.json()
                 return resp.get("data", {"handled": False})
 
-            logger.warning("Fat container returned status %d: %s", response.status_code, response.text)
+            logger.warning(f"Fat container returned status {response.status_code}: {response.text}")
             
             # CRITICAL: Fat container failure = agent cannot execute
-            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            
             import traceback
             log_critical_error(
                 function_name="process_and_invoke_agent",
@@ -221,13 +228,13 @@ def process_and_invoke_agent(event: dict):
             return response
 
     except requests.exceptions.RequestException as e:
-        logger.error("HTTP request failed: %s", e)
+        logger.error(f"HTTP request failed: {e}")
         return {"handled": False, "error": f"Request failed: {str(e)}"}
     except Exception as e:
-        logger.error("Error processing event: %s", e)
+        logger.error(f"Error processing event: {e}")
         
         # CRITICAL: General agent invocation failure
-        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        
         import traceback
         log_critical_error(
             function_name="process_and_invoke_agent",

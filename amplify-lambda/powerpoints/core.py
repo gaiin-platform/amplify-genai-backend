@@ -12,8 +12,14 @@ consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 PPTX_TEMPLATES = "powerPointTemplates"
 
 from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 logger = getLogger("powerpoints")
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="handle_pptx_upload", account="system")
 def handle_pptx_upload(event, context):
     records = event.get("Records", [])
     for record in records:

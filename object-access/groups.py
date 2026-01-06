@@ -339,7 +339,7 @@ def update_members_permission(event, context, current_user, name, data):
 
     # Update the permission of the specified member
     current_members = item.get("members", [])
-    logger.debug("Before updates members: ", current_members)
+    logger.debug("Before updates members: %s", current_members)
     for affected_user, new_permission in affected_user_dict.items():
         memberPerms = current_members.get(affected_user, None)
         if not memberPerms:
