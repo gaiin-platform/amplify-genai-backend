@@ -79,6 +79,7 @@ provider:
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE, '${self:custom.stageVars.USER_STORAGE_TABLE}'}
 
   iam:
     role:
@@ -204,37 +205,69 @@ functions:
           path: integrations/oauth/user/delete
           method: post
 
-  # Admin Web Search Endpoints
-  getAdminWebSearchConfig:
-    handler: integrations/admin_web_search.get_admin_web_search_config
+  # MCP Server Management Endpoints
+  listMCPServers:
+    handler: integrations/mcp_servers.list_mcp_servers
     timeout: 30
     events:
       - http:
-          path: integrations/web-search/admin/config
+          path: integrations/mcp/servers
           method: get
 
-  registerAdminWebSearchKey:
-    handler: integrations/admin_web_search.register_admin_web_search_key
+  addMCPServer:
+    handler: integrations/mcp_servers.add_mcp_server
     timeout: 30
     events:
       - http:
-          path: integrations/web-search/admin/register
+          path: integrations/mcp/servers
           method: post
 
-  deleteAdminWebSearchKey:
-    handler: integrations/admin_web_search.delete_admin_web_search_key
+  getMCPServer:
+    handler: integrations/mcp_servers.get_mcp_server
     timeout: 30
     events:
       - http:
-          path: integrations/web-search/admin/delete
+          path: integrations/mcp/server/get
           method: post
 
-  testAdminWebSearchKey:
-    handler: integrations/admin_web_search.test_admin_web_search_key
+  updateMCPServer:
+    handler: integrations/mcp_servers.update_mcp_server
     timeout: 30
     events:
       - http:
-          path: integrations/web-search/admin/test
+          path: integrations/mcp/server/update
+          method: post
+
+  deleteMCPServer:
+    handler: integrations/mcp_servers.delete_mcp_server
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/delete
+          method: post
+
+  testMCPConnection:
+    handler: integrations/mcp_servers.test_mcp_connection
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers/test
+          method: post
+
+  getMCPServerTools:
+    handler: integrations/mcp_servers.get_mcp_server_tools
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/tools
+          method: post
+
+  refreshMCPServerTools:
+    handler: integrations/mcp_servers.refresh_mcp_server_tools
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/refresh
           method: post
 
 
@@ -273,6 +306,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
