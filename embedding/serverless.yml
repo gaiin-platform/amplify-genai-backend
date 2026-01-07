@@ -107,6 +107,7 @@ provider:
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    EMBEDDING_DIM: ${self:custom.stageVars.EMBEDDING_DIM, '1536'}
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
     
     
