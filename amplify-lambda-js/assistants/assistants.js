@@ -111,15 +111,23 @@ const defaultAssistant = {
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
 
-                // Check if web search is enabled
-                logger.info("🔍 Web search check:", {
+                // Check if web search or MCP is enabled
+                const webSearchEnabled = shouldEnableWebSearch(body);
+                // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
+                const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
+
+                logger.info("🔍 Tool loop check:", {
                     enableWebSearch: body?.enableWebSearch,
                     optionsEnableWebSearch: body?.options?.enableWebSearch,
                     optionsOptionsWebSearch: body?.options?.options?.webSearch,
-                    shouldEnable: shouldEnableWebSearch(body)
+                    webSearchEnabled,
+                    mcpEnabled,
+                    optionsMcpEnabled: body?.options?.mcpEnabled,
+                    toolsCount: (body?.tools || body?.options?.tools)?.length || 0
                 });
-                if (shouldEnableWebSearch(body)) {
-                    logger.info("→ Web search enabled, using tool loop");
+
+                if (webSearchEnabled || mcpEnabled) {
+                    logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
                     return await executeToolLoop(
                         {
                             account: params.account,
@@ -134,7 +142,12 @@ const defaultAssistant = {
                         responseStream,
                         {
                             max_tokens: bodyWithImages.max_tokens || 2000,
-                            imageSources: bodyWithImages.imageSources
+                            imageSources: bodyWithImages.imageSources,
+                            // MCP tools sent from frontend need client-side execution
+                            // since they run on the user's local machine
+                            mcpClientSide: mcpEnabled,
+                            // Pass through any tools from the frontend (can be at top level or in options)
+                            tools: bodyWithImages.tools || bodyWithImages.options?.tools
                         }
                     );
                 }

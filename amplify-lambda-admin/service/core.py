@@ -78,6 +78,7 @@ class AdminConfigTypes(Enum):
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
     AI_EMAIL_DOMAIN = 'aiEmailDomain'
     CRITICAL_ERRORS = "criticalErrors"
+    WEB_SEARCH_CONFIG = "webSearchConfig"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -493,6 +494,133 @@ def handle_critical_errors_config_update(update_data: dict) -> dict:
     }
 
 
+# Web Search Config Constants
+WEB_SEARCH_SUPPORTED_PROVIDERS = ["brave_search", "tavily", "serper", "serpapi"]
+WEB_SEARCH_SSM_PREFIX = "/tools/web_search"
+
+
+def build_web_search_parameter_name(provider: str) -> str:
+    """Build the SSM parameter name for a web search provider"""
+    stage = os.environ.get("INTEGRATION_STAGE", os.environ.get("STAGE", "dev"))
+    return f"{WEB_SEARCH_SSM_PREFIX}/{provider}/{stage}"
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for display, showing only first 4 and last 4 chars"""
+    if not key or len(key) < 12:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
+def handle_web_search_config_update(update_data: dict) -> dict:
+    """
+    Handle web search configuration updates.
+    Stores API key in SSM Parameter Store and provider config in DynamoDB.
+
+    Args:
+        update_data: Dictionary with 'provider' and optionally 'api_key'
+
+    Returns:
+        dict: Success status and message
+    """
+    provider = update_data.get("provider")
+    api_key = update_data.get("api_key")
+
+    # Validate provider
+    if provider and provider not in WEB_SEARCH_SUPPORTED_PROVIDERS:
+        return {
+            "success": False,
+            "message": f"Unsupported provider: {provider}. Supported: {', '.join(WEB_SEARCH_SUPPORTED_PROVIDERS)}"
+        }
+
+    # If no provider, this is a delete/disable operation
+    if not provider:
+        # Delete the config from DynamoDB
+        try:
+            admin_table.delete_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
+            logger.info("Deleted web search config from admin table")
+            return {"success": True, "message": "Web search configuration disabled"}
+        except Exception as e:
+            logger.error("Error deleting web search config: %s", str(e))
+            return {"success": False, "message": f"Error deleting config: {str(e)}"}
+
+    # If API key provided, store it in SSM
+    if api_key and len(api_key.strip()) >= 10:
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+
+            ssm_client.put_parameter(
+                Name=param_name,
+                Value=api_key.strip(),
+                Type="SecureString",
+                Overwrite=True,
+                Description=f"Admin web search API key for {provider}"
+            )
+
+            logger.info("Stored web search API key in SSM: %s", param_name)
+        except ClientError as e:
+            logger.error("Error storing web search API key in SSM: %s", str(e))
+            return {"success": False, "message": f"Failed to store API key: {str(e)}"}
+
+    # Store config in DynamoDB (without the API key - that's in SSM)
+    config_data = {
+        "provider": provider,
+        "lastUpdated": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
+
+    if result.get("success"):
+        logger.info("Updated web search config in admin table for provider: %s", provider)
+
+    return result
+
+
+def get_web_search_config() -> dict:
+    """
+    Get the current web search configuration with masked API key.
+    Used for admin UI display.
+
+    Returns:
+        dict: Configuration data or None if not configured
+    """
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
+
+        if "Item" not in response:
+            return None
+
+        config = response["Item"].get("data", {})
+        provider = config.get("provider")
+
+        if not provider:
+            return None
+
+        # Try to get the actual key to verify it exists and mask it
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+            ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+            api_key = ssm_response["Parameter"]["Value"]
+
+            return {
+                "provider": provider,
+                "isEnabled": True,
+                "maskedKey": mask_api_key(api_key),
+                "lastUpdated": config.get("lastUpdated"),
+            }
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ParameterNotFound':
+                # Config exists but key was deleted from SSM
+                return None
+            raise
+
+    except Exception as e:
+        logger.error("Error getting web search config: %s", str(e))
+        return None
+
+
 def handle_update_config(config_type, update_data, token, invalid_users_set):
     """
     Handle configuration updates with pre-computed invalid users set.
@@ -532,6 +660,9 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
 
         case AdminConfigTypes.CRITICAL_ERRORS:
             return handle_critical_errors_config_update(update_data)
+
+        case AdminConfigTypes.WEB_SEARCH_CONFIG:
+            return handle_web_search_config_update(update_data)
 
         case (AdminConfigTypes.APP_VARS
             | AdminConfigTypes.APP_SECRETS
@@ -693,6 +824,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
             AdminConfigTypes.CRITICAL_ERRORS,
+            AdminConfigTypes.WEB_SEARCH_CONFIG,
         ]
 
         for config_type in dynamo_config_types:
@@ -746,12 +878,32 @@ def get_configs(event, context, current_user, name, data):
                                 }
                         else:
                             # Not active or no email configured
-                            logger.info("ℹ️ Critical errors not active or no email - isActive: %s, email: %s", 
+                            logger.info("ℹ️ Critical errors not active or no email - isActive: %s, email: %s",
                                        new_data.get("isActive"), new_data.get("email"))
                             new_data["subscription_status"] = {
                                 "status": "not_subscribed",
                                 "message": "Critical error notifications not enabled"
                             }
+                    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+                        # Enrich web search config with masked API key from SSM
+                        provider = new_data.get("provider")
+                        if provider:
+                            try:
+                                ssm_client = boto3.client("ssm")
+                                param_name = build_web_search_parameter_name(provider)
+                                ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+                                api_key = ssm_response["Parameter"]["Value"]
+                                new_data["isEnabled"] = True
+                                new_data["maskedKey"] = mask_api_key(api_key)
+                            except ClientError as e:
+                                if e.response['Error']['Code'] == 'ParameterNotFound':
+                                    # Config exists but key was deleted from SSM
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
+                                else:
+                                    logger.error("Error getting web search API key: %s", str(e))
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
                 else:
                     # Configuration does not exist, initialize it
                     new_data = initialize_config(config_type)

@@ -208,10 +208,11 @@ export async function getAdminWebSearchApiKey() {
 
     try {
         // Get config from DynamoDB admin table
+        // Uses 'webSearchConfig' to match AdminConfigTypes convention in Python backend
         const getItemCommand = new GetItemCommand({
             TableName: adminTableName,
             Key: {
-                config_id: { S: 'web_search_config' }
+                config_id: { S: 'webSearchConfig' }
             }
         });
 
@@ -316,7 +317,15 @@ export async function executeWebSearch(query, apiKeys = {}, skipAdminKey = false
  * Format search results for LLM consumption
  */
 export function formatSearchResultsForLLM(searchResult) {
-    let formatted = `## Web Search Results for: "${searchResult.query}"\n\n`;
+    const currentDate = new Date().toISOString().split('T')[0];
+
+    let formatted = `## Web Search Results for: "${searchResult.query}"\n`;
+    formatted += `**Search Date:** ${currentDate} (today)\n\n`;
+
+    // Add strong instruction to prioritize search results
+    formatted += `**CRITICAL INSTRUCTION:** These are REAL, LIVE web search results retrieved just now from the internet. Today's date is ${currentDate}. These results are from legitimate news sources (Reuters, BBC, CNN, NYT, etc.) reporting on ACTUAL current events.\n\n`;
+    formatted += `**DO NOT** dismiss these results as "fictional", "hypothetical", or "future scenarios". Your training data has a knowledge cutoff and CANNOT know about recent events. These search results represent what is ACTUALLY happening in the world RIGHT NOW.\n\n`;
+    formatted += `If these results contradict your training data, the search results are correct because they are more recent. Trust the search results.\n\n`;
 
     if (searchResult.answer) {
         formatted += `**Quick Answer:** ${searchResult.answer}\n\n`;
@@ -331,6 +340,8 @@ export function formatSearchResultsForLLM(searchResult) {
             formatted += `   URL: ${result.url}\n`;
             formatted += `   ${result.description}\n\n`;
         });
+
+        formatted += `\n**RESPONSE INSTRUCTIONS:** You MUST base your response on the above search results. These are real news articles from today. Cite the sources. Do not claim these events haven't happened or are fictional - they are real and current.\n`;
     } else {
         formatted += `No results found.\n`;
     }

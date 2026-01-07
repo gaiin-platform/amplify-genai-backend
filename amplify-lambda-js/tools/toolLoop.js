@@ -2,7 +2,7 @@
  * Tool Execution Loop Service
  *
  * Handles the LLM → tool call → execute → LLM cycle for function calling.
- * Supports web search and can be extended for other tools.
+ * Supports web search, MCP tools, and can be extended for other tools.
  */
 
 import { getLogger } from '../common/logging.js';
@@ -11,6 +11,7 @@ import { newStatus } from '../common/status.js';
 import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
 import { getUserToolApiKeys } from './userToolKeys.js';
 import { WEB_SEARCH_TOOL_DEFINITION, executeToolCall, getAdminWebSearchApiKey } from './webSearch.js';
+import { getMCPToolDefinitions, executeMCPTool, isMCPTool } from '../mcp/mcpRegistry.js';
 
 const logger = getLogger('toolLoop');
 
@@ -67,16 +68,23 @@ function extractToolCalls(result) {
  * @param {Object} model - Model configuration
  * @param {Object} responseStream - Response stream
  * @param {Object} options - Additional options
+ * @param {boolean} options.mcpClientSide - If true, MCP tools should be executed client-side
  * @returns {Object} Final result
  */
 export async function executeToolLoop(params, messages, model, responseStream, options = {}) {
     // Use username for tool API key lookup (matches how Python backend stores keys)
     // Falls back to user (sub) if username not available
     const userId = params.account?.username || params.account?.user;
+
+    // Use Cognito sub (user) for MCP server lookups - this matches how Python backend stores MCP servers
+    // The Python mcp_servers.py uses current_user which is the Cognito sub UUID
+    const mcpUserId = params.account?.user || params.account?.username;
+
     const maxIterations = options.maxIterations || MAX_TOOL_ITERATIONS;
 
     logger.info('Starting tool execution loop');
     logger.debug(`Tool loop using userId for API key lookup: ${userId}`);
+    logger.debug(`Tool loop using mcpUserId for MCP server lookup: ${mcpUserId}`);
 
     // Get user's tool API keys
     let apiKeys = await getUserToolApiKeys(userId);
@@ -97,9 +105,50 @@ export async function executeToolLoop(params, messages, model, responseStream, o
         logger.warn('Failed to get admin web search key:', error.message);
     }
 
-    if (Object.keys(apiKeys).length === 0) {
-        logger.warn('No tool API keys configured (user or admin), proceeding without tools');
-        // Continue without tools
+    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'} (admin key: ${hasAdminKey})`)
+
+    // Collect all available tools
+    const allTools = [];
+
+    // Add web search tool if API keys are available
+    if (Object.keys(apiKeys).length > 0) {
+        allTools.push(WEB_SEARCH_TOOL_DEFINITION);
+    }
+
+    // Handle MCP tools based on execution mode
+    // IMPORTANT: MCP tools don't need API keys - they use the user's local MCP servers
+    const mcpClientSide = options.mcpClientSide === true;
+
+    if (mcpClientSide && options.tools && options.tools.length > 0) {
+        // Use MCP tools passed from frontend (for client-side execution)
+        // Filter to only include MCP tools from frontend-provided tools
+        const frontendMCPTools = options.tools.filter(t => {
+            const toolName = t.function?.name || t.name;
+            return isMCPTool(toolName);
+        });
+
+        if (frontendMCPTools.length > 0) {
+            logger.info(`Using ${frontendMCPTools.length} MCP tools from frontend (client-side execution mode)`);
+            allTools.push(...frontendMCPTools);
+        }
+    } else if (!mcpClientSide) {
+        // Get MCP tools from backend registry (for server-side execution)
+        // Use mcpUserId (Cognito sub) to match Python storage format
+        let mcpTools = [];
+        try {
+            mcpTools = await getMCPToolDefinitions(mcpUserId);
+            if (mcpTools.length > 0) {
+                logger.info(`Found ${mcpTools.length} MCP tools for user from registry`);
+                allTools.push(...mcpTools);
+            }
+        } catch (error) {
+            logger.warn('Failed to get MCP tools:', error.message);
+        }
+    }
+
+    // If no tools available at all, just run without tools
+    if (allTools.length === 0) {
+        logger.warn('No tools available (no API keys and no MCP servers)');
         return await callUnifiedLLM(
             { ...params, options: { ...params.options, model } },
             messages,
@@ -108,24 +157,37 @@ export async function executeToolLoop(params, messages, model, responseStream, o
         );
     }
 
-    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ')} (admin key: ${hasAdminKey})`)
-
     // Add tool definitions to options
     const toolOptions = {
         ...options,
-        tools: [WEB_SEARCH_TOOL_DEFINITION],
+        tools: allTools,
         tool_choice: 'auto'
     };
 
-    // Send initial status to let user know web search is available
+    // Send initial status to let user know tools are available
     if (responseStream && !responseStream.writableEnded) {
-        sendStatusEventToStream(responseStream, newStatus({
-            id: 'web-search-init',
-            summary: 'Web search enabled',
-            inProgress: true,
-            animated: true,
-            icon: 'search'
-        }));
+        const hasWebSearch = allTools.some(t => (t.function?.name || t.name) === 'web_search');
+        const hasMCP = allTools.some(t => isMCPTool(t.function?.name || t.name));
+
+        if (hasWebSearch) {
+            sendStatusEventToStream(responseStream, newStatus({
+                id: 'web-search-init',
+                summary: 'Web search enabled',
+                inProgress: true,
+                animated: true,
+                icon: 'search'
+            }));
+        }
+
+        if (hasMCP) {
+            sendStatusEventToStream(responseStream, newStatus({
+                id: 'mcp-init',
+                summary: `MCP tools enabled (${mcpClientSide ? 'client-side' : 'server-side'})`,
+                inProgress: true,
+                animated: true,
+                icon: 'tool'
+            }));
+        }
     }
 
     let currentMessages = [...messages];
@@ -201,36 +263,109 @@ export async function executeToolLoop(params, messages, model, responseStream, o
 
         for (const toolCall of toolCalls) {
             const toolName = toolCall.function?.name || toolCall.name;
-            let query = 'query';
+            let args = {};
             try {
-                query = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments).query : 'query';
+                args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
             } catch (e) { /* ignore */ }
+
+            // Check if this is an MCP tool
+            const isToolMCP = isMCPTool(toolName);
+
+            // Check if MCP tools should be executed client-side
+            const mcpClientSide = options.mcpClientSide === true;
+
+            // If this is an MCP tool and client-side execution is requested,
+            // return the tool call to the frontend instead of executing
+            if (isToolMCP && mcpClientSide) {
+                logger.info(`MCP tool ${toolName} requires client-side execution`);
+
+                // Send the tool call info to the frontend via state
+                if (responseStream && !responseStream.writableEnded) {
+                    sendStateEventToStream(responseStream, {
+                        mcpToolCalls: [{
+                            id: toolCall.id,
+                            type: 'function',
+                            function: {
+                                name: toolName,
+                                arguments: JSON.stringify(args)
+                            }
+                        }]
+                    });
+
+                    sendStatusEventToStream(responseStream, newStatus({
+                        id: `mcp-client-${toolName}`,
+                        summary: `Waiting for client to execute MCP tool: ${toolName}`,
+                        inProgress: true,
+                        animated: true,
+                        icon: 'tool'
+                    }));
+                }
+
+                // Return partial result - frontend will continue the conversation
+                return {
+                    content: result.content || '',
+                    tool_calls: toolCalls,
+                    pendingMCPToolCalls: true
+                };
+            }
 
             // Send status update BEFORE executing the tool
             if (responseStream && !responseStream.writableEnded) {
-                sendStatusEventToStream(responseStream, newStatus({
-                    id: 'web-search',
-                    summary: `Searching the web for "${query}"...`,
-                    inProgress: true,
-                    animated: true,
-                    icon: 'search'
-                }));
+                if (isToolMCP) {
+                    // MCP tool status
+                    sendStatusEventToStream(responseStream, newStatus({
+                        id: `mcp-tool-${toolName}`,
+                        summary: `Executing MCP tool: ${toolName}...`,
+                        inProgress: true,
+                        animated: true,
+                        icon: 'tool'
+                    }));
+                } else {
+                    // Web search status
+                    const query = args.query || 'query';
+                    sendStatusEventToStream(responseStream, newStatus({
+                        id: 'web-search',
+                        summary: `Searching the web for "${query}"...`,
+                        inProgress: true,
+                        animated: true,
+                        icon: 'search'
+                    }));
+                }
             }
 
             try {
-                logger.info(`Executing tool: ${toolName}`);
-                const toolResult = await executeToolCall(toolCall, apiKeys);
-                toolResults.push(toolResult);
+                logger.info(`Executing tool: ${toolName} (MCP: ${isToolMCP})`);
+                let toolResult;
 
-                // Collect web search sources for display
-                if (toolName === 'web_search' && toolResult.rawResult && toolResult.rawResult.results) {
-                    const sources = toolResult.rawResult.results.map(r => ({
-                        name: r.title,
-                        url: r.url,
-                        content: r.description
-                    }));
-                    allWebSearchSources.push(...sources);
+                if (isToolMCP) {
+                    // Execute MCP tool server-side (for publicly accessible MCP servers)
+                    // Use mcpUserId (Cognito sub) to match Python storage format
+                    toolResult = await executeMCPTool(mcpUserId, toolName, args);
+
+                    // Clear MCP tool status
+                    if (responseStream && !responseStream.writableEnded) {
+                        sendStatusEventToStream(responseStream, newStatus({
+                            id: `mcp-tool-${toolName}`,
+                            summary: `MCP tool ${toolName} completed`,
+                            inProgress: false
+                        }));
+                    }
+                } else {
+                    // Execute web search or other built-in tools
+                    toolResult = await executeToolCall(toolCall, apiKeys);
+
+                    // Collect web search sources for display
+                    if (toolName === 'web_search' && toolResult.rawResult && toolResult.rawResult.results) {
+                        const sources = toolResult.rawResult.results.map(r => ({
+                            name: r.title,
+                            url: r.url,
+                            content: r.description
+                        }));
+                        allWebSearchSources.push(...sources);
+                    }
                 }
+
+                toolResults.push(toolResult);
 
             } catch (error) {
                 logger.error('Tool execution failed:', error.message);
@@ -240,6 +375,16 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     content: `Error executing tool: ${error.message}`,
                     isError: true
                 });
+
+                // Clear status on error
+                if (responseStream && !responseStream.writableEnded) {
+                    const statusId = isToolMCP ? `mcp-tool-${toolName}` : 'web-search';
+                    sendStatusEventToStream(responseStream, newStatus({
+                        id: statusId,
+                        summary: `Tool ${toolName} failed`,
+                        inProgress: false
+                    }));
+                }
             }
         }
 
