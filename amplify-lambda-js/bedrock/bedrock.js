@@ -76,7 +76,22 @@ export const chatBedrock = async (chatBody, writable) => {
             }
        
         }
-        if (currentModel.supportsReasoning && maxTokens > 1024) {
+        // Check if any message has tool content
+        const hasToolContent = sanitizedMessages.some(msg => 
+            Array.isArray(msg.content) && msg.content.some(item => 
+                item.toolResult || item.toolUse || (typeof item === 'object' && item.type && (item.type.includes('tool') || item.type === 'tool_result'))
+            )
+        );
+        
+        // Add toolConfig when tool content is present
+        if (hasToolContent) {
+            input.toolConfig = {
+                tools: [],
+                toolChoice: { auto: {} }
+            };
+        }
+        
+        if (currentModel.supportsReasoning && maxTokens > 1024 && !hasToolContent) {
             const budget_tokens = getBudgetTokens({options}, maxTokens); 
             input.additionalModelRequestFields={
                 "reasoning_config": {
@@ -133,6 +148,10 @@ export const chatBedrock = async (chatBody, writable) => {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
         
         // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
+        const sanitizedInput = { ...input };
+        delete sanitizedInput.messages;
+        delete sanitizedInput.system;
+        
         logCriticalError({
             functionName: 'chatBedrock',
             errorType: 'BedrockAPIFailure',
@@ -147,7 +166,9 @@ export const chatBedrock = async (chatBody, writable) => {
                 awsReason: error.$response?.reason || 'N/A',
                 awsMessage: error.$response?.message || 'N/A',
                 errorCode: error.code || error.name || 'N/A',
-                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION)
+                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
+                bedrockConfig: sanitizedInput,
+                hasToolContent: hasToolContent || false,
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
         
@@ -207,11 +228,34 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
         messages[messages.length - 1].content += doesNotSupportImagesInstructions(model.name);
     }
 
-    // Direct map without spread for better performance
-    let updatedMessages = messages.map(m => ({
-        role: m.role,
-        content: [{ text: m.content.trim() || BLANK_MSG }]
-    }));
+    let updatedMessages = [
+        ...(messages.map(m => {
+            // Convert 'tool' role to 'user' (Bedrock doesn't support 'tool' role)
+            const role = m['role'] === 'tool' ? 'user' : m['role'];
+            
+            let content;
+            if (typeof m['content'] === 'string') {
+                content = [{ "text": m['content'].trim() || BLANK_MSG }];
+            } else if (Array.isArray(m['content'])) {
+                // Handle tool content structures
+                content = m['content'].map(item => {
+                    if (item.type === 'tool_result') {
+                        return {
+                            "toolResult": {
+                                "toolUseId": item.tool_call_id || item.toolUseId || "missing_id",
+                                "content": [{ "text": typeof item.content === 'string' ? item.content : JSON.stringify(item.content) }]
+                            }
+                        };
+                    }
+                    return { "text": item.text || item.content || JSON.stringify(item) };
+                });
+            } else {
+                content = [{ "text": JSON.stringify(m['content']) }];
+            }
+            
+            return { "role": role, "content": content };
+        }))
+    ];
 
     if (model.supportsImages && containsImages) {
         updatedMessages = await includeImageSources(imageSources, updatedMessages, responseStream); 

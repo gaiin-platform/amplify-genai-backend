@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import reduce
 from typing import List, Callable, Dict, Any
 from agent.prompt import Prompt
-from service.requestState import request_killed
+from pycommon.api.request_state import request_killed
 from pycommon.logger import getLogger
 logger = getLogger("agent_core")
 
@@ -356,10 +356,10 @@ class Agent:
         if request_id and request_killed(
             action_context.get("current_user"), request_id
         ):
-            logger.warning("Request %s killed, terminating agent loop", request_id)
+            logger.warning(f"Request {request_id} killed, terminating agent loop")
             return True
         elif not request_id:
-            logger.debug("Request %s not provided, continuing...", request_id)
+            logger.debug(f"Request {request_id} not provided, continuing...")
 
         action_def, action = self.get_action(response)
         capability_decision = reduce(
@@ -463,8 +463,8 @@ class Agent:
                     return response
 
                 logger.warning("No action_def or action found in response, returning None")
-                logger.debug("action_def: %s", action_def)
-                logger.debug("action: %s", action)
+                logger.debug(f"action_def: {action_def}")
+                logger.debug(f"action: {action}")
 
             except Exception as e:
                 traceback_str = traceback.format_exc()

@@ -51,14 +51,14 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     handled_by_any = True
                     input_event = handler.process(message_body, context)
 
-                    if input_event:
+                    if input_event: 
 
                         if handler.is_agent_loop_event():
                             # print(f"Agent input event: {agent_input_event}")
                             response = process_and_invoke_agent(input_event)
                             logger.info("Agent response: %s", response)
 
-                            if response.get("handled"):
+                            if response.get("handled"): 
                                 # delete record from sqs
                                 try:
                                     sqs.delete_message(
@@ -67,7 +67,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 except Exception as e:
                                     logger.warning("Error deleting message: %s, continuing", e)
 
-                                result = response.get("result")
+                                result = response.get("result") 
                                 if not result:
                                     logger.error("Agent response missing")
                                     handler.onFailure(

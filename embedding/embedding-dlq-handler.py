@@ -7,6 +7,8 @@ import os
 import urllib.parse
 from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 import traceback
 from shared_functions import extract_base_key_from_chunk, extract_chunk_number
 
@@ -15,6 +17,10 @@ logger = getLogger("embedding_dlq_handler")
 sqs = boto3.client("sqs")
 dynamodb = boto3.resource("dynamodb")
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="embedding_dlq_handler", account="system")
 def lambda_handler(event, context):
     """
     Process messages from the DLQ and mark corresponding chunks as failed in DynamoDB.
