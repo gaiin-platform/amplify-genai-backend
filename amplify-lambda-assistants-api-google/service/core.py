@@ -214,6 +214,11 @@ def fix_data_types(data, func_schema):
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
+        # Initialize usage tracker for agent operations
+        from pycommon.metrics import get_usage_tracker
+        tracker = get_usage_tracker()
+        op_tracking_context = {}
+
         logger.debug("Input Data: %s", data["data"])
         try:
             params = {
@@ -224,11 +229,24 @@ def common_handler(operation, *required_params, **optional_params):
                 if param in data["data"]:
                     params[snake_param] = data["data"][param]
             params["access_token"] = data["access_token"]
+
+            # Start tracking Google integration operation
+            # Note: We don't have context here, but we can track the operation
+            op_tracking_context = tracker.start_tracking(
+                user=current_user,
+                operation=operation.__name__ if hasattr(operation, '__name__') else 'unknown_operation',
+                endpoint='google_integration',
+                api_accessed=data.get("api_accessed", False),
+                context=None,  # No Lambda context available in nested handler
+            )
+
             response = operation(current_user, **params)
             logger.debug("Integration Response: %s", response)
-            
+
             # Check if operation returned failure
+            success = True
             if isinstance(response, dict) and not response.get("success", True):
+                success = False
                 # CRITICAL: Integration operation reported failure
                 log_critical_error(
                     function_name="common_handler",
@@ -242,14 +260,57 @@ def common_handler(operation, *required_params, **optional_params):
                         "response": str(response)[:500]
                     }
                 )
-            
+
+            # End tracking and record metrics
+            result_dict = {"statusCode": 200 if success else 500}
+            metrics = tracker.end_tracking(
+                tracking_context=op_tracking_context,
+                result=result_dict,
+                claims={
+                    "account": data.get("account", "unknown"),
+                    "username": current_user,
+                    "api_key_id": data.get("api_key_id"),
+                },
+                error_type=None if success else "GoogleIntegrationOperationFailure",
+            )
+            tracker.record_metrics(metrics)
+
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
             logger.warning("Missing Credentials Error: %s", str(me))
+
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 401}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type="MissingCredentialsError",
+                )
+                tracker.record_metrics(metrics)
+
             return {"success": False, "error": str(me)}
         except Exception as e:
             logger.error("Error: %s", str(e))
-            
+
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 500}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type=type(e).__name__,
+                )
+                tracker.record_metrics(metrics)
+
             # CRITICAL: Google integration operation failure = user can't access Google services
             log_critical_error(
                 function_name="common_handler",
@@ -263,7 +324,7 @@ def common_handler(operation, *required_params, **optional_params):
                     "data_keys": list(data.get('data', {}).keys())
                 }
             )
-            
+
             return {"success": False, "error": str(e)}
 
     return handler

@@ -2,10 +2,11 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
-import { 
-    withEnvVarsTracking, 
-    DynamoDBOperation 
+import {
+    withEnvVarsTracking,
+    DynamoDBOperation
 } from '../common/envVarsTracking.js';
+import { getUsageTracker } from '../common/usageTracking.js';
 
 const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
@@ -1684,23 +1685,93 @@ const formatCurrency = (amount) => {
 };
 
 // Environment variable configuration for billing handlers
-const billingEnvConfig = {
+const EnvConfig = {
     // DynamoDB tables - require IAM permissions
     "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
     "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
-    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
-    
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM]  // For Lambda usage tracking
+
     // Configuration-only variables (no AWS permissions needed):
     // "SERVICE_NAME": [], // Tracking metadata only
     // "STAGE": [], // Tracking metadata only
 };
 
-// Export all handlers with environment variable tracking (using original names)
-export const handler = withEnvVarsTracking(billingEnvConfig, mtdHandler);
-export const apiKeyUserCostHandler = withEnvVarsTracking(billingEnvConfig, internalApiKeyUserCostHandler);
-export const listAllUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListAllUserMtdCostsHandler);
-export const billingGroupsCostsHandler = withEnvVarsTracking(billingEnvConfig, internalBillingGroupsCostsHandler);
-export const listUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListUserMtdCostsHandler);
-export const getUserCostHistoryHandler = withEnvVarsTracking(billingEnvConfig, internalGetUserCostHistoryHandler);
+/**
+ * Wrapper that adds both environment variable tracking AND usage tracking to billing handlers
+ *
+ * This wraps API Gateway handlers with:
+ * 1. Environment variable resolution and tracking (via withEnvVarsTracking)
+ * 2. Lambda execution metrics tracking for cost calculation
+ */
+const withTracking = (envConfig, operationName, handler) => {
+    // First wrap with env vars tracking
+    const envTrackedHandler = withEnvVarsTracking(envConfig, handler);
+
+    // Then wrap with usage tracking
+    return async (event, context) => {
+        const usageTracker = getUsageTracker();
+        let trackingContext = {};
+        let params = null;
+
+        try {
+            // Extract params (includes user authentication)
+            params = await extractParams(event);
+
+            // 📊 START USAGE TRACKING
+            if (params?.user && usageTracker.enabled) {
+                const endpoint = event.path || `/billing/${operationName}`;
+                const apiAccessed = params.body?.options?.accountId ? true : false;
+                trackingContext = usageTracker.startTracking(
+                    params.user,
+                    operationName,
+                    endpoint,
+                    apiAccessed,
+                    context
+                );
+            }
+
+            // Execute the handler (which already has env vars tracking)
+            return await envTrackedHandler(event, context);
+
+        } finally {
+            // 📊 END USAGE TRACKING
+            if (usageTracker.enabled && trackingContext.startTime) {
+                try {
+                    const result = { statusCode: 200 };
+                    const claims = {
+                        account: params?.body?.options?.accountId || 'oauth',
+                        user: params?.user || 'unknown',
+                        api_key_id: params?.body?.options?.accountId ? 'api_key' : null,
+                        purpose: params?.body?.options?.purpose || null
+                    };
+
+                    const metrics = usageTracker.endTracking(
+                        trackingContext,
+                        result,
+                        claims,
+                        null
+                    );
+
+                    if (metrics) {
+                        usageTracker.recordMetrics(metrics).catch(err =>
+                            logger.error(`Background metrics recording failed: ${err.message}`)
+                        );
+                    }
+                } catch (metricsError) {
+                    logger.error(`Metrics tracking failed: ${metricsError.message}`);
+                }
+            }
+        }
+    };
+};
+
+// Export all handlers with environment variable tracking AND usage tracking
+export const handler = withTracking(EnvConfig, 'mtd_cost', mtdHandler);
+export const apiKeyUserCostHandler = withTracking(EnvConfig, 'api_key_user_cost', internalApiKeyUserCostHandler);
+export const listAllUserMtdCostsHandler = withTracking(EnvConfig, 'list_all_user_mtd_costs', internalListAllUserMtdCostsHandler);
+export const billingGroupsCostsHandler = withTracking(EnvConfig, 'billing_groups_costs', internalBillingGroupsCostsHandler);
+export const listUserMtdCostsHandler = withTracking(EnvConfig, 'list_user_mtd_costs', internalListUserMtdCostsHandler);
+export const getUserCostHistoryHandler = withTracking(EnvConfig, 'user_cost_history', internalGetUserCostHistoryHandler);

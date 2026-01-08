@@ -4,10 +4,17 @@ set -e
 REGION="us-east-1"
 STAGE="${1:-dev}"
 PRUNE=false
+NO_CACHE=false
 
-# Check for --prune flag
+# Check for --prune and --no-cache flags
 if [[ "$2" == "--prune" ]]; then
     PRUNE=true
+elif [[ "$2" == "--no-cache" ]]; then
+    NO_CACHE=true
+fi
+
+if [[ "$3" == "--no-cache" ]]; then
+    NO_CACHE=true
 fi
 
 DEV_REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
@@ -56,13 +63,22 @@ fi
 docker buildx create --name lambda-builder --use || docker buildx use lambda-builder
 docker buildx inspect --bootstrap
 
-# Check if the cache image exists
-if ! aws ecr describe-images --repository-name $(echo $REPOSITORY_URI | cut -d'/' -f2) --image-ids imageTag=$CACHE_TAG --region $REGION &>/dev/null; then
+# Check if the cache image exists and --no-cache flag
+if [ "$NO_CACHE" = true ]; then
+    echo "NO_CACHE flag enabled - skipping cache completely and busting Docker layer cache"
+    CACHE_FROM_ARG=""
+    CACHE_TO_ARG=""
+    CACHE_BUST_ARG="--build-arg CACHE_BUST=$(date +%s)"
+elif ! aws ecr describe-images --repository-name $(echo $REPOSITORY_URI | cut -d'/' -f2) --image-ids imageTag=$CACHE_TAG --region $REGION &>/dev/null; then
     echo "Cache image doesn't exist, building fresh image..."
     CACHE_FROM_ARG=""
+    CACHE_TO_ARG="--cache-to=type=registry,ref=$REPOSITORY_URI:$CACHE_TAG,mode=max"
+    CACHE_BUST_ARG=""
 else
     echo "Using existing cache image: $REPOSITORY_URI:$CACHE_TAG"
     CACHE_FROM_ARG="--cache-from=$REPOSITORY_URI:$CACHE_TAG"
+    CACHE_TO_ARG="--cache-to=type=registry,ref=$REPOSITORY_URI:$CACHE_TAG,mode=max"
+    CACHE_BUST_ARG=""
 fi
 
 # Build explicitly for Lambda (single-arch, with cache)
@@ -73,7 +89,8 @@ docker buildx build \
   --provenance=false \
   --sbom=false \
   $CACHE_FROM_ARG \
-  --cache-to=type=registry,ref=$REPOSITORY_URI:$CACHE_TAG,mode=max \
+  $CACHE_TO_ARG \
+  $CACHE_BUST_ARG \
   -t $REPOSITORY_URI:$IMAGE_TAG_FAT \
   -t $REPOSITORY_URI:$IMAGE_TAG_SLIM .
 

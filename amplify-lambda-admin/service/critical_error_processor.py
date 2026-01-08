@@ -23,6 +23,8 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 from pycommon.db_utils import convert_floats_to_decimal
 from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 
 logger = getLogger("critical_error_processor")
 
@@ -379,6 +381,10 @@ def write_critical_error_to_dynamo(
         return {"success": False, "message": error_msg}
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="process_critical_error_from_sqs", account="system")
 def process_critical_error_from_sqs(event: dict, context) -> dict:
     """
     Lambda handler for processing critical error messages from SQS.

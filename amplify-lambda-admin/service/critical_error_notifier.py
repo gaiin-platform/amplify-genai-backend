@@ -15,6 +15,8 @@ import json
 import os
 import boto3
 from datetime import datetime
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 
 # Initialize SNS and STS clients
 sns = boto3.client('sns')
@@ -34,6 +36,10 @@ def get_sns_topic_arn(topic_name: str) -> str:
     region = sns.meta.region_name
     return f"arn:aws:sns:{region}:{account_id}:{topic_name}"
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="notify_critical_error", account="system")
 def notify_critical_error(event: dict, context) -> dict:
     """
     Lambda handler for DynamoDB Stream events on CriticalErrorsTable.

@@ -15,6 +15,7 @@ from pycommon.const import APIAccessType
 from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.files import delete_file
 from pycommon.api.user_data import save_user_data
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
@@ -793,7 +794,7 @@ def create_assistant(event, context, current_user, name, data):
         )
     except Exception as e:
     # CRITICAL: Assistant handler failure = user cannot create/update assistant
-        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        
         import traceback
         log_critical_error(
             function_name="create_assistant_handler",
@@ -1524,7 +1525,7 @@ def create_or_update_assistant(
                 },
             }
         except Exception as e:
-            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            
             import traceback
             log_critical_error(
                 function_name="create_or_update_assistant_update",
@@ -1633,7 +1634,7 @@ def create_or_update_assistant(
                 },
             }
         except Exception as e:
-            from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+            
             import traceback
             log_critical_error(
                 function_name="create_or_update_assistant_create",
