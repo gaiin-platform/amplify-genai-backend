@@ -16,6 +16,7 @@ update_models_schema = {
                         "systemPrompt": {"type": "string"},
                         "supportsSystemPrompts": {"type": "boolean"},
                         "supportsImages": {"type": "boolean"},
+                        "supportsVideo": {"type": "boolean"},
                         "supportsReasoning": {"type": "boolean"},
                         "inputContextWindow": {"type": "number"},
                         "outputTokenLimit": {"type": "number"},

@@ -105,6 +105,10 @@ logger = getLogger("models")
                                     "type": "boolean",
                                     "description": "Whether the model supports image inputs",
                                 },
+                                "supportsVideo": {
+                                    "type": "boolean",
+                                    "description": "Whether the model supports video inputs",
+                                },
                                 "supportsReasoning": {
                                     "type": "boolean",
                                     "description": "Whether the model supports reasoning capabilities",
@@ -343,6 +347,7 @@ def extract_data(model_id, model_data):
         "inputContextWindow": model_data.get("inputContextWindow", -1),
         "outputTokenLimit": model_data.get("outputTokenLimit", -1),
         "supportsImages": model_data.get("supportsImages", False),
+        "supportsVideo": model_data.get("supportsVideo", False),
         "supportsReasoning": model_data.get("supportsReasoning", False),
         "provider": model_data.get("provider", ""),
         "supportsSystemPrompts": model_data.get("supportsSystemPrompts", False),
@@ -400,9 +405,19 @@ def is_model_current(model_data):
     if not model_data:
         return False
 
-    required_cols_set = set(dynamodb_to_internal_field_map.values())
+    required_fields = {
+        'id', 'name', 'provider', 'inputContextWindow', 'outputTokenLimit',
+        'outputTokenCost', 'inputTokenCost', 'isAvailable'
+    }
+
     existing_columns = set(model_data.keys()) if model_data else set()
-    return required_cols_set.issubset(existing_columns)
+    missing_cols = required_fields - existing_columns
+
+    if missing_cols:
+        logger.debug(f"Model {model_data.get('id', 'unknown')} missing required fields: {missing_cols}")
+        return False
+
+    return True
 
 
 def get_supported_models():
@@ -591,6 +606,7 @@ dynamodb_to_internal_field_map = {
     "Description": "description",
     "ExclusiveGroupAvailability": "exclusiveGroupAvailability",
     "SupportsImages": "supportsImages",
+    "SupportsVideo": "supportsVideo",
     "SupportsReasoning": "supportsReasoning",
     "Available": "isAvailable",
     "Built-In": "isBuiltIn",
