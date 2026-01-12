@@ -223,6 +223,15 @@ export async function getAdminWebSearchApiKey() {
             return null;
         }
 
+        // Check if web search is enabled at admin level
+        const isEnabled = response.Item.data.M.isEnabled?.BOOL;
+        logger.info(`Admin web search config: provider=${response.Item.data.M.provider.S}, isEnabled=${isEnabled}`);
+
+        if (isEnabled === false) {
+            logger.info('Web search is disabled by admin configuration');
+            return null;
+        }
+
         const provider = response.Item.data.M.provider.S;
         const paramName = `/tools/web_search/${provider}/${stage}`;
 
