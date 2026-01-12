@@ -27,6 +27,10 @@ logger = getLogger("mcp_servers")
 
 # App ID for MCP server storage (matches JS backend)
 MCP_APP_ID = "amplify-mcp"
+
+# Configurable timeout for MCP connections (in seconds)
+MCP_CONNECTION_TIMEOUT = int(os.environ.get("MCP_CONNECTION_TIMEOUT", "10"))
+MCP_NOTIFICATION_TIMEOUT = int(os.environ.get("MCP_NOTIFICATION_TIMEOUT", "5"))
 MCP_ENTITY_TYPE = "mcp_servers"
 
 
@@ -484,7 +488,7 @@ def _test_mcp_connection_by_url(server_url):
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             },
-            timeout=10
+            timeout=MCP_CONNECTION_TIMEOUT
         )
 
         if response.status_code != 200:
@@ -515,7 +519,7 @@ def _test_mcp_connection_by_url(server_url):
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             },
-            timeout=5
+            timeout=MCP_NOTIFICATION_TIMEOUT
         )
 
         # Get tools list
@@ -533,7 +537,7 @@ def _test_mcp_connection_by_url(server_url):
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             },
-            timeout=10
+            timeout=MCP_CONNECTION_TIMEOUT
         )
 
         tools = []
@@ -562,12 +566,13 @@ def _test_mcp_connection_by_url(server_url):
     except requests.exceptions.ConnectionError as e:
         return {"success": False, "error": f"Connection failed: Could not connect to server"}
     except requests.exceptions.RequestException as e:
-        return {"success": False, "error": f"Request failed: {str(e)}"}
+        logger.error(f"MCP request failed: {str(e)}")
+        return {"success": False, "error": "Request failed"}
     except json.JSONDecodeError:
         return {"success": False, "error": "Invalid JSON response from server"}
     except Exception as e:
         logger.error(f"Error testing MCP connection: {str(e)}")
-        return {"success": False, "error": f"Test failed: {str(e)}"}
+        return {"success": False, "error": "Test failed"}
 
 
 @api_tool(

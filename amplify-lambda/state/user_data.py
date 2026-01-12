@@ -226,7 +226,20 @@ def _decode_app_id(app_id):
 
 
 def _remove_keys(item):
-    """Remove PK and SK from the item, extracting itemId from SK if needed"""
+    """
+    Remove internal DynamoDB keys (PK, SK) from an item and normalize field names.
+
+    This function:
+    - Extracts itemId from SK for backwards compatibility with items that don't have itemId stored
+    - Removes PK and SK keys from the returned item
+    - Normalizes UUID to lowercase 'uuid' for consistency
+
+    Args:
+        item: Dictionary containing DynamoDB item data with PK/SK keys
+
+    Returns:
+        A copy of the item with PK/SK removed and normalized field names
+    """
     item_copy = item.copy()  # Create a copy to avoid modifying the original
 
     # Extract itemId from SK for backwards compatibility with items that don't have itemId stored

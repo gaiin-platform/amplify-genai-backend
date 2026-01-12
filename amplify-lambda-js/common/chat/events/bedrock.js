@@ -1,7 +1,10 @@
-//Copyright (c) 2024 Vanderbilt University  
+//Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 import { sendStatusEventToStream } from "../../streams.js";
 import { newStatus } from "../../status.js";
+import { getLogger } from "../../logging.js";
+
+const logger = getLogger("bedrock-events");
 // for all Claude models  Not In Use
 export const claudeTransform = (event) => {
     if(event && event.d && event.d.delta && event.d.delta.text) {
@@ -71,11 +74,11 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
         // Tool use input delta - accumulate the JSON input
         if (delta.toolUse) {
             const inputChunk = delta.toolUse.input || '';
-            console.log(`🔧 contentBlockDelta.toolUse input: "${inputChunk}"`);
+            logger.debug(`contentBlockDelta.toolUse input: "${inputChunk}"`);
             if (capturedContent && capturedContent.currentToolCall) {
                 capturedContent.currentToolCall.function.arguments += inputChunk;
             } else {
-                console.log('🔧 WARNING: No currentToolCall to accumulate input');
+                logger.warn('No currentToolCall to accumulate input');
             }
             return null;
         }
@@ -105,11 +108,11 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
         // Tool use input delta - accumulate the JSON input (direct format)
         if (event.delta.toolUse) {
             const inputChunk = event.delta.toolUse.input || '';
-            console.log(`🔧 direct delta.toolUse input: "${inputChunk}"`);
+            logger.debug(`direct delta.toolUse input: "${inputChunk}"`);
             if (capturedContent && capturedContent.currentToolCall) {
                 capturedContent.currentToolCall.function.arguments += inputChunk;
             } else {
-                console.log('🔧 WARNING: No currentToolCall to accumulate input (direct format)');
+                logger.warn('No currentToolCall to accumulate input (direct format)');
             }
             return null;
         }
@@ -120,23 +123,23 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
     if (stopReason) {
         switch (stopReason) {
             case "content_filtered":
-                console.log("Bedrock Content_filtered Stop Reason");
+                logger.warn("Bedrock Content_filtered Stop Reason");
                 return "\nYour request was blocked by an AWS content filter.";
             case "guardrail_intervened":
-                console.log("Bedrock Guardrail_intervened Stop Reason");
+                logger.warn("Bedrock Guardrail_intervened Stop Reason");
                 return "\nYour request was blocked by your organization's guardrails.";
             case "tool_use":
                 // Tool use stop reason - finalize any pending tool call
-                console.log("Bedrock tool_use Stop Reason - model wants to use tools");
+                logger.debug("Bedrock tool_use Stop Reason - model wants to use tools");
                 if (capturedContent) {
                     // Finalize any pending tool call (since Bedrock may not send contentBlockStop)
                     if (capturedContent.currentToolCall) {
-                        console.log(`🔧 Finalizing tool call on stop: ${JSON.stringify(capturedContent.currentToolCall)}`);
+                        logger.debug(`Finalizing tool call on stop: ${JSON.stringify(capturedContent.currentToolCall)}`);
                         if (!capturedContent.toolCalls) capturedContent.toolCalls = [];
                         capturedContent.toolCalls.push(capturedContent.currentToolCall);
                         capturedContent.currentToolCall = null;
                     }
-                    console.log(`🔧 Tool calls captured: ${capturedContent.toolCalls?.length || 0}`);
+                    logger.debug(`Tool calls captured: ${capturedContent.toolCalls?.length || 0}`);
                 }
                 return null;
             default:
@@ -151,7 +154,7 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
                          event?.contentBlockStart?.toolUse ||
                          event?.start?.toolUse;  // Direct format (actual Bedrock format)
     if (toolUseStart) {
-        console.log(`🔧 toolUse start detected: id=${toolUseStart.toolUseId}, name=${toolUseStart.name}`);
+        logger.debug(`toolUse start detected: id=${toolUseStart.toolUseId}, name=${toolUseStart.name}`);
         if (capturedContent) {
             if (!capturedContent.toolCalls) capturedContent.toolCalls = [];
             capturedContent.currentToolCall = {
@@ -162,22 +165,22 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
                     arguments: ''
                 }
             };
-            console.log(`🔧 Initialized currentToolCall: ${JSON.stringify(capturedContent.currentToolCall)}`);
+            logger.debug(`Initialized currentToolCall: ${JSON.stringify(capturedContent.currentToolCall)}`);
         } else {
-            console.log('🔧 WARNING: capturedContent is null, cannot capture tool call');
+            logger.warn('capturedContent is null, cannot capture tool call');
         }
         return null;
     }
 
     // Handle content block stop
     if (event && event.contentBlockStop !== undefined) {
-        console.log(`🔧 contentBlockStop event, currentToolCall exists: ${!!capturedContent?.currentToolCall}`);
+        logger.debug(`contentBlockStop event, currentToolCall exists: ${!!capturedContent?.currentToolCall}`);
         if (capturedContent && capturedContent.currentToolCall) {
             // End of content block - if we were building a tool call, finalize it
-            console.log(`🔧 Finalizing tool call: ${JSON.stringify(capturedContent.currentToolCall)}`);
+            logger.debug(`Finalizing tool call: ${JSON.stringify(capturedContent.currentToolCall)}`);
             capturedContent.toolCalls.push(capturedContent.currentToolCall);
             capturedContent.currentToolCall = null;
-            console.log(`🔧 Tool calls count now: ${capturedContent.toolCalls.length}`);
+            logger.debug(`Tool calls count now: ${capturedContent.toolCalls.length}`);
         }
         return null;
     }

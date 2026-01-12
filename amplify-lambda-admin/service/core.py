@@ -545,7 +545,7 @@ def handle_web_search_config_update(update_data: dict) -> dict:
             return {"success": False, "message": f"Error deleting config: {str(e)}"}
 
     # If API key provided, store it in SSM
-    if api_key and len(api_key.strip()) >= 10:
+    if api_key and api_key.strip():
         try:
             ssm_client = boto3.client("ssm")
             param_name = build_web_search_parameter_name(provider)
@@ -713,6 +713,58 @@ def update_admin_config_data(config_type, update_data):
     except Exception as e:
         logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
+
+
+def transform_integrations_data(update_data):
+    """
+    Transform frontend integrations data format for DynamoDB storage.
+
+    Extracts provider_settings (if present) as a separate field for storage,
+    keeping the main integration data clean.
+
+    Args:
+        update_data: Dictionary from frontend with integration configuration
+
+    Returns:
+        Dictionary with 'data' and optionally 'provider_settings' fields
+    """
+    if not isinstance(update_data, dict):
+        return {"data": update_data}
+
+    # Check if provider_settings is embedded in the data
+    provider_settings = update_data.pop("provider_settings", None)
+
+    result = {"data": update_data}
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
+
+
+def reverse_transform_integrations_data(storage_data, provider_settings):
+    """
+    Transform stored integrations data back to frontend format.
+
+    Combines the separate storage_data and provider_settings back into
+    the format expected by the frontend.
+
+    Args:
+        storage_data: The main integrations data from DynamoDB 'data' field
+        provider_settings: The provider_settings from DynamoDB (may be empty)
+
+    Returns:
+        Combined dictionary in frontend format
+    """
+    if not isinstance(storage_data, dict):
+        return storage_data
+
+    result = dict(storage_data)
+
+    # Merge provider_settings back into the data if present
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
 
 
 def update_integrations_config(config_type, transformed_data):

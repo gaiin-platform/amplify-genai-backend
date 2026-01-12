@@ -7,6 +7,20 @@ import { getLogger } from "../../logging.js";
 
 const logger = getLogger("openai-events");
 
+/**
+ * Transforms OpenAI streaming events into plain text output or side-effect updates.
+ *
+ * @param {object} event - The raw OpenAI streaming event, which may contain
+ *   `choices` with `delta` or `message` fields, or new `/responses` endpoint format.
+ * @param {object|null} [responseStream=null] - Optional stream or channel used to send status
+ *   updates (for example, reasoning content) via {@link sendStatusEventToStream}.
+ * @param {object|null} [capturedContent=null] - Optional mutable accumulator object used to
+ *   collect tool invocation data across multiple chunks. When present, tool call deltas
+ *   are accumulated into `capturedContent.toolCalls` array with each tool call containing
+ *   `id`, `type`, and `function` (with `name` and `arguments` fields).
+ * @returns {string|object|null} The text content from the event, tool_calls object for streaming,
+ *   or null if the event was handled as a side effect.
+ */
 export const openAiTransform = (event, responseStream = null, capturedContent = null) => {
     // Handle new /responses endpoint format
     if (event && event.type) {

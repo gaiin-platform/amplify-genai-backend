@@ -6,6 +6,20 @@ import { getLogger } from "../../logging.js";
 
 const logger = getLogger("gemini-events");
 
+/**
+ * Transforms Gemini streaming events into plain text output or side-effect updates.
+ *
+ * @param {object} event - The raw Gemini streaming event, which may be in OpenAI compatibility
+ *   format (with `choices`) or native Gemini format (with `candidates`).
+ * @param {object|null} [_responseStream=null] - Optional stream or channel used to send status
+ *   updates (for example, reasoning/thinking content) via {@link sendStatusEventToStream}.
+ * @param {object|null} [capturedContent=null] - Optional mutable accumulator object used to
+ *   collect tool invocation data across multiple chunks. When present, tool calls are
+ *   accumulated into `capturedContent.toolCalls` array with each tool call containing
+ *   `id`, `type`, and `function` (with `name` and `arguments` fields).
+ * @returns {string|null} The text content from the event, or null if the event was handled
+ *   as a side effect (e.g., tool call accumulation, thinking content).
+ */
 export const geminiTransform = (event, _responseStream = null, capturedContent = null) => {
     try {
         // Handle Gemini OpenAI compatibility format directly
