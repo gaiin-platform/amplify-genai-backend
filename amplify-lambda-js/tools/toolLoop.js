@@ -18,29 +18,6 @@ const logger = getLogger('toolLoop');
 const MAX_TOOL_ITERATIONS = 5;
 
 /**
- * Check if the LLM response contains tool calls
- */
-function hasToolCalls(result) {
-    // Check different possible locations for tool calls
-    if (result.tool_calls && result.tool_calls.length > 0) {
-        return true;
-    }
-    if (result.content && typeof result.content === 'string') {
-        // Try to parse tool_calls from streamed content
-        const match = result.content.match(/\{"tool_calls":\s*\[([\s\S]*?)\]\}/);
-        if (match) {
-            try {
-                const parsed = JSON.parse(match[0]);
-                return parsed.tool_calls && parsed.tool_calls.length > 0;
-            } catch (e) {
-                // Not valid JSON
-            }
-        }
-    }
-    return false;
-}
-
-/**
  * Extract tool calls from LLM result
  */
 function extractToolCalls(result) {
@@ -105,7 +82,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
         logger.warn('Failed to get admin web search key:', error.message);
     }
 
-    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'} (admin key: ${hasAdminKey})`)
+    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'} (admin key: ${hasAdminKey})`);
 
     // Collect all available tools
     const allTools = [];

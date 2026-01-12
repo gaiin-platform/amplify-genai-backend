@@ -1,8 +1,11 @@
-//Copyright (c) 2024 Vanderbilt University  
+//Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import { sendStatusEventToStream } from "../../streams.js";
 import { newStatus } from "../../status.js";
+import { getLogger } from "../../logging.js";
+
+const logger = getLogger("openai-events");
 
 export const openAiTransform = (event, responseStream = null, capturedContent = null) => {
     // Handle new /responses endpoint format
@@ -46,7 +49,7 @@ export const openAiTransform = (event, responseStream = null, capturedContent = 
 
                     // Initialize tool call on first delta (has id and function.name)
                     if (delta.id && delta.function?.name) {
-                        console.log(`🔧 OpenAI tool call start: index=${idx}, id=${delta.id}, name=${delta.function.name}`);
+                        logger.debug(`OpenAI tool call start: index=${idx}, id=${delta.id}, name=${delta.function.name}`);
                         // Ensure array is large enough
                         while (capturedContent.toolCalls.length <= idx) {
                             capturedContent.toolCalls.push(null);
@@ -72,12 +75,12 @@ export const openAiTransform = (event, responseStream = null, capturedContent = 
 
         // Check for finish_reason to finalize tool calls
         if (choice.finish_reason === 'tool_calls' && capturedContent) {
-            console.log(`🔧 OpenAI finish_reason=tool_calls, captured ${capturedContent.toolCalls?.length || 0} tool calls`);
+            logger.debug(`OpenAI finish_reason=tool_calls, captured ${capturedContent.toolCalls?.length || 0} tool calls`);
             // Filter out any null entries
             if (capturedContent.toolCalls) {
                 capturedContent.toolCalls = capturedContent.toolCalls.filter(tc => tc !== null);
                 for (const tc of capturedContent.toolCalls) {
-                    console.log(`🔧 Finalized tool call: ${JSON.stringify(tc)}`);
+                    logger.debug(`Finalized tool call: ${JSON.stringify(tc)}`);
                 }
             }
         }

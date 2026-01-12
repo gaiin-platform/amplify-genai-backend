@@ -268,6 +268,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     const streamError = (err) => {
                         clearTimeout(statusTimer);
                         sendErrorMessage(writableStream, err.response?.status, err.response?.statusText);
+                        // Ensure stream is properly closed on error since we use { end: false }
+                        if (!writableStream.writableEnded && writableStream.writable) {
+                            try {
+                                writableStream.end();
+                            } catch (endErr) {
+                                logger.error("Error ending stream:", endErr);
+                            }
+                        }
                         reject(err);
                     };
                     const finalizeSuccess = () => {
@@ -329,7 +337,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 })
                 .catch((e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
-                    
+
                     // If we have tools and haven't already retried, try again without tools
                     if (!retryWithoutTools && data.tools && data.tools.length > 0) {
                         // Request failed with tools, retrying without tools
@@ -338,7 +346,16 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             .catch(reject);
                         return;
                     }
-                    
+
+                    // Ensure stream is properly closed on error since we use { end: false }
+                    if (!writableStream.writableEnded && writableStream.writable) {
+                        try {
+                            writableStream.end();
+                        } catch (endErr) {
+                            logger.error("Error ending stream:", endErr);
+                        }
+                    }
+
                     // CRITICAL: OpenAI/Azure API failure - capture full axios error details
                     logCriticalError({
                         functionName: 'openai_streamAxiosResponseToWritable',

@@ -24,6 +24,19 @@ export const mistralTransform = (event) => {
 }
 
 
+/**
+ * Transforms Bedrock Converse streaming events into plain text output or side-effect updates.
+ *
+ * @param {object} event - The raw Bedrock Converse streaming event, which may contain
+ *   `contentBlockDelta`, `delta`, `reasoningContent`, or `toolUse` fields.
+ * @param {object|null} [responseStream=null] - Optional stream or channel used to send status
+ *   updates (for example, reasoning content) via {@link sendStatusEventToStream}.
+ * @param {object|null} [capturedContent=null] - Optional mutable accumulator object used to
+ *   collect tool invocation data across multiple chunks. When present, any incoming
+ *   `toolUse.input` text is appended to `capturedContent.currentToolCall.function.arguments`.
+ * @returns {string|null} The text content from the event, or null if the event was handled
+ *   as a side effect (e.g., reasoning status update, tool call accumulation).
+ */
 export const bedrockConverseTransform = (event, responseStream = null, capturedContent = null) => {
     // Bedrock ConverseStream sends events with nested structure:
     // - contentBlockDelta: { delta: { text: "..." } } for text
