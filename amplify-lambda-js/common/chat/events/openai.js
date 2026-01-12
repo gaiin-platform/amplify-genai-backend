@@ -100,9 +100,10 @@ export const openAiTransform = (event, responseStream = null, capturedContent = 
 }
 
 export const openaiUsageTransform = (event) => {
-    if (event.usage) {
-        const usage = event.usage;
-        
+    // Handle response.completed event format
+    const usage = event.usage || (event.response && event.response.usage);
+    
+    if (usage) {
         // Handle new /responses endpoint format
         if (usage.output_tokens !== undefined && usage.input_tokens !== undefined) {
             // Convert to legacy format for compatibility
@@ -121,8 +122,8 @@ export const openaiUsageTransform = (event) => {
         }
         
         // Extract cached tokens from OpenAI format
-        // Input cached tokens: from prompt_tokens_details.cached_tokens
-        usage.inputCachedTokens = (usage.inputCachedTokens ?? usage.prompt_tokens_details?.cached_tokens) ?? 0;
+        // Input cached tokens: from prompt_tokens_details.cached_tokens OR input_tokens_details.cached_tokens
+        usage.inputCachedTokens = (usage.inputCachedTokens ?? usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens) ?? 0;
         
         return usage;
     } else {

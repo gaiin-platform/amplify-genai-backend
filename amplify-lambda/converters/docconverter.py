@@ -16,9 +16,9 @@ import os
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
-    S3Operation
+    S3Operation, DynamoDBOperation
 )
 
 from pycommon.logger import getLogger
@@ -221,6 +221,10 @@ def get_template_from_s3(user: str, unique_uuid: str):
     return None
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="docconverter_handler", account="system")
 def handler(event, context):
 
     consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]

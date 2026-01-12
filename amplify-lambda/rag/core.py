@@ -18,6 +18,8 @@ import asyncio
 
 from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 logger = getLogger("rag")
 
 # Uncomment for local testing 
@@ -670,6 +672,10 @@ def update_object_permissions(current_user, data):
 
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="process_document_for_rag", account="system")
 def process_document_for_rag(event, context):
     logger.info("Received event: %s", event)
     s3 = boto3.client("s3")
@@ -1318,6 +1324,10 @@ def reset_chunk_to_starting_status(global_id, chunk_number):
 
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="chunk_document_for_rag", account="system")
 def chunk_document_for_rag(event, context):
     logger.info("Received event: %s", event)
 
