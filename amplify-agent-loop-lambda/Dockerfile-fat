@@ -62,6 +62,8 @@ WORKDIR /var/task
 # Copy Python dependencies
 COPY agent-requirements-fat.txt  ./
 
+# Cache-busting argument to force rebuild when needed
+ARG CACHE_BUST=1
 
 RUN    uv pip install --system --no-cache-dir \
         --only-binary=numpy \

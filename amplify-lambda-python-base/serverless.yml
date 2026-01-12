@@ -1,4 +1,4 @@
-service: amplify-${self:custom.depName}-lambda-ops
+service: example-service
 
 frameworkVersion: "3"
 
@@ -11,19 +11,17 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-  - serverless-cloudformation-changesets-v3
+  - serverless-cloudformation-changesets
+
 custom:
+  pythonRequirements:
+    dockerizePip: non-linux
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
-  pythonRequirements:
-    dockerizePip: true
-
-  booleanMap:
-    "true": true
-    "false": false
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}} 
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
   stages:
     - dev
     - staging
@@ -32,33 +30,34 @@ custom:
   # Base paths for Parameter Store
   ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
+    
 provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
-  logRetentionInDays: 365
+  logRetentionInDays: 365  # Set the log retention to 365 days for 800-171 Compliance
   apiGateway:
     restApiId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
-      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"  
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
-    
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
     # Locally Defined Variables
-    LAMBDA_OPS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-ops-iam-policy
-    OPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-ops
+    LAMBDA_PYTHON_BASE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    SAMPLE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-sample-table
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -68,70 +67,30 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
-    
+
+
   iam:
     role:
       managedPolicies:
+        - !Ref LambdaPythonBaseIAMPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_OPS_IAM_POLICY_NAME}
+
 
 functions:
 
-  get_ops:
-    handler: service/core.get_ops
+  sample:
+    handler: service/core.sample
     events:
       - http:
-          path: ops/get
+          path: someservice/sample
           method: post
           cors: true
-        
-  get_op:
-    handler: service/core.get_op_by_name
-    events:
-      - http:
-          path: ops/get_op
-          method: post
-          cors: true
-  
-  get_all_ops:
-    handler: service/core.get_all_ops
-    events:
-      - http:
-          path: ops/get_all
-          method: get
-          cors: true
-
-  write_ops:
-    handler: service/core.write_ops
-    events:
-      - http:
-          path: ops/register
-          method: post
-          cors: true
-
-  delete_op:
-    handler: service/core.delete_op
-    events:
-      - http:
-          path: ops/delete
-          method: post
-          cors: true
-
-  tools_op: 
-    handler: tools_ops.api_tools_handler
-    timeout: 30
-    events:
-      - http:
-          path: ops/register_ops
-          method: post
-          cors: true
-
 resources:
   Resources:
-    LambdaOpsIAMPolicy:
+    LambdaPythonBaseIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
-        ManagedPolicyName: ${self:provider.environment.LAMBDA_OPS_IAM_POLICY_NAME}
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_PYTHON_BASE_IAM_POLICY_NAME}
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -144,14 +103,13 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
               Resource:
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"  
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SAMPLE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
@@ -168,8 +126,7 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
-
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
             - Effect: Allow
               Action:
                 - sqs:SendMessage
@@ -182,26 +139,23 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
-    OpsTable:
+    SampleDynamoTable:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${self:provider.environment.OPS_DYNAMODB_TABLE}
+        TableName: ${self:provider.environment.SAMPLE_DYNAMODB_TABLE}
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
           SSEEnabled: true
         AttributeDefinitions:
-          - AttributeName: user
-            AttributeType: S
-          - AttributeName: tag
+          - AttributeName: id
             AttributeType: S
         KeySchema:
-          - AttributeName: user
+          - AttributeName: id
             KeyType: HASH
-          - AttributeName: tag
-            KeyType: RANGE
-      
 
         
-           
+
+          
+            

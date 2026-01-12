@@ -188,6 +188,10 @@ export const chat = async (chatBody, writable) => {
         console.error('Exception in chat function:', error);
         
         // CRITICAL: Gemini API failure - capture full axios error details before re-throwing
+        const sanitizedData = { ...data };
+        delete sanitizedData.messages;
+        delete sanitizedData.input;
+        
         logCriticalError({
             functionName: 'gemini_chat',
             errorType: 'GeminiAPIFailure',
@@ -203,7 +207,8 @@ export const chat = async (chatBody, writable) => {
                 apiError: error.response?.data?.error || 'N/A',
                 apiErrorMessage: error.response?.data?.error?.message || error.response?.data?.message || 'N/A',
                 errorCode: error.code || 'N/A',
-                axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A'
+                axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A',
+                requestConfig: sanitizedData
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
         

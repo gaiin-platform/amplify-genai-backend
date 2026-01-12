@@ -25,5 +25,6 @@ rules = {
         "/amplifymin/auth": {"read": auth_as_admin_schema},
         "/amplifymin/verify_amp_member": {"read": verify_in_amp_group_schema},
         "/amplifymin/amplify_groups/affiliated": {"read": {}},
+        "/amplifymin/feature_flags": {"read": {}},
     },
 }

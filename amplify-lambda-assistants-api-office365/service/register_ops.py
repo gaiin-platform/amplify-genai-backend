@@ -1,9 +1,15 @@
 
 from pycommon.api.tools_ops import api_tools_register_handler
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 
 from pycommon.logger import getLogger
 logger = getLogger("office365_register_ops")
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="office365_integration_config_trigger", account="system")
 def integration_config_trigger(event, context):
     """
     Triggered by a DynamoDB stream event on the admin configs table.

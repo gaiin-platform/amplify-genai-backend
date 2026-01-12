@@ -21,7 +21,7 @@ from datetime import datetime
 from botocore.config import Config
 from service.user_services import is_in_amp_group
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SecretsManagerOperation
 )
@@ -639,9 +639,13 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             
             return update_admin_config_data(config_type.value, processed_data)
         
+        case AdminConfigTypes.INTEGRATIONS:
+            # Transform nested structure and save both data and provider_settings
+            transformed = transform_integrations_data(update_data)
+            return update_integrations_config(config_type.value, transformed)
+
         case ( AdminConfigTypes.RATE_LIMIT
             | AdminConfigTypes.PROMPT_COST_ALERT
-            | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
@@ -697,7 +701,7 @@ def update_admin_config_data(config_type, update_data):
         type_value = config_type
         # Convert any float values to Decimal for DynamoDB compatibility
         processed_data = convert_floats_to_decimal(update_data)
-        
+
         admin_table.put_item(
             Item={
                 "config_id": type_value,
@@ -709,6 +713,42 @@ def update_admin_config_data(config_type, update_data):
     except Exception as e:
         logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
+
+
+def update_integrations_config(config_type, transformed_data):
+    """
+    Special update function for integrations that handles both data and provider_settings fields.
+
+    Args:
+        config_type: The config type (should be 'integrations')
+        transformed_data: Dictionary containing 'data' and optionally 'provider_settings'
+
+    Returns:
+        Success/failure dictionary
+    """
+    try:
+        # Convert any float values to Decimal for DynamoDB compatibility
+        processed_data = convert_floats_to_decimal(transformed_data)
+
+        # Build the DynamoDB item
+        item = {
+            "config_id": config_type,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Add data field
+        if "data" in processed_data:
+            item["data"] = processed_data["data"]
+
+        # Add provider_settings as a separate top-level field if present
+        if "provider_settings" in processed_data:
+            item["provider_settings"] = processed_data["provider_settings"]
+
+        admin_table.put_item(Item=item)
+        return {"success": True, "data": f"{config_type} updated successfully."}
+    except Exception as e:
+        print(f"Error updating {config_type}: {str(e)}")
+        return {"success": False, "message": f"Error updating {config_type}: {str(e)}"}
 
 
 def get_secret(secret_name, region_name):
@@ -834,7 +874,12 @@ def get_configs(event, context, current_user, name, data):
                 new_data = None
                 if "Item" in config_item:
                     new_data = config_item["Item"]["data"]
-                    if config_type == AdminConfigTypes.FEATURE_FLAGS:
+                    if config_type == AdminConfigTypes.INTEGRATIONS:
+                        storage_data = config_item["Item"].get("data", {})
+                        provider_settings = config_item["Item"].get("provider_settings", {})
+                        # Transform back to frontend format
+                        new_data = reverse_transform_integrations_data(storage_data, provider_settings)
+                    elif config_type == AdminConfigTypes.FEATURE_FLAGS:
                         # Check if any base feature flags are missing and add them
                         missing_base_flags = check_and_update_missing_base_flags(
                             new_data
@@ -1140,7 +1185,7 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
-    logger.debug("users: ", user_feature_flags)
+    logger.debug("users: %s", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
 
@@ -1610,6 +1655,10 @@ def log_item(config_type, username, details):
     )
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="sync_assistant_admins", account="system")
 def sync_assistant_admins(event, context):
     logger.info("Syncing Assistant Admin Interface Users...")
     AST_ADMIN_UI_FLAG = "assistantAdminInterface"

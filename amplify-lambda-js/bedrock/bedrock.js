@@ -160,6 +160,10 @@ export const chatBedrock = async (chatBody, writable) => {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
         
         // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
+        const sanitizedInput = { ...input };
+        delete sanitizedInput.messages;
+        delete sanitizedInput.system;
+        
         logCriticalError({
             functionName: 'chatBedrock',
             errorType: 'BedrockAPIFailure',
@@ -174,7 +178,9 @@ export const chatBedrock = async (chatBody, writable) => {
                 awsReason: error.$response?.reason || 'N/A',
                 awsMessage: error.$response?.message || 'N/A',
                 errorCode: error.code || error.name || 'N/A',
-                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION)
+                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
+                bedrockConfig: sanitizedInput,
+                hasToolContent: hasToolContent || false,
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
         
