@@ -14,6 +14,7 @@ import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
+import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
 
 const logger = getLogger("assistants");
 
@@ -112,14 +113,30 @@ const defaultAssistant = {
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
 
                 // Check if web search or MCP is enabled
-                const webSearchEnabled = shouldEnableWebSearch(body);
+                let webSearchEnabled = shouldEnableWebSearch(body);
                 // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
                 const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
+
+                // Also check for admin-configured web search (auto-enable if admin has set up web search)
+                let adminWebSearchAvailable = false;
+                if (!webSearchEnabled) {
+                    try {
+                        const adminKey = await getAdminWebSearchApiKey();
+                        if (adminKey && adminKey.provider && adminKey.api_key) {
+                            adminWebSearchAvailable = true;
+                            webSearchEnabled = true;
+                            logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
+                        }
+                    } catch (error) {
+                        logger.debug('Failed to check admin web search config:', error.message);
+                    }
+                }
 
                 logger.info("🔍 Tool loop check:", {
                     enableWebSearch: body?.enableWebSearch,
                     optionsEnableWebSearch: body?.options?.enableWebSearch,
                     optionsOptionsWebSearch: body?.options?.options?.webSearch,
+                    adminWebSearchAvailable,
                     webSearchEnabled,
                     mcpEnabled,
                     optionsMcpEnabled: body?.options?.mcpEnabled,

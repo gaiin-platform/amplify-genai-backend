@@ -538,6 +538,7 @@ update_admin_config_schema = {
                                         "enum": ["brave_search", "tavily", "serper", "serpapi"]
                                     },
                                     "api_key": {"type": "string"},
+                                    "isEnabled": {"type": "boolean"}
                                 },
                                 "required": ["provider"],
                                 "additionalProperties": False
