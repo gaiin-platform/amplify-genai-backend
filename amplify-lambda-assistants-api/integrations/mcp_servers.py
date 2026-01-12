@@ -8,11 +8,9 @@ Users can add, remove, and configure their own MCP servers.
 from datetime import datetime, timezone
 import json
 import os
-import traceback
 import uuid
 
 import boto3
-from botocore.exceptions import ClientError
 
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation

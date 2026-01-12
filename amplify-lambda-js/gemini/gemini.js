@@ -234,13 +234,19 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
             const streamError = (err) => {
                 if (responseEnded) return;
                 responseEnded = true;
-                
+
                 if (statusTimer) clearTimeout(statusTimer);
-                
+
                 if (!writableStream.writableEnded && writableStream.writable) {
                     sendErrorMessage(writableStream);
+                    // Ensure stream is properly closed on error since we use { end: false }
+                    try {
+                        writableStream.end();
+                    } catch (endErr) {
+                        logger.error("Error ending stream:", endErr);
+                    }
                 }
-                
+
                 reject(err);
             };
 
@@ -304,9 +310,15 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
         })
         .catch((e) => {
             if (statusTimer) clearTimeout(statusTimer);
-            
+
             if (!writableStream.writableEnded && writableStream.writable) {
                 sendErrorMessage(writableStream);
+                // Ensure stream is properly closed on error since we use { end: false }
+                try {
+                    writableStream.end();
+                } catch (endErr) {
+                    logger.error("Error ending stream:", endErr);
+                }
             }
             
             let errorMessage = e.message;

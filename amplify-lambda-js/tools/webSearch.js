@@ -264,7 +264,23 @@ export async function getAdminWebSearchApiKey() {
  * @returns {Object} Search results
  */
 export async function executeWebSearch(query, apiKeys = {}, skipAdminKey = false) {
-    logger.info(`Executing web search for query: ${query}`);
+    // Validate query parameter
+    if (!query || typeof query !== 'string') {
+        throw new Error('Search query is required and must be a string');
+    }
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length === 0) {
+        throw new Error('Search query cannot be empty');
+    }
+
+    // Validate query length (most search APIs have limits around 2000-4000 characters)
+    const MAX_QUERY_LENGTH = 2000;
+    if (trimmedQuery.length > MAX_QUERY_LENGTH) {
+        throw new Error(`Search query exceeds maximum length of ${MAX_QUERY_LENGTH} characters`);
+    }
+
+    logger.info(`Executing web search for query: ${trimmedQuery}`);
 
     // Try providers in order of preference
     const providers = [
@@ -300,7 +316,7 @@ export async function executeWebSearch(query, apiKeys = {}, skipAdminKey = false
         if (apiKey) {
             try {
                 logger.info(`Using ${provider.name} for web search`);
-                const result = await provider.execute(query, apiKey);
+                const result = await provider.execute(trimmedQuery, apiKey);
                 logger.info(`Web search completed with ${result.resultCount} results`);
                 return result;
             } catch (error) {

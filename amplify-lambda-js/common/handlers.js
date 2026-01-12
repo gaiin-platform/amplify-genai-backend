@@ -105,7 +105,7 @@ export const extractParams = async (event) => {
         }
 
         const user = payload.username;
-        const extractIdpPrefix = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+        const extractCleanUsername = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
 
         let current_user = null;
      
@@ -124,13 +124,13 @@ export const extractParams = async (event) => {
         // If sub not found, fallback to old IDP prefix username logic
         if (!current_user) {
             logger.debug(`Extracting username from: ${user}`);
-            current_user = extractIdpPrefix();
+            current_user = extractCleanUsername();
         }
        
         logger.debug("Current user: " + current_user);
 
         // Extract clean username (without IDP prefix) for services that need it
-        const cleanUsername = extractIdpPrefix();
+        const cleanUsername = extractCleanUsername();
 
         let requestBody;
         try {
