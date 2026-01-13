@@ -221,12 +221,13 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, token_count, id, ((qa_vector_embedding <#> %s::vector) * -1) AS distance
-                FROM embeddings 
+                FROM embeddings
                 WHERE src = ANY(%s)  -- Use the ARRAY constructor for src_ids
-                ORDER BY distance DESC  -- Order by distance for ordering  
+                ORDER BY distance DESC  -- Order by distance for ordering
                 LIMIT %s  -- Use a placeholder for the limit
             """
             logger.info(f"Executing QA SQL query: {sql_query}")
+            logger.info(f"Query params - src_ids_array: {src_ids_array}, limit: {limit}")
             try:
                 cur.execute(sql_query, query_params)
                 top_docs = cur.fetchall()
@@ -289,12 +290,13 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
             # Create SQL query string with placeholders for parameters
             sql_query = """
                 SELECT content, src, locations, orig_indexes, char_index, token_count, id, ((vector_embedding <#> %s::vector) * -1) AS distance
-                FROM embeddings 
+                FROM embeddings
                 WHERE src = ANY(%s)  -- Use the ARRAY constructor for src_ids
-                ORDER BY distance DESC  -- Order by distance for ordering  
+                ORDER BY distance DESC  -- Order by distance for ordering
                 LIMIT %s  -- Use a placeholder for the limit
             """
             logger.info(f"Executing Top Similar SQL query: {sql_query}")
+            logger.info(f"Query params - src_ids_array: {src_ids_array}, limit: {limit}")
             try:
                 cur.execute(sql_query, query_params)
                 top_docs = cur.fetchall()
@@ -755,6 +757,36 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
+    # CRITICAL: Check if we have any accessible sources before proceeding
+    if not src_ids:
+        logger.error(f"[NO_ACCESSIBLE_SOURCES] No accessible sources after permission checks")
+        logger.error(f"Raw sources provided: individual={len(raw_src_ids)}, groups={len(raw_group_src_ids)}, ast={len(raw_ast_src_ids)}")
+
+        log_critical_error(
+            function_name="_async_process_input_with_dual_retrieval_no_access",
+            error_type="NoAccessibleDataSources",
+            error_message=f"User has no access to any of the provided data sources",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace="",
+            context={
+                "raw_src_ids_count": len(raw_src_ids),
+                "raw_group_src_ids": raw_group_src_ids,
+                "raw_ast_src_ids": raw_ast_src_ids,
+                "accessible_individual": accessible_src_ids,
+                "accessible_group": group_accessible_src_ids,
+                "accessible_ast": ast_accessible_src_ids
+            }
+        )
+
+        return {
+            "error": "No accessible data sources. User may not have permissions to the provided sources.",
+            "details": {
+                "total_sources_requested": len(raw_src_ids) + sum(len(v) for v in raw_group_src_ids.values()) + sum(len(v) for v in raw_ast_src_ids.values()),
+                "accessible_sources": 0
+            }
+        }
+
     # Advanced polling strategy with exponential backoff and early termination
     pending_ids = accessible_src_ids
     is_complete = False
@@ -851,8 +883,34 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
                 logger.warning(f"Continuing with completed embeddings, {len(pending_ids)} may be incomplete")
                 break
 
+    # CRITICAL: Verify we still have sources after polling loop
+    if not src_ids:
+        logger.error(f"[NO_SOURCES_AFTER_POLLING] All sources were removed during polling loop")
+        logger.error(f"Failed documents: {failed_documents}")
+
+        log_critical_error(
+            function_name="_async_process_input_with_dual_retrieval_all_failed",
+            error_type="AllDataSourcesFailedEmbedding",
+            error_message=f"All data sources failed during embedding generation",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace="",
+            context={
+                "failed_documents_count": len(failed_documents),
+                "failed_documents": failed_documents[:10],
+                "pre_failed_count": len(pre_failed_documents)
+            }
+        )
+
+        return {
+            "error": "All data sources failed during embedding generation",
+            "failed_documents": failed_documents,
+            "total_failed": len(failed_documents)
+        }
+
     # Parallel embedding generation and retrieval
-    logger.info("Starting embedding generation for user input query")
+    logger.info(f"Starting embedding generation for user input query with {len(src_ids)} accessible sources")
+    logger.info(f"Source IDs for retrieval: {src_ids}")
 
     response_embeddings = generate_embeddings(content)
 
@@ -881,9 +939,35 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         
         return {"error": error}
     
+    # DIAGNOSTIC: Check what src values exist in the database for these IDs
+    logger.info(f"[DIAGNOSTIC] Checking database for src values matching: {src_ids}")
+    try:
+        with psycopg2.connect(
+            host=pg_host,
+            database=pg_database,
+            user=pg_user,
+            password=pg_password,
+            port=3306,
+        ) as conn:
+            with conn.cursor() as cur:
+                # Query to check if any rows exist with these src values
+                src_ids_array = "{" + ",".join(map(str, src_ids)) + "}"
+                check_query = "SELECT DISTINCT src FROM embeddings WHERE src = ANY(%s) LIMIT 10"
+                cur.execute(check_query, (src_ids_array,))
+                existing_srcs = cur.fetchall()
+                logger.info(f"[DIAGNOSTIC] Found {len(existing_srcs)} matching src values in embeddings table: {existing_srcs}")
+
+                # Also check a sample of what src values DO exist
+                sample_query = "SELECT DISTINCT src FROM embeddings LIMIT 5"
+                cur.execute(sample_query)
+                sample_srcs = cur.fetchall()
+                logger.info(f"[DIAGNOSTIC] Sample of src values in embeddings table: {sample_srcs}")
+    except Exception as e:
+        logger.error(f"[DIAGNOSTIC] Failed to check database: {e}")
+
     def get_similar_docs():
         return get_top_similar_docs(embeddings, src_ids, limit)
-    
+
     def get_similar_qas():
         return get_top_similar_qas(embeddings, src_ids, limit)
 
@@ -895,8 +979,30 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     
     # Combine results
     related_docs.extend(related_qas)
-    
+
     logger.info(f"Retrieved {len(related_docs)} related documents/QAs")
+
+    # CRITICAL: Check if we got no results despite having sources
+    if len(related_docs) == 0 and len(src_ids) > 0:
+        logger.error(f"[NO_RESULTS_WITH_SOURCES] PostgreSQL returned 0 results despite having {len(src_ids)} accessible sources")
+        logger.error(f"Source IDs queried: {src_ids}")
+
+        log_critical_error(
+            function_name="_async_process_input_with_dual_retrieval_no_results",
+            error_type="PostgreSQLNoResultsWithSources",
+            error_message=f"PostgreSQL returned 0 results despite having accessible sources",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace="",
+            context={
+                "src_ids_count": len(src_ids),
+                "src_ids": src_ids,
+                "limit": limit,
+                "query_length": len(content),
+                "pg_host": pg_host,
+                "pg_database": pg_database
+            }
+        )
 
     # Build response
     response = {
