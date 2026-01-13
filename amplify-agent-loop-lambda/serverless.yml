@@ -72,11 +72,6 @@ provider:
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
-    # Amplify Notes Configuration
-    NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
-    S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
-    RAW_EMAILS_BUCKET: ${ssm:/amplify/${sls:stage}/RAW_EMAILS_BUCKET}
-
     # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
     AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
@@ -88,6 +83,7 @@ provider:
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
     WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
+    RAW_EMAILS_BUCKET: ${self:service}-${sls:stage}-raw-emails
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -109,6 +105,10 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
+    # Amplify Notes Configuration
+    NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
+    S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
+
 
   iam:
     role:
@@ -220,6 +220,14 @@ resources:
             #   Action:
             #     - lambda:InvokeFunction
             #   Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+            # Lambda→Lambda invocation for AI Scheduler backend (SES email forwarding)
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ai-scheduler-backend-${sls:stage}-analyzeEmailForScheduling"
+                - "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ai-scheduler-backend-${sls:stage}-generateDraftResponseInternal"
+                - "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ai-scheduler-backend-${sls:stage}-autoScheduleMeetingInternal"
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -296,6 +304,10 @@ resources:
                 - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
+                # AI Scheduler tables (for SES email forwarding workflow)
+                - "arn:aws:dynamodb:${aws:region}:*:table/ai-scheduler-backend-${sls:stage}-meeting-requests"
+                - "arn:aws:dynamodb:${aws:region}:*:table/ai-scheduler-backend-${sls:stage}-meeting-requests/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/ai-scheduler-backend-${sls:stage}-user-settings"
 
             - Effect: Allow
               Action:
