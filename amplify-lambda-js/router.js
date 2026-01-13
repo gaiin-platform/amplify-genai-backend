@@ -429,9 +429,12 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         context: {
                             requestId: requestId || 'unknown',
                             modelId: model?.id || 'unknown',
-                            assistantType: selectedAssistant?.constructor?.name || 'unknown',
                             conversationId: options?.conversationId || 'N/A',
-                            hasDataSources: dataSources?.length > 0
+                            hasDataSources: dataSources?.length > 0,
+                            requestedAssistantId: options?.assistantId || 'none',
+                            codeInterpreterOnly: options?.codeInterpreterOnly || false,
+                            artifactsMode: options?.artifactsMode || false,
+                            api_accessed: options?.api_accessed || false
                         }
                     });
                 }
