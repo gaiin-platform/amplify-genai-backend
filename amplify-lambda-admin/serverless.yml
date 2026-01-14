@@ -309,6 +309,14 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+            # Web Search API key storage in SSM
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*
             - Effect: Allow
               Action:
                 - dynamodb:DescribeStream

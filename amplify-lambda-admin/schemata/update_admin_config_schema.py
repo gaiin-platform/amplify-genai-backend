@@ -522,6 +522,31 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    {
+                        # Configuration for 'webSearchConfig'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "webSearchConfig"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "provider": {
+                                        "type": "string",
+                                        "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                    },
+                                    "api_key": {"type": "string"},
+                                    "isEnabled": {"type": "boolean"}
+                                },
+                                "required": ["provider"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }

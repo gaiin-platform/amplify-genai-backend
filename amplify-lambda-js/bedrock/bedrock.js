@@ -76,23 +76,11 @@ export const chatBedrock = async (chatBody, writable) => {
             }
        
         }
-        // Check if any message has tool content
-        const hasToolContent = sanitizedMessages.some(msg => 
-            Array.isArray(msg.content) && msg.content.some(item => 
-                item.toolResult || item.toolUse || (typeof item === 'object' && item.type && (item.type.includes('tool') || item.type === 'tool_result'))
-            )
-        );
-        
-        // Add toolConfig when tool content is present
-        if (hasToolContent) {
-            input.toolConfig = {
-                tools: [],
-                toolChoice: { auto: {} }
-            };
-        }
-        
-        if (currentModel.supportsReasoning && maxTokens > 1024 && !hasToolContent) {
-            const budget_tokens = getBudgetTokens({options}, maxTokens); 
+        // Note: Disable reasoning when tools are present because Bedrock requires thinking blocks
+        // in assistant messages when using extended thinking with tools, which complicates the tool loop
+        const hasTools = body.tools && body.tools.length > 0;
+        if (currentModel.supportsReasoning && maxTokens > 1024 && !hasTools) {
+            const budget_tokens = getBudgetTokens({options}, maxTokens);
             input.additionalModelRequestFields={
                 "reasoning_config": {
                     "type": "enabled",
@@ -107,12 +95,32 @@ export const chatBedrock = async (chatBody, writable) => {
             // Gather all text values from the system prompts list
             const systemPromptsText = systemPrompts.map(sp => sp.text).join("\n\n");
             const sanitizedMessagesCopy = [...sanitizedMessages];
-            
-            // May not need anymore, testing for a while 
+
+            // May not need anymore, testing for a while
             // sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
             // `Recall your custom instructions are: ${systemPromptsText}`;
 
             input.messages = sanitizedMessagesCopy;
+        }
+
+        // Add tool configuration if tools are provided (for web search, etc.)
+        if (body.tools && body.tools.length > 0) {
+            input.toolConfig = {
+                tools: body.tools.map(tool => {
+                    // Convert OpenAI tool format to Bedrock toolSpec format
+                    const fn = tool.function || tool;
+                    return {
+                        toolSpec: {
+                            name: fn.name,
+                            description: fn.description,
+                            inputSchema: {
+                                json: fn.parameters || { type: "object", properties: {} }
+                            }
+                        }
+                    };
+                })
+            };
+            logger.info(`Added ${body.tools.length} tools to Bedrock request`);
         }
 
         trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})
@@ -134,10 +142,14 @@ export const chatBedrock = async (chatBody, writable) => {
         const response = await client.send( new ConverseStreamCommand(input) );
         const { messageStream } = response.stream.options;
         const decoder = new TextDecoder();
-        
+
         // Process stream with minimal overhead
         for await (const chunk of messageStream) {
             const jsonString = decoder.decode(chunk.body);
+            // Debug: Log chunks that contain tool-related events
+            if (jsonString.includes('toolUse') || jsonString.includes('contentBlockStart') || jsonString.includes('contentBlockStop')) {
+                logger.debug(`🔧 Bedrock tool-related chunk: ${jsonString.substring(0, 500)}`);
+            }
             // Write directly as SSE format without re-parsing (already valid JSON)
             writable.write(`data: ${jsonString}\n\n`);
         }
@@ -179,24 +191,37 @@ export const chatBedrock = async (chatBody, writable) => {
 
 function combineMessages(oldMessages, failSafeUserMessage) {
     if (!oldMessages || oldMessages.length === 0) return oldMessages;
-    
+
     const delimiter = "\n_________________________\n";
     const messages = [];
     let currentMessage = null;
-    
+
     // Single pass optimization
     for (let j = 0; j < oldMessages.length; j++) {
         const msg = oldMessages[j];
         const role = msg.role;
+
+        // Don't combine tool messages or assistant messages with tool_calls - preserve full structure
+        if (role === 'tool' || (role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)) {
+            // Push any pending message first
+            if (currentMessage) {
+                messages.push(currentMessage);
+                currentMessage = null;
+            }
+            // Push tool-related message as-is (preserves tool_call_id and tool_calls)
+            messages.push({ ...msg });
+            continue;
+        }
+
         let content = msg.content || "NA Intentionally left empty, disregard and continue";
-        
+
         // Add delimiter to last user message
         if (j === oldMessages.length - 1 && role === 'user') {
             content = `${delimiter}${content}`;
         }
-        
-        content = content.trimEnd(); // remove white space
-        
+
+        content = typeof content === 'string' ? content.trimEnd() : content; // remove white space
+
         if (!currentMessage || currentMessage.role !== role) {
             // New role, push previous and start new
             if (currentMessage) messages.push(currentMessage);
@@ -206,15 +231,15 @@ function combineMessages(oldMessages, failSafeUserMessage) {
             currentMessage.content += delimiter + content;
         }
     }
-    
+
     // Push last message
     if (currentMessage) messages.push(currentMessage);
-    
+
     // Ensure first message is user
     if (messages.length === 0 || messages[0].role !== 'user') {
         messages.unshift({ role: 'user', content: failSafeUserMessage });
     }
-    
+
     return messages;
 }
 
@@ -228,37 +253,75 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
         messages[messages.length - 1].content += doesNotSupportImagesInstructions(model.name);
     }
 
-    let updatedMessages = [
-        ...(messages.map(m => {
-            // Convert 'tool' role to 'user' (Bedrock doesn't support 'tool' role)
-            const role = m['role'] === 'tool' ? 'user' : m['role'];
-            
-            let content;
-            if (typeof m['content'] === 'string') {
-                content = [{ "text": m['content'].trim() || BLANK_MSG }];
-            } else if (Array.isArray(m['content'])) {
-                // Handle tool content structures
-                content = m['content'].map(item => {
-                    if (item.type === 'tool_result') {
-                        return {
-                            "toolResult": {
-                                "toolUseId": item.tool_call_id || item.toolUseId || "missing_id",
-                                "content": [{ "text": typeof item.content === 'string' ? item.content : JSON.stringify(item.content) }]
-                            }
-                        };
-                    }
-                    return { "text": item.text || item.content || JSON.stringify(item) };
+    // Convert messages to Bedrock format, handling tool calls and tool results
+    let updatedMessages = [];
+    for (const m of messages) {
+        if (m.role === 'tool') {
+            // Convert OpenAI tool result to Bedrock toolResult format
+            // Bedrock expects: { role: 'user', content: [{ toolResult: { toolUseId, content: [{text}] } }] }
+            if (!m.tool_call_id) {
+                // Skip tool messages without tool_call_id - convert to regular user message
+                logger.warn(`Tool message missing tool_call_id, converting to regular user message`);
+                updatedMessages.push({
+                    role: 'user',
+                    content: [{ text: `Tool result: ${m.content || ''}` }]
                 });
             } else {
-                content = [{ "text": JSON.stringify(m['content']) }];
+                updatedMessages.push({
+                    role: 'user',
+                    content: [{
+                        toolResult: {
+                            toolUseId: m.tool_call_id,
+                            content: [{ text: m.content || '' }]
+                        }
+                    }]
+                });
             }
-            
-            return { "role": role, "content": content };
-        }))
-    ];
+        } else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+            // Convert OpenAI assistant tool_calls to Bedrock toolUse format
+            // Bedrock expects: { role: 'assistant', content: [{ toolUse: { toolUseId, name, input } }, ...] }
+            const content = [];
+            // Add text content if present
+            if (m.content && m.content.trim()) {
+                content.push({ text: m.content.trim() });
+            }
+            // Add tool use blocks
+            for (const tc of m.tool_calls) {
+                // Skip tool calls without id
+                if (!tc.id) {
+                    logger.warn(`Skipping tool call without id: ${tc.function?.name || tc.name}`);
+                    continue;
+                }
+                let inputObj = {};
+                try {
+                    inputObj = JSON.parse(tc.function?.arguments || '{}');
+                } catch (e) {
+                    logger.warn(`Failed to parse tool call arguments: ${tc.function?.arguments}`);
+                }
+                content.push({
+                    toolUse: {
+                        toolUseId: tc.id,
+                        name: tc.function?.name || tc.name,
+                        input: inputObj
+                    }
+                });
+            }
+            updatedMessages.push({
+                role: 'assistant',
+                content: content
+            });
+        } else {
+            // Regular message
+            const contentText = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content);
+            updatedMessages.push({
+                role: m.role,
+                content: [{ text: contentText || BLANK_MSG }]
+            });
+        }
+    }
 
     if (model.supportsImages && containsImages) {
-        updatedMessages = await includeImageSources(imageSources, updatedMessages, responseStream); 
+        updatedMessages = await includeImageSources(imageSources, updatedMessages, responseStream);
     }
     return updatedMessages;
 }
