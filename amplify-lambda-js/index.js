@@ -208,5 +208,37 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
     }
 });
 
+// Wrapper for AWS_PROXY format (Function URLs)
 export const handler = awslambda.streamifyResponse(protectedHandler);
+
+// Wrapper for AWS integration format (API Gateway REST API streaming)
+export const streamHandler = awslambda.streamifyResponse(async (event, responseStream, context) => {
+    // AWS integration + Request Template wraps body in {authHeader, bodyData}
+
+    logger.info("streamHandler: RAW EVENT RECEIVED:", JSON.stringify(event, null, 2));
+
+    // Extract Authorization from authHeader and actual body from bodyData
+    const authToken = event.authHeader || '';
+    const actualBody = event.bodyData || event; // Fallback to event if no wrapper
+
+    // Normalize to AWS_PROXY format that extractParams expects
+    const normalizedEvent = {
+        headers: {
+            Authorization: authToken || '',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(actualBody),
+        rawPath: '/chat_stream',
+        path: '/chat_stream',
+        requestContext: {}
+    };
+
+    logger.info("streamHandler: NORMALIZED EVENT (headers only):", {
+        hasAuth: !!normalizedEvent.headers.Authorization,
+        authPreview: normalizedEvent.headers.Authorization ? normalizedEvent.headers.Authorization.substring(0, 30) + '...' : 'NONE'
+    });
+
+    // Call the same protected handler with normalized event
+    return await protectedHandler(normalizedEvent, responseStream, context);
+});
 
