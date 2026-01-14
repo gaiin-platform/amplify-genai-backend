@@ -161,7 +161,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                                 responseStream.write(line + '\n\n');
                             } else {
                                 // This is LLM response data - apply provider transformer
-                                const transformed = transform(event, responseStream);
+                                const transformed = transform(event, responseStream, capturedContent);
                                 if (transformed) {
                                     sendDeltaToStream(responseStream, 'answer', transformed);
                                     // Capture content for conversation analysis if requested
@@ -204,7 +204,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                             responseStream.write(buffer + '\n\n');
                         } else {
                             // This is LLM response data - apply provider transformer
-                            const transformed = transform(event, responseStream);
+                            const transformed = transform(event, responseStream, capturedContent);
                             if (transformed) {
                                 sendDeltaToStream(responseStream, 'answer', transformed);
                                 // Capture content for conversation analysis if requested
@@ -293,13 +293,16 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         // }
 
         // Prepare request body
+        // Extract internal options that should NOT be passed to providers
+        const { keepStreamOpen, ...providerOptions } = options;
+
         const chatBody = {
             messages,
             model: model.id || model,
             stream: !!responseStream,
-            max_tokens: options.max_tokens || 2000,
-            temperature: options.temperature || 1.0,
-            ...options,
+            max_tokens: providerOptions.max_tokens || 2000,
+            temperature: providerOptions.temperature || 1.0,
+            ...providerOptions,
             options: {
                 ...params.options,
                 model,
@@ -329,8 +332,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         let result;
 
         if (responseStream) {
-            // Streaming mode - create interceptor stream that captures content
-            const capturedContent = { fullResponse: '' };
+            // Streaming mode - create interceptor stream that captures content and tool calls
+            const capturedContent = { fullResponse: '', toolCalls: [], currentToolCall: null };
             const interceptor = createStreamInterceptor(
                 responseStream,
                 providerConfig.transform,
@@ -348,8 +351,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 result = await providerConfig.chatFn(chatBody, interceptor);
             }
 
-            // Ensure stream is properly ended
-            if (!responseStream.writableEnded) {
+            // Ensure stream is properly ended (unless keepStreamOpen is set for tool loops)
+            if (!responseStream.writableEnded && !keepStreamOpen) {
                 endStream(responseStream);
                 responseStream.end();
             }
@@ -358,18 +361,20 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             // Create result object with captured content for conversation analysis
             result = {
                 content: capturedContent.fullResponse,
-                usage: requestState.totalUsage
+                usage: requestState.totalUsage,
+                tool_calls: capturedContent.toolCalls || []
             };
 
         } else {
             // Non-streaming mode - create a buffer stream to capture response
-            let responseBuffer = '';
             let fullContent = '';
+            // Create capturedContent object to accumulate tool calls (same as streaming mode)
+            const nonStreamCapturedContent = { fullResponse: '', toolCalls: [] };
+
             const bufferStream = new Writable({
                 write(chunk, _encoding, callback) {
                     const text = chunk.toString();
-                    responseBuffer += text;
-                    
+
                     // Parse SSE format to extract content
                     const lines = text.split('\n');
                     for (const line of lines) {
@@ -377,13 +382,20 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                             try {
                                 const data = line.slice(6);
                                 const event = JSON.parse(data);
-                                
-                                // Apply transform to get content
-                                const transformed = providerConfig.transform(event);
+
+                                // Apply transform to get content - pass capturedContent for tool call accumulation
+                                const transformed = providerConfig.transform(event, null, nonStreamCapturedContent);
                                 if (transformed) {
-                                    fullContent += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                                    if (typeof transformed === 'string') {
+                                        fullContent += transformed;
+                                        nonStreamCapturedContent.fullResponse += transformed;
+                                    } else if (transformed.d) {
+                                        fullContent += transformed.d;
+                                        nonStreamCapturedContent.fullResponse += transformed.d;
+                                    }
+                                    // tool_calls are accumulated in nonStreamCapturedContent by transform
                                 }
-                                
+
                                 // Extract usage
                                 const usage = providerConfig.usageTransform(event);
                                 if (usage) {
@@ -405,10 +417,12 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 result = await providerConfig.chatFn(chatBody, bufferStream);
             }
 
-            // Use the extracted content
+            // Use the extracted content and tool_calls
+            logger.debug(`Non-streaming result: fullContent="${fullContent.substring(0, 100)}...", toolCalls=${JSON.stringify(nonStreamCapturedContent.toolCalls)}`);
             result = {
-                content: fullContent || responseBuffer,  // Fallback to raw buffer if no SSE parsing worked
-                usage: requestState.totalUsage
+                content: fullContent,
+                usage: requestState.totalUsage,
+                tool_calls: nonStreamCapturedContent.toolCalls || []
             };
         }
 
