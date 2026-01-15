@@ -97,6 +97,7 @@ provider:
     SERVICE_NAME: ${self:service}
     VPC_CIDR: ${ssm:/amplify/${sls:stage}/VPC_CIDR}
     VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID}
+    EMBEDDING_DIM: ${ssm:/amplify/${sls:stage}/EMBEDDING_DIM, '1536'}
     # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
 

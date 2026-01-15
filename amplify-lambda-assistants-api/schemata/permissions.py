@@ -52,5 +52,27 @@ permissions_by_state_type = {
     "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
     },
-
+    # MCP server endpoints
+    "/integrations/mcp/servers": {
+        "list_mcp_servers": lambda for_user, with_data: True,
+        "add_mcp_server": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/servers/test": {
+        "test_mcp_connection": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/server/get": {
+        "get_mcp_server": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/server/update": {
+        "update_mcp_server": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/server/delete": {
+        "delete_mcp_server": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/server/tools": {
+        "get_mcp_server_tools": lambda for_user, with_data: True
+    },
+    "/integrations/mcp/server/refresh": {
+        "refresh_mcp_server_tools": lambda for_user, with_data: True
+    },
 }
