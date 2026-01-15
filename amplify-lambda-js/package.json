@@ -11,6 +11,7 @@
     "@aws-sdk/client-bedrock-runtime": "3.714.0",
     "@aws-sdk/client-dynamodb": "^3.648.0",
     "@aws-sdk/client-s3": "^3.474.0",
+    "@aws-sdk/client-ssm": "^3.648.0",
     "@aws-sdk/client-secrets-manager": "^3.474.0",
     "@aws-sdk/client-sqs": "^3.478.0",
     "@aws-sdk/lib-dynamodb": "^3.648.0",

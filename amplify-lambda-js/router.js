@@ -296,6 +296,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const assistantParams = {
                 account: {
                     user: params.user,
+                    username: params.username,  // Clean username for services like tool API key lookup
                     accessToken: params.accessToken,
                     accountId: options.accountId,
                     apiKeyId: params.apiKeyId

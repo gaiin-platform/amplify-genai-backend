@@ -220,7 +220,7 @@ class ParameterStorePopulator:
                     'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
                     'COGNITO_CLIENT_ID', 'COGNITO_USER_POOL_ID', 'ORGANIZATION_EMAIL_DOMAIN',
                     'API_VERSION', 'MAX_ACU', 'MIN_ACU', 'PRIVATE_SUBNET_ONE',
-                    'PRIVATE_SUBNET_TWO', 'VPC_CIDR', 'VPC_ID'
+                    'PRIVATE_SUBNET_TWO', 'VPC_CIDR', 'VPC_ID', 'EMBEDDING_DIM'
                 ]
                 
                 shared_vars = {}
