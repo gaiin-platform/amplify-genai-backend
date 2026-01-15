@@ -118,6 +118,16 @@ functions:
     # NO http event - we manually define the API Gateway method in resources section
     # to enable streaming with ContentHandling: CONVERT_TO_TEXT
 
+  # To be deprecated - kept for backward compatibility in the short term 
+  chat:
+    handler: index.handler
+    memorySize: 1024
+    timeout: 900
+    tracing: Active
+    url:
+      cors: true
+      invokeMode: RESPONSE_STREAM
+
   api_g_chat:
     handler: indexApiG.handler
     memorySize: 1024
