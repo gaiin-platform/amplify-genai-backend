@@ -5,14 +5,14 @@ const logger = getLogger("assistants.agent");
 
 
 export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
-    const endpoint = process.env.AGENT_ENDPOINT;
+    const endpoint = process.env.API_BASE_URL + "/vu-agent/handle-event";
 
     logger.info("Invoking agent with sessionId:", sessionId, "and Endpoint:", endpoint);
 
     try {
         const response = await axios.post(
             endpoint,
-            {
+            {   
                 data: {
                     sessionId,
                     requestId,
