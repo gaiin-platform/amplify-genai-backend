@@ -47,10 +47,6 @@ def create_hash_key(user_id: str, app_id: str) -> str:
     return f"{sanitized_user}#{sanitized_app}"
 
 
-def get_full_user_id(user_id: str) -> str:
-    """Get full user ID with IDP prefix"""
-    idp_prefix = get_idp_prefix()
-    return f"{idp_prefix}_{user_id}" if idp_prefix else user_id
 
 
 def generate_server_id() -> str:
@@ -86,11 +82,10 @@ def list_mcp_servers(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
-        logger.info(f"Querying MCP servers for user: {full_user_id}, PK: {pk}")
+        logger.info(f"Querying MCP servers for user: {current_user}, PK: {pk}")
 
         response = table.query(
             KeyConditionExpression="PK = :pk",
@@ -161,9 +156,8 @@ def get_mcp_server(event, context, current_user, name, data):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
-    try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+    try:       
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         response = table.get_item(Key={"PK": pk, "SK": server_id})
@@ -252,8 +246,8 @@ def add_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
         server_id = generate_server_id()
         now = datetime.now(timezone.utc).isoformat()
@@ -336,8 +330,7 @@ def update_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         # Get existing item
@@ -435,8 +428,7 @@ def delete_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         table.delete_item(Key={"PK": pk, "SK": server_id})
@@ -614,8 +606,8 @@ def test_mcp_connection(event, context, current_user, name, data):
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(os.environ.get("USER_STORAGE_TABLE", ""))
 
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         response = table.get_item(Key={"PK": pk, "SK": server_id})
@@ -668,8 +660,7 @@ def get_mcp_server_tools(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         response = table.get_item(Key={"PK": pk, "SK": server_id})
@@ -727,8 +718,7 @@ def refresh_mcp_server_tools(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        full_user_id = get_full_user_id(current_user)
-        hash_key = create_hash_key(full_user_id, MCP_APP_ID)
+        hash_key = create_hash_key(current_user, MCP_APP_ID)
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
 
         response = table.get_item(Key={"PK": pk, "SK": server_id})
