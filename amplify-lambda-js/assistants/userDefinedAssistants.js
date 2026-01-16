@@ -444,132 +444,134 @@ export const fillInAssistant = (assistant, assistantBase) => {
             }
 
             let blockTerminator = null;
+            
+            if (!body.options.disableTools) {
+                if (assistant.data && assistant.data.opsLanguageVersion === "v4") {
 
-            if (assistant.data && assistant.data.opsLanguageVersion === "v4") {
-
-                const statusInfo = newStatus(
-                    {
-                        animated: true,
-                        inProgress: true,
-                        sticky: true,
-                        summary: `Analyzing Request...`,
-                        icon: "info",
-                    }
-                );
-
-                let workflowTemplateId = assistant.data?.workflowTemplateId ? 
-                                          {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
-
-                if (!workflowTemplateId.workflow && assistant.data.baseWorkflowTemplateId) { // backup
-                    workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
-                }
-
-                // const segment = AWSXRay.getSegment();
-                // const agentSegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.invokeAgent');
-                const tools = getTools(body.messages)
-                const { builtInOperations, operations } = constructTools(tools);
-
-                const sessionId = params.options.conversationId;
-
-                // 🚀 AUTOMATION + IMAGES: Convert images to descriptions for agent compatibility
-                
-                // Check if model supports images (with fallback for known vision models)
-                const modelSupportsVision = params.model.supportsImages;
-                
-                logger.debug('🔍 Image processing check:', {
-                    hasImageSources: !!(body.imageSources && body.imageSources.length > 0),
-                    imageSourcesCount: body.imageSources?.length || 0,
-                    modelSupportsImages: !!params.model.supportsImages,
-                    modelSupportsVision: modelSupportsVision,
-                    modelId: params.model.id,
-                    willProcess: !!(body.imageSources && body.imageSources.length > 0 && modelSupportsVision)
-                });
-                
-                if (body.imageSources && body.imageSources.length > 0 && modelSupportsVision) {
-                    try {
-                        logger.debug(`Generating descriptions for ${body.imageSources.length} images for automation assistant`);
-                        
-                        const imageDescriptions = await generateImageDescriptions(
-                            body.imageSources, 
-                            params.model, 
-                            params
-                        );
-
-                        if (imageDescriptions.length > 0) {
-                            // Create a consolidated message with all image descriptions
-                            const imageDescriptionText = imageDescriptions.map(desc => 
-                                `**${desc.imageName}** (${desc.imageType}): ${desc.description}`
-                            ).join('\n\n');
-
-                            // Add image descriptions as a system message before invoking agent
-                            const imageContextMessage = {
-                                role: 'user',
-                                content: `📎 **Attached Images Analysis:**\n\n${imageDescriptionText}\n\n` +
-                                        `Note: The above descriptions represent ${imageDescriptions.length} image(s) that were attached to this conversation. ` +
-                                        `Use this visual information to better understand the context and answer the user's request.`
-                            };
-
-                            body.messages.push(imageContextMessage);
-                            
-                            // Clear image sources to prevent conflicts with agent processing
-                            body.imageSources = [];
-                            
-                            logger.debug(`Added descriptions for ${imageDescriptions.length} images to automation assistant context`);
+                    const statusInfo = newStatus(
+                        {
+                            animated: true,
+                            inProgress: true,
+                            sticky: true,
+                            summary: `Analyzing Request...`,
+                            icon: "info",
                         }
-                    } catch (error) {
-                        logger.error('Error generating image descriptions for automation assistant:', error);
-                        // Continue with agent invocation even if image description fails
-                    }
-                }
+                    );
 
-                invokeAgent(
-                    params.account.accessToken,
-                    sessionId,
-                    params.options.requestId,
-                    body.messages,
-                    {assistant, model: params.model.id, ...workflowTemplateId, 
-                     builtInOperations, operations}
-                );
+                    let workflowTemplateId = assistant.data?.workflowTemplateId ? 
+                                            {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
 
-                sendStatusEventToStream(responseStream, statusInfo);
-                forceFlush(responseStream);
-
-                sendStateEventToStream(responseStream, { agentRun: { startTime: new Date(), sessionId } });
-                forceFlush(responseStream);
-                responseStream.end();
-
-                return;
-
-            } else if (assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
-                if (assistant.data.opsLanguageVersion !== "custom") {
-                    const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
-                    const langVersion = opsLanguages[opsLanguageVersion];
-                    const instructionsPreProcessor = langVersion.instructionsPreProcessor;
-
-                    if (instructionsPreProcessor) {
-                        assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                    if (!workflowTemplateId.workflow && assistant.data.baseWorkflowTemplateId) { // backup
+                        workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
                     }
 
-                    const langMessages = langVersion.messages;
-                    blockTerminator = langVersion.blockTerminator;
-                    extraMessages.push(...langMessages);
-                    suffixMessages.push(...(langVersion.suffixMessages || []));
+                    // const segment = AWSXRay.getSegment();
+                    // const agentSegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.invokeAgent');
+                    const tools = getTools(body.messages)
+                    const { builtInOperations, operations } = constructTools(tools);
+
+                    const sessionId = params.options.conversationId;
+
+                    // 🚀 AUTOMATION + IMAGES: Convert images to descriptions for agent compatibility
+                    
+                    // Check if model supports images (with fallback for known vision models)
+                    const modelSupportsVision = params.model.supportsImages;
+                    
+                    logger.debug('🔍 Image processing check:', {
+                        hasImageSources: !!(body.imageSources && body.imageSources.length > 0),
+                        imageSourcesCount: body.imageSources?.length || 0,
+                        modelSupportsImages: !!params.model.supportsImages,
+                        modelSupportsVision: modelSupportsVision,
+                        modelId: params.model.id,
+                        willProcess: !!(body.imageSources && body.imageSources.length > 0 && modelSupportsVision)
+                    });
+                    
+                    if (body.imageSources && body.imageSources.length > 0 && modelSupportsVision) {
+                        try {
+                            logger.debug(`Generating descriptions for ${body.imageSources.length} images for automation assistant`);
+                            
+                            const imageDescriptions = await generateImageDescriptions(
+                                body.imageSources, 
+                                params.model, 
+                                params
+                            );
+
+                            if (imageDescriptions.length > 0) {
+                                // Create a consolidated message with all image descriptions
+                                const imageDescriptionText = imageDescriptions.map(desc => 
+                                    `**${desc.imageName}** (${desc.imageType}): ${desc.description}`
+                                ).join('\n\n');
+
+                                // Add image descriptions as a system message before invoking agent
+                                const imageContextMessage = {
+                                    role: 'user',
+                                    content: `📎 **Attached Images Analysis:**\n\n${imageDescriptionText}\n\n` +
+                                            `Note: The above descriptions represent ${imageDescriptions.length} image(s) that were attached to this conversation. ` +
+                                            `Use this visual information to better understand the context and answer the user's request.`
+                                };
+
+                                body.messages.push(imageContextMessage);
+                                
+                                // Clear image sources to prevent conflicts with agent processing
+                                body.imageSources = [];
+                                
+                                logger.debug(`Added descriptions for ${imageDescriptions.length} images to automation assistant context`);
+                            }
+                        } catch (error) {
+                            logger.error('Error generating image descriptions for automation assistant:', error);
+                            // Continue with agent invocation even if image description fails
+                        }
+                    }
+
+                    invokeAgent(
+                        params.account.accessToken,
+                        sessionId,
+                        params.options.requestId,
+                        body.messages,
+                        {assistant, model: params.model.id, ...workflowTemplateId, 
+                        builtInOperations, operations}
+                    );
+
+                    sendStatusEventToStream(responseStream, statusInfo);
+                    forceFlush(responseStream);
+
+                    sendStateEventToStream(responseStream, { agentRun: { startTime: new Date(), sessionId } });
+                    forceFlush(responseStream);
+                    responseStream.end();
+
+                    return;
+
+                } else if (assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
+                    if (assistant.data.opsLanguageVersion !== "custom") {
+                        const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
+                        const langVersion = opsLanguages[opsLanguageVersion];
+                        const instructionsPreProcessor = langVersion.instructionsPreProcessor;
+
+                        if (instructionsPreProcessor) {
+                            assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                        }
+
+                        const langMessages = langVersion.messages;
+                        blockTerminator = langVersion.blockTerminator;
+                        extraMessages.push(...langMessages);
+                        suffixMessages.push(...(langVersion.suffixMessages || []));
+                    }
+                    const containsIntegrations = assistant.data.operations.some(op => op.tags.includes("integration"));
+                    if (containsIntegrations) {
+                        const integrationInstructions = `
+                        If you detect an error message regarding *api credentials* please respond with your message and then finish with:
+
+                            \`\`\` integrationsDialog 
+                            \`\`\`
+
+                        You must provide this exactly with the 3 tick marks and a newline, so i can render a button. Let the user know they can connect to the service by clicking on the button. 
+
+                        This only applies when you have been notified there was an error regarding *api credentials* otherwise DO NOT mention it
+                        `;
+                        assistant.instructions += "\n\n" + integrationInstructions;
+                    }
+
                 }
-                const containsIntegrations = assistant.data.operations.some(op => op.tags.includes("integration"));
-                if (containsIntegrations) {
-                    const integrationInstructions = `
-                    If you detect an error message regarding *api credentials* please respond with your message and then finish with:
-
-                        \`\`\` integrationsDialog 
-                        \`\`\`
-
-                    You must provide this exactly with the 3 tick marks and a newline, so i can render a button. Let the user know they can connect to the service by clicking on the button. 
-
-                    This only applies when you have been notified there was an error regarding *api credentials* otherwise DO NOT mention it
-                    `;
-                    assistant.instructions += "\n\n" + integrationInstructions;
-                }
-
             }
 
 
@@ -578,7 +580,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             );
 
             const groupType = body.options.groupType;
-            if (groupType) {
+            if (groupType && assistant.data.groupTypeData?.[groupType]) {
                 const groupTypeData = assistant.data.groupTypeData[groupType];
                 if (!groupTypeData.isDisabled) {
                     assistant.instructions += "\n\n" + groupTypeData.additionalInstructions;
@@ -699,7 +701,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // 🚨 COMBINE NON-IMAGE DATA SOURCES: user + assistant (excluding images)
             const allDataSources = [...(ds || []), ...assistantNonImageDataSources];
             
-            logger.error("🎯 User-defined assistant: FINAL data sources being passed to base assistant:", {
+            logger.debug("🎯 User-defined assistant: FINAL data sources being passed to base assistant:", {
                 allDataSources_length: allDataSources.length,
                 allDataSources_preview: allDataSources.map(d => ({id: d.id?.substring(0, 50), type: d.type}))
             });
