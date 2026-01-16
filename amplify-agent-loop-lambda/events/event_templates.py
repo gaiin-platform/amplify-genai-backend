@@ -100,7 +100,6 @@ def add_event_template(
         # Step 1: Create an API Key for this event
         api_key_response = create_agent_event_api_key(
             user=user,
-            token=access_token,
             agent_event_name=tag,
             account=account,
             description=description,
