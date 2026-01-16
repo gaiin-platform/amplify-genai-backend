@@ -27,5 +27,6 @@ FEATURE_FLAGS = {
     "websiteUrls": False,
     "accounts": True,
     "cachedDocuments": False,
-    "modelPricing": False
+    "modelPricing": False,
+    "imageGeneration": True,
 }

@@ -9,6 +9,7 @@ import {createRequestState, deleteRequestState, updateKillswitch} from "./reques
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
+import {generateImage} from "./common/dalle.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
@@ -32,7 +33,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
         logger.debug("Extracting params from event");
         if (params && params.statusCode) {
             returnResponse(responseStream, params);
-        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest)) {
+        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest && !params.body.dalleRequest)) {
             logger.info("Invalid request body", params.body);
 
             returnResponse(responseStream, {
@@ -72,6 +73,15 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             logger.info("Processing datasource request");
             const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
             returnResponse(responseStream, response);
+        } else if(params.body.dalleRequest) {
+            // Handle DALL-E image generation request
+            logger.info("Processing DALL-E image generation request");
+            const dalleRequest = params.body.dalleRequest;
+            const response = await generateImage(dalleRequest);
+            returnResponse(responseStream, {
+                statusCode: response.success ? 200 : 400,
+                body: response
+            });
         } else if (await isRateLimited(params)) {
             const rateLimitInfo = params.body.options.rateLimit;
             let errorMessage = "Request limit reached."
