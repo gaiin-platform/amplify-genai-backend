@@ -17,7 +17,11 @@ custom:
   depName: ${self:custom.stageVars.DEP_NAME}
 
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
+    layer: true
+    slim: true    
+    useStaticCache: false
+    useDownloadCache: false             
 
   booleanMap:
     "true": true
@@ -80,6 +84,7 @@ provider:
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
 
   iam:
     role:
@@ -92,6 +97,8 @@ functions:
 
   getSupportedIntegrations:
     handler: integrations/oauth.get_supported_integrations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -100,6 +107,8 @@ functions:
 
   listConnectedUserIntegrations:
     handler: integrations/oauth.list_connected_integrations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -108,6 +117,8 @@ functions:
 
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
       - http:
@@ -116,6 +127,8 @@ functions:
 
   uploadIntegrationFiles:
     handler: integrations/drive_files.drive_files_to_data_sources
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
       - http:
@@ -127,6 +140,8 @@ functions:
 
   downloadIntegrationFile:
     handler: integrations/drive_files.download_integration_file
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -137,6 +152,8 @@ functions:
 
   registerIntegrationSecret:
     handler: integrations/oauth.regiser_secret
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -147,6 +164,8 @@ functions:
       
   refreshIntegrationsToken:
     handler: integrations/oauth.refresh_integration_tokens
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -157,6 +176,8 @@ functions:
       
   execute_custom_auto:
     handler: service/core.execute_custom_auto
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -166,6 +187,8 @@ functions:
 
   get_job_result:
     handler: service/core.get_job_result
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -174,6 +197,8 @@ functions:
           cors: true
   set_job_result:
     handler: service/core.update_job_result
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -182,6 +207,8 @@ functions:
           cors: true
   startAuth:
     handler: integrations/oauth.start_auth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -189,6 +216,8 @@ functions:
           method: post
   authCallback:
     handler: integrations/oauth.auth_callback
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -199,12 +228,94 @@ functions:
   
   deleteUserIntegration:
     handler: integrations/oauth.handle_delete_integration
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
           path: integrations/oauth/user/delete
           method: post
 
+  # MCP Server Management Endpoints
+  listMCPServers:
+    handler: integrations/mcp_servers.list_mcp_servers
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers
+          method: get
+
+  addMCPServer:
+    handler: integrations/mcp_servers.add_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers
+          method: post
+
+  getMCPServer:
+    handler: integrations/mcp_servers.get_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/get
+          method: post
+
+  updateMCPServer:
+    handler: integrations/mcp_servers.update_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/update
+          method: post
+
+  deleteMCPServer:
+    handler: integrations/mcp_servers.delete_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/delete
+          method: post
+
+  testMCPConnection:
+    handler: integrations/mcp_servers.test_mcp_connection
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers/test
+          method: post
+
+  getMCPServerTools:
+    handler: integrations/mcp_servers.get_mcp_server_tools
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/tools
+          method: post
+
+  refreshMCPServerTools:
+    handler: integrations/mcp_servers.refresh_mcp_server_tools
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/refresh
+          method: post
 
 
 resources:
@@ -223,6 +334,7 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
                 - s3:GetObject
                 - s3:PutObject
                 - s3:ListBucket
@@ -241,6 +353,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -249,6 +363,18 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*"
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource:
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:alias/aws/ssm"
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:key/*"
+              Condition:
+                StringEquals:
+                  "kms:ViaService": "ssm.${self:provider.region}.amazonaws.com"
             - Effect: Allow
               Action:
                 - ssm:GetParameter

@@ -555,6 +555,7 @@ resources:
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*
             - Effect: Allow
               Action:
                 - ssm:GetParameter

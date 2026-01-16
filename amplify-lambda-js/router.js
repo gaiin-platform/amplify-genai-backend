@@ -296,6 +296,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const assistantParams = {
                 account: {
                     user: params.user,
+                    username: params.username,  // Clean username for services like tool API key lookup
                     accessToken: params.accessToken,
                     accountId: options.accountId,
                     apiKeyId: params.apiKeyId
@@ -429,9 +430,12 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         context: {
                             requestId: requestId || 'unknown',
                             modelId: model?.id || 'unknown',
-                            assistantType: selectedAssistant?.constructor?.name || 'unknown',
                             conversationId: options?.conversationId || 'N/A',
-                            hasDataSources: dataSources?.length > 0
+                            hasDataSources: dataSources?.length > 0,
+                            requestedAssistantId: options?.assistantId || 'none',
+                            codeInterpreterOnly: options?.codeInterpreterOnly || false,
+                            artifactsMode: options?.artifactsMode || false,
+                            api_accessed: options?.api_accessed || false
                         }
                     });
                 }

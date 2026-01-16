@@ -32,7 +32,7 @@ custom:
   prune:
     automatic: false
     includeLayers: true
-    number: 5    
+    number: 20    
 
 
 provider:
@@ -56,7 +56,6 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
-    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT, ''}
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
     BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
@@ -100,6 +99,7 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     AGENT_STATE_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-agent-loop/AGENT_STATE_DYNAMODB_TABLE}
+    USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
     
   iam:
     role:
@@ -111,6 +111,15 @@ provider:
 
 
 functions:
+  chat_stream:
+    handler: index.streamHandler
+    memorySize: 1024
+    timeout: 900
+    tracing: Active
+    # NO http event - we manually define the API Gateway method in resources section
+    # to enable streaming with ContentHandling: CONVERT_TO_TEXT
+
+  # To be deprecated - kept for backward compatibility in the short term 
   chat:
     handler: index.handler
     memorySize: 1024
@@ -265,6 +274,7 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -320,7 +330,9 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*  
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools*
+
 
             - Effect: Allow
               Action:
@@ -458,9 +470,123 @@ resources:
               Resource:
                 - 'arn:aws:bedrock:*::foundation-model/*'
                 - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+
+    # =============================================================================
+    # API GATEWAY STREAMING CONFIGURATION
+    # =============================================================================
+    # Manually create API Gateway resources for streaming support.
+    # We removed the http event from the function definition because Serverless
+    # auto-generation doesn't support ContentHandling: CONVERT_TO_TEXT.
+    # =============================================================================
+
+    # Create /chat_stream resource
+    ApiGatewayResourceChatstream:
+      Type: AWS::ApiGateway::Resource
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ParentId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+        PathPart: chat_stream
+
+    # Lambda permission for API Gateway to invoke chat_stream function
+    ChatUnderscorestreamLambdaPermissionApiGateway:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !GetAtt ChatUnderscorestreamLambdaFunction.Arn
+        Action: lambda:InvokeFunction
+        Principal: apigateway.amazonaws.com
+        SourceArn:
+          Fn::Join:
+            - ""
+            - - "arn:"
+              - !Ref AWS::Partition
+              - ":execute-api:"
+              - !Ref AWS::Region
+              - ":"
+              - !Ref AWS::AccountId
+              - ":"
+              - Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+              - "/*/*"
+
+    # POST method with streaming configuration
+    ApiGatewayMethodChatstreamPost:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ResourceId: !Ref ApiGatewayResourceChatstream
+        HttpMethod: POST
+        AuthorizationType: NONE
+        Integration:
+          Type: AWS  # NOT AWS_PROXY - streaming requires custom integration
+          IntegrationHttpMethod: POST
+          Uri:
+            Fn::Join:
+              - ""
+              - - "arn:"
+                - !Ref AWS::Partition
+                - ":apigateway:"
+                - !Ref AWS::Region
+                - ":lambda:path/2015-03-31/functions/"
+                - !GetAtt ChatUnderscorestreamLambdaFunction.Arn
+                - "/invocations"
+
+          # KEY: Enable streaming - this is what Serverless doesn't set
+          ContentHandling: CONVERT_TO_TEXT
+
+          # Request Template to map Authorization header into body
+          RequestTemplates:
+            application/json: |
+              #set($authHeader = $input.params().header.get('Authorization'))
+              {
+                "authHeader": "$authHeader",
+                "bodyData": $input.json('$')
+              }
+
+          # REQUIRED: Integration responses for AWS integration (not proxy)
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+
+        # REQUIRED: Method responses for AWS integration
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: true
+
+    # OPTIONS method for CORS preflight
+    ApiGatewayMethodChatstreamOptions:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ResourceId: !Ref ApiGatewayResourceChatstream
+        HttpMethod: OPTIONS
+        AuthorizationType: NONE
+        Integration:
+          Type: MOCK
+          RequestTemplates:
+            application/json: '{"statusCode": 200}'
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+              ResponseTemplates:
+                application/json: ''
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+
   Outputs:
     BedrockIAMPolicyArn:
-      Value: 
+      Value:
         Ref: BedrockIAMPolicy
       Export:
         Name: ${self:service}-${sls:stage}-BedrockIAMPolicyArn

@@ -13,6 +13,8 @@ import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
+import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
+import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
 
 const logger = getLogger("assistants");
 
@@ -69,26 +71,14 @@ const defaultAssistant = {
             (body.imageSources && body.imageSources.length > 0) ||
             (params.body?.imageSources && params.body.imageSources.length > 0);
 
-        logger.debug("🎯 Assistant decision logic:", {
+        logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
             hasPreResolvedData,
-            preResolvedSources: preResolvedSources ? {
-                ragDataSources: preResolvedSources.ragDataSources?.length || 0,
-                dataSources: preResolvedSources.dataSources?.length || 0,
-                conversationDataSources: preResolvedSources.conversationDataSources?.length || 0,
-                attachedDataSources: preResolvedSources.attachedDataSources?.length || 0
-            } : "NULL_OR_MISSING",
-            // Show fallback checks
-            rawDataSources_length: dataSources?.length || 0,
-            bodyImageSources_length: body.imageSources?.length || 0,
-            paramsBodyImageSources_length: params.body?.imageSources?.length || 0,
             needsDataProcessing: needsDataProcessingDecision,
-            // Updated routing logic
-            isUserDefinedAssistant: !!body.options?.assistantId,
-            assistantId: body.options?.assistantId || "default",
-            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" : 
+            enableWebSearch: body?.enableWebSearch,
+            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
@@ -121,18 +111,76 @@ const defaultAssistant = {
                 logger.info("→ Using direct native provider (no data sources needed)");
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
+
+                // Check if web search or MCP is enabled
+                let webSearchEnabled = shouldEnableWebSearch(body);
+                // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
+                const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
+
+                // Also check for admin-configured web search (auto-enable if admin has set up web search)
+                let adminWebSearchAvailable = false;
+                if (!webSearchEnabled) {
+                    try {
+                        const adminKey = await getAdminWebSearchApiKey();
+                        if (adminKey && adminKey.provider && adminKey.api_key) {
+                            adminWebSearchAvailable = true;
+                            webSearchEnabled = true;
+                            logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
+                        }
+                    } catch (error) {
+                        logger.debug('Failed to check admin web search config:', error.message);
+                    }
+                }
+
+                logger.info("🔍 Tool loop check:", {
+                    enableWebSearch: body?.enableWebSearch,
+                    optionsEnableWebSearch: body?.options?.enableWebSearch,
+                    optionsOptionsWebSearch: body?.options?.options?.webSearch,
+                    adminWebSearchAvailable,
+                    webSearchEnabled,
+                    mcpEnabled,
+                    optionsMcpEnabled: body?.options?.mcpEnabled,
+                    toolsCount: (body?.tools || body?.options?.tools)?.length || 0
+                });
+
+                if (webSearchEnabled || mcpEnabled) {
+                    logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
+                    return await executeToolLoop(
+                        {
+                            account: params.account,
+                            options: {
+                                ...bodyWithImages.options,
+                                model,
+                                requestId: params.options?.requestId
+                            }
+                        },
+                        bodyWithImages.messages,
+                        model,
+                        responseStream,
+                        {
+                            max_tokens: bodyWithImages.max_tokens || 2000,
+                            imageSources: bodyWithImages.imageSources,
+                            // MCP tools sent from frontend need client-side execution
+                            // since they run on the user's local machine
+                            mcpClientSide: mcpEnabled,
+                            // Pass through any tools from the frontend (can be at top level or in options)
+                            tools: bodyWithImages.tools || bodyWithImages.options?.tools
+                        }
+                    );
+                }
+
                 return await callUnifiedLLM(
-                    { 
-                        account: params.account, 
-                        options: { 
+                    {
+                        account: params.account,
+                        options: {
                             ...bodyWithImages.options,  // Include all options from body (including trackConversations)
-                            model, 
-                            requestId: params.options?.requestId 
-                        } 
+                            model,
+                            requestId: params.options?.requestId
+                        }
                     },
                     bodyWithImages.messages,
                     responseStream,
-                    { 
+                    {
                         max_tokens: bodyWithImages.max_tokens || 2000,
                         imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
                     }

@@ -26,6 +26,17 @@ rules = {
         "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/register_secret": oauth_register_secret_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
+        # MCP server endpoints
+        "/integrations/mcp/servers": {
+            "list_mcp_servers": {},
+            "add_mcp_server": {}
+        },
+        "/integrations/mcp/servers/test": {"test_mcp_connection": {}},
+        "/integrations/mcp/server/get": {"get_mcp_server": {}},
+        "/integrations/mcp/server/update": {"update_mcp_server": {}},
+        "/integrations/mcp/server/delete": {"delete_mcp_server": {}},
+        "/integrations/mcp/server/tools": {"get_mcp_server_tools": {}},
+        "/integrations/mcp/server/refresh": {"refresh_mcp_server_tools": {}},
     },
     "api_validators": {
         "/assistant-api/execute-custom-auto": {
@@ -40,5 +51,16 @@ rules = {
         "/integrations/user/files/download": integration_user_files_download_schema,
         "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
+        # MCP server endpoints
+        "/integrations/mcp/servers": {
+            "list_mcp_servers": {},
+            "add_mcp_server": {}
+        },
+        "/integrations/mcp/servers/test": {"test_mcp_connection": {}},
+        "/integrations/mcp/server/get": {"get_mcp_server": {}},
+        "/integrations/mcp/server/update": {"update_mcp_server": {}},
+        "/integrations/mcp/server/delete": {"delete_mcp_server": {}},
+        "/integrations/mcp/server/tools": {"get_mcp_server_tools": {}},
+        "/integrations/mcp/server/refresh": {"refresh_mcp_server_tools": {}},
     }
 }
