@@ -59,9 +59,21 @@ export const chatBedrock = async (chatBody, writable) => {
         const maxModelTokens = options.model.outputTokenLimit;
 
         const maxTokens = body.max_tokens || 2000;
-        const inferenceConfigs = {"temperature": options.temperature, 
-                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens, };
-        
+
+        // Note: Disable reasoning when tools are present because Bedrock requires thinking blocks
+        // in assistant messages when using extended thinking with tools, which complicates the tool loop
+        const hasTools = body.tools && body.tools.length > 0;
+        const isReasoningEnabled = currentModel.supportsReasoning && maxTokens > 1024 && !hasTools;
+
+        // CRITICAL: When extended thinking is enabled, temperature MUST be 1.0
+        // https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
+        const temperature = isReasoningEnabled ? 1.0 : options.temperature;
+
+        const inferenceConfigs = {
+            "temperature": temperature,
+            "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens,
+        };
+
         const input = { modelId: currentModel.id,
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
@@ -74,19 +86,18 @@ export const chatBedrock = async (chatBody, writable) => {
                 guardrailIdentifier: process.env.BEDROCK_GUARDRAIL_ID,
                 guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION
             }
-       
+
         }
-        // Note: Disable reasoning when tools are present because Bedrock requires thinking blocks
-        // in assistant messages when using extended thinking with tools, which complicates the tool loop
-        const hasTools = body.tools && body.tools.length > 0;
-        if (currentModel.supportsReasoning && maxTokens > 1024 && !hasTools) {
+
+        if (isReasoningEnabled) {
             const budget_tokens = getBudgetTokens({options}, maxTokens);
             input.additionalModelRequestFields={
                 "reasoning_config": {
                     "type": "enabled",
-                "budget_tokens": budget_tokens
+                    "budget_tokens": budget_tokens
                 },
             }
+            logger.info(`Extended thinking enabled with temperature=1.0 (original: ${options.temperature}), budget_tokens=${budget_tokens}`);
         }
 
         if (currentModel.supportsSystemPrompts) {
