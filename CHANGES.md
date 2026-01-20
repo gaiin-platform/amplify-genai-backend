@@ -1,3 +1,81 @@
+# Security Updates - January 2025
+
+## Resolved Dependabot Security Alerts
+
+**Date:** January 20, 2025
+
+### Summary
+Resolved 20 pending Dependabot security alerts by upgrading Python dependencies to their latest secure versions. All updates are minimal version bumps focused on security patches, with no breaking API changes expected.
+
+### Direct Dependency Updates (requirements.in)
+Updated `amplify-lambda/requirements.in` with minimum secure versions:
+- **beautifulsoup4**: 4.12.2 → 4.13.4
+- **Pillow**: 11.2.1 → 11.3.0
+- **pydantic**: (unpinned) → >=2.11.9
+- **tiktoken**: 0.9.0 → >=0.12.0
+
+### Transitive Dependency Updates
+Updated across multiple requirements.txt files:
+
+#### Network/HTTP Libraries
+- **h11**: 0.14.0 → 0.16.0 (9 files)
+- **httpcore**: 1.0.7 → 1.0.9 (9 files)
+- **httpx**: Already at 0.28.1 (no update needed)
+
+#### Data Processing
+- **lxml**: 5.3.0/5.4.0 → 6.0.2
+- **regex**: 2024.11.6 → 2025.9.18 (9 files)
+- **pymupdf**: 1.25.1 → 1.26.4
+
+#### AI/ML Libraries
+- **openai**: 1.59.4 → 2.5.0
+- **tiktoken**: 0.6.0/0.8.0 → 0.12.0 (7 files)
+- **jiter**: 0.8.2 → 0.11.1
+
+#### Image Processing
+- **Pillow**: 10.1.0/10.4.0/11.1.0 → 11.3.0 (12 files)
+
+#### Database/Cloud
+- **pgvector**: 0.3.6 → 0.4.1
+- **s3transfer**: 0.13.0 → 0.14.0
+
+#### Other
+- **charset-normalizer**: 3.4.2 → 3.4.4
+
+### Affected Files (17 total)
+- amplify-agent-loop-lambda/requirements.txt
+- amplify-assistants/requirements.txt
+- amplify-lambda/requirements.in
+- amplify-lambda/requirements.txt
+- amplify-lambda/markitdown/requirements.txt
+- amplify-lambda-admin/requirements.txt
+- amplify-lambda-api/requirements.txt
+- amplify-lambda-artifacts/requirements.txt
+- amplify-lambda-assistants-api/requirements.txt
+- amplify-lambda-assistants-api/requirements_hold.txt
+- amplify-lambda-assistants-api-google/requirements.txt
+- amplify-lambda-assistants-api-office365/requirements.txt
+- amplify-lambda-ops/requirements.txt
+- amplify-lambda-python-base/requirements.txt
+- chat-billing/requirements.txt
+- data-disclosure/requirements.txt
+- embedding/requirements.txt
+
+### Testing Requirements
+Before deployment:
+- [ ] Import checks pass for critical packages
+- [ ] Lambda functions deploy successfully
+- [ ] Basic smoke tests pass
+- [ ] No regression in existing functionality
+
+### Rollback Plan
+If issues arise, revert commit and redeploy. All changes are version number updates only - no code changes required.
+
+### CVE Information
+These updates address various security vulnerabilities. Specific CVE numbers can be found in the corresponding Dependabot alerts on GitHub.
+
+---
+
 # Implementation Changes Summary
 
 ## Files Created
