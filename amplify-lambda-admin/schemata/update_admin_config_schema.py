@@ -249,7 +249,8 @@ update_admin_config_schema = {
                                     "documentCaching": {"type": ["string", "null"]},
                                     "agent": {"type": ["string", "null"]},
                                     "embeddings": {"type": ["string", "null"]},
-                                    "qa": {"type": ["string", "null"]}
+                                    "qa": {"type": ["string", "null"]},
+                                    "imageGeneration": {"type": ["string", "null"]}
                                 },
                                 "additionalProperties": False
                             }

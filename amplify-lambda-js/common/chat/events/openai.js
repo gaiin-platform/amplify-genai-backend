@@ -1,7 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { sendStatusEventToStream } from "../../streams.js";
+import { sendStatusEventToStream, sendStateEventToStream } from "../../streams.js";
 import { newStatus } from "../../status.js";
 import { getLogger } from "../../logging.js";
 
@@ -38,6 +38,38 @@ export const openAiTransform = (event, responseStream = null, capturedContent = 
                 }));
             }
             return null; // Don't send this as content
+        }
+
+        // Handle image generation partial images (streaming)
+        if (event.type === "response.image_generation_call.partial_image") {
+            if (responseStream) {
+                sendStateEventToStream(responseStream, {
+                    imageGeneration: {
+                        type: "partial",
+                        partialImageIndex: event.partial_image_index,
+                        imageBase64: event.partial_image_b64,
+                    }
+                });
+            }
+            return null; // Don't send as content
+        }
+
+        // Handle completed image generation
+        if (event.type === "response.output_item.done" && event.item?.type === "image_generation_call") {
+            if (responseStream) {
+                sendStateEventToStream(responseStream, {
+                    imageGeneration: {
+                        type: "complete",
+                        imageBase64: event.item.result,
+                        revisedPrompt: event.item.revised_prompt,
+                        size: event.item.size,
+                        quality: event.item.quality,
+                        background: event.item.background,
+                        outputFormat: event.item.output_format,
+                    }
+                });
+            }
+            return null; // Don't send as content
         }
 
         // Handle text delta from assistant response

@@ -236,6 +236,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
+        // Add image generation tool if enabled
+        if (options.imageGenerationEnabled) {
+            data.tools = [...(data.tools || []), {"type": "image_generation"}];
+        }
     }
 
     // Debug logging for tool requests

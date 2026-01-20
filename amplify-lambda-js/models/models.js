@@ -81,6 +81,7 @@ export const getUserAvailableModels = async (accessToken) => {
     if (!model_data.advanced) model_data.advanced = model_data.default;
     if (!model_data.cheapest) model_data.cheapest = model_data.default;
     if (!model_data.documentCaching) model_data.documentCaching = model_data.cheapest;
+    if (!model_data.imageGeneration) model_data.imageGeneration = model_data.cheapest;
 
     return model_data;
 }
