@@ -19,7 +19,7 @@ et-xmlfile==2.0.0
     # via openpyxl
 joblib==1.5.1
     # via nltk
-lxml==5.4.0
+lxml==6.0.2
     # via
     #   python-docx
     #   python-pptx
@@ -27,7 +27,7 @@ nltk==3.8.1
     # via -r requirements.in
 openpyxl==3.1.5
     # via -r requirements.in
-pillow==11.2.1
+pillow==11.3.0
     # via
     #   -r requirements.in
     #   python-pptx
@@ -41,13 +41,13 @@ python-pptx==1.0.2
     # via -r requirements.in
 pyyaml==6.0.2
     # via -r requirements.in
-regex==2024.11.6
+regex==2025.9.18
     # via
     #   nltk
     #   tiktoken
 soupsieve==2.7
     # via beautifulsoup4
-tiktoken==0.9.0
+tiktoken==0.12.0
     # via -r requirements.in
 tqdm==4.67.1
     # via nltk
