@@ -213,7 +213,14 @@ def create_or_update_user(event, context):
         # Check if request specifies which field to use as immutable_id
         body = json.loads(event.get("body", "{}"))
         immutable_id_field = body.get("immutable_id_field")
-
+        
+        if (not payload.get("email")):
+            data = body.get("data",{})
+            email = data.get("token", {}).get("email") or data.get("profile",{}).get("email")
+            if (email): 
+                logger.info(f"Email extracted from data field: {email}")
+                payload["email"] = email
+                
         # If no immutable_id in token but we have a field specified, copy it
         if not payload.get("immutable_id") and immutable_id_field and payload.get(immutable_id_field):
             logger.debug(f"Using field {immutable_id_field} as immutable_id")
