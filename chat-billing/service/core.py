@@ -173,6 +173,7 @@ def get_user_available_models(event, context, current_user, name, data):
             "advanced": None,
             "cheapest": None,
             "documentCaching": None,
+            "imageGeneration": None,
         }
         available_models_by_id = {model["id"]: model for model in available_models}
 
@@ -188,6 +189,7 @@ def get_user_available_models(event, context, current_user, name, data):
         advanced_model = default_model_types["advanced"]
         cheapest_model = default_model_types["cheapest"]
         document_caching_model = default_model_types["documentCaching"]
+        image_generation_model = default_model_types["imageGeneration"]
 
     return {
         "success": True,
@@ -197,6 +199,7 @@ def get_user_available_models(event, context, current_user, name, data):
             "advanced": advanced_model,
             "cheapest": cheapest_model,
             "documentCaching": document_caching_model,
+            "imageGeneration": image_generation_model,
         },
     }
 

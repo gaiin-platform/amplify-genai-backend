@@ -510,7 +510,8 @@ def initialize_config(config_type):
             "cheapest": None,
             "documentCaching": None,
             "agent": None,
-            "embeddings": None
+            "embeddings": None,
+            "imageGeneration": None
         }
     elif config_type == AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE:
         item["data"] = "future-local"

@@ -18,6 +18,7 @@ export const ModelTypes = {
     CHEAPEST: 'cheapestModel',
     ADVANCED: 'advancedModel',
     DOCUMENT_CACHING: 'documentCachingModel',
+    IMAGE_GENERATION: 'imageGenerationModel',
 }
                                      // ModelTypes 
 export const getModelByType = (params, identifier) => {
