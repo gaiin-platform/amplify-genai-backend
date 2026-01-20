@@ -38,4 +38,5 @@ FEATURE_FLAGS = {
     "createAssistantWorkflows": False,
     "scheduledTasks": False,
     "criticalErrorTracking": False,
+    "webSearch": True,
 }
