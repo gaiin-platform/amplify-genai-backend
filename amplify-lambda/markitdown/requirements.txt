@@ -11,12 +11,12 @@ python-docx==1.1.2
 tiktoken==0.12.0
     # via -r requirements.in
 
-urllib3==2.3.0
+urllib3==2.3.1
     # via
     #   botocore
-    #   requestsnltk==3.8.1
+    #   requestsnltk==3.9.2
     # via -r requirements.in
-nltk==3.8.1
+nltk==3.9.2
     # via -r requirements.in
 pymupdf==1.26.4
     # via -r requirements.in
