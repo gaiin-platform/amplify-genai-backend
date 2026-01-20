@@ -121,14 +121,16 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             params.model = model;
             options.model = model;
 
-            //default to user model in case there is no defined cheapest or advanced models 
+            //default to user model in case there is no defined cheapest or advanced models
             params.cheapestModel = user_model_data.cheapest ?? model;
             params.advancedModel = user_model_data.advanced ?? model;
             params.documentCachingModel = user_model_data.documentCaching ?? model;
+            params.imageGenerationModel = user_model_data.imageGeneration ?? model;
 
             options.cheapestModel = getModelByType(params, ModelTypes.CHEAPEST);
             options.advancedModel = getModelByType(params, ModelTypes.ADVANCED);
             options.documentCachingModel = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
+            options.imageGenerationModel = getModelByType(params, ModelTypes.IMAGE_GENERATION);
 
             // ensure the model id in the body and options is consitent with the changes 
             let body = {...params.body, options: options, model: model.id}; 

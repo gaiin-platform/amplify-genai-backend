@@ -141,9 +141,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     
     if (!isCompletionEndpoint) {
         data = translateDataToResponseBody(data);
-        // if contains a url the 
+        // if contains a url the
         if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
+        }
+        // Add image generation tool if enabled
+        if (options.imageGenerationEnabled) {
+            data.tools = [...(data.tools || []), {"type": "image_generation"}];
         }
     }
 
