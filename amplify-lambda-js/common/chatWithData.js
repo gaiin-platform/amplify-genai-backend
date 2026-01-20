@@ -94,11 +94,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         dataSourceDetailsLookup[ds.id] = ds;
     });
 
-    // 🔥 SEQUENTIAL RAG PROCESSING: Follow original pattern for immediate source transmission
-    const tokenLimitBuffer = chatRequestOrig.max_tokens || 1000;
-    const minTokensForContext = (categorizedDataSources.length > 0) ? 1000 : 0;
-    const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext;
-
     // ✅ STEP 1: Process RAG first (sequential, not parallel)
     let ragResults = { messages: [], sources: [] };
     
@@ -160,7 +155,19 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
     }
 
-    // Calculate max tokens for context document processing
+    // TODO: Future improvement for improving context overflows.
+
+    // Simple token reservation: flat 1500 tokens if there are any data sources
+    const totalDataSources = categorizedDataSources.length + conversationDataSources.length;
+    const minTokensForContext = totalDataSources > 0 ? 1000 : 0;
+
+    // Calculate space for messages (context windows are huge in 2026, so this is fine)
+    const maxTokensForMessages = Math.max(
+        1000, // Minimum safety buffer
+        model.inputContextWindow - minTokensForContext
+    );
+
+    // Trim messages to fit
     const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
 
     // Build safe messages and insert RAG context
@@ -176,7 +183,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // Calculate max tokens for contexts
     const chatRequestTokens = tokenCounter.countMessageTokens(chatRequest.messages);
-    const maxTokens = model.inputContextWindow - (chatRequestTokens + tokenLimitBuffer);
+    const maxTokens = model.inputContextWindow - chatRequestTokens;
     logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id}`);
 
     // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
