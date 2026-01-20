@@ -117,9 +117,15 @@ const defaultAssistant = {
                 // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
                 const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
 
-                // Also check for admin-configured web search (auto-enable if admin has set up web search)
+                // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
                 let adminWebSearchAvailable = false;
-                if (!webSearchEnabled) {
+                // Check if frontend explicitly disabled web search (respect explicit false)
+                const frontendExplicitlyDisabled = body?.enableWebSearch === false ||
+                                                  body?.options?.enableWebSearch === false ||
+                                                  body?.options?.options?.webSearch === false;
+
+                // Only auto-enable if frontend didn't explicitly set a preference (undefined values)
+                if (!webSearchEnabled && !frontendExplicitlyDisabled) {
                     try {
                         const adminKey = await getAdminWebSearchApiKey();
                         if (adminKey && adminKey.provider && adminKey.api_key) {
@@ -130,12 +136,15 @@ const defaultAssistant = {
                     } catch (error) {
                         logger.debug('Failed to check admin web search config:', error.message);
                     }
+                } else if (frontendExplicitlyDisabled) {
+                    logger.info(`Web search explicitly disabled by frontend, respecting user choice`);
                 }
 
                 logger.info("🔍 Tool loop check:", {
                     enableWebSearch: body?.enableWebSearch,
                     optionsEnableWebSearch: body?.options?.enableWebSearch,
                     optionsOptionsWebSearch: body?.options?.options?.webSearch,
+                    frontendExplicitlyDisabled,
                     adminWebSearchAvailable,
                     webSearchEnabled,
                     mcpEnabled,
