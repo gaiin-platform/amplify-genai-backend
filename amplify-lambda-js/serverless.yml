@@ -519,7 +519,7 @@ resources:
         HttpMethod: POST
         AuthorizationType: NONE
         Integration:
-          Type: AWS  # NOT AWS_PROXY - streaming requires custom integration
+          Type: AWS_PROXY
           IntegrationHttpMethod: POST
           Uri:
             Fn::Join:
@@ -528,33 +528,18 @@ resources:
                 - !Ref AWS::Partition
                 - ":apigateway:"
                 - !Ref AWS::Region
-                - ":lambda:path/2015-03-31/functions/"
+                - ":lambda:path/2021-11-15/functions/"
                 - !GetAtt ChatUnderscorestreamLambdaFunction.Arn
-                - "/invocations"
+                - "/response-streaming-invocations"
 
-          # KEY: Enable streaming - this is what Serverless doesn't set
-          ContentHandling: CONVERT_TO_TEXT
+          # Required: Must be STREAM when using /response-streaming-invocations endpoint
+          ResponseTransferMode: STREAM
 
-          # Request Template to map Authorization header into body
-          RequestTemplates:
-            application/json: |
-              #set($authHeader = $input.params().header.get('Authorization'))
-              {
-                "authHeader": "$authHeader",
-                "bodyData": $input.json('$')
-              }
-
-          # REQUIRED: Integration responses for AWS integration (not proxy)
-          IntegrationResponses:
-            - StatusCode: 200
-              ResponseParameters:
-                method.response.header.Access-Control-Allow-Origin: "'*'"
-
-        # REQUIRED: Method responses for AWS integration
         MethodResponses:
           - StatusCode: 200
             ResponseParameters:
               method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Content-Type: true
 
     # OPTIONS method for CORS preflight
     ApiGatewayMethodChatstreamOptions:
