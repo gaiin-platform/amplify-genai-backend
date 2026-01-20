@@ -208,37 +208,28 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
     }
 });
 
-// Wrapper for AWS_PROXY format (Function URLs)
 export const handler = awslambda.streamifyResponse(protectedHandler);
 
-// Wrapper for AWS integration format (API Gateway REST API streaming)
+// streamHandler: For API Gateway REST API streaming with AWS_PROXY + ResponseTransferMode: STREAM
 export const streamHandler = awslambda.streamifyResponse(async (event, responseStream, context) => {
-    // AWS integration + Request Template wraps body in {authHeader, bodyData}
+    logger.debug("streamHandler: API Gateway AWS_PROXY streaming mode - using metadata format");
 
-    logger.info("streamHandler: RAW EVENT RECEIVED:", JSON.stringify(event, null, 2));
-
-    // Extract Authorization from authHeader and actual body from bodyData
-    const authToken = event.authHeader || '';
-    const actualBody = event.bodyData || event; // Fallback to event if no wrapper
-
-    // Normalize to AWS_PROXY format that extractParams expects
-    const normalizedEvent = {
+    // API Gateway requires metadata JSON + 8-byte delimiter before payload
+    const metadata = JSON.stringify({
+        statusCode: 200,
         headers: {
-            Authorization: authToken || '',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(actualBody),
-        rawPath: '/chat_stream',
-        path: '/chat_stream',
-        requestContext: {}
-    };
-
-    logger.info("streamHandler: NORMALIZED EVENT (headers only):", {
-        hasAuth: !!normalizedEvent.headers.Authorization,
-        authPreview: normalizedEvent.headers.Authorization ? normalizedEvent.headers.Authorization.substring(0, 30) + '...' : 'NONE'
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Access-Control-Allow-Origin': '*'
+        }
     });
 
-    // Call the same protected handler with normalized event
-    return await protectedHandler(normalizedEvent, responseStream, context);
-});
+    // Write metadata
+    responseStream.write(metadata);
 
+    // Write 8 null bytes as delimiter (required by API Gateway)
+    responseStream.write('\x00\x00\x00\x00\x00\x00\x00\x00');
+
+    // Now call protectedHandler which will stream the actual payload
+    return await protectedHandler(event, responseStream, context);
+});
