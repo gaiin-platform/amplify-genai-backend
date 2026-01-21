@@ -1,8 +1,14 @@
 import {
-    AssistantState, chainActions,
+    AssistantState,
     DoneState, invokeAction, 
     PromptAction, StateBasedAssistant
 } from "./statemachine/states.js";
+import {sendStateEventToStream} from "../common/streams.js";
+import {getInternalLLM} from "../llm/InternalLLM.js";
+import {getLogger} from "../common/logging.js";
+import {isKilled} from "../requests/requestState.js";
+
+const logger = getLogger("assistants.ArtifactModeAssistant");
 
 
 const ARTIFACT_COMPLETE_MARKER = "~END_A~";
@@ -46,6 +52,7 @@ You need to seamlessly continue the artifact from where it left off.
 Guidelines:
 - look at the contents of the artifact and determine if it is in fact incomplete. If it is complete then you will only responde with the identifier ${ARTIFACT_COMPLETE_MARKER}
 - if the artifact is incomplete then you will need to continue the artifact from where it left off without any additional preamble or introduction. 
+- DO NOT add any commentary, explanations, or introductory text like "I'll continue the artifact..." - just continue the code/content directly.
 - The most important goal is that your response is a direct continuation of the artifact and not a new artifact.
 - Dont repeat any content from the previous artifact, it must be a perfectly seamless continuation.
 - example:
@@ -55,37 +62,11 @@ Guidelines:
        le artifact that was cut off.
        
 - You must still operate under the same **Token Limit:** Behavioral Guideline as instructed.
+- CRITICAL: Start your response with the exact next character/word that should continue the artifact. No explanations, no commentary, no introductions.
 `;
 
-// mode long form 
-//if we are working with multiple parts decide whetheryou absolutley only need to see which ones. you many not need all 
-// mode fast edit We may need to also automatically line number artifacts when we detect them and stream them back so that the LLM doesn’t have to figure out the line numbers itself.
-
-const determineMode = () => {
-
-}
-
-
-// prompt for mode and! 
-
-const transitionToMode = () => {
-    const mode = context.data['mode'];
-    // console.log("Selected Entertainment: ", entertainmentSelected);
-    switch (mode) {
-        case 'fastEdit':
-            States.initialState.addTransition(States.fastEdit.name, "The next random state is fastEdit, go here");
-            break;
-        case 'longForm ':
-            States.initialState.addTransition(States.longForm.name, "The next random state is longForm, go here");
-            break;
-        case 'truncatedOputput':
-            States.initialState.addTransition(States.truncatedOputput.name, "The next random state is truncatedOputput, go here");
-            break;
-        default:
-            console.error("Error with entertainment states");
-    }
-
-}
+// Future expansion: mode long form, fast edit, etc.
+// Currently using truncatedOutput mode for all artifact generation
 
 
 const containsPotentialMarker = (buffer, marker) => {
@@ -98,7 +79,16 @@ const containsPotentialMarker = (buffer, marker) => {
     return remainingBuffer === marker.slice(0, remainingBuffer.length);
 };
 
-const handleTruncatedMode = async (llm, context, dataSources) => {
+const handleTruncatedMode = async (originalLLM, context, dataSources) => {
+    // 🚀 BREAKTHROUGH: Use InternalLLM for massive performance gains in artifact generation
+    // ArtifactMode doesn't need RAG/context chunking - just fast LLM responses for marker detection
+    const llm = getInternalLLM(originalLLM.params.options.model, originalLLM.params.account, context.responseStream);
+    llm.params = { ...originalLLM.params }; // Copy params for compatibility
+    
+    // 🚀 Increase token limits for artifact generation (artifacts can be large)
+    llm.defaultBody.max_tokens = 4000; // Increased from 1000 to 4000 for artifact generation
+    
+    logger.info("🚀 ArtifactMode using InternalLLM for high-speed generation");
     let retryCount = 0;
     let isComplete = false;
     let accumulatedResponse = "";
@@ -113,43 +103,77 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
         }
 
         transform(chunk) {
-            return "data: "+JSON.stringify({d: chunk}) + '\n\n'
+            // Final safeguard against undefined content
+            if (chunk === undefined || chunk === null) {
+                return "data: "+JSON.stringify({d: ""}) + '\n\n';
+            }
+            
+            // Convert to string to handle any remaining edge cases
+            const safeChunk = String(chunk);
+            
+            // Don't send literal "undefined" strings
+            if (safeChunk === "undefined" || safeChunk === "null") {
+                return "data: "+JSON.stringify({d: ""}) + '\n\n';
+            }
+            
+            return "data: "+JSON.stringify({d: safeChunk}) + '\n\n';
         }
         
         write(chunk) {
+            // Stop processing chunks once artifact is complete
+            if (this.isComplete) {
+                return false;
+            }
 
-            if (chunk.startsWith('data: {"d"')) {
+            // Fix format check - LiteLLM actually sends {"s":0,"d":"content"} not {"d":"content"}
+            if (chunk.startsWith('data: {"s"')) {
                 const jsonString = chunk.slice(6);
                 try {
-                    const extractedChunk = JSON.parse(jsonString).d;
+                    const parsedData = JSON.parse(jsonString);
+                    const extractedChunk = parsedData.d; // Extract content from {"s":0,"d":"content"}
+
+                    // Don't add undefined to buffer to prevent frontend corruption
+                    if (extractedChunk === undefined || extractedChunk === null) {
+                        return false;
+                    }
 
                     // Add to our buffer
                     this.buffer += extractedChunk;
                     this.llmResponse += extractedChunk;
-                    
+
                     if (containsPotentialMarker(this.buffer, ARTIFACT_COMPLETE_MARKER)) {
                         // Check if we have the completion marker
                         if (this.buffer.includes(ARTIFACT_COMPLETE_MARKER)) {
-                            // Extract everything before the marker
-                            const parts = this.buffer.split(ARTIFACT_COMPLETE_MARKER);
-                            const cleanContent = parts[0];
+                            logger.info("✅ ARTIFACT_COMPLETE_MARKER found! Artifact generation complete.");
                             
-                            // Send the content without the marker
-                            this.originalStream.write(this.transform(cleanContent));
+                            // Extract everything before the marker
+                            const markerIndex = this.buffer.indexOf(ARTIFACT_COMPLETE_MARKER);
+                            const cleanContent = this.buffer.substring(0, markerIndex);
+                            
+                            // Only send content if it's valid
+                            if (cleanContent !== undefined && cleanContent !== null) {
+                                const transformedContent = this.transform(cleanContent);
+                                this.originalStream.write(transformedContent);
+                            }
+                            
                             this.isComplete = true;
-                            console.log("Artifact completed");
+                            logger.info("✅ Artifact completed");
                             return true;
+                        } else {
+                            // Potential marker found but not complete - wait for more chunks
+                            return false;
                         }
 
                     } else {
                         // If no marker, just pass through
-                        this.originalStream.write(this.transform(this.buffer)); 
+                        if (this.buffer !== undefined && this.buffer !== null && this.buffer !== "undefined") {
+                            this.originalStream.write(this.transform(this.buffer)); 
+                        }
                         this.buffer = "";
                     }
 
-                } catch {
-                    // continue 
-                    console.log("Error parsing chunk: ", chunk, "\ncontinuing...");
+                } catch (error) {
+                    logger.debug("Error parsing chunk:", chunk, "continuing...");
                 }
         
             } else {
@@ -170,21 +194,35 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
     }
     
     while (!isComplete && retryCount < MAX_RETRIES) {
+        // Check killswitch before each retry
+        if (await isKilled(llm.params?.account?.user, context.responseStream, llm.params)) {
+            logger.info("🛑 Killswitch activated, stopping artifact generation");
+            sendStateEventToStream(context.responseStream, {artifactCompletion: false, reason: "cancelled"});
+            return false;
+        }
+        
+        logger.info(`🚀 Artifact generation attempt ${retryCount + 1}/${MAX_RETRIES}`);
+        
         // Create custom stream handler
         const streamHandler = new ArtifactStreamHandler(context.responseStream);
         
-        // Clone LLM with custom stream
+        // Clone InternalLLM with custom stream for marker detection
         const customStreamLLM = llm.clone();
         customStreamLLM.responseStream = {
             write: (chunk) => streamHandler.write(chunk),
-            end: () => {} // We'll handle the end separately
+            end: () => {},
+            destroyed: false,
+            writable: true,
+            writableEnded: false
         };
+        
+        customStreamLLM.params = { ...llm.params };
         
         // Build the appropriate prompt based on retry count
         const messages = [{
-                            role: "system",
-                            content: additional_instructions
-                        }];
+            role: "system",
+            content: additional_instructions
+        }];
         if (retryCount > 0) {
             messages.push({
                 role: "user",
@@ -196,20 +234,35 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
             "response",
             {skipRag: true, ragOnly: false, appendMessages: true, streamResults: true}
         );
-        // Execute the prompt
+        
+        // Execute the prompt and wait for stream completion
         await invokeAction(prompt, customStreamLLM, context, dataSources);
         
+        // Wait for stream to actually complete (invokeAction returns when call starts, not when stream ends)
+        let waitCount = 0;
+        while (!streamHandler.isArtifactComplete() && waitCount < 100) {
+            await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+            waitCount++;
+        }
+        
         isComplete = streamHandler.isArtifactComplete();
+        const currentResponse = streamHandler.getAccumulatedResponse();
+        
+        if (isComplete) {
+            logger.info("✅ Artifact generation completed successfully");
+        } else if (retryCount + 1 < MAX_RETRIES) {
+            logger.warn(`⚠️ Artifact incomplete, will retry (attempt ${retryCount + 2}/${MAX_RETRIES})`);
+        }
         
         // Update accumulated response for next iteration if needed
-        accumulatedResponse += streamHandler.getAccumulatedResponse();
+        accumulatedResponse += currentResponse;
         retryCount++;
     }
     
     if (isComplete) {
-        llm.sendStateEventToStream({artifactCompletion: true});
+        sendStateEventToStream(context.responseStream, {artifactCompletion: true});
     } else if (retryCount >= MAX_RETRIES) {
-        llm.sendStateEventToStream({artifactCompletion: false});
+        sendStateEventToStream(context.responseStream, {artifactCompletion: false});
     }
     
     return isComplete;
@@ -217,53 +270,27 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
 
 
 const States = {
-    // outputToResponse
-
-        initialState: new AssistantState("initialState",
-            "Update user and set up for creating artifacts",
-            chainActions([// possible mode detection
-            ]), false,
-        ),
-
-        fastEdit: new AssistantState("fastEdit",
-            "",
-            chainActions([
-            ]), false,
-        ),
-
-        truncatedOputput: new AssistantState("truncatedOputput",
-            "Handling artifact generation with automatic continuation if truncated",
-            {
-                execute: async (llm, context, dataSources) => {
-                    // Use our custom handler instead of the standard PromptAction
-                    const isComplete = await handleTruncatedMode(llm, context, dataSources);
-                    console.log("Artifact complete: ", isComplete);
-                }
-            }, false,
-            {
-                useFullHistory: true,
-                failOnError: false,
-                omitDocuments: false,
-                stream: {target: "response", passThrough: true}
+    truncatedOutput: new AssistantState("truncatedOutput",
+        "Handling artifact generation with automatic continuation if truncated",
+        {
+            execute: async (llm, context, dataSources) => {
+                // Use our custom handler instead of the standard PromptAction
+                const isComplete = await handleTruncatedMode(llm, context, dataSources);
+                logger.info("Artifact complete:", isComplete);
             }
-        ),
-
-        longForm: new AssistantState("longForm",
-            "",
-            chainActions([
-            ]), false,
-        ),
-        done: new DoneState(),
+        }, false,
+        {
+            useFullHistory: true,
+            failOnError: false,
+            omitDocuments: false,
+            stream: {target: "response", passThrough: true}
+        }
+    ),
+    done: new DoneState(),
 }
 
-// const current = States.initialState;
-// States.initialState.addTransition(States.fastEdit.name, "");
-// States.initialState.addTransition(States.longForm.name, "The next random state is longForm, go here");
-// States.initialState.addTransition(States.truncatedOputput.name, "The next random state is truncatedOputput, go here");
-const current = States.truncatedOputput;
-// done will be added on the fly 
-States.truncatedOputput.addTransition(States.done.name, "We are done");
-// We add transitions to the state machine to define the state machine.
+const current = States.truncatedOutput;
+States.truncatedOutput.addTransition(States.done.name, "Artifact generation complete");
 
 
 export const ArtifactModeAssistant = new StateBasedAssistant(

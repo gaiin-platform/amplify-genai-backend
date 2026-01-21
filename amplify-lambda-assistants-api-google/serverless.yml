@@ -184,3 +184,4 @@ resources:
                 - dynamodb:PutItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+

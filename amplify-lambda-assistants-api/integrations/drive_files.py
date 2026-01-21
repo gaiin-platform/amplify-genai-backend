@@ -1273,3 +1273,5 @@ def filter_to_root_level_items(file_list_result):
     logger.debug("Showing %s root-level items (filtered out %s)", len(root_level_items), len(file_list_result) - len(root_level_items))
     
     return root_level_items
+
+

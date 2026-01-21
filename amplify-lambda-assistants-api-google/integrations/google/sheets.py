@@ -6,6 +6,8 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_sheets"
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 def format_row_as_json(row, index):
     csv_string = ",".join(str(cell).replace(",", "\\,") for cell in row)

@@ -73,3 +73,4 @@ export const getBudgetTokens = (params, maxTokens) => {
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
 }
+

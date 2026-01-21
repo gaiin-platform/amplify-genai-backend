@@ -5,6 +5,9 @@ import {chat} from "../azure/openai.js";
 import {executeWorkflow} from "../workflow/workflow.js";
 import {ConsoleWritableStream} from "./consoleWriteableStream.js";
 import {getLLMConfig} from "../common/secrets.js";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("workflowLocal");
 
 async function main() {
     const modelId = process.argv.slice(2, 3)[0];
@@ -32,7 +35,7 @@ async function main() {
 
     const model = {id: modelId}; // most likely missing data attributes since eliminating Models 
     if (!model) {
-        console.log("Invalid model: " + modelId);
+        logger.error("Invalid model: " + modelId);
         return;
     }
 
@@ -75,7 +78,7 @@ async function main() {
         ]
     }
 
-    console.log("Starting local workflow....");
+    logger.info("Starting local workflow....");
 
     const response = await executeWorkflow(
         {
@@ -90,7 +93,7 @@ async function main() {
 
     if (response) {
         // This indicates an error
-        console.log(response);
+        logger.info(response);
     }
 }
 

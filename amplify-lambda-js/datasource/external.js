@@ -1,12 +1,14 @@
 import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
+import {getLogger} from "../common/logging.js";
 
 const dynamodbClient = new DynamoDBClient({ });
+const logger = getLogger("datasource.external");
 
 async function getDatasourceRegistryConfig(type) {
 
     if(process.env.DATASOURCE_REGISTRY_DYNAMO_TABLE === undefined) {
-        console.error('DATASOURCE_REGISTRY_DYNAMO_TABLE environment variable not set');
+        logger.error('DATASOURCE_REGISTRY_DYNAMO_TABLE environment variable not set');
         return null;
     }
 
@@ -26,7 +28,7 @@ async function getDatasourceRegistryConfig(type) {
             return null;
         }
     } catch (error) {
-        console.error('Error getting assistant alias:', error);
+        logger.error('Error getting assistant alias:', error);
         return null;
     }
 }
