@@ -30,11 +30,9 @@ custom:
     - dev
     - staging
     - prod
-  booleanMap:
-    "true": true
-    "false": false
+
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
 provider:
   name: aws
