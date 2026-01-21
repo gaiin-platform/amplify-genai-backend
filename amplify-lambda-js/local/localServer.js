@@ -1,6 +1,9 @@
 // Copyright (c) 2024 Vanderbilt University
 // Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
+// Set LOCAL_DEVELOPMENT flag for enhanced logging
+process.env.LOCAL_DEVELOPMENT = 'true';
+
 import express from 'express';
 import cors from 'cors';
 import AWSXRay from 'aws-xray-sdk';

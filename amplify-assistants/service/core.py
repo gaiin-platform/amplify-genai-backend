@@ -1881,3 +1881,4 @@ def validate_assistant_id(event, context, current_user, name, data):
             "success": False,
             "message": f"Error verifying assistant id: {str(e)}",
         }
+

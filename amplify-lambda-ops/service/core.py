@@ -3,6 +3,10 @@ import uuid
 import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.api.ops import api_tool
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.authz import validated, setup_validated
@@ -13,7 +17,12 @@ setup_validated(rules, get_permission_checker)
 
 dynamodb = boto3.client("dynamodb")
 
+from pycommon.logger import getLogger
+logger = getLogger("ops")
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_all_ops(event, context, current_user, name, data):
     if not verify_user_as_admin(data["access_token"], "Get All Ops"):
@@ -109,6 +118,9 @@ def get_all_ops(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data["data"]
@@ -194,6 +206,9 @@ def get_ops(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_op_by_name(event, context, current_user, name, data):
     data = data["data"]
@@ -212,7 +227,7 @@ def get_op_by_name(event, context, current_user, name, data):
             "message": "DynamoDB table name is not set in environment variables",
         }
 
-    print(f"Finding operation '{op_name}' for user '{user}' with tag '{tag}'")
+    logger.debug("Finding operation '%s' for user '%s' with tag '%s'", op_name, user, tag)
 
     # Build the DynamoDB query parameters
     query_params = {
@@ -258,14 +273,14 @@ def get_op_by_name(event, context, current_user, name, data):
             break
 
     if found_op:
-        print(f"Found operation: {found_op}")
+        logger.debug("Found operation: %s", found_op)
         return {
             "success": True,
             "message": "Successfully found the requested operation",
             "data": found_op,
         }
     else:
-        print(f"Operation '{op_name}' not found for user '{user}' with tag '{tag}'")
+        logger.warning("Operation '%s' not found for user '%s' with tag '%s'", op_name, user, tag)
         return {
             "success": False,
             "message": f"Operation '{op_name}' not found for the specified tag and user",
@@ -276,7 +291,7 @@ def fetch_user_ops(current_user, tag):
     # Get the DynamoDB table name from the environment variable
     table_name = os.environ.get("OPS_DYNAMODB_TABLE")
 
-    print(f"Finding operations for user {current_user} with tag {tag}")
+    logger.debug("Finding operations for user %s with tag %s", current_user, tag)
 
     # Build the DynamoDB query parameters
     query_params = {
@@ -314,16 +329,16 @@ def fetch_user_ops(current_user, tag):
     # Flatten the list of operations
     data_from_dynamo = [op for sublist in data_from_dynamo for op in sublist]
 
-    print(f"Found operations {data_from_dynamo} for user {current_user} with tag {tag}")
+    logger.debug("Found operations %s for user %s with tag %s", data_from_dynamo, current_user, tag)
 
     if current_user != "system":
         try:
             system_ops = fetch_user_ops("system", tag)
-            print(f"System operations: {system_ops}")
+            logger.debug("System operations: %s", system_ops)
             system_ops = system_ops["data"]
             data_from_dynamo.extend(system_ops)
         except Exception as e:
-            print(f"Failed to retrieve system operations: {e}")
+            logger.error("Failed to retrieve system operations: %s", e)
 
     return {
         "success": True,
@@ -332,6 +347,13 @@ def fetch_user_ops(current_user, tag):
     }
 
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.UPDATE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="write")
 def write_ops(event, context, current_user, name, data):
     data = data["data"]
@@ -354,7 +376,7 @@ def write_ops(event, context, current_user, name, data):
         if "tag" in op:
             del op["tag"]
 
-        print(op)
+        logger.debug("Processing operation: %s", op)
         op["includeAccessToken"] = True
         # Check and register based on tags attached to the operation
         operation_tags = op.get("tags", ["default"])
@@ -408,6 +430,13 @@ def write_ops(event, context, current_user, name, data):
     }
 
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.UPDATE_ITEM,
+        DynamoDBOperation.DELETE_ITEM,
+    ],
+})
 @validated(op="delete")
 def delete_op(event, context, current_user, name, data):
     op = data["data"]["op"]
@@ -428,7 +457,7 @@ def delete_op(event, context, current_user, name, data):
 
     deleted_any = False
     for tag in op["tags"]:
-        print(tag)
+        logger.debug("Processing tag: %s", tag)
 
         response = table.query(
             KeyConditionExpression=Key("user").eq(user) & Key("tag").eq(tag)
@@ -469,7 +498,7 @@ def delete_op(event, context, current_user, name, data):
                     table.delete_item(Key={"user": user, "tag": tag})
 
     if not deleted_any:
-        print("No matching operation(s) found to delete")
+        logger.warning("No matching operation(s) found to delete")
     return {
         "success": True,
         "message": "Successfully deleted the specified operation(s)",

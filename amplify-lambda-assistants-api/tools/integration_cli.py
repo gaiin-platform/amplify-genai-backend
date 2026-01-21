@@ -3,6 +3,8 @@ import json
 import boto3
 from pycommon.api.secrets import store_secret_parameter
 
+from pycommon.logger import getLogger
+logger = getLogger("integration_cli")
 
 def store_integration_config_as_secret(stage, integration, client_config, scopes):
     secret_name = f"integrations/{integration}/{stage}"
@@ -11,7 +13,7 @@ def store_integration_config_as_secret(stage, integration, client_config, scopes
         "scopes": json.loads(scopes),
     }
     store_secret_parameter(secret_name, json.dumps(configuration), "/oauth")
-    print(f"Integration configuration for {integration} stored as secret.")
+    logger.info("Integration configuration for %s stored as secret.", integration)
 
 
 def list_integrations(show_details):
@@ -20,17 +22,17 @@ def list_integrations(show_details):
     response = ssm.get_parameters_by_path(
         Path=prefix, Recursive=True, WithDecryption=False
     )
-    print("List of integrations:")
+    logger.info("List of integrations:")
     for parameter in response["Parameters"]:
         integration = parameter["Name"].replace(prefix, "", 1).split("/")[0]
-        print(integration)
+        logger.info(integration)
         if show_details:
             stages = [
                 param.split("/")[-1]
                 for param in response["Parameters"]
                 if param.startswith(f"{prefix}{integration}/")
             ]
-            print(f"Stages configured: {', '.join(stages)}")
+            logger.info("Stages configured: %s", ', '.join(stages))
 
 
 def list_integration_details(integration, show_details):
@@ -40,19 +42,19 @@ def list_integration_details(integration, show_details):
         Path=prefix, Recursive=False, WithDecryption=False
     )
 
-    print(f"Details for integration '{integration}':")
+    logger.info("Details for integration '%s':", integration)
     for parameter in response["Parameters"]:
         stage = parameter["Name"].replace(prefix, "", 1)
-        print(f"Stage: {stage}")
+        logger.info("Stage: %s", stage)
         if show_details:
             config = ssm.get_parameter(Name=parameter["Name"], WithDecryption=True)[
                 "Parameter"
             ]["Value"]
             config_dict = json.loads(config)
-            print(f"Client Configuration for Stage {stage}:")
-            print(json.dumps(config_dict["client_config"], indent=4))
-            print(f"Scopes for Stage {stage}:")
-            print(json.dumps(config_dict["scopes"], indent=4))
+            logger.info("Client Configuration for Stage %s:", stage)
+            logger.info("%s", json.dumps(config_dict["client_config"], indent=4))
+            logger.info("Scopes for Stage %s:", stage)
+            logger.info("%s", json.dumps(config_dict["scopes"], indent=4))
 
 
 if __name__ == "__main__":

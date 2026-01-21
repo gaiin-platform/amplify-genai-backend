@@ -32,7 +32,7 @@ custom:
     - prod
 
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN} 
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
 provider:
   name: aws
@@ -54,7 +54,7 @@ provider:
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     AGENT_QUEUE_URL: !Ref AgentQueue
     API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
-    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME} 
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}

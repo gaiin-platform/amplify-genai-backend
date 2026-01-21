@@ -4,6 +4,9 @@
 import {S3Client, PutObjectCommand} from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
+import { getLogger } from './logging.js';
+
+const logger = getLogger("trace");
 
 const client = new S3Client();
 const bucket = process.env.TRACE_BUCKET_NAME;
@@ -61,7 +64,7 @@ export const saveTrace = async (user, requestId) => {
             try {
                 await client.send(command);
             } catch (error) {
-                console.error("Error saving trace", error);
+                logger.error("Error saving trace", error);
             }
         }
     }

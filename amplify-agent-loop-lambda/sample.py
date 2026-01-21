@@ -7,6 +7,8 @@ from agent.capabilities.use_tools import ToolUseCapability
 from agent.environments.python_function_calling import PythonFunctionEnvironment
 from agent.tools.python_action_registry import ActionRegistry
 from agent.llm_service import LiteLLMService
+from pycommon.logger import getLogger
+logger = getLogger("sample")
 
 import agent.tools.common_tools
 import agent.tools.writing_tools
@@ -17,7 +19,7 @@ async def main():
 
     def print_agent_decisions(event_type, evt):
         if event_type == "agent/response/received":
-            print(f"Agent: {evt['response']}")
+            logger.info("Agent: %s", evt['response'])
 
     agent_context = AgentContext()
     agent_context.add_listener(print_agent_decisions)
@@ -49,7 +51,7 @@ async def main():
         context=agent_context,
         initial_input="Write a long report on Vanderbilt with two sections and no subsections",
     )
-    print(result)
+    logger.info("Sample result: %s", result)
 
 
 # Entry point for the script

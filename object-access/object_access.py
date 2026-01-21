@@ -5,6 +5,10 @@ import boto3
 import json
 from botocore.exceptions import ClientError
 import os
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated
 from pycommon.api.amplify_users import are_valid_amplify_users
 from schemata.schema_validation_rules import rules
@@ -14,6 +18,9 @@ setup_validated(rules, get_permission_checker)
 
 # Initialize a DynamoDB client
 dynamodb = boto3.resource("dynamodb")
+
+from pycommon.logger import getLogger
+logger = getLogger("object_access")
 
 
 def is_sufficient_privilege(object_id, permission_level, policy, requested_access_type):
@@ -32,16 +39,19 @@ def is_sufficient_privilege(object_id, permission_level, policy, requested_acces
 
 
 def add_access_response(access_responses, object_id, access_type, response):
-    print("Add access response")
+    logger.debug("Add access response")
     if object_id not in access_responses:
         access_responses[object_id] = {}
     access_responses[object_id][access_type] = response
-    print("Added access response: ", access_responses)
+    logger.debug("Added access response: %s", access_responses)
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("simulate_access_to_objects")
 def simulate_access_to_objects(event, context, current_user, name, data):
-    print("Simulating object access")
+    logger.info("Simulating object access")
     table_name = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
     table = dynamodb.Table(table_name)
 
@@ -51,10 +61,9 @@ def simulate_access_to_objects(event, context, current_user, name, data):
     access_responses = {}
 
     for object_id, access_types in data_sources.items():
-        print(
-            "checking permissions for object: ",
+        logger.debug(
+            "checking permissions for object: %s with access: %s",
             object_id,
-            " with access: ",
             access_types,
         )
         # Check if any permissions already exist for the object_id
@@ -66,7 +75,7 @@ def simulate_access_to_objects(event, context, current_user, name, data):
                 item = query_response.get("Item")
 
                 if not item:
-                    print(
+                    logger.warning(
                         f"User does not have access to objectId {object_id} with access type {access_type}."
                     )
                     add_access_response(access_responses, object_id, access_type, False)
@@ -77,18 +86,18 @@ def simulate_access_to_objects(event, context, current_user, name, data):
                 if not is_sufficient_privilege(
                     object_id, permission_level, policy, access_type
                 ):
-                    print(
+                    logger.warning(
                         f"User does not have access to objectId {object_id} with access type {access_type}."
                     )
                     add_access_response(access_responses, object_id, access_type, False)
                     continue
 
-                print(
+                logger.debug(
                     f"User has access to objectId {object_id} with access type {access_type}."
                 )
                 add_access_response(access_responses, object_id, access_type, True)
             except Exception as e:
-                print(f"Error in simulate_access_to_objects: {e}")
+                logger.error(f"Error in simulate_access_to_objects: {e}")
                 add_access_response(access_responses, object_id, access_type, False)
 
     return {
@@ -98,16 +107,19 @@ def simulate_access_to_objects(event, context, current_user, name, data):
     }
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("can_access_objects")
 def can_access_objects(event, context, current_user, name, data):
-    print("Can access objects")
+    logger.info("Can access objects")
 
     table_name = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
     table = dynamodb.Table(table_name)
 
     data = data["data"]
 
-    print("Data: ", data)
+    logger.debug("Data: %s", data)
 
     try:
         data_sources = data["dataSources"]
@@ -136,7 +148,7 @@ def can_access_objects(event, context, current_user, name, data):
             if not is_sufficient_privilege(
                 object_id, permission_level, policy, access_type
             ):
-                print("User does not have access to objectId: ", object_id)
+                logger.warning("User does not have access to objectId: %s", object_id)
                 return {
                     "statusCode": 403,
                     "body": json.dumps(
@@ -149,26 +161,34 @@ def can_access_objects(event, context, current_user, name, data):
                 }
 
     except ClientError as e:
-        print(
+        logger.error(
             f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}"
         )
         return {
             "statusCode": 500,
             "body": "Internal error determining access. Please try again later.",
         }
-    print("User passed can access objects.")
+    logger.info("User passed can access objects.")
     return {"statusCode": 200, "body": "User has access to the object(s)."}
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.PUT_ITEM,
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.UPDATE_ITEM,
+    ],
+})
 @validated("update_object_permissions")
 def update_object_permissions(event, context, current_user, name, data):
     table_name = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
     data = data["data"]
-    print("Entered update object permissions")
+    logger.info("Entered update object permissions")
     try:
         data_sources = data["dataSources"]
         email_list = data["emailList"]
-        print("Email list: ", email_list)
+        logger.debug("Email list: %s", email_list)
         provided_permission_level = data[
             "permissionLevel"
         ]  # Permission level provided for other users
@@ -179,7 +199,7 @@ def update_object_permissions(event, context, current_user, name, data):
         table = dynamodb.Table(table_name)
 
         for object_id in data_sources:
-            print("Current object Id: ", object_id)
+            logger.debug("Current object Id: %s", object_id)
 
             # Check if any permissions already exist for the object_id
             query_response = table.query(
@@ -190,8 +210,8 @@ def update_object_permissions(event, context, current_user, name, data):
             items = query_response.get("Items")
 
             if not items:
-                print(
-                    " no permissions, create the initial item with the current_user as the owner"
+                logger.info(
+                    "no permissions, create the initial item with the current_user as the owner"
                 )
                 table.put_item(
                     Item={
@@ -207,15 +227,15 @@ def update_object_permissions(event, context, current_user, name, data):
             owner_key = {"object_id": object_id, "principal_id": current_user}
             owner_response = table.get_item(Key=owner_key)
             owner_item = owner_response.get("Item")
-            print(
+            logger.debug(
                 "check if the current_user has 'owner' or 'write' permissions for the object_id"
             )
             if owner_item and owner_item.get("permission_level") in ["owner", "write"]:
                 # If current_user is the owner or has write permission, proceed with updates
-                print("current_user does have permissions to proceed with updates")
+                logger.info("current_user does have permissions to proceed with updates")
                 for principal_id in email_list:
                     if current_user != principal_id:  # edge case
-                        print("Object ID: ", object_id, " for user: ", principal_id)
+                        logger.debug("Object ID: %s for user: %s", object_id, principal_id)
                         # Create or update the permission level for each principal_id
                         principal_key = {
                             "object_id": object_id,
@@ -236,7 +256,7 @@ def update_object_permissions(event, context, current_user, name, data):
                         )
             else:
                 # The current_user does not have 'owner' or 'write' permissions
-                print("The current_user does not have 'owner' or 'write' permissions")
+                logger.warning("The current_user does not have 'owner' or 'write' permissions")
                 return {
                     "statusCode": 403,
                     "body": json.dumps(
@@ -256,7 +276,7 @@ def update_object_permissions(event, context, current_user, name, data):
             "statusCode": 500,
             "body": json.dumps(f"Error processing request: {str(e)}"),
         }
-    print("Permissions updated successfully")
+    logger.info("Permissions updated successfully")
     return {"statusCode": 200, "body": json.dumps("Permissions updated successfully.")}
 
 
@@ -266,7 +286,7 @@ def validate_users(event, context, current_user, name, data):
     Validates a list of user names (emails) against Amplify user directory.
     Returns which user names are valid Amplify users and which are not.
     """
-    print("Validating users")
+    logger.info("Validating users")
     
     try:
         data = data["data"]
@@ -291,7 +311,7 @@ def validate_users(event, context, current_user, name, data):
         }
         
     except Exception as e:
-        print(f"Error in validate_users: {str(e)}")
+        logger.error(f"Error in validate_users: {str(e)}")
         return {
             "statusCode": 500,
             "body": json.dumps(f"Error processing user validation request: {str(e)}"),

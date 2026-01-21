@@ -1,6 +1,10 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("models");
+
 /**
  * Ensures numeric model properties are converted to numbers instead of strings
  * @param {Object} model - The model object to sanitize
@@ -13,8 +17,9 @@ const ensureNumericProperties = (model) => {
         'inputContextWindow',
         'outputTokenLimit',
         'inputTokenCost',
-        'outputTokenCost', 
-        'cachedTokenCost'
+        'outputTokenCost',
+        "inputCachedTokenCost",
+        "inputWriteCachedTokenCost"
     ];
     
     const sanitizedModel = { ...model };
@@ -43,14 +48,14 @@ export const getUserAvailableModels = async (accessToken) => {
     });
 
     if (!response.ok) {
-        console.error("Error fetching ops: ", response.statusText);
+        logger.error("Error fetching ops: ", response.statusText);
         return [];
     }
 
     const data = await response.json();
 
     if(!data || !data.success || !data.data || !data.data.models) {
-        console.error("Missing data in user available models response: ", response.statusText);
+        logger.error("Missing data in user available models response: ", response.statusText);
         return [];
     }
 
@@ -67,7 +72,7 @@ export const getUserAvailableModels = async (accessToken) => {
             try {
                 model_data[key] = ensureNumericProperties(model_data[key]);
             } catch (error) {
-               console.error("Error ensuring numeric properties for ", model_data[key], "\nError: ", error);
+               logger.error("Error ensuring numeric properties for ", model_data[key], "\nError: ", error);
             }
         }
     }

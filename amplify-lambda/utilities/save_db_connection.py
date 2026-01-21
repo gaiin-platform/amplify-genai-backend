@@ -10,6 +10,9 @@ from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
 
+from pycommon.logger import getLogger
+logger = getLogger("save_db_connection")
+
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["DB_CONNECTIONS_TABLE"])
 
@@ -120,7 +123,7 @@ def lambda_handler(event, context, current_user, name, data):
         try:
             table.put_item(Item=item)
         except ClientError as e:
-            print(f"DynamoDB error: {str(e)}")  # Add logging
+            logger.error("DynamoDB error: %s", str(e))
             return {
                 "statusCode": 500,
                 "body": json.dumps(
@@ -143,7 +146,7 @@ def lambda_handler(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")  # Add logging
+        logger.error("Unexpected error: %s", str(e))
         return {
             "statusCode": 500,
             "body": json.dumps(

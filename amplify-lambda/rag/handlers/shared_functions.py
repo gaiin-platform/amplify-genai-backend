@@ -3,6 +3,8 @@ import hashlib
 import io
 from PIL import Image
 
+from pycommon.logger import getLogger
+logger = getLogger("rag_shared_functions")
 
 def is_likely_text(file_content):
     # Use chardet to detect the encoding of the file_content
@@ -52,7 +54,7 @@ def ensure_supported_format(image_bytes, content_type):
     
     # At this point, image_bytes should be raw bytes
     if not isinstance(image_bytes, bytes):
-        print(f"Warning: ensure_supported_format expected bytes, got {type(image_bytes)}")
+        logger.warning("ensure_supported_format expected bytes, got %s", type(image_bytes))
         # Try to continue anyway for backward compatibility
     
     # Supported formats for vision models
@@ -85,7 +87,7 @@ def ensure_supported_format(image_bytes, content_type):
         return converted_bytes, "image/png"
 
     except Exception as e:
-        print(f"Format conversion failed for {content_type}: {e}")
+        logger.warning("Format conversion failed for %s: %s", content_type, e)
         return image_bytes, content_type
 
 
