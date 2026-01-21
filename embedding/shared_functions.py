@@ -96,16 +96,48 @@ def generate_bedrock_embeddings(content):
         client = boto3.client("bedrock-runtime", region_name=region)
         model_id = embedding_model_name
 
-        native_request = {"inputText": content}
+        # Check if using Nova Multimodal Embeddings
+        is_nova = "nova" in model_id.lower()
+        
+        if is_nova:
+            # Nova Multimodal Embeddings uses a different API structure
+            embedding_dim = int(os.environ.get("EMBEDDING_DIM", "3072"))
+            embedding_purpose = os.environ.get("EMBEDDING_PURPOSE", "GENERIC_INDEX")
+            
+            native_request = {
+                "taskType": "SINGLE_EMBEDDING",
+                "singleEmbeddingParams": {
+                    "embeddingPurpose": embedding_purpose,
+                    "embeddingDimension": embedding_dim,
+                    "text": {
+                        "truncationMode": "END",
+                        "value": content
+                    }
+                }
+            }
+        else:
+            # Standard Bedrock embeddings (Titan, Cohere, etc.)
+            native_request = {"inputText": content}
+        
         request = json.dumps(native_request)
 
         response = client.invoke_model(modelId=model_id, body=request)
         model_response = json.loads(response["body"].read())
 
-        embeddings = model_response["embedding"]
-        input_token_count = model_response["inputTextTokenCount"]
+        # Nova returns embeddings in a different structure
+        if is_nova:
+            # Nova response: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
+            embeddings_data = model_response.get("embeddings", [])
+            if not embeddings_data:
+                raise Exception("No embeddings returned from Nova model")
+            # Get the first embedding (for single text input, there's only one)
+            embeddings = embeddings_data[0]["embedding"]
+            input_token_count = model_response.get("inputTokenCount", 0)
+        else:
+            embeddings = model_response["embedding"]
+            input_token_count = model_response.get("inputTextTokenCount", 0)
         
-        logger.info(f"Embedding generated. Input tokens: {input_token_count}, Embedding size: {len(embeddings)}")
+        logger.info(f"Embedding generated. Model: {model_id}, Input tokens: {input_token_count}, Embedding size: {len(embeddings)}")
         return {"success": True, "data": embeddings, "token_count": input_token_count}
     except Exception as e:
         logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
