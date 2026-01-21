@@ -23,12 +23,9 @@ custom:
     useStaticCache: false
     useDownloadCache: false             
 
-  booleanMap:
-    "true": true
-    "false": false
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
  
   stages:
     - dev
