@@ -7,6 +7,14 @@
 
 import { DynamoDBClient, ScanCommand, UpdateItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import {
+    withEnvVarsTracking,
+    DynamoDBOperation
+} from '../common/envVarsTracking.js';
+import { trackExecution } from '../common/usageTracking.js';
+import { getLogger } from '../common/logging.js';
+
+const logger = getLogger("billing-reset");
 
 const dynamodbClient = new DynamoDBClient({});
 const costTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
@@ -52,7 +60,7 @@ async function updateItem(item) {
         const command = new UpdateItemCommand(params);
         return await dynamodbClient.send(command);
     } catch (error) {
-        console.error(`Error updating item for ${item.id}:`, error);
+        logger.error(`Error updating item for ${item.id}:`, error);
         throw error;
     }
 }
@@ -86,7 +94,7 @@ async function saveDailyCostHistory(item) {
             await dynamodbClient.send(command);
         }
     } catch (error) {
-        console.error(`Error saving daily cost history for ${item.id}:`, error);
+        logger.error(`Error saving daily cost history for ${item.id}:`, error);
         throw error;
     }
 }
@@ -119,12 +127,12 @@ async function handleMonthlyReset(item) {
             }));
         }
     } catch (error) {
-        console.error(`Error handling monthly reset for ${item.id}:`, error);
+        logger.error(`Error handling monthly reset for ${item.id}:`, error);
         throw error;
     }
 }
 
-export const handler = async (event) => {
+const billingResetHandler = async (event, context) => {
     try {
         const items = await getAllItems();
         for (const item of items) {
@@ -134,7 +142,17 @@ export const handler = async (event) => {
         }
         return { statusCode: 200, body: JSON.stringify({ message: "Billing reset completed successfully" }) };
     } catch (error) {
-        console.error("Error in reset-billing:", error);
+        logger.error("Error in reset-billing:", error);
         return { statusCode: 500, body: JSON.stringify({ message: "Error occurred during billing reset" }) };
     }
 };
+
+// Export handler with both environment variable tracking AND usage tracking
+// This is a scheduled event-driven function (runs daily at midnight UTC)
+export const handler = withEnvVarsTracking({
+    // Environment variables used in billing reset operations
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM]
+}, trackExecution(billingResetHandler));

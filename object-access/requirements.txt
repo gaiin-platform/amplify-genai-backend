@@ -9,5 +9,5 @@ jose==1.0.0
     # via -r requirements.in
 pyyaml==6.0.2
     # via -r requirements.in
-aiohttp==3.9.1
+aiohttp==3.11.11
     # via async HTTP operations for register_ops

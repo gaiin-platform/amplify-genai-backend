@@ -25,6 +25,28 @@ def can_upload(user, data):
     return True
 
 
+def can_read_critical_errors(user, data):
+    """
+    Permission check for reading critical errors.
+    
+    Actual admin authentication is performed in the handler via
+    verify_user_as_admin(), so this just returns True to allow
+    the request to reach the handler.
+    """
+    return True
+
+
+def can_resolve_critical_errors(user, data):
+    """
+    Permission check for resolving critical errors.
+    
+    Actual admin authentication is performed in the handler via
+    verify_user_as_admin(), so this just returns True to allow
+    the request to reach the handler.
+    """
+    return True
+
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -44,5 +66,7 @@ permissions_by_state_type = {
     "/amplifymin/verify_amp_member": {"read": can_read},
     "/amplifymin/amplify_groups/list": {"read": can_read},
     "/amplifymin/user_app_configs": {"read": can_read},
-    "/amplifymin/amplify_groups/affiliated": {"read": can_read}
+    "/amplifymin/amplify_groups/affiliated": {"read": can_read},
+    "/amplifymin/critical_errors": {"read": can_read_critical_errors},
+    "/amplifymin/critical_errors/resolve": {"update": can_resolve_critical_errors}
 }

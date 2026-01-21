@@ -13,6 +13,11 @@ from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
 
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH, SEVERITY_CRITICAL
+import traceback
+logger = getLogger("files")
+
 import os
 import boto3
 import rag.util
@@ -119,7 +124,23 @@ def get_presigned_download_url(event, context, current_user, name, data):
             ExpiresIn=3600,  # Expiration time for the presigned URL, in seconds
         )
     except ClientError as e:
-        print(f"Error generating presigned download URL: {e}")
+        logger.error("Error generating presigned download URL: %s", e)
+        
+        # CRITICAL: Presigned URL generation failure = user can't download their files
+        log_critical_error(
+            function_name="get_presigned_download_url",
+            error_type="S3PresignedURLGenerationFailure",
+            error_message=f"Failed to generate presigned download URL: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "bucket": bucket_name,
+                "key": key,
+                "error_code": e.response['Error']['Code'] if hasattr(e, 'response') else 'Unknown'
+            }
+        )
+        
         return {"success": False, "message": "File not found"}
 
     if presigned_url:
@@ -1977,7 +1998,22 @@ def delete_text_file_fully(
     if success:
         print(f"Embeddings deleted successfully. Result: {result}")
     else:
-        print(f"Failed to delete embeddings. Error: {result}")
+        logger.error("Failed to delete embeddings. Error: %s", result)
+        
+        # CRITICAL: Embedding deletion failure = orphaned embeddings in PostgreSQL
+        log_critical_error(
+            function_name="delete_text_file_fully",
+            error_type="EmbeddingDeletionFailure",
+            error_message=f"Failed to delete embeddings during file deletion: {result}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "global_key": global_key,
+                "file_key": key,
+                "file_hash": file_contents_hash
+            }
+        )
 
     # Finally: Delete from object access
     oa_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
