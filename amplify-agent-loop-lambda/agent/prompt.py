@@ -12,9 +12,8 @@ from pycommon.api.accounting import record_usage
 import boto3
 from pycommon.api.secrets import get_secret_value
 from pycommon.authz import is_rate_limited
-
-dynamodb = boto3.client("dynamodb")
-
+from pycommon.logger import getLogger
+logger = getLogger("litellm")
 @dataclass
 class Prompt:
     messages: List[dict]
@@ -42,7 +41,7 @@ def generate_response(
     try:
         response = None
         if not tools:
-            print("Prompting without tools.")
+            logger.debug("Prompting without tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -50,7 +49,7 @@ def generate_response(
             )
             result = response.choices[0].message.content
         else:
-            print("Prompting with tools.")
+            logger.debug("Prompting with tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -153,7 +152,7 @@ def generate_response(
         for message in messages:
             logger.error(f"Message: {message}")
         if tools:
-            print(f"Tools:")
+            logger.error("Tools:")
             for tool in tools:
                 logger.error(f"Tool: {tool}")
         logger.error(f"Model: {model}")
