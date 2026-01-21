@@ -11,6 +11,8 @@ GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 # You frequently discover these IDs via the list_sites and list_site_lists calls,
 #  or by using GET /sites/root or GET /sites/{hostname}:{sitePath} to look up a site by URL.
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class SharePointError(Exception):
     """Base exception for SharePoint operations"""
@@ -101,7 +103,7 @@ def list_sites(
                 if root_response.ok:
                     sites.append(root_response.json())
             except Exception as e:
-                print(f"Could not fetch root site: {e}")
+                logger.error(f"Could not fetch root site: {e}")
 
             # Also try to get followed/frequently used sites using search with wildcard
             try:
@@ -112,7 +114,7 @@ def list_sites(
                     search_sites = search_response.json().get("value", [])
                     sites.extend(search_sites)
             except Exception as e:
-                print(f"Could not fetch additional sites: {e}")
+                logger.error(f"Could not fetch additional sites: {e}")
 
             return [format_site(site) for site in sites]
 
@@ -735,7 +737,7 @@ def get_all_library_files_recursively(
         
     except Exception as e:
         # Log error but don't fail completely
-        print(f"Error processing folder {folder_path}: {e}")
+        logger.error(f"Error processing folder {folder_path}: {e}")
     
     return all_files
 

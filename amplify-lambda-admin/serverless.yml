@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-admin
+service: amplify-${self:custom.depName}-admin
 frameworkVersion: "3"
 
 package:
@@ -12,13 +12,17 @@ plugins:
   - serverless-prune-plugin
   - serverless-cloudformation-changesets-v3
 custom:
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
   pythonRequirements:
-    dockerizePip: non-linux
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+    dockerizePip: non-linux 
   stages:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
@@ -27,7 +31,7 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   logRetentionInDays: 365
   apiGateway:
@@ -36,23 +40,39 @@ provider:
     restApiRootResourceId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
   environment:
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-cost-calculations
-    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+  
+    ADMINS: ${ssm:/amplify/${sls:stage}/ADMINS}
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+  # Locally Defined Variables
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-configs
     AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-logs
-    ADMINS: ${self:custom.stageVars.ADMINS}
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${sls:stage}-openai-endpoints
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output
-    AMPLIFY_GROUPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    CRITICAL_ERRORS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-critical-errors
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${self:service}-${sls:stage}-critical-errors
+    CRITICAL_ERRORS_SNS_TOPIC_NAME: ${self:service}-${sls:stage}-critical-errors-notifications
+    CRITICAL_ERRORS_SNS_TOPIC_ARN: !Ref CriticalErrorsNotificationTopic
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+
+  # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME} #Marked for future deletion
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -162,6 +182,24 @@ functions:
           method: post
           cors: true
 
+  get_critical_errors:
+    handler: service/critical_error_tracker.get_critical_errors_admin
+    timeout: 30
+    events:
+      - http:
+          path: amplifymin/critical_errors
+          method: post
+          cors: true
+
+  resolve_critical_error:
+    handler: service/critical_error_tracker.resolve_critical_error_admin
+    timeout: 10
+    events:
+      - http:
+          path: amplifymin/critical_errors/resolve
+          method: post
+          cors: true
+
   sync_assistant_admins:
     runtime: python3.11
     handler: service/core.sync_assistant_admins
@@ -170,6 +208,27 @@ functions:
       - schedule:
           rate: rate(3 minutes)
           enabled: true
+
+  notify_critical_error:
+    handler: service/critical_error_notifier.notify_critical_error
+    timeout: 30
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt AmplifyAdminCriticalErrorsTable.StreamArn
+          batchSize: 10
+          startingPosition: LATEST
+          enabled: true
+
+  process_critical_error_from_sqs:
+    handler: service/critical_error_processor.process_critical_error_from_sqs
+    timeout: 30
+    events:
+      - sqs:
+          arn: !GetAtt CriticalErrorsQueue.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+          functionResponseType: ReportBatchItemFailures
 
 resources:
   Resources:
@@ -194,26 +253,84 @@ resources:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:PutSecretValue
                 - secretsmanager:UpdateSecretVersionStage
+                - sns:Publish
+                - sns:Subscribe
+                - sns:Unsubscribe
+                - sns:ListSubscriptionsByTopic
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
               Resource:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*'
-                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}*'
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CRITICAL_ERRORS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CRITICAL_ERRORS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:provider.environment.CRITICAL_ERRORS_DYNAMODB_TABLE}/stream/*"
+                - "arn:aws:sns:${aws:region}:${aws:accountId}:${self:provider.environment.CRITICAL_ERRORS_SNS_TOPIC_NAME}"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}-dlq"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
                 - dynamodb:Scan
               Resource:
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_GROUPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+            # Web Search API key storage in SSM
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*
+            - Effect: Allow
+              Action:
+                - dynamodb:DescribeStream
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:ListStreams
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:provider.environment.CRITICAL_ERRORS_DYNAMODB_TABLE}/stream/*"
+            - Effect: Allow
+              Action:
+                - sts:GetCallerIdentity
+              Resource: "*"
+            
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
     
     AmplifyAdminTable:
       Type: 'AWS::DynamoDB::Table'
@@ -253,10 +370,92 @@ resources:
           - AttributeName: "log_id"
             KeyType: "HASH"      
 
+    AmplifyAdminCriticalErrorsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${sls:stage}-critical-errors
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: "error_id"
+            AttributeType: "S"
+          - AttributeName: "status"
+            AttributeType: "S"
+          - AttributeName: "timestamp"
+            AttributeType: "N"
+          - AttributeName: "error_fingerprint"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "error_id"
+            KeyType: "HASH"
+        GlobalSecondaryIndexes:
+          - IndexName: "status-timestamp-index"
+            KeySchema:
+              - AttributeName: "status"
+                KeyType: "HASH"
+              - AttributeName: "timestamp"
+                KeyType: "RANGE"
+            Projection:
+              ProjectionType: "ALL"
+          - IndexName: "error-fingerprint-index"
+            KeySchema:
+              - AttributeName: "error_fingerprint"
+                KeyType: "HASH"
+            Projection:
+              ProjectionType: "ALL"
+        TimeToLiveSpecification:
+          AttributeName: "ttl"
+          Enabled: true
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    CriticalErrorsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-critical-errors-dlq
+        MessageRetentionPeriod: 1209600  # 14 days
+
+    CriticalErrorsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-critical-errors
+        VisibilityTimeout: 180  # 3 minutes (6x Lambda timeout)
+        MessageRetentionPeriod: 345600  # 4 days
+        ReceiveMessageWaitTimeSeconds: 20  # Long polling
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt CriticalErrorsDeadLetterQueue.Arn
+          maxReceiveCount: 3  # Retry 3 times before DLQ
+
+    CriticalErrorsNotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${sls:stage}-critical-errors-notifications
+        DisplayName: "Critical Error Notifications"
+
   Outputs:
     AmplifyAdminTableStreamArn:
       Value: !GetAtt AmplifyAdminTable.StreamArn
       Export:
         Name:
           Fn::Sub: "${sls:stage}-AmplifyAdminTableStreamArn"
-
+    
+    CriticalErrorsNotificationTopicArn:
+      Value: !Ref CriticalErrorsNotificationTopic
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-CriticalErrorsNotificationTopicArn"
+    
+    CriticalErrorsQueueUrl:
+      Value: !Ref CriticalErrorsQueue
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-CriticalErrorsQueueUrl"
+    
+    CriticalErrorsQueueArn:
+      Value: !GetAtt CriticalErrorsQueue.Arn
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-CriticalErrorsQueueArn"

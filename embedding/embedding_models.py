@@ -45,9 +45,13 @@ def get_embedding_models():
             response = model_rate_table.get_item(Key={"ModelID": model_id})
             if "Item" in response:
                 item = response["Item"]
+                # Extract input token limit - DynamoDB returns Decimal objects directly
+                input_context_window = int(item.get("InputContextWindow", 8192))
+                
                 defaults[default_key] = {
                     "model_id": item["ModelID"],
                     "provider": item["Provider"],
+                    "input_context_window": input_context_window,
                 }
 
         get_provider(embedding_model_id, "embedding")

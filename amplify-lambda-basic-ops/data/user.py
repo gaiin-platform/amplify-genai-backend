@@ -46,6 +46,7 @@ class CommonData:
             "data": self._float_to_decimal(data),
             "appId": app_id,
             "entityType": entity_type,
+            "itemId": item_id,  # Store itemId as separate field for queries
             "createdAt": int(time.time()),
         }
 
@@ -172,6 +173,7 @@ class CommonData:
                     "data": self._float_to_decimal(item["data"]),
                     "appId": app_id,
                     "entityType": entity_type,
+                    "itemId": item["itemId"],  # Store itemId as separate field for queries
                     "createdAt": int(time.time()),
                 }
 

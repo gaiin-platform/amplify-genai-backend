@@ -12,6 +12,10 @@ from pycommon.const import IMAGE_FILE_TYPES
 
 s3 = boto3.client("s3")
 
+from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
+logger = getLogger("images")
 
 def is_base64_image(file_content):
     """
@@ -88,6 +92,10 @@ def cal_total_tokens_gpt(width, height):
     return tokens
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="process_images_for_chat", account="system")
 def process_images_for_chat(event, context):
     try:
         # Extract the bucket name and key from the event

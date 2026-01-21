@@ -13,10 +13,18 @@ from decimal import Decimal
 from events.event_handler import MessageHandler
 from delegation.api_keys import get_api_key_directly_by_id
 from events.event_templates import get_assistant_by_alias
-from pycommon.api.user_data import load_user_data
+from pycommon.api.user_data import load_user_data, save_user_data
 from pycommon.api.ses_email import send_email
+from pycommon.lzw import safe_compress
 from croniter import croniter
+from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
+logger = getLogger("agent_scheduled_tasks")
 
+# Constants for log archival
+MAX_LOGS_SIZE_BYTES = 350 * 1024  # 350KB threshold for archival
+TARGET_SIZE_AFTER_ARCHIVAL = 200 * 1024  # Keep 200KB in USER_DATA_STORAGE_TABLE
 
 class DecimalEncoder(json.JSONEncoder):
     """
@@ -48,11 +56,11 @@ class TasksMessageHandler(MessageHandler):
         try:
             # Check if this is a scheduled task message
             if message.get("source") == "scheduled-task":
-                print(f"TasksMessageHandler can handle this scheduled task message")
+                logger.debug("TasksMessageHandler can handle this scheduled task message")
                 return True
             return False
         except Exception as e:
-            print(f"Error in TasksMessageHandler.can_handle: {e}")
+            logger.error(f"Error in TasksMessageHandler.can_handle: {e}")
             return False
 
     def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -75,14 +83,14 @@ class TasksMessageHandler(MessageHandler):
             runtime = get_timestamp(False)
             last_run_at_utc = datetime.now(pytz.utc).isoformat()
 
-            print(
-                f"Processing scheduled task: { task_data.get('taskName')} ({task_id}) for user {user_id}"
+            logger.info(
+                f"Processing scheduled task: {task_data.get('taskName')} ({task_id}) for user {user_id}"
             )
             # Clear the lastCheckedAt field so the task can be retried
             if source == "scheduled-task":
                 self._reset_task_check_status(user_id, task_id, last_run_at_utc)
-            # Create a unique session ID
-            session_id = f"scheduled-task-{task_id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+            # Create a unique session ID with short UUID format
+            session_id = f"execution-{str(uuid.uuid4())}"
 
             # Format the task instructions as prompt
             prompt = [{"role": "user", "content": task_instructions}]
@@ -116,12 +124,13 @@ class TasksMessageHandler(MessageHandler):
                     "source": source,
                 },
                 execution_id=session_id,
+                access_token=api_key
             )
 
             return event_payload
 
         except Exception as e:
-            print(f"Error processing scheduled task: {e}")
+            logger.error(f"Error processing scheduled task: {e}")
             return None
 
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
@@ -129,44 +138,62 @@ class TasksMessageHandler(MessageHandler):
         Handle task failure. This is called by the agent_queue when processing fails.
 
         Args:
-            event: The input event that failed processing
+            event: The input event that failed processing (may be None)
             error: The exception that caused the failure
         """
-        print(f"Task failure handler for event {event}")
-        # Extract task info from event metadata
+        logger.debug(f"Task failure handler for event {event}")
+        
+        # Handle None event gracefully
+        if event is None:
+            logger.error("Error in onFailure: event is None, cannot extract task data")
+            return
+        
+        # Extract task info from event metadata  
         task_data = event.get("taskData", {})
-        print(f"Task data: {task_data}")
+        logger.debug(f"Task data: {task_data}")
         user_id = task_data.get("user")
         task_id = task_data.get("taskId")
 
         # Try to extract sessionId - it might be available in task_data or we can reconstruct it
         session_id = task_data.get("sessionId")
         if not session_id and task_id:
-            # Try to reconstruct sessionId using current time (best effort)
-            runtime = get_timestamp(False)
-            session_id = f"scheduled-task-{task_id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+            # Try to reconstruct sessionId using short UUID format (best effort)
+            session_id = f"execution-{str(uuid.uuid4())}"
         
         # Add sessionId to task_data for consistency
         if session_id:
             task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
-            print(f"Error in onFailure: Missing task data in event")
-            add_task_execution_record(
-                user_id,
-                task_id,
-                "failure",
-                {
-                    "error": error,
-                    "message": "Agent failed prior to execution",
-                    "failedAt": get_timestamp(),
-                    "source": task_data.get("source", "unknown"),
-                },
-                execution_id=session_id,
-            )
+            logger.error(f"Error in onFailure: Missing task data in event - user_id: {user_id}, task_id: {task_id}")
+            # Try to extract basic info from event structure for logging
+            try:
+                if user_id and task_id:  # We have at least something to work with
+                    # Safely extract access token
+                    access_token = None
+                    if event and isinstance(event, dict) and event.get("metadata"):
+                        access_token = event.get("metadata").get("accessToken")
+                    
+                    add_task_execution_record(
+                        user_id,
+                        task_id,
+                        "failure",
+                        {
+                            "error": str(error),
+                            "message": "Agent failed prior to execution - missing task data",
+                            "failedAt": get_timestamp(),
+                            "source": task_data.get("source", "unknown"),
+                        },
+                        execution_id=session_id,
+                        access_token=access_token,
+                    )
+                else:
+                    logger.error("Cannot log task failure: insufficient task identification data")
+            except Exception as log_error:
+                logger.error(f"Error logging task failure: {log_error}")
             return
 
-        print(f"Task failure handler called for task {task_id}: {str(error)}")
+        logger.warning(f"Task failure handler called for task {task_id}: {str(error)}")
         task_failed(user_id, task_id, str(error), task_data)
 
     def onSuccess(
@@ -179,7 +206,7 @@ class TasksMessageHandler(MessageHandler):
             agent_input_event: The input event that was processed
             agent_result: The result of processing
         """
-        print(f"Task success handler called for agent input {agent_input_event}")
+        logger.debug(f"Task success handler called for agent input {agent_input_event}")
         # Extract task info from event metadata
         task_data = agent_input_event.get("metadata", {}).get("requestContent", {})
         user_id = agent_input_event.get("currentUser")
@@ -193,13 +220,13 @@ class TasksMessageHandler(MessageHandler):
             task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
-            print(
+            logger.error(
                 f"Error in onSuccess: Missing task data in event: {agent_input_event}"
             )
             return
 
-        print(f"Task success handler called for task {task_id}")
-        task_completed(user_id, task_id, task_data, agent_result)
+        logger.info(f"Task success handler called for task {task_id}")
+        task_completed(user_id, task_id, task_data, agent_result) 
 
     def _reset_task_check_status(self, user_id, task_id, last_run_at):
         """Reset the lastCheckedAt field to allow the task to be retried."""
@@ -221,9 +248,9 @@ class TasksMessageHandler(MessageHandler):
                 ReturnValues="NONE",
             )
 
-            print(f"Reset check status and updated lastRunAt for task {task_id}")
+            logger.debug(f"Reset check status and updated lastRunAt for task {task_id}")
         except Exception as e:
-            print(f"Error resetting task check status: {e}")
+            logger.error(f"Error resetting task check status: {e}")
 
     def _resolved_object_info(self, user, object_info, object_type, access_token):
         object_id = object_info.get("objectId")
@@ -233,18 +260,18 @@ class TasksMessageHandler(MessageHandler):
         if object_type == "assistant":
             assistant_response = get_assistant_by_alias(user, object_id)
             if not assistant_response["success"]:
-                raise Exception(
-                    f"The scheduled taskexists, but its associated assistant could not be found."
-                )
+                error_msg = f"The scheduled task exists, but its associated assistant (ID: {object_id}) could not be found. The assistant may have been deleted."
+                logger.warning(error_msg)
+                raise Exception(error_msg)
             return {"assistant": assistant_response["data"]}
 
         elif object_type == "actionSet":
-            print(f"Processing actionSet with object_id: {object_id}")
+            logger.debug(f"Processing actionSet with object_id: {object_id}")
             APP_ID = "amplify-action-sets"
             ENTITY_TYPE = "action-sets"
             action_set = load_user_data(access_token, APP_ID, ENTITY_TYPE, object_id)
             actions = action_set.get("data", {}).get("actions", [])
-            print(f"Found {len(actions)} actions in the action set")
+            logger.debug(f"Found {len(actions)} actions in the action set")
             operations = []
 
             for action in actions:
@@ -252,21 +279,24 @@ class TasksMessageHandler(MessageHandler):
                 operation = action.get("operation", {})
                 defined_tool_parameters = action.get("parameters", {})
 
-                print(f"Defined tool parameters: {defined_tool_parameters}")
+                logger.debug(f"Defined tool parameters: {defined_tool_parameters}")
 
                 bindings = {
                     k: v for k, v in defined_tool_parameters.items() if v["value"] != ""
                 }
 
                 operation["bindings"] = bindings
-                print("Operation: ", operation)
+                logger.debug(f"Operation: {operation}")
                 operations.append(operation)
 
             return {"operations": operations}
         elif object_type == "apiTool":
             # object_info.data.op should be in the expected operation format
-            print(f"Processing apiTool with object_info: {object_info}")
+            logger.debug(f"Processing apiTool with object_info: {object_info}")
             return {"operations": [object_info.get("data", {}).get("op", {})]}
+        elif object_type == "workflow":
+            template_id = object_info.get("data", {}).get("templateId")
+            return {"workflow": {"templateId": template_id}}
 
 
 def task_completed(user_id, task_id, task_data, result):
@@ -295,6 +325,7 @@ def task_completed(user_id, task_id, task_data, result):
                 "source": task_data.get("source"),
             },
             execution_id=session_id,
+            access_token=task_data.get("apiKey")
         )
 
         if source == "scheduled-task":
@@ -312,12 +343,12 @@ def task_completed(user_id, task_id, task_data, result):
                 ReturnValues="NONE",
             )
 
-            print(f"Task {task_id} completed successfully and reset for next run")
+            logger.info(f"Task {task_id} completed successfully and reset for next run")
 
         if task_data.get("notifyOnCompletion", False) and task_data.get(
             "notifyEmailAddresses", []
         ):
-            print(f"Sending task completion notification for task {task_id}")
+            logger.info(f"Sending task completion notification for task {task_id}")
             # Prepare rich notification content
             task_name = task_data.get("taskName", "Unknown Task")
             # Create a detailed failure message
@@ -342,7 +373,7 @@ def task_completed(user_id, task_id, task_data, result):
             )
 
     except Exception as e:
-        print(f"Error handling task completion: {e}")
+        logger.error(f"Error handling task completion: {e}")
 
 
 def task_failed(user_id, task_id, error, task_data):
@@ -373,6 +404,7 @@ def task_failed(user_id, task_id, error, task_data):
                 "source": task_data.get("source"),
             },
             execution_id=session_id,
+            access_token=task_data.get("apiKey")
         )
 
         if task_data.get("source") == "scheduled-task":
@@ -421,7 +453,7 @@ def task_failed(user_id, task_id, error, task_data):
             )
 
     except Exception as e:
-        print(f"Error handling task failure: {e}")
+        logger.error(f"Error handling task failure: {e}")
         return None
 
 
@@ -460,16 +492,137 @@ def extract_task_detail_message(task_data):
 
 
 def email_task_details(api_key, email_subject, email_body, email_addresses):
-    print(f"Sending task notification to configured addresses: {email_addresses}")
+    logger.info(f"Sending task notification to configured addresses: {email_addresses}")
 
     for email_address in email_addresses:
         address = email_address.strip()
         result = send_email(api_key, address, email_subject, email_body)
         if not result:
-            print(f"Failed to send task notification to {address}")
+            logger.warning(f"Failed to send task notification to {address}")
 
 
-def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None):
+def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive, access_token):
+    """
+    Archive logs from USER_DATA_STORAGE_TABLE to consolidation bucket.
+    
+    Args:
+        current_user (str): User ID owning the task
+        task_id (str): Task ID
+        logs_to_archive (dict): Dictionary of {execution_id: compressed_data} to archive
+        access_token (str): Access token for authentication
+    
+    Returns:
+        dict: Result with success status and archived count
+    """
+    try:
+        # Get consolidation bucket from environment
+        consolidation_bucket = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME")
+        if not consolidation_bucket:
+            logger.error("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
+            return {"success": False, "archived_count": 0, "error": "Consolidation bucket not configured"}
+        
+        s3 = boto3.client("s3")
+        archived_count = 0
+        
+        for execution_id, compressed_data in logs_to_archive.items():
+            try:
+                # Archive path: scheduledTaskLogs/{user_id}/{task_id}/{execution_id}.json
+                archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
+                
+                # Decompress data before archiving to S3 (S3 stores uncompressed)
+                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
+                    # Already decompressed data
+                    log_data = compressed_data
+                else:
+                    # Decompress LZW data
+                    from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
+                    if is_lzw_compressed_format(compressed_data):
+                        log_data = lzw_uncompress(compressed_data)
+                    else:
+                        log_data = compressed_data
+                
+                # Store in consolidation bucket
+                s3.put_object(
+                    Bucket=consolidation_bucket,
+                    Key=archive_key,
+                    Body=safe_json_dumps(log_data),
+                    ContentType="application/json"
+                )
+                
+                archived_count += 1
+                logger.debug(f"Archived execution {execution_id} to consolidation bucket: {archive_key}")
+                
+            except Exception as e:
+                logger.error(f"Failed to archive execution {execution_id}: {e}")
+                continue
+        
+        logger.info(f"Archived {archived_count} logs for task {task_id} to consolidation bucket")
+        return {"success": True, "archived_count": archived_count}
+        
+    except Exception as e:
+        logger.error(f"Error archiving logs to consolidation bucket: {e}")
+        return {"success": False, "archived_count": 0, "error": str(e)}
+
+
+def calculate_logs_size(logs_dict):
+    """
+    Calculate approximate size of logs dictionary in bytes.
+    
+    Args:
+        logs_dict (dict): Dictionary of logs
+        
+    Returns:
+        int: Approximate size in bytes
+    """
+    try:
+        # Approximate size calculation using JSON serialization
+        return len(safe_json_dumps(logs_dict).encode('utf-8'))
+    except Exception as e:
+        logger.warning(f"Failed to calculate logs size: {e}")
+        return 0
+
+
+def select_logs_for_archival(logs_dict, target_size):
+    """
+    Select oldest logs for archival to reach target size.
+    
+    Args:
+        logs_dict (dict): Dictionary of {execution_id: compressed_data}
+        target_size (int): Target size to keep in bytes
+        
+    Returns:
+        tuple: (logs_to_keep, logs_to_archive) as dictionaries
+    """
+    try:
+        # Sort by execution_id (which contains timestamp) to get chronological order
+        # execution_id format: "execution-{uuid}" or "scheduled-task-{task_id}-{timestamp}"
+        sorted_executions = sorted(logs_dict.items(), key=lambda x: x[0], reverse=True)  # Newest first
+        
+        logs_to_keep = {}
+        logs_to_archive = {}
+        current_size = 0
+        
+        # Keep newest logs until we reach target size
+        for execution_id, log_data in sorted_executions:
+            log_size = len(safe_json_dumps(log_data).encode('utf-8'))
+            
+            if current_size + log_size <= target_size:
+                logs_to_keep[execution_id] = log_data
+                current_size += log_size
+            else:
+                logs_to_archive[execution_id] = log_data
+        
+        logger.debug(f"Selected {len(logs_to_keep)} logs to keep ({current_size} bytes), {len(logs_to_archive)} logs to archive")
+        
+        return logs_to_keep, logs_to_archive
+        
+    except Exception as e:
+        logger.error(f"Failed to select logs for archival: {e}")
+        # Return all logs to keep as fallback
+        return logs_dict, {}
+
+
+def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None, access_token=None):
     """
     Add execution record to a task's logs.
 
@@ -485,7 +638,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
     """
     # Get environment variables
     table_name = os.environ.get("SCHEDULED_TASKS_TABLE")
-    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")
+    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")  #Marked for future deletion
 
     if not table_name or not logs_bucket:
         raise ValueError(
@@ -495,6 +648,10 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
     s3 = boto3.client("s3")
+    
+    # Initialize deserializer and serializer early
+    deserializer = TypeDeserializer()
+    serializer = TypeSerializer()
 
     try:
         # First, check if the task exists and belongs to the user
@@ -523,25 +680,103 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
             "source": details.get("source", "unknown"),
         }
 
-        # Store details in S3 if provided
+        # Check if task has migrated logs (no detailsKey entries)
+        logs = []
+        if "logs" in response["Item"]:
+            logs = deserializer.deserialize(response["Item"]["logs"])
+        
+        has_details_keys = any(log_entry.get("detailsKey") for log_entry in logs)
+        
+        # Store details based on migration status
         if details:
-            s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
-            s3.put_object(
-                Bucket=logs_bucket,
-                Key=s3_key,
-                Body=json.dumps(details),
-                ContentType="application/json",
-            )
-            execution_record["detailsKey"] = s3_key
+            if has_details_keys:
+                # Legacy mode: Store in S3
+                s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
+                s3.put_object(
+                    Bucket=logs_bucket,
+                    Key=s3_key,
+                    Body=json.dumps(details),
+                    ContentType="application/json",
+                )
+                execution_record["detailsKey"] = s3_key
+            else:
+                # Migrated mode: Store in USER_STORAGE_TABLE dictionary with compression and archival
+                if access_token:
+                    try:
+                        # Get existing logs dictionary or create new
+                        app_id = "amplify-agent-logs"
+                        existing_logs_data = None
+                        try:
+                            existing_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                        except Exception:
+                            pass  # New consolidated log entry
+                        
+                        if existing_logs_data and "logs" in existing_logs_data:
+                            logs_dict = existing_logs_data["logs"]
+                        else:
+                            logs_dict = {}
+                        
+                        # Add compressed log data directly to dictionary
+                        compressed_details = safe_compress(details)
+                        logs_dict[execution_id] = compressed_details
+                        
+                        # Check if we need to archive old logs (350KB threshold)
+                        current_size = calculate_logs_size(logs_dict)
+                        logger.debug(f"Current logs size for task {task_id}: {current_size} bytes")
+                        
+                        if current_size > MAX_LOGS_SIZE_BYTES:
+                            logger.info(f"Logs size ({current_size} bytes) exceeds threshold ({MAX_LOGS_SIZE_BYTES} bytes), archiving old logs for task {task_id}")
+                            
+                            # Select logs to keep (200KB) and archive the rest
+                            logs_to_keep, logs_to_archive = select_logs_for_archival(logs_dict, TARGET_SIZE_AFTER_ARCHIVAL)
+                            
+                            if logs_to_archive:
+                                # Archive old logs to consolidation bucket
+                                archive_result = archive_logs_to_consolidation_bucket(
+                                    current_user, task_id, logs_to_archive, access_token
+                                )
+                                
+                                if archive_result["success"]:
+                                    # Use the reduced logs dictionary
+                                    logs_dict = logs_to_keep
+                                    logger.info(f"Archived {archive_result['archived_count']} logs, keeping {len(logs_dict)} recent logs for task {task_id}")
+                                else:
+                                    logger.warning(f"Failed to archive logs, keeping all logs in USER_DATA_STORAGE_TABLE: {archive_result.get('error', 'Unknown error')}")
+                        
+                        # Save logs dictionary (either original or reduced after archival)
+                        consolidated_data = {
+                            "taskId": task_id,
+                            "user": current_user,
+                            "logs": logs_dict
+                        }
+                        
+                        save_result = save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
+                        
+                        # DEBUG: Log save result 
+                        logger.debug(f"save_user_data returned: {save_result}")
+                        
+                        if save_result:
+                            logger.info(f"✅ Successfully stored execution {execution_id} in logs dictionary for task {task_id}")
+                        else:
+                            logger.error(f"❌ FAILED to store execution {execution_id} - save_user_data returned: {save_result}")
+                    except Exception as e:
+                        logger.error(f"SAVE DEBUG: Exception during USER_STORAGE_TABLE save: {e}", exc_info=True)
+                        logger.warning(f"Failed to store in USER_STORAGE_TABLE, falling back to S3: {e}")
+                        # Fallback to S3 if USER_STORAGE_TABLE fails
+                        s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
+                        s3.put_object(
+                            Bucket=logs_bucket,
+                            Key=s3_key,
+                            Body=json.dumps(details),
+                            ContentType="application/json",
+                        )
+                        execution_record["detailsKey"] = s3_key
 
         # Update the task in DynamoDB to add the record to logs and update lastRunAt
         deserializer = TypeDeserializer()
         serializer = TypeSerializer()
 
-        # Get current logs
-        logs = []
-        if "logs" in response["Item"]:
-            logs = deserializer.deserialize(response["Item"]["logs"])
+        # Use previously loaded logs
 
         # Find existing record with same execution_id and update it, or insert new record
         existing_record_index = None
@@ -556,11 +791,11 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
             if "startTime" in existing_record and status != "running":
                 execution_record["startTime"] = existing_record["startTime"]
             logs[existing_record_index] = execution_record
-            print(f"Updated existing execution record {execution_id} with status {status}")
+            logger.debug(f"Updated existing execution record {execution_id} with status {status}")
         else:
             # Insert new record at the beginning
             logs.insert(0, execution_record)
-            print(f"Created new execution record {execution_id} with status {status}")
+            logger.debug(f"Created new execution record {execution_id} with status {status}")
 
         # Update the task
         update_expression = "SET logs = :logs, lastRunAt = :executedAt"
@@ -583,7 +818,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
         }
 
     except Exception as e:
-        print(f"Error adding execution record: {e}")
+        logger.error(f"Error adding execution record: {e}")
         raise RuntimeError(f"Failed to add execution record: {e}")
 
 
@@ -608,7 +843,7 @@ def find_tasks_to_execute():
     run_id = str(uuid.uuid4())  # Unique ID for this scheduler run
     deserializer = TypeDeserializer()
 
-    print(f"Scanning for active tasks. Current time (UTC): {now_iso}, Run ID: {run_id}")
+    logger.info(f"Scanning for active tasks. Current time (UTC): {now_iso}, Run ID: {run_id}")
 
     try:
         # Scan for all active tasks. Filtering for "due" tasks will happen in Lambda.
@@ -633,27 +868,27 @@ def find_tasks_to_execute():
                 try:
                     user_tz = ZoneInfo(user_timezone_str)
                 except:
-                    print(
+                    logger.warning(
                         f"Invalid timezone '{user_timezone_str}' for task {task_id}. Using America/Chicago."
                     )
                     user_tz = ZoneInfo("America/Chicago")
 
                 if not user or not task_id:
-                    print(f"Skipping item due to missing user or taskId: {item}")
+                    logger.warning(f"Skipping item due to missing user or taskId: {item}")
                     continue
 
                 if not cron_expression:
-                    print(
+                    logger.warning(
                         f"Task {task_id} for user {user} is active but has no cronExpression. Skipping."
                     )
                     continue
 
                 # Convert current time to user's timezone for display
                 now_user_tz = now_utc.astimezone(user_tz)
-                print(
-                    f"\n--- Processing task {task_id} (user: {user}, cron: {cron_expression}, timezone: {user_timezone_str}) ---"
+                logger.debug(
+                    f"Processing task {task_id} (user: {user}, cron: {cron_expression}, timezone: {user_timezone_str})"
                 )
-                print(
+                logger.debug(
                     f"Current time in user's timezone: {now_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
                 )
 
@@ -677,11 +912,11 @@ def find_tasks_to_execute():
                                 ).astimezone(pytz.utc)
                             if now_utc < start_date:
                                 skip_task_due_to_date_range = True
-                                print(
+                                logger.debug(
                                     f"Task not started yet. Start date: {start_date.isoformat()}"
                                 )
                     except (ValueError, TypeError) as e:
-                        print(
+                        logger.error(
                             f"Error parsing start date for task {task_id} (user {user}): {e}. Skipping."
                         )
                         skip_task_due_to_date_range = True
@@ -707,17 +942,17 @@ def find_tasks_to_execute():
                                 ).astimezone(pytz.utc)
                             if now_utc > end_date:
                                 skip_task_due_to_date_range = True
-                                print(
+                                logger.debug(
                                     f"Task has ended. End date: {end_date.isoformat()}"
                                 )
                     except (ValueError, TypeError) as e:
-                        print(
+                        logger.error(
                             f"Error parsing end date for task {task_id} (user {user}): {e}. Skipping."
                         )
                         skip_task_due_to_date_range = True
 
                 if skip_task_due_to_date_range:
-                    print(f"Skipping task {task_id} for user {user} due to date range.")
+                    logger.debug(f"Skipping task {task_id} for user {user} due to date range.")
                     continue
 
                 # 2. Get last checked time to avoid re-processing instances
@@ -730,9 +965,9 @@ def find_tasks_to_execute():
                             last_checked_at = pytz.utc.localize(last_checked_at)
                         else:
                             last_checked_at = last_checked_at.astimezone(pytz.utc)
-                        print(f"Last checked at (UTC): {last_checked_at.isoformat()}")
+                        logger.debug(f"Last checked at (UTC): {last_checked_at.isoformat()}")
                     except ValueError:
-                        print(
+                        logger.error(
                             f"Error parsing lastCheckedAt '{last_checked_at_str}'. Treating as None."
                         )
                         last_checked_at = None
@@ -748,23 +983,23 @@ def find_tasks_to_execute():
                         try:
                             # Since these are already UTC with timezone info, just parse directly
                             base_dt_utc = datetime.fromisoformat(date_str)
-                            print(
+                            logger.debug(
                                 f"Using {date_type} as base (UTC): {base_dt_utc.isoformat()}"
                             )
                             break
                         except ValueError:
-                            print(f"Error parsing {date_type} '{date_str}'.")
+                            logger.error(f"Error parsing {date_type} '{date_str}'.")
                             continue
 
                 if not base_dt_utc:
-                    print(
+                    logger.error(
                         f"Task {task_id} has no valid lastRunAt or createdAt. Skipping."
                     )
                     continue
 
                 # Convert base time to user's timezone for cron calculation
                 base_dt_user_tz = base_dt_utc.astimezone(user_tz)
-                print(
+                logger.debug(
                     f"Base time in user timezone: {base_dt_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
                 )
 
@@ -784,7 +1019,7 @@ def find_tasks_to_execute():
 
                         if next_instance_utc > now_utc:
                             # Log the next scheduled run for clarity
-                            print(
+                            logger.debug(
                                 f"Next scheduled run: {next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')})"
                             )
                             break
@@ -795,20 +1030,20 @@ def find_tasks_to_execute():
                             or next_instance_utc > last_checked_at
                         ):
                             due_instances_utc.append(next_instance_utc)
-                            print(
-                                f"  Found due instance: {next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+                            logger.debug(
+                                f"Found due instance: {next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')})"
                             )
 
                         # Safety limit to prevent infinite loops
                         if len(due_instances_utc) > 1000:
-                            print(
-                                f"WARNING: Task {task_id} has over 1000 due instances. Limiting to most recent 100."
+                            logger.warning(
+                                f"Task {task_id} has over 1000 due instances. Limiting to most recent 100."
                             )
                             due_instances_utc = due_instances_utc[-100:]
                             break
 
                     if not due_instances_utc:
-                        print(f"No due instances found for task {task_id}")
+                        logger.debug(f"No due instances found for task {task_id}")
                         continue
 
                     # Get the earliest due instance that hasn't been processed
@@ -816,23 +1051,20 @@ def find_tasks_to_execute():
                     earliest_due_instance_user_tz = (
                         earliest_due_instance_utc.astimezone(user_tz)
                     )
-                    print(
+                    logger.debug(
                         f"Will process earliest due instance: {earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({earliest_due_instance_utc.isoformat()})"
                     )
                     if len(due_instances_utc) > 1:
-                        print(
-                            f"  Note: {len(due_instances_utc) - 1} additional instance(s) pending"
+                        logger.debug(
+                            f"Note: {len(due_instances_utc) - 1} additional instance(s) pending"
                         )
 
                 except Exception as e:
-                    print(f"Error with croniter for task {task_id}: {e}. Skipping.")
-                    import traceback
-
-                    traceback.print_exc()
+                    logger.error(f"Error with croniter for task {task_id}: {e}. Skipping.", exc_info=True)
                     continue
 
                 # 5. Attempt to claim the earliest due instance atomically
-                print(
+                logger.debug(
                     f"Attempting to claim task {task_id} for instance {earliest_due_instance_utc.isoformat()}"
                 )
                 try:
@@ -853,29 +1085,29 @@ def find_tasks_to_execute():
                         ReturnValues="NONE",
                     )
 
-                    print(
-                        f"✓ Successfully claimed task {task_id} (user {user}) for instance {earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                    logger.info(
+                        f"Successfully claimed task {task_id} (user {user}) for instance {earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
                     )
                     tasks.append(task)
 
                 except dynamodb.exceptions.ConditionalCheckFailedException:
-                    print(
-                        f"✗ Task {task_id} (user {user}) already claimed by another process"
+                    logger.debug(
+                        f"Task {task_id} (user {user}) already claimed by another process"
                     )
                     continue
                 except Exception as e:
-                    print(
-                        f"✗ Error updating lastCheckedAt for task {task_id} (user {user}): {e}"
+                    logger.error(
+                        f"Error updating lastCheckedAt for task {task_id} (user {user}): {e}"
                     )
                     continue
 
-        print(f"\n=== Summary: Found {len(tasks)} tasks to execute in run {run_id} ===")
+        logger.info(f"Summary: Found {len(tasks)} tasks to execute in run {run_id}")
         return tasks
 
     except Exception as e:
         import traceback
 
-        print(
+        logger.error(
             f"General error in find_tasks_to_execute (run {run_id}): {e}\n{traceback.format_exc()}"
         )
         raise RuntimeError(f"Failed to find tasks to execute (run {run_id}): {str(e)}")
@@ -905,10 +1137,10 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
 
     for task in tasks:
         current_user = task["user"]
-        print(f"Current user: {current_user}")
+        logger.debug(f"Current user: {current_user}")
         task_id = task["taskId"]
 
-        print("Retrieving api key for task")
+        logger.debug("Retrieving api key for task")
         api_key_id = task.get("apiKeyId")
         # Retrieve API key
         api_result = get_api_key_directly_by_id(api_key_id)
@@ -928,7 +1160,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
         try:
             # Create message payload
             message = {"source": "scheduled-task", "taskData": task}
-            print(f"Sending task {task_id} to queue")
+            logger.debug(f"Sending task {task_id} to queue")
             # Send message to queue with our safe JSON serialization helper
             response = sqs.send_message(
                 QueueUrl=queue_url, MessageBody=safe_json_dumps(message)
@@ -939,7 +1171,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
             )
 
         except Exception as e:
-            print(f"Error sending task {task['taskId']} to queue: {e}")
+            logger.error(f"Error sending task {task['taskId']} to queue: {e}")
             failed.append(
                 {
                     "taskId": task["taskId"],
@@ -950,11 +1182,10 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
             )
     for failedTask in failed:
         id = failedTask["taskId"]
-        print(f"Failed to send task {id} to queue: {failedTask['error']}")
+        logger.error(f"Failed to send task {id} to queue: {failedTask['error']}")
         
-        # Create a sessionId for this failed queue operation
-        runtime = get_timestamp(False)
-        session_id = f"scheduled-task-{id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+        # Create a sessionId for this failed queue operation with short UUID format
+        session_id = f"execution-{str(uuid.uuid4())}"
         
         add_task_execution_record(
             failedTask["userId"],
@@ -967,10 +1198,15 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
                 "source": task_source,
             },
             execution_id=session_id,
+            access_token=task["apiKey"]
         )
     return {"successful": successful, "failed": failed}
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="execute_scheduled_tasks", account="system")
 def execute_scheduled_tasks(event, context):
     """
     Main handler for scheduled tasks execution.
@@ -1011,7 +1247,7 @@ def execute_scheduled_tasks(event, context):
         }
 
     except Exception as e:
-        print(f"Error executing scheduled tasks: {e}")
+        logger.error(f"Error executing scheduled tasks: {e}")
         return {
             "statusCode": 500,
             "body": safe_json_dumps(

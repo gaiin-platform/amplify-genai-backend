@@ -1,4 +1,4 @@
-service:  amplify-${self:custom.stageVars.DEP_NAME}-office365
+service:  amplify-${self:custom.depName}-office365
 
 frameworkVersion: "3"
 
@@ -13,13 +13,21 @@ plugins:
   - serverless-prune-plugin
   - serverless-cloudformation-changesets-v3
 custom:
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
   pythonRequirements:
     dockerizePip: non-linux
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   stages:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
 provider:
   name: aws
@@ -35,19 +43,31 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     INTEGRATION_STAGE: ${self:provider.stage}
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ENCRYPTION_PARAMETER: /amplify-${self:custom.depName}-assistants-api/${sls:stage}/oauth/integrations/encryption #must start with /
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+    
+    # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-    OAUTH_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-assistants-api/${sls:stage}/oauth/integrations/encryption #must start with /
-    OAUTH_USER_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-user-oauth-integrations
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+
+    # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    OAUTH_USER_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants-api/OAUTH_USER_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     
   iam:
     role:
@@ -118,6 +138,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OAUTH_USER_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
 
             - Effect: Allow
               Action:
@@ -133,3 +154,33 @@ resources:
                 - dynamodb:ListStreams
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}/stream/*"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+              
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"

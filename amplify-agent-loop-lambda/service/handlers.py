@@ -1006,13 +1006,13 @@ def get_latest_agent_state(current_user, session_id):
         # Get the first item if it exists
         items = response.get("Items", [])
         if not items:
-            return {"success": False, "error": "No agent state found for this session"}
+            return {"success": True, "message": "No agent state found for this session"}
 
         latest_item = items[0]
 
         # Check if this result has already been consumed
         if "consumedAt" in latest_item and latest_item["consumedAt"]:
-            return {"success": False, "error": "No fresh results available"}
+            return {"success": True, "message": "No fresh results available"}
 
         # Check if the memory column is populated (indicating result is complete)
         if "memory" in latest_item and latest_item["memory"]:

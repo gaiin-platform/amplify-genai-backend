@@ -2,6 +2,11 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
+import {
+    withEnvVarsTracking,
+    DynamoDBOperation
+} from '../common/envVarsTracking.js';
+import { getUsageTracker } from '../common/usageTracking.js';
 
 const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
@@ -388,11 +393,11 @@ const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
         user = params.user; // Assign user from params
         logger.info("Request initiated by user", { user, requestBody: body });
 
-        // Check if user is in Admin group by querying ADMIN_DYNAMODB_TABLE
+        // Check if user is in Admin group by querying AMPLIFY_ADMIN_DYNAMODB_TABLE
         logger.info("Starting admin privilege verification");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -755,9 +760,9 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
 
         // Step 1: Check admin privileges
         logger.info("Verifying admin privileges");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -1450,10 +1455,10 @@ const internalGetUserCostHistoryHandler = async (event, context, callback) => {
         // Check admin privileges if requesting another user's history
         if (requestedEmail !== user) {
             logger.info("Verifying admin privileges for cross-user history request");
-            const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+            const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
             
             if (!adminTableName) {
-                logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+                logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
                 return {
                     statusCode: 500,
                     body: JSON.stringify({ error: 'Server configuration error' }),
@@ -1679,10 +1684,94 @@ const formatCurrency = (amount) => {
     return `$${amount.toFixed(2)}`;
 };
 
+// Environment variable configuration for billing handlers
+const EnvConfig = {
+    // DynamoDB tables - require IAM permissions
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM]  // For Lambda usage tracking
 
+    // Configuration-only variables (no AWS permissions needed):
+    // "SERVICE_NAME": [], // Tracking metadata only
+    // "STAGE": [], // Tracking metadata only
+};
 
-export const handler = mtdHandler;
-export const apiKeyUserCostHandler = internalApiKeyUserCostHandler;
-export const listAllUserMtdCostsHandler = internalListAllUserMtdCostsHandler;
-export const billingGroupsCostsHandler = internalBillingGroupsCostsHandler;
-export const listUserMtdCostsHandler = internalListUserMtdCostsHandler;
+/**
+ * Wrapper that adds both environment variable tracking AND usage tracking to billing handlers
+ *
+ * This wraps API Gateway handlers with:
+ * 1. Environment variable resolution and tracking (via withEnvVarsTracking)
+ * 2. Lambda execution metrics tracking for cost calculation
+ */
+const withTracking = (envConfig, operationName, handler) => {
+    // First wrap with env vars tracking
+    const envTrackedHandler = withEnvVarsTracking(envConfig, handler);
+
+    // Then wrap with usage tracking
+    return async (event, context) => {
+        const usageTracker = getUsageTracker();
+        let trackingContext = {};
+        let params = null;
+
+        try {
+            // Extract params (includes user authentication)
+            params = await extractParams(event);
+
+            // 📊 START USAGE TRACKING
+            if (params?.user && usageTracker.enabled) {
+                const endpoint = event.path || `/billing/${operationName}`;
+                const apiAccessed = params.body?.options?.accountId ? true : false;
+                trackingContext = usageTracker.startTracking(
+                    params.user,
+                    operationName,
+                    endpoint,
+                    apiAccessed,
+                    context
+                );
+            }
+
+            // Execute the handler (which already has env vars tracking)
+            return await envTrackedHandler(event, context);
+
+        } finally {
+            // 📊 END USAGE TRACKING
+            if (usageTracker.enabled && trackingContext.startTime) {
+                try {
+                    const result = { statusCode: 200 };
+                    const claims = {
+                        account: params?.body?.options?.accountId || 'oauth',
+                        user: params?.user || 'unknown',
+                        api_key_id: params?.body?.options?.accountId ? 'api_key' : null,
+                        purpose: params?.body?.options?.purpose || null
+                    };
+
+                    const metrics = usageTracker.endTracking(
+                        trackingContext,
+                        result,
+                        claims,
+                        null
+                    );
+
+                    if (metrics) {
+                        usageTracker.recordMetrics(metrics).catch(err =>
+                            logger.error(`Background metrics recording failed: ${err.message}`)
+                        );
+                    }
+                } catch (metricsError) {
+                    logger.error(`Metrics tracking failed: ${metricsError.message}`);
+                }
+            }
+        }
+    };
+};
+
+// Export all handlers with environment variable tracking AND usage tracking
+export const handler = withTracking(EnvConfig, 'mtd_cost', mtdHandler);
+export const apiKeyUserCostHandler = withTracking(EnvConfig, 'api_key_user_cost', internalApiKeyUserCostHandler);
+export const listAllUserMtdCostsHandler = withTracking(EnvConfig, 'list_all_user_mtd_costs', internalListAllUserMtdCostsHandler);
+export const billingGroupsCostsHandler = withTracking(EnvConfig, 'billing_groups_costs', internalBillingGroupsCostsHandler);
+export const listUserMtdCostsHandler = withTracking(EnvConfig, 'list_user_mtd_costs', internalListUserMtdCostsHandler);
+export const getUserCostHistoryHandler = withTracking(EnvConfig, 'user_cost_history', internalGetUserCostHistoryHandler);

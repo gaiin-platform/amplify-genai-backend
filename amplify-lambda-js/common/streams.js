@@ -321,6 +321,9 @@ export const sendResultToStream = (resultStream, result) => {
 }
 
 export const endStream = (resultStream) => {
+    if (!resultStream || resultStream.writableEnded) {
+        return;
+    }
     resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
 }
 

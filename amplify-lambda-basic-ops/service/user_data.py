@@ -18,6 +18,10 @@ from service.routes import route_data
 set_route_data(route_data)
 set_permissions_by_state(permissions)
 
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
+logger = getLogger("user-data")
 
 USER_DATA_TABLE = os.environ["USER_STORAGE_TABLE"]
 table_name = os.getenv("USER_STORAGE_TABLE")
@@ -48,6 +52,11 @@ def camel_to_snake(name):
 
 def common_handler(operation, func_schema, **optional_params):
     def handler(event, context, current_user, name, data):
+        # Initialize usage tracker for agent operations
+        from pycommon.metrics import get_usage_tracker
+        tracker = get_usage_tracker()
+        op_tracking_context = {}
+
         try:
             print(f"Function schema: {func_schema}")
 
@@ -82,15 +91,74 @@ def common_handler(operation, func_schema, **optional_params):
             if has_named_parameter(operation, "access_token"):
                 args["access_token"] = access_token
 
-            print("Invoking operation")
+            # Start tracking agent operation
+            op_tracking_context = tracker.start_tracking(
+                user=current_user,
+                operation=operation.__name__ if hasattr(operation, '__name__') else 'unknown_operation',
+                endpoint=name,
+                api_accessed=data.get("api_accessed", False),
+                context=context,
+            )
+
+            logger.debug("Invoking operation")
             response = operation(**args)
 
-            return {"success": True, "data": response}
-        except Exception as e:
-            import traceback
+            # Handle both dict and list responses
+            if isinstance(response, dict):
+                success = response.get("success", True)
+                result = {"success": success, "data": response}
+            else:
+                # Raw list/data response - wrap it
+                logger.debug("Wrapping raw response in success format")
+                success = True
+                result = {"success": True, "data": response}
 
-            traceback.print_exc()
-            print(f"Unexpected error: {str(e)}")
+            # End tracking and record metrics
+            result_dict = {"statusCode": 200 if success else 500}
+            metrics = tracker.end_tracking(
+                tracking_context=op_tracking_context,
+                result=result_dict,
+                claims={
+                    "account": data.get("account"),
+                    "username": current_user,
+                    "api_key_id": data.get("api_key_id"),
+                },
+                error_type=None if success else "OperationReturnedFailure",
+            )
+            tracker.record_metrics(metrics)
+
+            return result
+        except Exception as e:
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 500}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type=type(e).__name__,
+                )
+                tracker.record_metrics(metrics)
+
+            logger.error("Unexpected error in common_handler operation: %s", str(e), exc_info=True)
+
+            # CRITICAL: User data operation failure = broken user experience
+            log_critical_error(
+                function_name="common_handler",
+                error_type="UserDataOperationFailure",
+                error_message=f"Failed to execute user data operation: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "schema": str(func_schema)[:200]  # Truncate for readability
+                }
+            )
+
             return {"success": False, "error": "Unexpected error."}
 
     return handler
@@ -146,8 +214,28 @@ def _decode_app_id(app_id):
 
 
 def _remove_keys(item):
-    """Remove PK and SK from the item"""
+    """
+    Remove internal DynamoDB keys (PK, SK) from an item and normalize field names.
+
+    This function:
+    - Extracts itemId from SK for backwards compatibility with items that don't have itemId stored
+    - Removes PK and SK keys from the returned item
+    - Normalizes UUID to lowercase 'uuid' for consistency
+
+    Args:
+        item: Dictionary containing DynamoDB item data with PK/SK keys
+
+    Returns:
+        A copy of the item with PK/SK removed and normalized field names
+    """
     item_copy = item.copy()  # Create a copy to avoid modifying the original
+
+    # Extract itemId from SK for backwards compatibility with items that don't have itemId stored
+    if "itemId" not in item_copy and "SK" in item_copy:
+        sk = item_copy["SK"]
+        # SK format is either "item_id" or "item_id#range_key"
+        item_copy["itemId"] = sk.split("#")[0] if "#" in sk else sk
+
     item_copy.pop("PK", None)  # Remove 'PK' if exists
     item_copy.pop("SK", None)  # Remove 'SK' if exists
 

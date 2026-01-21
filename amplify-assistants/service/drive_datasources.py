@@ -17,6 +17,10 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
+logger = getLogger("assistants_drive_files")
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value])
@@ -124,7 +128,21 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         }
 
     except Exception as e:
-        print(f"Error uploading integration files: {e}")
+        logger.error("Error uploading integration files: %s", e)
+        
+        # CRITICAL: Drive file upload failure = assistant can't access Google/OneDrive files
+        log_critical_error(
+            function_name="upload_integration_files_to_datasources",
+            error_type="DriveFileUploadFailure",
+            error_message=f"Failed to upload integration drive files: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "provider_count": len(drive_files_data) if drive_files_data else 0,
+                "upload_endpoint": upload_endpoint
+            }
+        )
+        
         return {
             "success": False,
             "error": str(e),

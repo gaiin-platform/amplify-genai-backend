@@ -5,6 +5,7 @@ import {S3Client, GetObjectCommand} from '@aws-sdk/client-s3';
 import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
@@ -101,6 +102,24 @@ export const getImageBase64Content = async (dataSource) => {
         return data;
     } catch (error) {
         logger.error("Error retrieving base64 encoded image", error);
+        
+        // CRITICAL: Image retrieval failure - user cannot use images in conversation
+        logCriticalError({
+            functionName: 'getImageBase64Content',
+            errorType: 'ImageRetrievalFailure',
+            errorMessage: `Failed to retrieve image from S3: ${error.message || "Unknown error"}`,
+            currentUser: 'system', // No user context available at this level
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                bucket: bucket,
+                key: key,
+                dataSourceId: dataSource?.id || 'unknown',
+                errorCode: error.code || error.name || 'N/A',
+                s3ErrorCode: error.Code || 'N/A'
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         return null;
     }
 

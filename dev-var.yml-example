@@ -1,5 +1,4 @@
 # amplify-lambda
-AGENT_ENDPOINT: "" #leave blank for future release
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
 BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
