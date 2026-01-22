@@ -59,7 +59,7 @@ export const translateDataToResponseBody = (data) => {
     });
 
     data.input = messages;
-    data.max_output_tokens = data.max_tokens || data.max_completion_tokens || 1000;
+    data.max_output_tokens = data.max_output_tokens || data.max_tokens || data.max_completion_tokens || 4096;
     if (data.max_output_tokens < 16) data.max_output_tokens = 16;
     delete data.messages;
     delete data.max_tokens;
@@ -211,20 +211,24 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             messages: data.messages,
             tools: data.tools,
             tool_choice: data.tool_choice || 'auto',
-            max_completion_tokens: data.max_tokens || model.outputTokenLimit,
+            max_completion_tokens: data.max_tokens || options.maxTokens || model.outputTokenLimit,
             stream: true
         };
         // Note: stream_options and reasoning_effort are NOT included for O-models with tools
         // as they may cause 400 errors
     }
     // Only add reasoning for non-tool requests (reasoning can conflict with tool calling)
-    if (model.supportsReasoning && !hasTools) {
+    const disableReasoning = options.disableReasoning;
+    if (model.supportsReasoning && !hasTools && !disableReasoning) {
         const reasoningLvl = options.reasoningLevel ?? "low";
         if (isCompletionEndpoint) {
             data.reasoning_effort = reasoningLvl;
         } else {
             data.reasoning = {effort: reasoningLvl, summary: "auto"};
         }
+        logger.info(`Reasoning enabled with level: ${reasoningLvl}`);
+    } else if (model.supportsReasoning && disableReasoning) {
+        logger.info(`Reasoning disabled by user (disableReasoning=true)`);
     }
     
     // Only use responses API format when:

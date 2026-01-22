@@ -1265,7 +1265,8 @@ Be thorough and precise so someone could understand the image content without se
                     account: params.account,
                     options: {
                         model,
-                        requestId: params.requestId
+                        requestId: params.requestId,
+                        disableReasoning: true
                     }
                 },
                 visionMessages,

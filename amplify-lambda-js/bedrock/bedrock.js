@@ -63,7 +63,8 @@ export const chatBedrock = async (chatBody, writable) => {
         // Note: Disable reasoning when tools are present because Bedrock requires thinking blocks
         // in assistant messages when using extended thinking with tools, which complicates the tool loop
         const hasTools = body.tools && body.tools.length > 0;
-        const isReasoningEnabled = currentModel.supportsReasoning && maxTokens > 1024 && !hasTools;
+        const disableReasoning = options.disableReasoning;
+        const isReasoningEnabled = currentModel.supportsReasoning && maxTokens > 1024 && !hasTools && !disableReasoning;
 
         // CRITICAL: When extended thinking is enabled, temperature MUST be 1.0
         // https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
@@ -98,6 +99,8 @@ export const chatBedrock = async (chatBody, writable) => {
                 },
             }
             logger.info(`Extended thinking enabled with temperature=1.0 (original: ${options.temperature}), budget_tokens=${budget_tokens}`);
+        } else if (currentModel.supportsReasoning && disableReasoning) {
+            logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
         }
 
         if (currentModel.supportsSystemPrompts) {
