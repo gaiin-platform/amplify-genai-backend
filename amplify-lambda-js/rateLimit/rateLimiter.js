@@ -225,10 +225,12 @@ export async function isRateLimited(params) {
         return !limit || limit.period?.toLowerCase() === 'unlimited';
     }
     
-    // Simple rate limit checking order:
-    // 1. Admin limit - if violated, reject immediately
-    // 2. Group limits - check each group, if any violated, reject
-    // 3. User limit - only if admin + groups all pass
+    // Rate limit checking order:
+    // 1. Find the highest group limit among all user's groups
+    // 2. Compare highest group limit vs admin limit - use whichever is HIGHER
+    //    (allows billing groups to grant higher limits than the default)
+    // 3. Check against that single effective limit
+    // 4. Finally check user's personal limit
 
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
@@ -262,23 +264,40 @@ export async function isRateLimited(params) {
         const rateData = unmarshall(item);
 
         // Function now defined at module level
-        // 1. Check admin limit first
-        if (!noLimit(adminRateLimit)) {
-            if (await checkAndSetLimit(adminRateLimit, rateData, params, 'admin', true)) {
+        // 1. Find the highest group limit (by rate value)
+        let highestGroupLimit = null;
+        for (const groupLimit of groupRateLimits) {
+            if (!noLimit(groupLimit)) {
+                if (!highestGroupLimit || groupLimit.rate > highestGroupLimit.rate) {
+                    highestGroupLimit = groupLimit;
+                }
+            }
+        }
+
+        // 2. Determine effective limit: use group if higher than admin, else use admin
+        let effectiveLimit = null;
+        let effectiveLimitType = null;
+        let effectiveGroupName = null;
+
+        if (highestGroupLimit && (noLimit(adminRateLimit) || highestGroupLimit.rate > adminRateLimit.rate)) {
+            // Group limit is higher, use it
+            effectiveLimit = highestGroupLimit;
+            effectiveLimitType = 'group';
+            effectiveGroupName = highestGroupLimit.groupName;
+        } else if (!noLimit(adminRateLimit)) {
+            // Use admin limit as the default
+            effectiveLimit = adminRateLimit;
+            effectiveLimitType = 'admin';
+        }
+
+        // 3. Check against the single effective limit
+        if (effectiveLimit) {
+            if (await checkAndSetLimit(effectiveLimit, rateData, params, effectiveLimitType, effectiveLimitType === 'admin', effectiveGroupName)) {
                 return true;
             }
         }
         
-        // 2. Check each group limit
-        for (const groupLimit of groupRateLimits) {
-            if (!noLimit(groupLimit)) {
-                if (await checkAndSetLimit(groupLimit, rateData, params, 'group', false, groupLimit.groupName)) {
-                    return true;
-                }
-            }
-        }
-        
-        // 3. Finally check user limit
+        // 4. Finally check user limit (personal limit)
         if (!noLimit(userRateLimit)) {
             if (await checkAndSetLimit(userRateLimit, rateData, params, 'user')) {
                 return true;
