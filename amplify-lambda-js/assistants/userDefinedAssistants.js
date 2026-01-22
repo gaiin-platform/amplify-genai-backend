@@ -623,6 +623,9 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 const updatedBody = {
                     ...body,
+                    // 🔧 PRESERVE WEB SEARCH & MCP FLAGS: Must be at top level for tool loop detection
+                    enableWebSearch: body.options?.enableWebSearch,
+                    mcpEnabled: body.options?.mcpEnabled,
                     messages: [
                         ...messagesWithoutSystem.slice(0,-1),
                         {
@@ -645,9 +648,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         ...dataSourceOptions,
                         prompt: instructions,
                         skipDocumentCache: true, // 🚨 CRITICAL: No document caching for assistants
-                        skipRag: false,          // 🚨 CRITICAL: ALWAYS use RAG for user-defined assistants  
+                        skipRag: false,          // 🚨 CRITICAL: ALWAYS use RAG for user-defined assistants
                         ragOnly: true,           // 🚨 CRITICAL: ONLY RAG, no attached documents ever
-                        groupType: groupType // Preserve groupType for conversation analysis
+                        groupType: groupType, // Preserve groupType for conversation analysis
+                        // 🔧 PRESERVE WEB SEARCH & MCP in options too (checked by shouldEnableWebSearch)
+                        enableWebSearch: body.options?.enableWebSearch,
+                        mcpEnabled: body.options?.mcpEnabled
                     }
                 };
             
