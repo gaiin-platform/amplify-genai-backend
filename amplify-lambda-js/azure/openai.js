@@ -144,6 +144,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
+    if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
     const config = await endpointProvider(modelId, model.provider);
 

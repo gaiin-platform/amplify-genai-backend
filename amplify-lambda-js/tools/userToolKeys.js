@@ -62,19 +62,14 @@ export async function getUserToolApiKeys(userId) {
     }
 
     try {
-        // Python backend stores with IDP-prefixed username: {IDP_PREFIX}_{username}
-        // We need to match that format when querying
-        const fullUserId = IDP_PREFIX ? `${IDP_PREFIX}_${userId}` : userId;
-        logger.info(`🔑 Full userId with IDP prefix: "${fullUserId}"`);
-
-        const hashKey = createHashKey(fullUserId, APP_ID);
+        const hashKey = createHashKey(userId, APP_ID);
         // PK format in Python: {hash_key}#{entity_type} where hash_key = {user}#{app}
         // So PK = {user}#{app}#{entity_type}
         const pk = `${hashKey}#${ENTITY_TYPE}`;
 
         logger.info(`🔑 Generated hashKey: "${hashKey}"`);
         logger.info(`🔑 Full PK for query: "${pk}"`);
-        logger.debug(`Querying tool API keys for user: ${fullUserId}`);
+        logger.debug(`Querying tool API keys for user: ${userId}`);
 
         // Python stores with SK = item_id (provider name), not entity_type#provider
         const command = new QueryCommand({
