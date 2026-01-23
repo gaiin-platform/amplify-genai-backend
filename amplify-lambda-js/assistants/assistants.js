@@ -15,6 +15,7 @@ import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
+import {chatWithDataStateless} from "../common/chatWithData.js";
 
 const logger = getLogger("assistants");
 
@@ -45,7 +46,7 @@ const defaultAssistant = {
         const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
         // ✅ Use token counting
         const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
-        const aboveLimit = requiredTokens >= limit;
+        const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
         logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
@@ -77,7 +78,7 @@ const defaultAssistant = {
             dataSources_length: dataSources.length,
             hasPreResolvedData,
             needsDataProcessing: needsDataProcessingDecision,
-            enableWebSearch: body?.enableWebSearch,
+            enableWebSearch: body?.options?.enableWebSearch,
             route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
@@ -88,14 +89,12 @@ const defaultAssistant = {
         if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit){
             logger.info("→ Using mapReduceAssistant (token limit exceeded)");
             
-            
-            
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
         } else {
             if (needsDataProcessingDecision) {
                 // Use chatWithDataStateless for RAG, document processing, conversation discovery  
                 logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
-                const {chatWithDataStateless} = await import("../common/chatWithData.js");
+    
                 
                 // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
                 const enhancedParams = params.preResolvedDataSourcesByUse ? {
@@ -116,41 +115,6 @@ const defaultAssistant = {
                 let webSearchEnabled = shouldEnableWebSearch(body);
                 // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
                 const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
-
-                // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
-                let adminWebSearchAvailable = false;
-                // Check if frontend explicitly disabled web search (respect explicit false)
-                const frontendExplicitlyDisabled = body?.enableWebSearch === false ||
-                                                  body?.options?.enableWebSearch === false ||
-                                                  body?.options?.options?.webSearch === false;
-
-                // Only auto-enable if frontend didn't explicitly set a preference (undefined values)
-                if (!webSearchEnabled && !frontendExplicitlyDisabled) {
-                    try {
-                        const adminKey = await getAdminWebSearchApiKey();
-                        if (adminKey && adminKey.provider && adminKey.api_key) {
-                            adminWebSearchAvailable = true;
-                            webSearchEnabled = true;
-                            logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
-                        }
-                    } catch (error) {
-                        logger.debug('Failed to check admin web search config:', error.message);
-                    }
-                } else if (frontendExplicitlyDisabled) {
-                    logger.info(`Web search explicitly disabled by frontend, respecting user choice`);
-                }
-
-                logger.info("🔍 Tool loop check:", {
-                    enableWebSearch: body?.enableWebSearch,
-                    optionsEnableWebSearch: body?.options?.enableWebSearch,
-                    optionsOptionsWebSearch: body?.options?.options?.webSearch,
-                    frontendExplicitlyDisabled,
-                    adminWebSearchAvailable,
-                    webSearchEnabled,
-                    mcpEnabled,
-                    optionsMcpEnabled: body?.options?.mcpEnabled,
-                    toolsCount: (body?.tools || body?.options?.tools)?.length || 0
-                });
 
                 if (webSearchEnabled || mcpEnabled) {
                     logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
@@ -173,8 +137,9 @@ const defaultAssistant = {
                             // since they run on the user's local machine
                             mcpClientSide: mcpEnabled,
                             // Pass through any tools from the frontend (can be at top level or in options)
-                            tools: bodyWithImages.tools || bodyWithImages.options?.tools
-                        }
+                            tools: bodyWithImages.tools || bodyWithImages.options?.tools,
+                            webSearchEnabled: webSearchEnabled,
+                        },
                     );
                 }
 

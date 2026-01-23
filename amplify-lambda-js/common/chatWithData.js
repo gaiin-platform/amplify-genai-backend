@@ -1,4 +1,4 @@
-//Copyright (c) 2024 Vanderbilt University  
+//Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {extractProtocol, getContexts, isDocument} from "../datasource/datasources.js";
@@ -13,6 +13,7 @@ import {getContextMessages} from "./chat/rag/rag.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
 import {isKilled} from "../requests/requestState.js";
+import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 
 const logger = getLogger("chatWithData");
 
@@ -407,44 +408,54 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         messages: cleanedMessages
     };
 
-    // Check killswitch before making final request
-    if (await isKilled(account.user, responseStream, requestWithContext)) return;
-
     // Process the final request based on context types
     const hasRAGSources = ragResults.sources.length > 0;
     const hasContexts = contexts.length > 0;
 
-    if (hasRAGSources || hasContexts) {
-        logger.info(`🎯 Final request with contexts: RAG sources: ${ragResults.sources.length}, Context documents: ${contexts.length}`);
-        
-        // Check killswitch before LLM call
-        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
-        
-        // ✅ Direct native provider call for each context
-        await callUnifiedLLM(
-            { account, options: { ...options, model } },  // Pass all options including trackConversations
+    if (hasRAGSources || hasContexts) logger.info(`🎯 Final request with contexts: RAG sources: ${ragResults.sources.length}, Context documents: ${contexts.length}`);
+    if(!params.options.ragOnly) logger.info("🎯 No relevant contexts found, making direct LLM call");
+
+    // Check killswitch before LLM call
+    if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+
+    // Check if web search or MCP is enabled (same pattern as assistants.js)
+    let webSearchEnabled = shouldEnableWebSearch(chatRequestOrig);
+    const mcpEnabled = chatRequestOrig?.mcpEnabled === true || chatRequestOrig?.options?.mcpEnabled === true;
+
+    if (webSearchEnabled || mcpEnabled) {
+        logger.info(`🔧 Tool loop enabled with data sources (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
+        await executeToolLoop(
+            {
+                account,
+                options: {
+                    ...options,
+                    model,
+                    requestId: params.options?.requestId
+                }
+            },
             requestWithContext.messages,
+            model,
             responseStream,
-            { 
+            {
                 max_tokens: requestWithContext.max_tokens || 2000,
-                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
-            }
-        );
-    } else if(!params.options.ragOnly) {
-        // No context, direct LLM call
-        logger.info("🎯 No relevant contexts found, making direct LLM call");
-        
-        // Check killswitch before LLM call
-        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
-        
-        await callUnifiedLLM(
-            { account, options: { ...options, model } },  // Pass all options including trackConversations
-            requestWithContext.messages,
-            responseStream,
-            { 
-                max_tokens: requestWithContext.max_tokens || 2000,
-                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+                imageSources: chatRequestOrig.imageSources,
+                // MCP tools sent from frontend need client-side execution
+                mcpClientSide: mcpEnabled,
+                // Pass through any tools from the frontend
+                tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
+                webSearchEnabled: webSearchEnabled,
             }
         );
     }
+
+    // ✅ Direct native provider call (no tools needed)
+    await callUnifiedLLM(
+        { account, options: { ...options, model } },  // Pass all options including trackConversations
+        requestWithContext.messages,
+        responseStream,
+        {
+            max_tokens: requestWithContext.max_tokens || 2000,
+            imageSources: chatRequestOrig.imageSources 
+        }
+    );
 };

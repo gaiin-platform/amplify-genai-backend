@@ -32,6 +32,15 @@ export const createTokenCounter = () => {
                 return 0;
             }
 
+            // Ensure text is a string - convert if needed
+            if (typeof text !== 'string') {
+                if (typeof text === 'object') {
+                    text = JSON.stringify(text);
+                } else {
+                    text = String(text);
+                }
+            }
+
             // Check cache first
             const cacheKey = `${text.substring(0, 100)}:${text.length}`;
             const cached = tokenCountCache.get(cacheKey);
@@ -67,7 +76,18 @@ export const createTokenCounter = () => {
             }
         },
         countMessageTokens: (messages) => {
-            const counts = messages.map(m => encoding.encode(m.content ?? '').length);
+            const counts = messages.map(m => {
+                // Ensure content is a string
+                let content = m.content ?? '';
+                if (typeof content !== 'string') {
+                    if (typeof content === 'object') {
+                        content = JSON.stringify(content);
+                    } else {
+                        content = String(content);
+                    }
+                }
+                return encoding.encode(content).length;
+            });
             const count = counts.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
             return count;
         },
@@ -99,7 +119,20 @@ export const countChatTokens = (messages) => {
         tiktokenModel.pat_str,
     );
 
-    const counts = messages.map(m => encoding.encode(m.content).length);
+    const counts = messages.map(m => {
+        // Ensure content is a string
+        let content = m.content;
+        if (typeof content !== 'string') {
+            if (typeof content === 'object') {
+                content = JSON.stringify(content);
+            } else if (content) {
+                content = String(content);
+            } else {
+                content = '';
+            }
+        }
+        return encoding.encode(content).length;
+    });
     const count = counts.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
 
     encoding.free();

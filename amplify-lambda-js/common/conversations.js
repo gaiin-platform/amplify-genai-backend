@@ -846,7 +846,8 @@ export const processSmartMessages = async ({
                     model,
                     options: {
                         temperature: 0.8,
-                        max_tokens: 500
+                        max_tokens: 500,
+                        disableReasoning: true
                     }
                 },
                 llmMessages,
@@ -945,7 +946,8 @@ export const processSmartMessages = async ({
                 account,
                 options: {
                     model,
-                    requestId
+                    requestId,
+                    disableReasoning: true,
                 }
             },
             llmMessages,

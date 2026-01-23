@@ -712,13 +712,22 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             // statusTimer = setTimeout(sendStatusMessage, statusInterval);
             
             // Prepare enhanced chat request
+            const disableReasoning = options.disableReasoning;
+            const shouldEnableReasoning = isReasoningModel(model.id) && !disableReasoning;
+
+            if (shouldEnableReasoning) {
+                logger.info(`Reasoning enabled for model ${model.id} with level: ${options.reasoningLevel || 'low'}`);
+            } else if (isReasoningModel(model.id) && disableReasoning) {
+                logger.info(`Reasoning disabled by user (disableReasoning=true) for model ${model.id}`);
+            }
+
             const enhancedChatRequest = {
                 ...chatRequest,
                 messages: processedMessages,
                 tools: tools.length > 0 ? tools : undefined,
                 tool_choice: toolConversions.tool_choice,
                 // Handle o-models and reasoning models
-                ...(isReasoningModel(model.id) && {
+                ...(shouldEnableReasoning && {
                     max_completion_tokens: model.outputTokenLimit,
                     reasoning_effort: options.reasoningLevel || 'low'
                 })

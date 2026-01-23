@@ -57,32 +57,42 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // The Python mcp_servers.py uses current_user which is the Cognito sub UUID
     const mcpUserId = params.account?.user || params.account?.username;
 
-    const maxIterations = options.maxIterations || MAX_TOOL_ITERATIONS;
-
     logger.info('Starting tool execution loop');
     logger.debug(`Tool loop using userId for API key lookup: ${userId}`);
     logger.debug(`Tool loop using mcpUserId for MCP server lookup: ${mcpUserId}`);
 
     // Get user's tool API keys
     let apiKeys = await getUserToolApiKeys(userId);
+     // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
+    let adminKey = null;
 
-    // Also check for admin-configured API key
-    let hasAdminKey = false;
-    try {
-        const adminKey = await getAdminWebSearchApiKey();
-        if (adminKey && adminKey.provider && adminKey.api_key) {
-            logger.info(`Found admin-configured web search key for provider: ${adminKey.provider}`);
-            apiKeys = {
+    if (options.webSearchEnabled) {
+        try {
+            adminKey = await getAdminWebSearchApiKey();
+            if (adminKey && adminKey.provider && adminKey.api_key) {
+                logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
+                apiKeys = {
                 ...apiKeys,
-                [adminKey.provider]: adminKey.api_key
-            };
-            hasAdminKey = true;
+                    [adminKey.provider]: adminKey.api_key
+                };
+            } else {
+                logger.warn("→ Web search enabled for this request but no admin API key configured");
+                options.webSearchEnabled = false;
+            }
+        } catch (error) {
+            logger.debug('Failed to check admin web search config:', error.message);
         }
-    } catch (error) {
-        logger.warn('Failed to get admin web search key:', error.message);
-    }
+    } 
 
-    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'} (admin key: ${hasAdminKey})`);
+    logger.info("🔍 Tool loop check:", {
+        adminWebSearchAvailable: !!adminKey,
+        webSearchEnabled: options.webSearchEnabled,
+        mcpEnabled :options?.mcpEnabled,
+        toolsCount: (options?.tools)?.length || 0
+    });
+
+
+    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'}`);
 
     // Collect all available tools
     const allTools = [];
@@ -170,6 +180,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     let currentMessages = [...messages];
     let iteration = 0;
     let allWebSearchSources = []; // Track sources across iterations
+    const maxIterations = options.maxIterations || MAX_TOOL_ITERATIONS;
 
     while (iteration < maxIterations) {
         iteration++;
