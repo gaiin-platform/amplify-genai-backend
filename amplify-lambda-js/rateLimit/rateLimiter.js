@@ -426,6 +426,12 @@ export async function isRateLimited(params) {
         return !limit || limit.period?.toLowerCase() === 'unlimited';
     }
     
+    // Rate limit checking order:
+    // 1. Collect all group limits + admin limit into a pool
+    // 2. If ANY limit in the pool passes, user is not rate limited
+    // 3. Only if ALL limits in pool fail, user is blocked
+    // 4. Finally check user's personal limit (always applies as a personal cap)
+
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
     if (!costCalcTable) {
@@ -446,10 +452,10 @@ export async function isRateLimited(params) {
                 ':userid': { S: params.user}
             }
         });
-        
+
         logger.debug("Calling billing table.");
         const response = await dynamodbClient.send(command);
-        
+
         const item = response.Items[0];
 
         if (!item) {
@@ -460,45 +466,91 @@ export async function isRateLimited(params) {
 
         // 🚀 OPTIMIZATION: Pre-calculate lifetime cost ONCE if any limit needs it
         let precomputedLifetimeCost = null;
-        const needsLifetimeCost = 
+        const needsLifetimeCost =
             (!noLimit(adminRateLimit) && adminRateLimit.period === 'Total') ||
             groupRateLimits.some(g => !noLimit(g) && g.period === 'Total') ||
             (!noLimit(userRateLimit) && userRateLimit.period === 'Total');
-        
+
         if (needsLifetimeCost) {
             logger.debug("Pre-calculating lifetime cost once for all rate limit checks");
             precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
         }
 
+        // 1. Build the pool of limits to check (groups + admin)
+        const limitPool = [];
 
-        // Check limits in order: admin -> groups -> user
-        
-        // 1. Check admin limit first
+        // Add all group limits to the pool
+        for (const groupLimit of groupRateLimits) {
+            if (!noLimit(groupLimit)) {
+                limitPool.push({
+                    limit: groupLimit,
+                    limitType: 'group',
+                    groupName: groupLimit.groupName
+                });
+            }
+        }
+
+        // Add admin limit to the pool
         if (!noLimit(adminRateLimit)) {
-            if (await checkAndSetLimit(adminRateLimit, rateData, params, 'admin', true, null, precomputedLifetimeCost)) {
+            limitPool.push({
+                limit: adminRateLimit,
+                limitType: 'admin',
+                isAdminSet: true
+            });
+        }
+
+        // Sort limits by check speed: fast (Hourly/Daily/Monthly) before slow (Total)
+        // This allows early exit on fast checks, avoiding expensive lifetime calculations
+        const periodPriority = { 'Hourly': 1, 'Daily': 2, 'Monthly': 3, 'Total': 4 };
+        limitPool.sort((a, b) =>
+            (periodPriority[a.limit.period] || 3) - (periodPriority[b.limit.period] || 3)
+        );
+
+        // 2. check all limits in the pool
+        if (limitPool.length > 0) {
+            let passedAny = false;
+            let failedLimits = [];
+
+            for (const entry of limitPool) {
+                const isLimited = await calcIsRateLimited(entry.limit, rateData, params, precomputedLifetimeCost);
+                if (!isLimited) {
+                    passedAny = true;
+                    break; // Found one that passes, user is in
+                } else {
+                    failedLimits.push({
+                        ...entry,
+                        currentSpent: params.body.options.rateLimit?.currentSpent
+                    });
+                }
+            }
+
+            if (!passedAny && failedLimits.length > 0) {
+                // All limits in pool exceeded - user is blocked
+                // Report the limit with highest rate (most generous that still failed)
+                const mostGenerous = failedLimits.reduce((max, curr) =>
+                    curr.limit.rate > max.limit.rate ? curr : max
+                );
+
+                params.body.options.rateLimit = {
+                    ...mostGenerous.limit,
+                    limitType: mostGenerous.limitType,
+                    adminSet: mostGenerous.isAdminSet || false,
+                    currentSpent: mostGenerous.currentSpent,
+                    ...(mostGenerous.groupName && { groupName: mostGenerous.groupName })
+                };
                 recordRateLimitViolation(params.user);
                 return true;
             }
         }
-        
-        // 2. Check each group limit
-        for (const groupLimit of groupRateLimits) {
-            if (!noLimit(groupLimit)) {
-                if (await checkAndSetLimit(groupLimit, rateData, params, 'group', false, groupLimit.groupName, precomputedLifetimeCost)) {
-                    recordRateLimitViolation(params.user);
-                    return true;
-                }
-            }
-        }
-        
-        // 3. Finally check user limit
+
+        // 3. Finally check user's personal limit (always applies)
         if (!noLimit(userRateLimit)) {
             if (await checkAndSetLimit(userRateLimit, rateData, params, 'user', false, null, precomputedLifetimeCost)) {
                 recordRateLimitViolation(params.user);
                 return true;
             }
         }
-        
+
         return false;
         
     } catch (error) {
