@@ -32,18 +32,6 @@ const logger = getLogger('UnifiedLLMClient');
 // Active request tracking
 const activeRequests = new Map();
 
-// Model type detection utilities
-const isOpenAIModel = (modelId) => {
-    return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
-};
-
-const isGeminiModel = (modelId) => {
-    return modelId && modelId.includes("gemini");
-};
-
-const isBedrockModel = (modelId) => {
-    return modelId && (modelId.includes("claude") || modelId.includes("mistral") || modelId.includes("amazon"));
-};
 
 /**
  * Get the appropriate chat function and transformer for a model
