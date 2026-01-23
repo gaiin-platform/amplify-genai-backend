@@ -219,7 +219,7 @@ pydyf
 pygments
 pylog
 pyluach
-pymupdf==1.23.26
+pymupdf==1.26.4
 pynacl
 pypandoc
 pyparsing
