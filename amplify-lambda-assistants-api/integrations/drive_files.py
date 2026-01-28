@@ -1137,16 +1137,17 @@ def get_current_iso_timestamp():
 
 
 def is_folder(provider_file, provider_type):
-    """Check if a provider file is a folder."""
+    """Check if a provider file is a folder/directory/site/library."""
     mime_type = ""
-    
+
     if isinstance(provider_file, dict):
         mime_type = provider_file.get("mimeType", "") or provider_file.get("type", "")
     elif isinstance(provider_file, list) and len(provider_file) > 2:
         # Google Drive format [id, name, mimeType, ...]
         mime_type = provider_file[2]
-    
-    return "folder" in mime_type.lower()
+
+    mime_lower = mime_type.lower()
+    return any(keyword in mime_lower for keyword in ["folder", "directory", "site", "library"])
 
 
 def get_file_id(provider_file):
