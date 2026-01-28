@@ -350,7 +350,7 @@ def format_sites_as_folders(sites):
         formatted.append({
             "id": site["id"],  # This becomes the folder_id for next level
             "name": site.get("displayName", site.get("name", "Unknown Site")),
-            "mimeType": "application/vnd.google-apps.folder",  # Mimic folder type
+            "mimeType": "sharepoint.site",  
             "size": "N/A",
             "downloadLink": None
         })
@@ -364,8 +364,8 @@ def format_libraries_as_folders(libraries, site_id):
         formatted.append({
             "id": f"{site_id}:{library['id']}",  # site_id:drive_id format
             "name": library.get("name", "Unknown Library"),
-            "mimeType": "application/vnd.google-apps.folder",  # Mimic folder type
-            "size": "N/A", 
+            "mimeType": "sharepoint.library", 
+            "size": "N/A",
             "downloadLink": None
         })
     return formatted
