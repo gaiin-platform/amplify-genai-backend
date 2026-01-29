@@ -457,23 +457,90 @@ update_admin_config_schema = {
                             },
                             "data": {
                                 "type": "object",
-                                "patternProperties": {
-                                    "^(google|microsoft|drive|github|slack)$": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "id": {"type": "string"},
-                                                "icon": {"type": "string"},
-                                                "description": {"type": "string"},
-                                                "isAvailable": {"type": "boolean"},
-                                            },
-                                            "required": ["name", "id", "icon", "description"],
-                                            "additionalProperties": False
+                                "properties": {
+                                    "integrations": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(google|microsoft|drive|github|slack)$": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "name": {"type": "string"},
+                                                        "id": {"type": "string"},
+                                                        "description": {"type": "string"},
+                                                        "isAvailable": {"type": "boolean"},
+                                                    },
+                                                    "required": ["name", "id", "description"],
+                                                    "additionalProperties": True
+                                                },
+                                            }
                                         },
+                                        "additionalProperties": False
+                                    },
+                                    "provider_settings": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(google|microsoft)$": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "azure_admin_consent_provided": {"type": "boolean"}
+                                                },
+                                                "additionalProperties": False
+                                            }
+                                        },
+                                        "additionalProperties": False
                                     }
                                 },
+                                "required": ["integrations"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'criticalErrors'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "criticalErrors"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "email": {
+                                        "type": "string"
+                                    },
+                                },
+                                "required": ["isActive", "email"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'webSearchConfig'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "webSearchConfig"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "provider": {
+                                        "type": "string",
+                                        "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                    },
+                                    "api_key": {"type": "string"},
+                                    "isEnabled": {"type": "boolean"}
+                                },
+                                "required": ["provider"],
                                 "additionalProperties": False
                             }
                         },

@@ -28,6 +28,8 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["OP_LOG_DYNAMO_TABLE"])
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("assistants_api")
 
 def log_execution(current_user, data, code, message, result, metadata={}):
@@ -368,6 +370,23 @@ def execute_custom_auto(event, context, current_user, name, data):
             )
 
             logger.error("An error occurred while executing the action: %s", str(e))
+            
+            # CRITICAL: Custom action execution failure = assistant can't perform actions
+            log_critical_error(
+                function_name="execute_custom_auto",
+                error_type="CustomActionExecutionFailure",
+                error_message=f"Failed to execute custom action: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "action_name": action_name,
+                    "conversation_id": conversation_id,
+                    "assistant_id": assistant_id,
+                    "message_id": message_id
+                }
+            )
+            
             return {"success": False, "error": str(e)}
 
     except Exception as e:

@@ -136,6 +136,46 @@ def _update_admin_groups(user: UserABC) -> None:
                 conf[g]["members"].remove(user_id)
     dal.AdminConfig.set_config(config_id, conf)
 
+def _update_payload(payload: dict, data: dict | None) -> dict:
+    if not payload or not data:
+        return payload
+
+    if (not payload.get("email")):
+        email = data.get("token", {}).get("email") or data.get("profile",{}).get("email")
+        if (email):
+            logger.info(f"Email extracted from data field: {email}")
+            payload["email"] = email
+
+    # Extract given_name and family_name if not already in payload
+    if not payload.get("given_name") or not payload.get("family_name"):
+        profile = data.get("profile", {})
+        token = data.get("token", {})
+
+        # Try to get from profile or token
+        given_name = profile.get("given_name") or token.get("given_name")
+        family_name = profile.get("family_name") or token.get("family_name")
+        name = profile.get("name") or token.get("name")
+
+        # If both given_name and family_name exist, use them
+        if given_name and family_name:
+            payload["given_name"] = given_name
+            payload["family_name"] = family_name
+            logger.info(f"Names extracted from profile: {given_name} {family_name}")
+        # Otherwise, parse the name field
+        elif name:
+            if "," in name:
+                # Format: "Last, First" -> split and reverse
+                parts = name.split(",", 1)
+                payload["family_name"] = parts[0].strip()
+                payload["given_name"] = parts[1].strip()
+                logger.info(f"Names parsed from comma-separated name: {payload['given_name']} {payload['family_name']}")
+            else:
+                # No comma, treat entire name as given_name
+                payload["given_name"] = name.strip()
+                logger.info(f"Name assigned to given_name: {payload['given_name']}")
+
+    return payload
+
 
 @required_env_vars({
     "COGNITO_USERS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
@@ -213,7 +253,9 @@ def create_or_update_user(event, context):
         # Check if request specifies which field to use as immutable_id
         body = json.loads(event.get("body", "{}"))
         immutable_id_field = body.get("immutable_id_field")
-
+        
+        payload = _update_payload(payload, body.get("data"))
+                
         # If no immutable_id in token but we have a field specified, copy it
         if not payload.get("immutable_id") and immutable_id_field and payload.get(immutable_id_field):
             logger.debug(f"Using field {immutable_id_field} as immutable_id")

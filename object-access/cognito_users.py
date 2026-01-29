@@ -5,6 +5,7 @@ import json
 import os
 import re
 import boto3
+import traceback
 from botocore.exceptions import ClientError
 from pycommon.const import APIAccessType
 from pycommon.decorators import required_env_vars
@@ -140,6 +141,21 @@ def get_emails(event, context, current_user, name, data):
 
     except ClientError as e:
         logger.error("Error: %s", e.response["Error"]["Message"])
+        
+        # CRITICAL: DynamoDB scan failure = user lookup broken
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        log_critical_error(
+            function_name="get_emails",
+            error_type="CognitoUserScanFailure",
+            error_message=f"Failed to scan DynamoDB for user emails: {e.response['Error']['Message']}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_code": e.response['Error'].get('Code'),
+                "error_message": e.response['Error']['Message']
+            }
+        )
+        
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 

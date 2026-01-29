@@ -15,6 +15,7 @@ from pycommon.const import APIAccessType
 from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.files import delete_file
 from pycommon.api.user_data import save_user_data
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
@@ -637,160 +638,181 @@ def create_assistant(event, context, current_user, name, data):
     logger.debug("Starting with %s existing website URLs", len(all_website_urls))
     logger.debug("all_website_urls: %s", all_website_urls)
 
-
-    for source in data_sources:
-        # Check if this is a website-related data source
-        is_website_type = source.get("type") in ["website/url", "website/sitemap"]
-        is_from_sitemap = source.get("metadata", {}).get("fromSitemap") is not None
-        
-        if is_website_type or is_from_sitemap:
-            # Check if this is a new URL to scrape (no key) or existing scraped content (has key)
-            if not source.get("key"):
-                # This is a NEW website URL that needs scraping
-                url = source.get("metadata", {}).get("sourceUrl", "")
-                if not url:
-                    url = source.get("id", '')
-                    if (url and "metadata" in source):
-                        source["metadata"]["sourceUrl"] = url
-                
-                # Check if this URL is already being tracked
-                existing_entry = next((entry for entry in all_website_urls if entry.get("url") == url), None)
-                if not existing_entry:
-                    # Add new website URL to tracking
-                    website_url_entry = {
-                        "url": url,
-                        "sourceUrl": url,
-                        "isSitemap": source.get("type") == "website/sitemap",
-                        "type": source.get("type"),
-                        **source.get("metadata", {}),  # Take frontend metadata as-is
-                        "lastScanned": source.get("metadata", {}).get("lastScanned")
-                    }
-                    all_website_urls.append(website_url_entry)
-                    logger.debug("Added new website URL to tracking: %s", url)
-                
-                logger.debug("Website data source needs scraping: %s", source)
-                website_data_sources.append(source)
-            else:
-                # This is EXISTING scraped content - preserve as data source
-                logger.debug("Preserving existing scraped website data source: %s", source.get('id'))
-                standard_data_sources.append(source)
-        else:
-            standard_data_sources.append(source)
-
-    assistant_data["websiteUrls"] = all_website_urls
-
-    # Process website URLs for scraping (only unscraped ones)
-    scraped_data_sources = []
-    if website_data_sources:
-        for website_source in website_data_sources:
-            # Extract URL and metadata
-            metadata = website_source.get("metadata", {})
-            url = metadata.get("sourceUrl", "") or website_source.get("id", "")
-            is_sitemap = website_source.get("type") == "website/sitemap"
-            scan_frequency = metadata.get("scanFrequency")
-
-            try:
-                # imported here to avoid circular import
-                from service.scrape_websites import scrape_website_content
-                # Attempt immediate scraping
-                max_pages = metadata.get("maxPages")
-                exclusions = metadata.get("exclusions")
-                scraped_data = scrape_website_content(url, access_token, is_sitemap, max_pages, exclusions)
-                scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
-                if scraped_data.get("success") and scraped_web_ds:
-                    for ds in scraped_web_ds:
-                        ds.get("metadata").update({"scanFrequency": scan_frequency, "contentKey": ds['id']})
-                        if (is_sitemap):
-                            ds.get("metadata").update({"maxPages": max_pages})
-                        ds['key'] = ds['id']
-
-                    scraped_data_sources += scraped_web_ds
+    try:
+        for source in data_sources:
+            # Check if this is a website-related data source
+            is_website_type = source.get("type") in ["website/url", "website/sitemap"]
+            is_from_sitemap = source.get("metadata", {}).get("fromSitemap") is not None
+            
+            if is_website_type or is_from_sitemap:
+                # Check if this is a new URL to scrape (no key) or existing scraped content (has key)
+                if not source.get("key"):
+                    # This is a NEW website URL that needs scraping
+                    url = source.get("metadata", {}).get("sourceUrl", "")
+                    if not url:
+                        url = source.get("id", '')
+                        if (url and "metadata" in source):
+                            source["metadata"]["sourceUrl"] = url
                     
-                    # Update lastScanned timestamp for this URL
-                    for website_entry in assistant_data["websiteUrls"]:
-                        if website_entry["url"] == url:
-                            website_entry["lastScanned"] = scraped_web_ds[0].get("metadata", {}).get("scrapedAt", datetime.now().isoformat())
-                            break
-
-            except Exception as e:
-                logger.error("Error initially scraping website %s: %s", url, str(e))
-
-    # imported here to avoid circular import
-    from service.drive_datasources import process_assistant_drive_sources
-    integration_drive_ds_response = process_assistant_drive_sources(assistant_data, access_token)
-    if not integration_drive_ds_response.get("success", False):
-        return integration_drive_ds_response
-    integration_drive_ds_data = integration_drive_ds_response.get("data", {})
-    # update assistant_data with integration drive data
-    assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
-
-    # Permissions handling for non-group users
-    if not is_group_user:
-        # Process standard data sources (excluding website URLs which don't need permission checks)
-        filtered_ds = []
-        tag_data_sources = []
-
-        for source in standard_data_sources:
-            if source["id"].startswith("tag://"):
-                tag_data_sources.append(source)
+                    # Check if this URL is already being tracked
+                    existing_entry = next((entry for entry in all_website_urls if entry.get("url") == url), None)
+                    if not existing_entry:
+                        # Add new website URL to tracking
+                        website_url_entry = {
+                            "url": url,
+                            "sourceUrl": url,
+                            "isSitemap": source.get("type") == "website/sitemap",
+                            "type": source.get("type"),
+                            **source.get("metadata", {}),  # Take frontend metadata as-is
+                            "lastScanned": source.get("metadata", {}).get("lastScanned")
+                        }
+                        all_website_urls.append(website_url_entry)
+                        logger.debug("Added new website URL to tracking: %s", url)
+                    
+                    logger.debug("Website data source needs scraping: %s", source)
+                    website_data_sources.append(source)
+                else:
+                    # This is EXISTING scraped content - preserve as data source
+                    logger.debug("Preserving existing scraped website data source: %s", source.get('id'))
+                    standard_data_sources.append(source)
             else:
-                filtered_ds.append(source)
+                standard_data_sources.append(source)
 
-        logger.debug("Tag Data sources: %s", tag_data_sources)
+        assistant_data["websiteUrls"] = all_website_urls
 
-        if len(filtered_ds) > 0:
-            logger.debug("Data sources before translation: %s", filtered_ds)
+        # Process website URLs for scraping (only unscraped ones)
+        scraped_data_sources = []
+        if website_data_sources:
+            for website_source in website_data_sources:
+                # Extract URL and metadata
+                metadata = website_source.get("metadata", {})
+                url = metadata.get("sourceUrl", "") or website_source.get("id", "")
+                is_sitemap = website_source.get("type") == "website/sitemap"
+                scan_frequency = metadata.get("scanFrequency")
 
-            for i in range(len(filtered_ds)):
-                source = filtered_ds[i]
-                if "://" not in source["id"]:
-                    filtered_ds[i]["id"] = source.get("key", source.get("id", ""))
+                try:
+                    # imported here to avoid circular import
+                    from service.scrape_websites import scrape_website_content
+                    # Attempt immediate scraping
+                    max_pages = metadata.get("maxPages")
+                    exclusions = metadata.get("exclusions")
+                    scraped_data = scrape_website_content(url, access_token, is_sitemap, max_pages, exclusions)
+                    scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
+                    if scraped_data.get("success") and scraped_web_ds:
+                        for ds in scraped_web_ds:
+                            ds.get("metadata").update({"scanFrequency": scan_frequency, "contentKey": ds['id']})
+                            if (is_sitemap):
+                                ds.get("metadata").update({"maxPages": max_pages})
+                            ds['key'] = ds['id']
 
-            logger.debug("Final data sources before translation: %s", filtered_ds)
+                        scraped_data_sources += scraped_web_ds
+                        
+                        # Update lastScanned timestamp for this URL
+                        for website_entry in assistant_data["websiteUrls"]:
+                            if website_entry["url"] == url:
+                                website_entry["lastScanned"] = scraped_web_ds[0].get("metadata", {}).get("scrapedAt", datetime.now().isoformat())
+                                break
 
-            filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+                except Exception as e:
+                    logger.error("Error initially scraping website %s: %s", url, str(e))
 
-            logger.debug("Data sources after translation and extraction: %s", filtered_ds)
+        # imported here to avoid circular import
+        from service.drive_datasources import process_assistant_drive_sources
+        integration_drive_ds_response = process_assistant_drive_sources(assistant_data, access_token)
+        if not integration_drive_ds_response.get("success", False):
+            return integration_drive_ds_response
+        integration_drive_ds_data = integration_drive_ds_response.get("data", {})
+        # update assistant_data with integration drive data
+        assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
 
-            # Only check permissions on standard data sources
-            if filtered_ds and not can_access_objects(
-                data["access_token"], filtered_ds
-            ):
-                return {
-                    "success": False,
-                    "message": "You are not authorized to access the referenced files",
-                }
+        # Permissions handling for non-group users
+        if not is_group_user:
+            # Process standard data sources (excluding website URLs which don't need permission checks)
+            filtered_ds = []
+            tag_data_sources = []
 
-        # Combine all types of data sources for the final assistant
-        final_data_sources = filtered_ds + tag_data_sources
-    else:
-        # For group system users, use all data sources as-is
-        final_data_sources = standard_data_sources
-    
-    # merge additional ds
-    final_data_sources += scraped_data_sources 
-    # + drive_data_sources
+            for source in standard_data_sources:
+                if source["id"].startswith("tag://"):
+                    tag_data_sources.append(source)
+                else:
+                    filtered_ds.append(source)
 
-    logger.debug("final_data_sources: %s", final_data_sources)
+            logger.debug("Tag Data sources: %s", tag_data_sources)
 
-    # Create or update the assistant with the final data sources
-    return create_or_update_assistant(
-        current_user=current_user,
-        access_token=data["access_token"],
-        user_that_owns_the_assistant=current_user,
-        assistant_name=assistant_name,
-        description=description,
-        instructions=instructions,
-        assistant_data=assistant_data,
-        disclaimer=disclaimer,
-        tags=tags,
-        data_sources=final_data_sources,
-        tools=tools,
-        provider=provider,
-        uri=uri,
-        assistant_public_id=assistant_public_id,
-        is_group_user=is_group_user,
-    )
+            if len(filtered_ds) > 0:
+                logger.debug("Data sources before translation: %s", filtered_ds)
+
+                for i in range(len(filtered_ds)):
+                    source = filtered_ds[i]
+                    if "://" not in source["id"]:
+                        filtered_ds[i]["id"] = source.get("key", source.get("id", ""))
+
+                logger.debug("Final data sources before translation: %s", filtered_ds)
+
+                filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+
+                logger.debug("Data sources after translation and extraction: %s", filtered_ds)
+
+                # Only check permissions on standard data sources
+                if filtered_ds and not can_access_objects(
+                    data["access_token"], filtered_ds
+                ):
+                    return {
+                        "success": False,
+                        "message": "You are not authorized to access the referenced files",
+                    }
+
+            # Combine all types of data sources for the final assistant
+            final_data_sources = filtered_ds + tag_data_sources
+        else:
+            # For group system users, use all data sources as-is
+            final_data_sources = standard_data_sources
+        
+        # merge additional ds
+        final_data_sources += scraped_data_sources 
+        # + drive_data_sources
+
+        logger.debug("final_data_sources: %s", final_data_sources)
+
+        # Create or update the assistant with the final data sources
+        return create_or_update_assistant(
+            current_user=current_user,
+            access_token=data["access_token"],
+            user_that_owns_the_assistant=current_user,
+            assistant_name=assistant_name,
+            description=description,
+            instructions=instructions,
+            assistant_data=assistant_data,
+            disclaimer=disclaimer,
+            tags=tags,
+            data_sources=final_data_sources,
+            tools=tools,
+            provider=provider,
+            uri=uri,
+            assistant_public_id=assistant_public_id,
+            is_group_user=is_group_user,
+        )
+    except Exception as e:
+    # CRITICAL: Assistant handler failure = user cannot create/update assistant
+        
+        import traceback
+        log_critical_error(
+            function_name="create_assistant_handler",
+            error_type="AssistantHandlerFailure",
+            error_message=f"Failed in create_assistant handler: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "assistant_name": assistant_name if 'assistant_name' in locals() else 'unknown',
+                "assistant_public_id": assistant_public_id if 'assistant_public_id' in locals() else None,
+                "stage": "handler_preprocessing"
+            }
+        )
+    return {
+        "success": False,
+        "message": f"Failed to create assistant: {str(e)}"
+    }
 
 
 @api_tool(
@@ -1389,205 +1411,247 @@ def create_or_update_assistant(
                 "message": "You are not authorized to update this assistant",
             }
 
-        # The assistant already exists, so we need to create a new version
-        assistant_public_id = existing_assistant["assistantId"]
-        assistant_name = assistant_name
-        assistant_version = existing_assistant[
-            "version"
-        ]  # Default to version 1 if not present
+        try:
+            # The assistant already exists, so we need to create a new version
+            assistant_public_id = existing_assistant["assistantId"]
+            assistant_name = assistant_name
+            assistant_version = existing_assistant[
+                "version"
+            ]  # Default to version 1 if not present
 
-        if (existing_assistant.get("data", {}).get("astPath") and \
-            not assistant_data.get("astPath")):
-            if assistant_data.get("astPathData"): 
-                del assistant_data["astPathData"]
-            # imported here to avoid circular import
-            from service.standalone_ast_path import release_assistant_path
-            release_assistant_path(existing_assistant["data"]["astPath"], assistant_public_id, current_user)
+            if (existing_assistant.get("data", {}).get("astPath") and \
+                not assistant_data.get("astPath")):
+                if assistant_data.get("astPathData"): 
+                    del assistant_data["astPathData"]
+                # imported here to avoid circular import
+                from service.standalone_ast_path import release_assistant_path
+                release_assistant_path(existing_assistant["data"]["astPath"], assistant_public_id, current_user)
 
-        # Increment the version number
-        new_version = assistant_version + 1
+            # Increment the version number
+            new_version = assistant_version + 1
 
-        new_item = save_assistant(
-            assistants_table,
-            assistant_name,
-            description,
-            instructions,
-            assistant_data,
-            disclaimer,
-            data_sources,
-            provider,
-            tools,
-            user_that_owns_the_assistant,
-            new_version,
-            tags,
-            uri,
-            assistant_public_id,
-            is_group_user,
-        )
-        new_item["version"] = new_version
+            new_item = save_assistant(
+                assistants_table,
+                assistant_name,
+                description,
+                instructions,
+                assistant_data,
+                disclaimer,
+                data_sources,
+                provider,
+                tools,
+                user_that_owns_the_assistant,
+                new_version,
+                tags,
+                uri,
+                assistant_public_id,
+                is_group_user,
+            )
+            new_item["version"] = new_version
 
-        # Collect all data source keys, including scraped content
-        # Note: scraped content could still be processing through the rag pipeline
-        # therefore we dont have the globals to update the permissions, 
-        # we dont need to anyway
-        all_data_source_keys = [
-            source["id"] for source in data_sources 
-            if not source["id"].startswith("s3://") and 
-               source.get("metadata", {}).get("type") != "assistant-web-content"
-        ]
-        
-        # Set permissions for the assistant
-        if not update_object_permissions(
-            access_token,
-            [user_that_owns_the_assistant],
-            [new_item["id"], new_item["assistantId"]],
-            "assistant",
-            principal_type,
-            "owner"):
-            logger.error("Error updating permissions for assistant %s", new_item['id'])
-
-        logger.info("Successfully updated permissions for assistant %s", new_item['id'])
-
-        # Set permissions for all data sources, including scraped content
-        if all_data_source_keys:
-            update_result = update_object_permissions(
+            # Collect all data source keys, including scraped content
+            # Note: scraped content could still be processing through the rag pipeline
+            # therefore we dont have the globals to update the permissions, 
+            # we dont need to anyway
+            all_data_source_keys = [
+                source["id"] for source in data_sources 
+                if not source["id"].startswith("s3://") and 
+                   source.get("metadata", {}).get("type") != "assistant-web-content"
+            ]
+            
+            # Set permissions for the assistant
+            if not update_object_permissions(
                 access_token,
                 [user_that_owns_the_assistant],
-                all_data_source_keys,
-                "datasource",
+                [new_item["id"], new_item["assistantId"]],
+                "assistant",
                 principal_type,
-                "owner",
-            )
-            if not update_result:
-                logger.error("Error updating permissions for data sources: %s", all_data_source_keys)
-            else:
-                logger.info("Successfully updated permissions for data sources: %s", all_data_source_keys)
+                "owner"):
+                logger.error("Error updating permissions for assistant %s", new_item['id'])
 
-        # Update permissions for the new version to ensure the user retains edit rights
-        try:
-            # Add direct permissions entry in DynamoDB for the new version ID
-            object_access_table.put_item(
-                Item={
-                    "object_id": new_item["id"],  # The ID of the new assistant version
-                    "principal_id": user_that_owns_the_assistant,
-                    "permission_level": "owner",  # Give the user full ownership rights
-                    "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant",  # The type of object being accessed
-                }
-            )
-            logger.info(
-                "Successfully added direct permissions for %s %s on assistant version %s",
-                principal_type, user_that_owns_the_assistant, new_item['id']
-            )
-        except Exception as e:
-            logger.error("Error adding permissions for assistant version: %s", str(e))
+            logger.info("Successfully updated permissions for assistant %s", new_item['id'])
 
-        # Update the latest alias to point to the new version
-        update_assistant_latest_alias(assistant_public_id, new_item["id"], new_version)
+            # Set permissions for all data sources, including scraped content
+            if all_data_source_keys:
+                update_result = update_object_permissions(
+                    access_token,
+                    [user_that_owns_the_assistant],
+                    all_data_source_keys,
+                    "datasource",
+                    principal_type,
+                    "owner",
+                )
+                if not update_result:
+                    logger.error("Error updating permissions for data sources: %s", all_data_source_keys)
+                else:
+                    logger.info("Successfully updated permissions for data sources: %s", all_data_source_keys)
 
-        # print(f"Indexing assistant {new_item['id']} for RAG")
-
-        logger.debug("Added RAG entry for %s", new_item['id'])
-
-        # Return success response
-        return {
-            "success": True,
-            "message": "Assistant created successfully",
-            "data": {
-                "assistantId": assistant_public_id,
-                "id": new_item["id"],
-                "version": new_version,
-                "data_sources": new_item["dataSources"],
-                "ast_data": new_item["data"]
-            },
-        }
-    else:
-        new_item = save_assistant(
-            assistants_table,
-            assistant_name,
-            description,
-            instructions,
-            assistant_data,
-            disclaimer,
-            data_sources,
-            provider,
-            tools,
-            user_that_owns_the_assistant,
-            1,
-            tags,
-            uri,
-            None,
-            is_group_user,
-        )
-
-        # Set permissions for all data sources, including scraped content
-        all_data_source_keys = [source["id"] for source in data_sources]
-
-        if not update_object_permissions(
-            access_token,
-            [user_that_owns_the_assistant],
-            [new_item["assistantId"], new_item["id"]],
-            "assistant",
-            principal_type,
-            "owner",
-        ):
-            logger.error("Error updating permissions for assistant %s", new_item['id'])
-
-        logger.info("Successfully updated permissions for assistant %s", new_item['id'])
-
-        # Set permissions for all data sources
-        if all_data_source_keys:
-            update_object_permissions(
-                access_token,
-                [user_that_owns_the_assistant],
-                all_data_source_keys,
-                "datasource",
-                principal_type,
-                "owner",
-            )
-
-        try:
-            for object_id in [new_item["id"], new_item[ "assistantId"]]:
+            # Update permissions for the new version to ensure the user retains edit rights
+            try:
+                # Add direct permissions entry in DynamoDB for the new version ID
                 object_access_table.put_item(
-                Item={
-                    "object_id": object_id,  
-                    "principal_id": user_that_owns_the_assistant,
-                    "permission_level": "owner",  # Give the user full ownership rights
-                    "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant",  # The type of object being accessed
+                    Item={
+                        "object_id": new_item["id"],  # The ID of the new assistant version
+                        "principal_id": user_that_owns_the_assistant,
+                        "permission_level": "owner",  # Give the user full ownership rights
+                        "principal_type": principal_type,  # For individual users or groups
+                        "object_type": "assistant",  # The type of object being accessed
+                    }
+                )
+                logger.info(
+                    "Successfully added direct permissions for %s %s on assistant version %s",
+                    principal_type, user_that_owns_the_assistant, new_item['id']
+                )
+            except Exception as perm_error:
+                logger.error("Error adding permissions for assistant version: %s", str(perm_error))
+
+            # Update the latest alias to point to the new version
+            update_assistant_latest_alias(assistant_public_id, new_item["id"], new_version)
+
+            # print(f"Indexing assistant {new_item['id']} for RAG")
+
+            logger.debug("Added RAG entry for %s", new_item['id'])
+
+            # Return success response
+            return {
+                "success": True,
+                "message": "Assistant created successfully",
+                "data": {
+                    "assistantId": assistant_public_id,
+                    "id": new_item["id"],
+                    "version": new_version,
+                    "data_sources": new_item["dataSources"],
+                    "ast_data": new_item["data"]
+                },
+            }
+        except Exception as e:
+            
+            import traceback
+            log_critical_error(
+                function_name="create_or_update_assistant_update",
+                error_type="AssistantUpdateFailure",
+                error_message=f"Failed to update existing assistant: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "assistant_name": assistant_name,
+                    "assistant_public_id": existing_assistant.get("assistantId"),
+                    "version": new_version if 'new_version' in locals() else 'unknown',
+                    "owner": user_that_owns_the_assistant
                 }
             )
-            logger.info(
-                "Successfully added direct permissions for %s %s on assistant %s and %s",
-                principal_type, user_that_owns_the_assistant, new_item['id'], new_item['assistantId']
+            return {
+                "success": False,
+                "message": f"Failed to update assistant: {str(e)}"
+            }
+    else:
+        try:
+            new_item = save_assistant(
+                assistants_table,
+                assistant_name,
+                description,
+                instructions,
+                assistant_data,
+                disclaimer,
+                data_sources,
+                provider,
+                tools,
+                user_that_owns_the_assistant,
+                1,
+                tags,
+                uri,
+                None,
+                is_group_user,
             )
+
+            # Set permissions for all data sources, including scraped content
+            all_data_source_keys = [source["id"] for source in data_sources]
+
+            if not update_object_permissions(
+                access_token,
+                [user_that_owns_the_assistant],
+                [new_item["assistantId"], new_item["id"]],
+                "assistant",
+                principal_type,
+                "owner",
+            ):
+                logger.error("Error updating permissions for assistant %s", new_item['id'])
+
+            logger.info("Successfully updated permissions for assistant %s", new_item['id'])
+
+            # Set permissions for all data sources
+            if all_data_source_keys:
+                update_object_permissions(
+                    access_token,
+                    [user_that_owns_the_assistant],
+                    all_data_source_keys,
+                    "datasource",
+                    principal_type,
+                    "owner",
+                )
+
+            try:
+                for object_id in [new_item["id"], new_item[ "assistantId"]]:
+                    object_access_table.put_item(
+                    Item={
+                        "object_id": object_id,  
+                        "principal_id": user_that_owns_the_assistant,
+                        "permission_level": "owner",  # Give the user full ownership rights
+                        "principal_type": principal_type,  # For individual users or groups
+                        "object_type": "assistant",  # The type of object being accessed
+                    }
+                )
+                logger.info(
+                    "Successfully added direct permissions for %s %s on assistant %s and %s",
+                    principal_type, user_that_owns_the_assistant, new_item['id'], new_item['assistantId']
+                )
+            except Exception as perm_error:
+                logger.error("Error adding direct permissions for assistant: %s", str(perm_error))
+
+            create_assistant_alias(
+                user_that_owns_the_assistant,
+                new_item["assistantId"],
+                new_item["id"],
+                1,
+                "latest",
+            )
+
+            # print(f"Indexing assistant {new_item['id']} for RAG")
+            # save_assistant_for_rag(new_item)
+            logger.debug("Added RAG entry for %s", new_item['id'])
+
+            # Return success response
+            return {
+                "success": True,
+                "message": "Assistant created successfully",
+                "data": {
+                    "assistantId": new_item["assistantId"],
+                    "id": new_item["id"],
+                    "version": new_item["version"],
+                    "data_sources": new_item["dataSources"],
+                    "ast_data": new_item["data"]
+                },
+            }
         except Exception as e:
-            logger.error("Error adding direct permissions for assistant: %s", str(e))
-
-        create_assistant_alias(
-            user_that_owns_the_assistant,
-            new_item["assistantId"],
-            new_item["id"],
-            1,
-            "latest",
-        )
-
-        # print(f"Indexing assistant {new_item['id']} for RAG")
-        # save_assistant_for_rag(new_item)
-        logger.debug("Added RAG entry for %s", new_item['id'])
-
-        # Return success response
-        return {
-            "success": True,
-            "message": "Assistant created successfully",
-            "data": {
-                "assistantId": new_item["assistantId"],
-                "id": new_item["id"],
-                "version": new_item["version"],
-                "data_sources": new_item["dataSources"],
-                "ast_data": new_item["data"]
-            },
-        }
+            
+            import traceback
+            log_critical_error(
+                function_name="create_or_update_assistant_create",
+                error_type="AssistantCreationFailure",
+                error_message=f"Failed to create new assistant: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "assistant_name": assistant_name,
+                    "owner": user_that_owns_the_assistant
+                }
+            )
+            return {
+                "success": False,
+                "message": f"Failed to create assistant: {str(e)}"
+            }
 
 
 def get_assistant_hashes(

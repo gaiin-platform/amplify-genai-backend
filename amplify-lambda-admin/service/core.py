@@ -21,7 +21,7 @@ from datetime import datetime
 from botocore.config import Config
 from service.user_services import is_in_amp_group
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SecretsManagerOperation
 )
@@ -38,6 +38,24 @@ logger = getLogger("admin")
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+# Setup AWS SNS client for critical error notifications
+sns_client = boto3.client("sns")
+sts_client = boto3.client("sts")
+
+def get_sns_topic_arn(topic_name: str) -> str:
+    """
+    Construct SNS topic ARN from topic name using AWS account ID and region.
+    
+    Args:
+        topic_name: Name of the SNS topic
+    
+    Returns:
+        str: Full ARN of the SNS topic
+    """
+    account_id = sts_client.get_caller_identity()["Account"]
+    region = sns_client.meta.region_name
+    return f"arn:aws:sns:{region}:{account_id}:{topic_name}"
 
 
 class AdminConfigTypes(Enum):
@@ -59,6 +77,8 @@ class AdminConfigTypes(Enum):
     EMAIL_SUPPORT = "emailSupport"
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
     AI_EMAIL_DOMAIN = 'aiEmailDomain'
+    CRITICAL_ERRORS = "criticalErrors"
+    WEB_SEARCH_CONFIG = "webSearchConfig"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -187,6 +207,420 @@ def validate_and_filter_users_in_config(config_type, update_data, invalid_users_
     return update_data
 
 
+def get_sns_subscription_status(email: str, topic_arn: str) -> dict:
+    """
+    Check the current subscription status for an email.
+    
+    Args:
+        email: Email address to check
+        topic_arn: ARN of the SNS topic
+    
+    Returns:
+        dict: Status information with keys:
+            - status: 'confirmed' | 'pending' | 'not_subscribed'
+            - subscription_arn: The ARN if subscribed
+            - message: Human-readable status message
+    """
+    try:
+        existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+        
+        for sub in existing_subscriptions.get("Subscriptions", []):
+            if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                subscription_arn = sub.get("SubscriptionArn")
+                
+                if subscription_arn == "PendingConfirmation":
+                    return {
+                        "status": "pending",
+                        "subscription_arn": None,
+                        "message": "Subscription pending email confirmation"
+                    }
+                else:
+                    return {
+                        "status": "confirmed",
+                        "subscription_arn": subscription_arn,
+                        "message": "Subscription confirmed and active"
+                    }
+        
+        return {
+            "status": "not_subscribed",
+            "subscription_arn": None,
+            "message": "Email not subscribed"
+        }
+        
+    except ClientError as e:
+        logger.error("Error checking SNS subscription status: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Error checking status: {str(e)}"
+        }
+    except Exception as e:
+        logger.error("Unexpected error checking SNS subscription: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Unexpected error: {str(e)}"
+        }
+
+
+def manage_sns_subscription(email: str, topic_arn: str, action: str) -> dict:
+    """
+    Subscribe or unsubscribe an email to/from an SNS topic.
+    
+    Args:
+        email: Email address to subscribe/unsubscribe
+        topic_arn: ARN of the SNS topic
+        action: Either 'subscribe' or 'unsubscribe'
+    
+    Returns:
+        dict: Success status and message
+    """
+    try:
+        if action == "subscribe":
+            # Check if email is already subscribed
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    if sub.get("SubscriptionArn") != "PendingConfirmation":
+                        logger.info("Email %s already subscribed to topic", email)
+                        return {"success": True, "message": "Email already subscribed"}
+                    else:
+                        logger.info("Email %s has pending confirmation", email)
+                        return {"success": True, "message": "Subscription pending confirmation"}
+            
+            # Subscribe new email
+            response = sns_client.subscribe(
+                TopicArn=topic_arn,
+                Protocol="email",
+                Endpoint=email,
+                ReturnSubscriptionArn=True
+            )
+            
+            logger.info("Subscribed %s to critical errors notifications (pending confirmation)", email)
+            return {
+                "success": True,
+                "message": f"Subscription email sent to {email}. Please check inbox to confirm.",
+                "subscription_arn": response.get("SubscriptionArn")
+            }
+            
+        elif action == "unsubscribe":
+            # Find and unsubscribe the email
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    subscription_arn = sub.get("SubscriptionArn")
+                    
+                    if subscription_arn and subscription_arn != "PendingConfirmation":
+                        sns_client.unsubscribe(SubscriptionArn=subscription_arn)
+                        logger.info("Unsubscribed %s from critical errors notifications", email)
+                        return {"success": True, "message": f"Unsubscribed {email} from notifications"}
+                    else:
+                        logger.info("Subscription for %s is pending, cannot unsubscribe", email)
+                        return {"success": True, "message": "Subscription pending, cannot unsubscribe"}
+            
+            logger.warning("No subscription found for %s", email)
+            return {"success": True, "message": "No active subscription found"}
+        
+        else:
+            return {"success": False, "message": f"Invalid action: {action}"}
+            
+    except ClientError as e:
+        error_msg = f"SNS error: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+    except Exception as e:
+        error_msg = f"Error managing SNS subscription: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+
+
+def handle_critical_errors_config_update(update_data: dict) -> dict:
+    """
+    Handle critical errors configuration updates with sophisticated SNS subscription management.
+    
+    Handles all state transitions:
+    - Activating notifications: Subscribe new email
+    - Deactivating notifications: Unsubscribe current email
+    - Changing email: Unsubscribe old, subscribe new
+    - Email change while inactive: Just update config
+    
+    Args:
+        update_data: Dictionary with 'isActive' and 'email' keys
+    
+    Returns:
+        dict: Success status, message, and subscription_status object
+    """
+    is_active = update_data.get("isActive", False)
+    new_email = update_data.get("email", "").strip() if is_active else ""
+    
+    # Validation: Email required if activating
+    if is_active and not new_email:
+        return {"success": False, "message": "Email address is required for active notifications"}
+    
+    # Get SNS topic ARN from environment
+    topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+    if not topic_arn:
+        logger.error("CRITICAL_ERRORS_SNS_TOPIC_ARN not set")
+        return {"success": False, "message": "SNS topic ARN not configured"}
+    
+    # Get previous config to compare state changes
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.CRITICAL_ERRORS.value})
+        previous_config = response.get("Item", {}).get("data", {})
+        previous_active = previous_config.get("isActive", False)
+        previous_email = previous_config.get("email", "").strip()
+    except Exception as e:
+        logger.warning("Could not retrieve previous critical errors config: %s", str(e))
+        previous_active = False
+        previous_email = ""
+    
+    logger.info("🔄 Critical errors config update: active %s→%s, email '%s'→'%s'", 
+                previous_active, is_active, previous_email, new_email)
+    
+    # Determine subscription status based on state transition
+    subscription_status = None
+    sns_result = None
+    
+    # STATE TRANSITION 1: ACTIVATING (was off, now on)
+    if is_active and not previous_active:
+        logger.info("✅ ACTIVATING notifications for %s", new_email)
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation"
+            }
+            logger.info("📧 Subscription email sent to %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe %s: %s", new_email, sns_result.get("message"))
+    
+    # STATE TRANSITION 2: DEACTIVATING (was on, now off)
+    elif not is_active and previous_active:
+        logger.info("🛑 DEACTIVATING notifications for %s", previous_email)
+        
+        if previous_email:
+            sns_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if sns_result.get("success"):
+                logger.info("✅ Unsubscribed %s successfully", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe %s: %s", previous_email, sns_result.get("message"))
+        
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Notifications deactivated"
+        }
+    
+    # STATE TRANSITION 3: EMAIL CHANGED (while active)
+    elif is_active and previous_active and new_email != previous_email:
+        logger.info("🔄 CHANGING email from %s to %s", previous_email, new_email)
+        
+        # Unsubscribe old email
+        if previous_email:
+            unsubscribe_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if unsubscribe_result.get("success"):
+                logger.info("✅ Unsubscribed old email %s", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe old email %s", previous_email)
+        
+        # Subscribe new email
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation for new address"
+            }
+            logger.info("📧 Subscription email sent to new address %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe new email: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe new email %s", new_email)
+    
+    # STATE TRANSITION 4: EMAIL CHANGED (while inactive)
+    elif not is_active and new_email != previous_email:
+        logger.info("ℹ️ Email changed while inactive: %s → %s (no SNS action)", previous_email, new_email)
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Email updated but notifications are inactive"
+        }
+        sns_result = {"success": True, "message": "Email updated (inactive)"}
+    
+    # STATE TRANSITION 5: NO CHANGES
+    else:
+        logger.info("ℹ️ No subscription changes needed")
+        # Don't touch subscription_status - let it be rechecked on next load
+        subscription_status = None  # Will be checked in real-time on next GET
+        sns_result = {"success": True, "message": "No subscription changes needed"}
+    
+    # Prepare data for DynamoDB (include subscription_status only if changed)
+    if subscription_status:
+        update_data_with_status = {**update_data, "subscription_status": subscription_status}
+    else:
+        # Remove subscription_status if present (will be rechecked on load)
+        update_data_with_status = {k: v for k, v in update_data.items() if k != "subscription_status"}
+    
+    # Update DynamoDB
+    db_result = update_admin_config_data(AdminConfigTypes.CRITICAL_ERRORS.value, update_data_with_status)
+    
+    if not db_result.get("success"):
+        logger.error("❌ Failed to update DynamoDB: %s", db_result.get("message"))
+        return db_result
+    
+    logger.info("✅ Critical errors config updated successfully")
+    
+    # Return combined result
+    if sns_result and not sns_result.get("success"):
+        logger.warning("⚠️ SNS operation failed but config saved: %s", sns_result.get("message"))
+        return {
+            "success": True,
+            "message": f"Config saved but SNS operation failed: {sns_result.get('message')}",
+            "warning": sns_result.get("message"),
+            "subscription_status": subscription_status
+        }
+    
+    return {
+        "success": True,
+        "message": sns_result.get("message", "Critical errors configuration updated successfully"),
+        "subscription_status": subscription_status
+    }
+
+
+# Web Search Config Constants
+WEB_SEARCH_SUPPORTED_PROVIDERS = ["brave_search", "tavily", "serper", "serpapi"]
+WEB_SEARCH_SSM_PREFIX = "/tools/web_search"
+
+
+def build_web_search_parameter_name(provider: str) -> str:
+    """Build the SSM parameter name for a web search provider"""
+    stage = os.environ.get("INTEGRATION_STAGE", os.environ.get("STAGE", "dev"))
+    return f"{WEB_SEARCH_SSM_PREFIX}/{provider}/{stage}"
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for display, showing only first 4 and last 4 chars"""
+    if not key or len(key) < 12:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
+def handle_web_search_config_update(update_data: dict) -> dict:
+    """
+    Handle web search configuration updates.
+    Stores API key in SSM Parameter Store and provider config in DynamoDB.
+
+    Args:
+        update_data: Dictionary with 'provider' and optionally 'api_key'
+
+    Returns:
+        dict: Success status and message
+    """
+    provider = update_data.get("provider")
+    api_key = update_data.get("api_key")
+
+    # Validate provider
+    if provider and provider not in WEB_SEARCH_SUPPORTED_PROVIDERS:
+        return {
+            "success": False,
+            "message": f"Unsupported provider: {provider}. Supported: {', '.join(WEB_SEARCH_SUPPORTED_PROVIDERS)}"
+        }
+
+    # If no provider, this is a delete/disable operation
+    if not provider:
+        # Delete the config from DynamoDB
+        try:
+            admin_table.delete_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
+            logger.info("Deleted web search config from admin table")
+            return {"success": True, "message": "Web search configuration disabled"}
+        except Exception as e:
+            logger.error("Error deleting web search config: %s", str(e))
+            return {"success": False, "message": f"Error deleting config: {str(e)}"}
+
+    # If API key provided, store it in SSM
+    if api_key and api_key.strip():
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+
+            ssm_client.put_parameter(
+                Name=param_name,
+                Value=api_key.strip(),
+                Type="SecureString",
+                Overwrite=True,
+                Description=f"Admin web search API key for {provider}"
+            )
+
+            logger.info("Stored web search API key in SSM: %s", param_name)
+        except ClientError as e:
+            logger.error("Error storing web search API key in SSM: %s", str(e))
+            return {"success": False, "message": f"Failed to store API key: {str(e)}"}
+
+    # Store config in DynamoDB (without the API key - that's in SSM)
+    config_data = {
+        "provider": provider,
+        "lastUpdated": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
+
+    if result.get("success"):
+        logger.info("Updated web search config in admin table for provider: %s", provider)
+
+    return result
+
+
+def get_web_search_config() -> dict:
+    """
+    Get the current web search configuration with masked API key.
+    Used for admin UI display.
+
+    Returns:
+        dict: Configuration data or None if not configured
+    """
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
+
+        if "Item" not in response:
+            return None
+
+        config = response["Item"].get("data", {})
+        provider = config.get("provider")
+
+        if not provider:
+            return None
+
+        # Try to get the actual key to verify it exists and mask it
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+            ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+            api_key = ssm_response["Parameter"]["Value"]
+
+            return {
+                "provider": provider,
+                "isEnabled": True,
+                "maskedKey": mask_api_key(api_key),
+                "lastUpdated": config.get("lastUpdated"),
+            }
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ParameterNotFound':
+                # Config exists but key was deleted from SSM
+                return None
+            raise
+
+    except Exception as e:
+        logger.error("Error getting web search config: %s", str(e))
+        return None
+
+
 def handle_update_config(config_type, update_data, token, invalid_users_set):
     """
     Handle configuration updates with pre-computed invalid users set.
@@ -205,9 +639,13 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             
             return update_admin_config_data(config_type.value, processed_data)
         
+        case AdminConfigTypes.INTEGRATIONS:
+            # Transform nested structure and save both data and provider_settings
+            transformed = transform_integrations_data(update_data)
+            return update_integrations_config(config_type.value, transformed)
+
         case ( AdminConfigTypes.RATE_LIMIT
             | AdminConfigTypes.PROMPT_COST_ALERT
-            | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
@@ -223,6 +661,12 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
 
         case AdminConfigTypes.PPTX_TEMPLATES:
             return update_pptx_data(config_type.value, update_data)
+
+        case AdminConfigTypes.CRITICAL_ERRORS:
+            return handle_critical_errors_config_update(update_data)
+
+        case AdminConfigTypes.WEB_SEARCH_CONFIG:
+            return handle_web_search_config_update(update_data)
 
         case (AdminConfigTypes.APP_VARS
             | AdminConfigTypes.APP_SECRETS
@@ -257,7 +701,7 @@ def update_admin_config_data(config_type, update_data):
         type_value = config_type
         # Convert any float values to Decimal for DynamoDB compatibility
         processed_data = convert_floats_to_decimal(update_data)
-        
+
         admin_table.put_item(
             Item={
                 "config_id": type_value,
@@ -269,6 +713,94 @@ def update_admin_config_data(config_type, update_data):
     except Exception as e:
         logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
+
+
+def transform_integrations_data(update_data):
+    """
+    Transform frontend integrations data format for DynamoDB storage.
+
+    Extracts provider_settings (if present) as a separate field for storage,
+    keeping the main integration data clean.
+
+    Args:
+        update_data: Dictionary from frontend with integration configuration
+
+    Returns:
+        Dictionary with 'data' and optionally 'provider_settings' fields
+    """
+    if not isinstance(update_data, dict):
+        return {"data": update_data}
+
+    # Check if provider_settings is embedded in the data
+    provider_settings = update_data.pop("provider_settings", None)
+
+    result = {"data": update_data}
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
+
+
+def reverse_transform_integrations_data(storage_data, provider_settings):
+    """
+    Transform stored integrations data back to frontend format.
+
+    Combines the separate storage_data and provider_settings back into
+    the format expected by the frontend.
+
+    Args:
+        storage_data: The main integrations data from DynamoDB 'data' field
+        provider_settings: The provider_settings from DynamoDB (may be empty)
+
+    Returns:
+        Combined dictionary in frontend format
+    """
+    if not isinstance(storage_data, dict):
+        return storage_data
+
+    result = dict(storage_data)
+
+    # Merge provider_settings back into the data if present
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
+
+
+def update_integrations_config(config_type, transformed_data):
+    """
+    Special update function for integrations that handles both data and provider_settings fields.
+
+    Args:
+        config_type: The config type (should be 'integrations')
+        transformed_data: Dictionary containing 'data' and optionally 'provider_settings'
+
+    Returns:
+        Success/failure dictionary
+    """
+    try:
+        # Convert any float values to Decimal for DynamoDB compatibility
+        processed_data = convert_floats_to_decimal(transformed_data)
+
+        # Build the DynamoDB item
+        item = {
+            "config_id": config_type,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Add data field
+        if "data" in processed_data:
+            item["data"] = processed_data["data"]
+
+        # Add provider_settings as a separate top-level field if present
+        if "provider_settings" in processed_data:
+            item["provider_settings"] = processed_data["provider_settings"]
+
+        admin_table.put_item(Item=item)
+        return {"success": True, "data": f"{config_type} updated successfully."}
+    except Exception as e:
+        print(f"Error updating {config_type}: {str(e)}")
+        return {"success": False, "message": f"Error updating {config_type}: {str(e)}"}
 
 
 def get_secret(secret_name, region_name):
@@ -383,6 +915,8 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.AI_EMAIL_DOMAIN,
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
+            AdminConfigTypes.CRITICAL_ERRORS,
+            AdminConfigTypes.WEB_SEARCH_CONFIG,
         ]
 
         for config_type in dynamo_config_types:
@@ -392,7 +926,12 @@ def get_configs(event, context, current_user, name, data):
                 new_data = None
                 if "Item" in config_item:
                     new_data = config_item["Item"]["data"]
-                    if config_type == AdminConfigTypes.FEATURE_FLAGS:
+                    if config_type == AdminConfigTypes.INTEGRATIONS:
+                        storage_data = config_item["Item"].get("data", {})
+                        provider_settings = config_item["Item"].get("provider_settings", {})
+                        # Transform back to frontend format
+                        new_data = reverse_transform_integrations_data(storage_data, provider_settings)
+                    elif config_type == AdminConfigTypes.FEATURE_FLAGS:
                         # Check if any base feature flags are missing and add them
                         missing_base_flags = check_and_update_missing_base_flags(
                             new_data
@@ -402,6 +941,66 @@ def get_configs(event, context, current_user, name, data):
                             logger.info(
                                 "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
+                    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+                        # Check real-time SNS subscription status
+                        logger.info("🔍 Checking critical errors config - isActive: %s, email: %s", 
+                                   new_data.get("isActive"), new_data.get("email"))
+                        
+                        if new_data.get("isActive") and new_data.get("email"):
+                            try:
+                                topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+                                logger.info("📧 Topic ARN from env: %s", topic_arn[:50] + "..." if topic_arn else "NOT SET")
+                                
+                                if topic_arn:
+                                    logger.info("✅ Checking SNS subscription for %s against topic %s", 
+                                               new_data["email"], topic_arn[-20:])
+                                    sns_status = get_sns_subscription_status(new_data["email"], topic_arn)
+                                    new_data["subscription_status"] = sns_status
+                                    logger.info("📊 SNS subscription status for %s: %s - %s", 
+                                               new_data["email"], 
+                                               sns_status.get("status"), 
+                                               sns_status.get("message"))
+                                else:
+                                    logger.error("❌ CRITICAL_ERRORS_SNS_TOPIC_ARN environment variable not set! Cannot check subscription status.")
+                                    logger.error("💡 This should be set in serverless.yml as: CRITICAL_ERRORS_SNS_TOPIC_ARN: !Ref CriticalErrorsNotificationTopic")
+                                    new_data["subscription_status"] = {
+                                        "status": "error",
+                                        "message": "SNS topic ARN not configured - check Lambda environment variables"
+                                    }
+                            except Exception as e:
+                                logger.error("⚠️ Exception while checking SNS status: %s", str(e), exc_info=True)
+                                new_data["subscription_status"] = {
+                                    "status": "error",
+                                    "message": f"Error checking subscription: {str(e)}"
+                                }
+                        else:
+                            # Not active or no email configured
+                            logger.info("ℹ️ Critical errors not active or no email - isActive: %s, email: %s",
+                                       new_data.get("isActive"), new_data.get("email"))
+                            new_data["subscription_status"] = {
+                                "status": "not_subscribed",
+                                "message": "Critical error notifications not enabled"
+                            }
+                    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+                        # Enrich web search config with masked API key from SSM
+                        provider = new_data.get("provider")
+                        if provider:
+                            try:
+                                ssm_client = boto3.client("ssm")
+                                param_name = build_web_search_parameter_name(provider)
+                                ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+                                api_key = ssm_response["Parameter"]["Value"]
+                                new_data["isEnabled"] = True
+                                new_data["maskedKey"] = mask_api_key(api_key)
+                            except ClientError as e:
+                                if e.response['Error']['Code'] == 'ParameterNotFound':
+                                    # Config exists but key was deleted from SSM
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
+                                else:
+                                    logger.error("Error getting web search API key: %s", str(e))
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
                 else:
                     # Configuration does not exist, initialize it
                     new_data = initialize_config(config_type)
@@ -551,6 +1150,8 @@ def initialize_config(config_type):
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
         item["data"] = ""
+    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+        item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     else:
@@ -574,6 +1175,7 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
         AdminConfigTypes.AI_EMAIL_DOMAIN,
+        AdminConfigTypes.PROMPT_COST_ALERT,
     ]
     configs = {}
     for config_type in app_configs:
@@ -636,7 +1238,7 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
-    logger.debug("users: ", user_feature_flags)
+    logger.debug("users: %s", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
 
@@ -1106,6 +1708,10 @@ def log_item(config_type, username, details):
     )
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="sync_assistant_admins", account="system")
 def sync_assistant_admins(event, context):
     logger.info("Syncing Assistant Admin Interface Users...")
     AST_ADMIN_UI_FLAG = "assistantAdminInterface"

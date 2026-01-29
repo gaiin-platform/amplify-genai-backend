@@ -19,6 +19,8 @@ dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("assistants_websites")
 
 from pycommon.api.ops import api_tool
@@ -277,6 +279,21 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
 
     except Exception as e:
         logger.error("Error scraping website: %s", e)
+        
+        # CRITICAL: Complete website scraping failure = assistant can't access web content
+        log_critical_error(
+            function_name="scrape_website_content",
+            error_type="WebsiteScrapingFailure",
+            error_message=f"Failed to scrape website content: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "url": url,
+                "is_sitemap": is_sitemap,
+                "max_pages": max_pages
+            }
+        )
+        
         return {
             "success": False,
             "message": f"Failed to scrape website: {str(e)}",

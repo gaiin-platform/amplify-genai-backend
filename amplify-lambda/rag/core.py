@@ -17,6 +17,9 @@ from nltk.tokenize import sent_tokenize
 import asyncio
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 logger = getLogger("rag")
 
 # Uncomment for local testing 
@@ -515,6 +518,20 @@ def chunk_s3_file_content(bucket, key, object_key=None, force_reprocess=False):
 
     except Exception as e:
         logger.error("Error getting object %s from bucket %s: %s", key, bucket, str(e), exc_info=True)
+        log_critical_error(
+            function_name="chunk_s3_file_content",
+            error_type="ChunkS3FileContentFailure",
+            error_message=f"Failed to chunk S3 file content: {str(e)}",
+            current_user='system',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "document_key": key,
+                "bucket": bucket,
+                "object_key": object_key if object_key else 'N/A',
+                "force_reprocess": force_reprocess
+            }
+        )
         return None
 
 
@@ -655,6 +672,10 @@ def update_object_permissions(current_user, data):
 
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="process_document_for_rag", account="system")
 def process_document_for_rag(event, context):
     logger.info("Received event: %s", event)
     s3 = boto3.client("s3")
@@ -795,12 +816,30 @@ def process_document_for_rag(event, context):
                             logger.info("⚠️ Document %s processed but embedding incomplete/failed - reprocessing", key)
                         else:
                             logger.info("🆕 New document %s - processing", key)
-                        text = asyncio.run(
-                            extract_text_from_file(file_extension, file_content, user, account_data)
-                        )
-                        logger.info("Extracted text from %s", key)
-                        total_tokens = sum(d.get("tokens", 0) for d in text)
-                        total_items = len(text)
+                        try:
+                            text = asyncio.run(
+                                extract_text_from_file(file_extension, file_content, user, account_data)
+                            )
+                            logger.info("Extracted text from %s", key)
+                            total_tokens = sum(d.get("tokens", 0) for d in text)
+                            total_items = len(text)
+                        except Exception as extract_error:
+                            # CRITICAL: Text extraction failure = data loss, document unreadable
+                            log_critical_error(
+                                function_name="process_document_for_rag",
+                                error_type="TextExtractionFailure",
+                                error_message=f"Failed to extract text from document: {str(extract_error)}",
+                                current_user=user,
+                                severity=SEVERITY_HIGH,
+                                stack_trace=traceback.format_exc(),
+                                context={
+                                    "document_key": key,
+                                    "file_extension": file_extension,
+                                    "bucket": bucket,
+                                    "force_reprocess": force_reprocess
+                                }
+                            )
+                            raise
 
                         if total_items > 0:
                             location_properties = list(
@@ -884,6 +923,19 @@ def process_document_for_rag(event, context):
 
                 except Exception as e:
                     logger.error("Error processing document: %s", str(e))
+                    log_critical_error(
+                        function_name="process_document_for_rag",
+                        error_type="DocumentProcessingFailure",
+                        error_message=f"Failed to process document: {str(e)}",
+                        current_user=user if 'user' in locals() else 'unknown',
+                        severity=SEVERITY_HIGH,
+                        stack_trace=traceback.format_exc(),
+                        context={
+                            "document_key": key if 'key' in locals() else 'unknown',
+                            "bucket": bucket if 'bucket' in locals() else 'unknown',
+                            "force_reprocess": force_reprocess if 'force_reprocess' in locals() else False
+                        }
+                    )
 
             # If text extraction was successful, delete the message from the queue
             if text is not None:
@@ -938,6 +990,17 @@ def process_document_for_rag(event, context):
                 sys.exit(1)
             
             logger.error("Error processing SQS message: %s", str(e))
+            log_critical_error(
+                function_name="process_document_for_rag_sqs",
+                error_type="RAGSQSMessageProcessingFailure",
+                error_message=f"Failed to process RAG SQS message: {str(e)}",
+                current_user='system',
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "record": str(record)[:500] if 'record' in locals() else 'unknown'
+                }
+            )
 
     return {"statusCode": 200, "body": json.dumps("SQS Text Extraction Complete!")}
 
@@ -1261,6 +1324,10 @@ def reset_chunk_to_starting_status(global_id, chunk_number):
 
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="chunk_document_for_rag", account="system")
 def chunk_document_for_rag(event, context):
     logger.info("Received event: %s", event)
 
@@ -1295,6 +1362,25 @@ def chunk_document_for_rag(event, context):
 
             # Use original chunking method - no selective processing for now to avoid complexity
             chunks_created = chunk_s3_file_content(bucket, key, object_key, force_reprocess)
+            
+            if chunks_created is None:
+                logger.error("❌ Chunking failed for %s - chunk_s3_file_content returned None", key)
+                log_critical_error(
+                    function_name="chunk_document_for_rag",
+                    error_type="ChunkingFailure",
+                    error_message=f"chunk_s3_file_content returned None for {key}",
+                    current_user='system',
+                    severity=SEVERITY_HIGH,
+                    stack_trace='',
+                    context={
+                        "document_key": key,
+                        "bucket": bucket,
+                        "object_key": object_key if object_key else 'N/A',
+                        "force_reprocess": force_reprocess
+                    }
+                )
+                continue
+            
             logger.info("[CHUNKING] Created %d chunk files for %s", chunks_created, key)
             
             if chunks_created == 0:
@@ -1329,6 +1415,19 @@ def chunk_document_for_rag(event, context):
                 sys.exit(1)
             
             logger.error("Error processing SQS message: %s", str(e))
+            log_critical_error(
+                function_name="chunk_document_for_rag_sqs",
+                error_type="ChunkingSQSMessageProcessingFailure",
+                error_message=f"Failed to process chunking SQS message: {str(e)}",
+                current_user='system',
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "record": str(record)[:500] if 'record' in locals() else 'unknown',
+                    "bucket": bucket if 'bucket' in locals() else 'unknown',
+                    "key": key if 'key' in locals() else 'unknown'
+                }
+            )
 
     return {"statusCode": 200, "body": json.dumps("SQS Text Extraction Complete!")}
 

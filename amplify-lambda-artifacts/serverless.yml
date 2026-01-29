@@ -18,8 +18,9 @@ custom:
   pythonRequirements:
     dockerizePip: true
 
+
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN} 
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   stages:
     - dev
     - staging
@@ -58,12 +59,13 @@ provider:
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
-
 
   iam:
     role:
@@ -174,6 +176,18 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
     AmplifyArtifactsBucket: #Marked for future deletion
         Type: 'AWS::S3::Bucket'

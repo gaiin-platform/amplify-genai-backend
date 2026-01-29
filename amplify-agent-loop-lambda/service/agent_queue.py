@@ -1,6 +1,5 @@
 import json
 import os
-import requests
 from events.event_handler import MessageHandler
 from service.handlers import handle_event
 import boto3
@@ -11,11 +10,13 @@ from events.email_events import SESMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 from pycommon.logger import getLogger
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 logger = getLogger("agent_queue")
 
 sqs = boto3.client("sqs")
 agent_queue = os.environ["AGENT_QUEUE_URL"]
-agent_fat_container_url = os.environ.get("AGENT_FAT_CONTAINER_URL")
 
 _handlers: List[MessageHandler] = []
 
@@ -24,9 +25,13 @@ def register_handler(handler: MessageHandler):
     _handlers.append(handler)
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="route_queue_event", account="system")
 def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Process messages from SQS queue by trying registered handlers."""
-    logger.info("Processing SQS event: %s", json.dumps(event))
+    logger.info(f"Processing SQS event: {json.dumps(event)}")
 
     for record in event.get("Records", []):
         receipt_handle = record.get("receiptHandle")
@@ -42,7 +47,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     if agent_input_event:
                         # print(f"Agent input event: {agent_input_event}")
                         response = process_and_invoke_agent(agent_input_event)
-                        logger.info("Agent response: %s", response)
+                        logger.info(f"Agent response: {response}")
 
                         if response.get("handled"):
                             # delete record from sqs
@@ -51,7 +56,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                     QueueUrl=agent_queue, ReceiptHandle=receipt_handle
                                 )
                             except Exception as e:
-                                logger.warning("Error deleting message: %s, continuing", e)
+                                logger.warning(f"Error deleting message: {e}, continuing")
 
                             result = response.get("result")
                             if not result:
@@ -69,13 +74,13 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                     }
                                 ]
                             logger.info(
-                                "Final agent results: %s", json.dumps(result, separators=(',', ':'))
+                                f"Final agent results: {json.dumps(result, separators=(',', ':'))}"
                             )
                             handler.onSuccess(agent_input_event, result)
                         else:
-                            # Handle case when fat container returns handled=False
+                            # Handle case when agent returns handled=False
                             error_msg = response.get("error", "Agent failed to handle event")
-                            logger.error("Agent failed to handle event: %s", error_msg)
+                            logger.error(f"Agent failed to handle event: {error_msg}")
                             handler.onFailure(
                                 agent_input_event,
                                 Exception(f"Agent failed to handle event: {error_msg}")
@@ -91,7 +96,24 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         )
 
         except Exception as e:
-            logger.error("Error processing message: %s", e)
+            logger.error(f"Error processing message: {e}")
+            
+            # CRITICAL: Message processing failure = agent workflow blocked
+            
+            import traceback
+            log_critical_error(
+                function_name="process_queue_messages",
+                error_type="AgentQueueMessageProcessingFailure",
+                error_message=f"Failed to process SQS message: {str(e)}",
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "message_id": record.get('messageId'),
+                    "receipt_handle": receipt_handle[:50] if receipt_handle else 'unknown',
+                    "error_details": str(e)
+                }
+            )
+            
             # Only call onFailure if we have a handler that can process this message
             for handler in _handlers:
                 if handler.can_handle(message_body):
@@ -104,7 +126,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     VisibilityTimeout=0,
                 )
             except Exception as e:
-                logger.warning("Error changing message visibility: %s, continuing", e)
+                logger.warning(f"Error changing message visibility: {e}, continuing")
             raise
 
     return {
@@ -115,80 +137,62 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 def process_and_invoke_agent(event: dict):
     """
-    Processes an event, ensures it follows the expected format, and invokes the fat container.
+    Processes an event, ensures it follows the expected format, and invokes the agent handler.
 
     Args:
         event (dict): The event dictionary containing user session details, prompt, metadata, and files.
 
     Returns:
-        dict: The response from the fat container.
+        dict: The response from the agent handler.
     """
     try:
-        logger.info("Processing event prompt: %s", event.get("prompt"))
-        logger.info("Processing event metadata: %s", event.get("metadata"))
+        logger.info(f"Processing event prompt: {event.get('prompt')}")
+        logger.info(f"Processing event metadata: {event.get('metadata')}")
+
         # Extract required fields
         current_user = event.get("currentUser")
         session_id = event.get("sessionId")
         prompt = event.get("prompt", [])
         metadata = event.get("metadata", {})
         apiKey = metadata.get("accessToken")
+
         if not apiKey:
-            raise ValueError("Missing required fields: apiKey")
+            raise ValueError("Missing required field: apiKey")
 
         # Validate required fields
         if not current_user or not session_id:
-            raise ValueError(
-                "Missing required fields: currentUser, sessionId, or prompt"
-            )
+            raise ValueError("Missing required fields: currentUser or sessionId")
 
-        # Prepare the request payload for the fat container
-        payload = {
-            "currentUser": current_user,
-            "sessionId": session_id,
-            "prompt": prompt,
-            "metadata": metadata
-        }
+        # Direct function call to handle_event
+        logger.info("Invoking agent handler directly")
+        response = handle_event(
+            current_user=current_user,
+            access_token=apiKey,
+            session_id=session_id,
+            prompt=prompt,
+            metadata=metadata,
+        )
+        return response
 
-        # Make HTTP call to fat container
-        if agent_fat_container_url:
-            endpoint_url = f"{agent_fat_container_url.rstrip('/')}/vu-agent/handle-event"
-            logger.info("Calling fat container at: %s", endpoint_url)
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {apiKey}"
-            }
-            
-            response = requests.post(
-                endpoint_url,
-                json={"data": payload},
-                headers=headers,
-                timeout=890  # Slightly less than Lambda timeout
-            )
-            
-            if response.status_code == 200:
-                resp = response.json()
-                return resp.get("data", {"handled": False})
-
-            logger.warning("Fat container returned status %d: %s", response.status_code, response.text)
-            return {"handled": False, "error": f"HTTP {response.status_code}: {response.text}"}
-        else:
-            # Fallback to direct function call if URL not available
-            logger.info("Fat container URL not found, falling back to direct function call")
-            response = handle_event(
-                current_user=current_user,
-                access_token=apiKey,
-                session_id=session_id,
-                prompt=prompt,
-                metadata=metadata,
-            )
-            return response
-
-    except requests.exceptions.RequestException as e:
-        logger.error("HTTP request failed: %s", e)
-        return {"handled": False, "error": f"Request failed: {str(e)}"}
     except Exception as e:
-        logger.error("Error processing event: %s", e)
+        logger.error(f"Error processing event: {e}")
+
+        # CRITICAL: General agent invocation failure
+        import traceback
+        log_critical_error(
+            function_name="process_and_invoke_agent",
+            error_type="AgentInvocationFailure",
+            error_message=f"Failed to invoke agent: {str(e)}",
+            current_user=event.get("currentUser"),
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "session_id": event.get("sessionId"),
+                "has_prompt": bool(event.get("prompt")),
+                "error_details": str(e)
+            }
+        )
+
         return {"handled": False, "error": str(e)}
 
 

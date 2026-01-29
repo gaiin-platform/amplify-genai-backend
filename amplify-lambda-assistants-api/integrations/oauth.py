@@ -1,22 +1,21 @@
-from datetime import datetime, timedelta, timezone
 import json
 import os
 import time
 import uuid
-from msal import ConfidentialClientApplication
-from google_auth_oauthlib.flow import Flow
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-import requests
-from pycommon.api.secrets import store_secret_parameter
 import boto3
+import requests
 from botocore.exceptions import ClientError
-from integrations.scopes import scopes
+from google_auth_oauthlib.flow import Flow
 from integrations.oauth_encryption import (
     decrypt_oauth_data,
     encrypt_oauth_data,
     verify_oauth_encryption_parameter,
 )
+from integrations.scopes import scopes
+from msal import ConfidentialClientApplication
 from pycommon.api.auth_admin import verify_user_as_admin
 
 from pycommon.decorators import required_env_vars
@@ -26,6 +25,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
+from schemata.schema_validation_rules import rules
 
 setup_validated(rules, permissions.get_permission_checker)
 from pycommon.api.ops import api_tool, set_permissions_by_state
@@ -33,6 +33,8 @@ from pycommon.api.ops import api_tool, set_permissions_by_state
 set_permissions_by_state(permissions)
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("oauth")
 
 # Define a custom error for missing credentials
@@ -97,25 +99,32 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
     raise ValueError(f"Unsupported integration type: {integration}")
 
 
-def get_authorization_url_and_state(integration, client, scopes=None, retry_with_consent=False):
+def get_authorization_url_and_state(integration, client, scopes=None, admin_consent_provided=False):
     """
     Gets authorization URL and state for either Google or Microsoft clients.
     Args:
         integration: The integration type
         client: OAuth client
         scopes: OAuth scopes
-        retry_with_consent: If True, forces prompt=consent for Microsoft OAuth
+        admin_consent_provided: If True, skips prompt=consent for Microsoft OAuth (admin has pre-consented)
     """
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             authorization_url, state = client.authorization_url(prompt="consent")
         case IntegrationType.MICROSOFT:
             state = str(uuid.uuid4())  # Generate a random state
-            # Only use prompt=consent if explicitly requested (for retry scenarios)
             auth_params = {"scopes": scopes, "state": state}
-            if retry_with_consent:
+
+            # Determine if we should prompt for consent
+            if admin_consent_provided:
+                # Admin has pre-consented, so we don't need to prompt users for consent
+                print("Admin consent provided - skipping user consent prompt")
+                # Don't add prompt parameter - let user sign in without consent
+            else:
+                # Default behavior - request user consent
                 auth_params["prompt"] = "consent"
-                
+                print("Requesting user consent")
+
             # For Microsoft, we need to explicitly pass the redirect_uri
             # The redirect_uri should be determined from the current environment
             redirect_uri = build_redirect_uri()
@@ -170,12 +179,56 @@ def serialize_credentials(integration, credentials):
                     credentials_dict["expires_at"] = int(dt.timestamp())
                 except Exception as e:
                     logger.error("Error parsing Google expiry date: %s", e)
+                    
+                    # CRITICAL: Google credentials expiry parsing failure
+                    log_critical_error(
+                        function_name="serialize_credentials_google_expiry",
+                        error_type="GoogleCredentialsExpiryParsingFailure",
+                        error_message=f"Failed to parse Google expiry date: {str(e)}",
+                        severity=SEVERITY_HIGH,
+                        stack_trace=traceback.format_exc(),
+                        context={
+                            "integration": integration,
+                            "expiry_str": credentials_dict.get("expiry", "N/A"),
+                            "credentials_keys": list(credentials_dict.keys())
+                        }
+                    )
+                    
                     raise e
             else:
+                # CRITICAL: Google credentials missing required expiry field
+                log_critical_error(
+                    function_name="serialize_credentials_google_missing_expiry",
+                    error_type="GoogleCredentialsMissingExpiryFailure",
+                    error_message=f"Google credentials missing required expiry field",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "integration": integration,
+                        "credentials_keys": list(credentials_dict.keys()),
+                        "credentials_dict": str(credentials_dict)
+                    }
+                )
+                
                 raise Exception("Google credentials missing required fields:", credentials_dict)
         case IntegrationType.MICROSOFT:
             if ("error" in credentials or "error_description" in credentials):
                 logger.error("Error serializing Microsoft credentials: %s", credentials)
+                
+                # CRITICAL: OAuth credential serialization failure = user can't connect integrations
+                log_critical_error(
+                    function_name="serialize_credentials",
+                    error_type="OAuthCredentialSerializationFailure",
+                    error_message=f"Failed to serialize OAuth credentials: {credentials.get('error_description', str(credentials))}",
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "integration": integration,
+                        "error": credentials.get('error'),
+                        "error_description": credentials.get('error_description')
+                    }
+                )
+                
                 raise Exception(f"Error serializing Microsoft credentials: {credentials}")
                 
             credentials_dict = {
@@ -187,6 +240,19 @@ def serialize_credentials(integration, credentials):
                 credentials_dict["expires_in"]
             )
         case _:
+            # CRITICAL: Unsupported integration type - user can't connect integration
+            log_critical_error(
+                function_name="serialize_credentials_unsupported_type",
+                error_type="UnsupportedIntegrationTypeFailure",
+                error_message=f"Unsupported integration type: {integration}",
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "integration": integration,
+                    "integration_type": type(integration).__name__
+                }
+            )
+            
             raise ValueError(f"Unsupported integration type: {integration}")
     return credentials_dict
 
@@ -241,6 +307,23 @@ def get_user_credentials(current_user, integration):
         )
     except Exception as e:
         logger.error("Error retrieving credentials from DynamoDB: %s", str(e))
+        
+        # CRITICAL: User credentials retrieval failure - user cannot access integrations
+        log_critical_error(
+            function_name="get_user_credentials",
+            error_type="OAuthCredentialsRetrievalFailure",
+            error_message=f"Failed to retrieve OAuth credentials: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key,
+                "error_type": type(e).__name__
+            }
+        )
+        
         raise e
 
 
@@ -339,8 +422,7 @@ def detect_request_origin(event):
 @required_env_vars({
     "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
     "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
-    "API_BASE_URL": [],
-    "OAUTH_AUDIENCE": [],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("start_oauth")
 def start_auth(event, context, current_user, name, data):
@@ -350,16 +432,20 @@ def start_auth(event, context, current_user, name, data):
 
     # Detect request origin for dynamic callback URL selection
     origin = detect_request_origin(event)
-    
+
     auth_client, scopes = get_oauth_client_for_integration(integration, origin)
 
-    logger.debug("Obtained client.")
-    logger.info("Creating client redirect url...")
-    
-    # For Microsoft, try without consent first (will retry with consent if needed)
-    retry_with_consent = False
+    print("Obtained client.")
+    print("Creating client redirect url...")
+
+    # Get provider settings to determine if admin consent is provided
+    provider_settings = get_provider_settings(integration)
+    admin_consent_provided = provider_settings.get("azure_admin_consent_provided", False)
+
+    print(f"Admin consent provided: {admin_consent_provided}")
+
     authorization_url, state = get_authorization_url_and_state(
-        integration, auth_client, scopes, retry_with_consent
+        integration, auth_client, scopes, admin_consent_provided
     )
 
     dynamodb = boto3.resource("dynamodb")
@@ -374,12 +460,28 @@ def start_auth(event, context, current_user, name, data):
                 "user": current_user,
                 "timestamp": int(time.time()),
                 "origin": origin,  # Store origin for callback handling
-                "retry_with_consent": retry_with_consent,
                 "ttl": current_timestamp + 3600,  # Expire in 1 hour (3600 seconds)
             }
         )
     except ClientError as e:
         logger.error("Error storing state in DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth state storage failure - user cannot start OAuth flow
+        log_critical_error(
+            function_name="start_auth",
+            error_type="OAuthStateStorageFailure",
+            error_message=f"Failed to store OAuth state in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "state": state,
+                "origin": origin,
+                "table": os.environ.get("OAUTH_STATE_TABLE", "unknown")
+            }
+        )
+        
         raise
 
     return {
@@ -409,6 +511,22 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
             logger.debug("No record found; initializing a new integrations map.")
     except Exception as e:
         logger.error("Error retrieving item %s from DynamoDB: %s", item_key, e)
+        
+        # CRITICAL: OAuth credentials retrieval failure during update
+        log_critical_error(
+            function_name="update_oauth_user_credentials_retrieve",
+            error_type="OAuthCredentialsUpdateRetrievalFailure",
+            error_message=f"Failed to retrieve existing OAuth credentials during update: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key
+            }
+        )
+        
         return {
             "success": False,
             "message": f"Error retrieving existing OAuth credentials",
@@ -431,45 +549,38 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
         return {"success": True}
     except Exception as e:
         logger.error("Error storing token in DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth credentials storage failure - user loses integration connection
+        log_critical_error(
+            function_name="update_oauth_user_credentials_store",
+            error_type="OAuthCredentialsStorageFailure",
+            error_message=f"Failed to store OAuth credentials in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "integration": integration,
+                "integration_provider": integration_provider,
+                "item_key": item_key
+            }
+        )
+        
         return {"success": False, "message": f"Error storing OAuth credentials."}
 
 
 def handle_oauth_error_retry(current_user, integration, origin, error_description):
     """
-    Handles OAuth errors by retrying with consent prompt if needed.
-    Returns a redirect URL for retry or None if retry is not appropriate.
+    Handles OAuth errors by logging them.
+    With admin consent configuration, retry logic is no longer needed.
+    Returns None as retry is not supported.
     """
-    # Check if this is an approval required error for Microsoft
+    # Log the error for debugging
     if provider_case(integration) == IntegrationType.MICROSOFT:
         if "approval" in error_description.lower() or "consent" in error_description.lower():
-            logger.error("Approval required error detected, retrying with consent prompt")
-            
-            # Create new OAuth client with consent prompt
-            auth_client, scopes = get_oauth_client_for_integration(integration, origin)
-            authorization_url, state = get_authorization_url_and_state(
-                integration, auth_client, scopes, retry_with_consent=True
-            )
-            
-            # Store retry state
-            dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(os.environ["OAUTH_STATE_TABLE"])
-            
-            try:
-                table.put_item(
-                    Item={
-                        "state": state,
-                        "integration": integration,
-                        "user": current_user,
-                        "timestamp": int(time.time()),
-                        "origin": origin,
-                        "retry_with_consent": True,
-                        "is_retry": True,
-                    }
-                )
-                return authorization_url
-            except ClientError as e:
-                logger.error(f"Error storing retry state in DynamoDB: {e}")
-    
+            print(f"Approval/consent error detected: {error_description}")
+            print(f"Admin should configure azure_admin_consent_provided setting if admin consent has been granted")
+
+    # No retry logic - admin should configure provider_settings instead
     return None
 
 
@@ -521,8 +632,22 @@ def auth_callback(event, context):
             return return_html_failed_auth(f"OAuth error: {error_description or error}")
     except Exception as e:
         logger.error("Unexpected error in auth_callback: %s", str(e))
-        import traceback
         logger.error("Traceback: %s", traceback.format_exc())
+        
+        # CRITICAL: OAuth callback unexpected failure - user OAuth flow completely broken
+        log_critical_error(
+            function_name="auth_callback",
+            error_type="OAuthCallbackUnexpectedFailure",
+            error_message=f"Unexpected error in OAuth callback: {str(e)}",
+            current_user="unknown",  # User context not available at this point
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_type": type(e).__name__,
+                "has_query_params": bool(event.get("queryStringParameters"))
+            }
+        )
+        
         return return_html_failed_auth(f"Internal server error: {str(e)}")
 
     state = query_params.get("state")
@@ -543,6 +668,21 @@ def auth_callback(event, context):
             raise ValueError("Invalid OAuth callback.")
     except ClientError as e:
         logger.error("Error retrieving state from DynamoDB: %s", e)
+        
+        # CRITICAL: OAuth state retrieval failure - callback cannot complete
+        log_critical_error(
+            function_name="auth_callback_state_retrieval",
+            error_type="OAuthStateRetrievalFailure",
+            error_message=f"Failed to retrieve OAuth state from DynamoDB: {str(e)}",
+            current_user="unknown",  # User context not available yet
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "state": state,
+                "table": os.environ.get("OAUTH_STATE_TABLE", "unknown")
+            }
+        )
+        
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "text/html"},
@@ -866,11 +1006,93 @@ def get_available_integrations():
         return None
 
 
+def get_provider_settings(integration):
+    """
+    Retrieve provider settings for a given integration from the admin config.
+
+    Args:
+        integration: Integration identifier (e.g., 'microsoft_calendar', 'google_drive')
+
+    Returns:
+        dict: Provider settings for the integration's provider, or empty dict if not found
+
+    Example return for Microsoft:
+        {"azure_admin_consent_provided": false}
+    """
+    INTEGRATIONS = "integrations"
+
+    try:
+        # Determine the provider from the integration
+        integration_provider = provider_case(integration).value
+        # Use lowercase to match storage format (microsoft, google, etc.)
+        provider_key = integration_provider.lower()
+
+        dynamodb = boto3.resource("dynamodb")
+        admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+        response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
+
+        if "Item" in response:
+            # Provider settings are stored at the top level, not inside data
+            all_provider_settings = response["Item"].get("provider_settings", {})
+            # Get settings for this specific provider (lowercase key)
+            provider_settings = all_provider_settings.get(provider_key, {})
+            print(f"Provider settings for {provider_key}: {provider_settings}")
+            return provider_settings
+
+        print(f"No integrations config found in DynamoDB")
+        return {}
+
+    except Exception as e:
+        print(f"Error retrieving provider settings for {integration}: {str(e)}")
+        return {}
+
+
+def get_provider_settings(integration):
+    """
+    Retrieve provider settings for a given integration from the admin config.
+
+    Args:
+        integration: Integration identifier (e.g., 'microsoft_calendar', 'google_drive')
+
+    Returns:
+        dict: Provider settings for the integration's provider, or empty dict if not found
+
+    Example return for Microsoft:
+        {"azure_admin_consent_provided": false}
+    """
+    INTEGRATIONS = "integrations"
+
+    try:
+        # Determine the provider from the integration
+        integration_provider = provider_case(integration).value
+        # Use lowercase to match storage format (microsoft, google, etc.)
+        provider_key = integration_provider.lower()
+
+        dynamodb = boto3.resource("dynamodb")
+        admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+        response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
+
+        if "Item" in response:
+            # Provider settings are stored at the top level, not inside data
+            all_provider_settings = response["Item"].get("provider_settings", {})
+            # Get settings for this specific provider (lowercase key)
+            provider_settings = all_provider_settings.get(provider_key, {})
+            print(f"Provider settings for {provider_key}: {provider_settings}")
+            return provider_settings
+
+        print(f"No integrations config found in DynamoDB")
+        return {}
+
+    except Exception as e:
+        print(f"Error retrieving provider settings for {integration}: {str(e)}")
+        return {}
+
+
 @required_env_vars({
     "INTEGRATION_STAGE": [SSMOperation.PUT_PARAMETER],
-    "API_BASE_URL": [],
-    "OAUTH_AUDIENCE": [],
-})
+}) 
 @validated("register_secret")
 def regiser_secret(event, context, current_user, name, data):
     integration_provider = data["data"]["integration"]

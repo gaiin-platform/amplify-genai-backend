@@ -6,6 +6,10 @@ import json
 import os
 import urllib.parse
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
+import traceback
 from shared_functions import extract_base_key_from_chunk, extract_chunk_number
 
 logger = getLogger("embedding_dlq_handler")
@@ -13,6 +17,10 @@ logger = getLogger("embedding_dlq_handler")
 sqs = boto3.client("sqs")
 dynamodb = boto3.resource("dynamodb")
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="embedding_dlq_handler", account="system")
 def lambda_handler(event, context):
     """
     Process messages from the DLQ and mark corresponding chunks as failed in DynamoDB.
@@ -86,6 +94,21 @@ def lambda_handler(event, context):
         except Exception as e:
             logger.error(f"[DLQ_ERROR] Critical error processing DLQ message {record_index + 1}: {e}")
             logger.exception(e)
+            
+            # CRITICAL: DLQ handler failing = orphaned chunks never marked as failed
+            log_critical_error(
+                function_name="lambda_handler",
+                error_type="DLQProcessingFailure",
+                error_message=f"Failed to process DLQ message: {str(e)}",
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "record_index": record_index + 1,
+                    "total_records": len(event['Records']),
+                    "failed_count": failed_count
+                }
+            )
+            
             failed_count += 1
     
     logger.info(f"[DLQ_HANDLER_COMPLETE] ✅ Processed {processed_count} chunks, Failed {failed_count} chunks")

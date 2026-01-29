@@ -16,9 +16,9 @@ import os
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
-    S3Operation
+    S3Operation, DynamoDBOperation
 )
 
 from pycommon.logger import getLogger
@@ -120,6 +120,16 @@ date: {formatted_date}
     # Join all contents into a single string
     contents_to_convert = "\n\n".join(all_contents)
 
+    # Clean surrogate characters and encode properly
+    # This handles cases where message content has invalid Unicode surrogates
+    try:
+        # Encode to UTF-8, replacing surrogates with replacement character
+        contents_to_convert_bytes = contents_to_convert.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace').encode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError) as e:
+        logger.warning(f"Unicode encoding issue detected, using fallback encoding: {e}")
+        # Fallback: remove surrogates entirely
+        contents_to_convert_bytes = contents_to_convert.encode('utf-8', errors='ignore')
+
     # Generate a unique UUID
     unique_uuid = str(uuid.uuid4())
 
@@ -132,9 +142,9 @@ date: {formatted_date}
     logger.info(
         "Saving file to S3 with key: %s and content type: text/markdown and bucket: %s", consolidation_s3_key, consolidation_bucket_name
     )
-    # Save the contents to the consolidation bucket
+    # Save the contents to the consolidation bucket with properly encoded bytes
     s3_client.put_object(
-        Body=contents_to_convert,
+        Body=contents_to_convert_bytes,
         Bucket=consolidation_bucket_name,
         Key=consolidation_s3_key,
         ContentType="text/markdown",
@@ -221,6 +231,10 @@ def get_template_from_s3(user: str, unique_uuid: str):
     return None
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="docconverter_handler", account="system")
 def handler(event, context):
 
     consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]

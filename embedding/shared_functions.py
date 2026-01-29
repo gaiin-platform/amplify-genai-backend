@@ -17,6 +17,8 @@ from pycommon.api.get_endpoint import get_endpoint as get_chat_endpoint, Endpoin
 import time
 import random
 from pycommon.logger import getLogger
+import uuid
+from datetime import datetime, timezone
 
 logger = getLogger("embedding_shared_functions")
 
@@ -55,6 +57,45 @@ def num_tokens_from_text(content, embedding_model_name):
     return num_tokens
 
 
+def record_embedding_cost(model_id, token_count, account_data, document_key=None):
+    """
+    Record embedding costs to ADDITIONAL_CHARGES_TABLE using pycommon.
+
+    Args:
+        model_id (str): The embedding model ID (e.g., 'text-embedding-3-small')
+        token_count (int): Number of input tokens used
+        account_data (dict): Account information containing 'user' and 'account'
+        document_key (str): Optional document key for tracking
+
+    Returns:
+        float: Cost in USD, or 0.0 if recording fails
+    """
+    from pycommon.api.accounting import record_additional_charge
+
+    # Build account dict in the format expected by pycommon
+    account = {
+        "user": account_data.get("user") if account_data else None,
+        "account_id": account_data.get("account") if account_data else None,
+    }
+
+    # Build details dict with document key if provided
+    details = {}
+    if document_key:
+        details["document_key"] = document_key
+
+    # Call the reusable pycommon function
+    # Note: TTL is not set (was commented out in original code)
+    return record_additional_charge(
+        account=account,
+        model_id=model_id,
+        token_count=token_count,
+        item_type="embedding",
+        request_id="embedding-batch",
+        details=details,
+        ttl_days=None,  # Original code had TTL commented out
+    )
+
+
 def clean_text(text):
     # Remove non-ASCII characters
     text = text.encode("ascii", "ignore").decode("ascii")
@@ -89,41 +130,76 @@ def preprocess_text(text):
         return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 
-def generate_embeddings(content):
+def generate_embeddings(content, account_data=None, document_key=None):
     if not embedding_model_name:
         logger.error(f"No Models Provided:\nembedding: {embedding_model_name}")
         return {"success": False, "error": f"No Models Provided:\nembedding: {embedding_model_name}"}
     if embedding_provider == PROVIDERS.BEDROCK.value:
-        return generate_bedrock_embeddings(content)
+        return generate_bedrock_embeddings(content, account_data, document_key)
     if embedding_provider == PROVIDERS.AZURE.value:
-        return generate_azure_embeddings(content)
+        return generate_azure_embeddings(content, account_data, document_key)
     if embedding_provider == PROVIDERS.OPENAI.value:
-        return generate_openai_embeddings(content)
+        return generate_openai_embeddings(content, account_data, document_key)
     logger.error(f"Invalid embedding provider: {embedding_provider}")
     return {"success": False, "error": f"Invalid embedding provider: {embedding_provider}"}
 
-def generate_bedrock_embeddings(content):
+def generate_bedrock_embeddings(content, account_data=None, document_key=None):
     try:
         client = boto3.client("bedrock-runtime", region_name=region)
         model_id = embedding_model_name
 
-        native_request = {"inputText": content}
+        # Check if using Nova Multimodal Embeddings
+        is_nova = "nova" in model_id.lower()
+        
+        if is_nova:
+            # Nova Multimodal Embeddings uses a different API structure
+            embedding_dim = int(os.environ.get("EMBEDDING_DIM", "3072"))
+            embedding_purpose = os.environ.get("EMBEDDING_PURPOSE", "GENERIC_INDEX")
+            
+            native_request = {
+                "taskType": "SINGLE_EMBEDDING",
+                "singleEmbeddingParams": {
+                    "embeddingPurpose": embedding_purpose,
+                    "embeddingDimension": embedding_dim,
+                    "text": {
+                        "truncationMode": "END",
+                        "value": content
+                    }
+                }
+            }
+        else:
+            # Standard Bedrock embeddings (Titan, Cohere, etc.)
+            native_request = {"inputText": content}
+        
         request = json.dumps(native_request)
 
         response = client.invoke_model(modelId=model_id, body=request)
         model_response = json.loads(response["body"].read())
 
-        embeddings = model_response["embedding"]
-        input_token_count = model_response["inputTextTokenCount"]
-        
-        logger.info(f"Embedding generated. Input tokens: {input_token_count}, Embedding size: {len(embeddings)}")
+        # Nova returns embeddings in a different structure
+        if is_nova:
+            # Nova response: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
+            embeddings_data = model_response.get("embeddings", [])
+            if not embeddings_data:
+                raise Exception("No embeddings returned from Nova model")
+            # Get the first embedding (for single text input, there's only one)
+            embeddings = embeddings_data[0]["embedding"]
+            input_token_count = model_response.get("inputTokenCount", 0)
+        else:
+            embeddings = model_response["embedding"]
+            input_token_count = model_response.get("inputTextTokenCount", 0)
+
+        # Record embedding cost
+        cost = record_embedding_cost(model_id, input_token_count, account_data, document_key)
+
+        logger.info(f"Embedding generated. Input tokens: {input_token_count}, Embedding size: {len(embeddings)}, Cost: ${cost:.6f}")
         return {"success": True, "data": embeddings, "token_count": input_token_count}
     except Exception as e:
         logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
         return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
 
 
-def generate_azure_embeddings(content):
+def generate_azure_embeddings(content, account_data=None, document_key=None):
     logger.info("Getting Embedding Endpoints")
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
     logger.info(f"Endpoint: {endpoint}")
@@ -135,22 +211,49 @@ def generate_azure_embeddings(content):
         response = client.embeddings.create(input=content, model=embedding_model_name)
         embedding = response.data[0].embedding
         token_count = num_tokens_from_text(content, embedding_model_name)
+
+        # Record embedding cost
+        cost = record_embedding_cost(embedding_model_name, token_count, account_data, document_key)
+        logger.info(f"Azure embedding cost recorded: ${cost:.6f}")
     except Exception as e:
         logger.error(f"An error occurred with Azure OpenAI: {e}", exc_info=True)
         return {"success": False, "error": f"An error occurred with Azure OpenAI: {str(e)}"}
     return {"success": True, "data": embedding, "token_count": token_count}
 
 
-def generate_openai_embeddings(content):
-    logger.info("Getting Embedding Endpoints")
-    endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
-    logger.info(f"Endpoint: {endpoint}")
-
-    client = OpenAI(api_key=api_key)
+def generate_openai_embeddings(content, account_data=None, document_key=None):
+    logger.info("Getting OpenAI API key from secrets")
     try:
+        # Get the secret name from environment
+        secret_name = os.environ.get("SECRETS_ARN_NAME")
+        if not secret_name:
+            raise ValueError("SECRETS_ARN_NAME environment variable not set")
+
+        # Retrieve secrets from AWS Secrets Manager
+        secrets_client = boto3.client("secretsmanager")
+        secret_response = secrets_client.get_secret_value(SecretId=secret_name)
+        secret_data = json.loads(secret_response["SecretString"])
+
+        # Extract OpenAI API key
+        openai_api_key = secret_data.get("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY not found in secrets")
+
+        logger.info("Successfully retrieved OpenAI API key")
+
+        # Create OpenAI client with direct API key
+        client = OpenAI(api_key=openai_api_key)
+
+        # Create embedding using OpenAI API
         response = client.embeddings.create(input=content, model=embedding_model_name)
         embedding = response.data[0].embedding
         token_count = num_tokens_from_text(content, embedding_model_name)
+
+        logger.info(f"Successfully generated embedding with {token_count} tokens")
+
+        # Record embedding cost
+        cost = record_embedding_cost(embedding_model_name, token_count, account_data, document_key)
+        logger.info(f"OpenAI embedding cost recorded: ${cost:.6f}")
     except Exception as e:
         logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
         return {"success": False, "error": f"An error occurred with OpenAI: {str(e)}"}

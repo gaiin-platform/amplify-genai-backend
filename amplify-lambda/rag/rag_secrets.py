@@ -3,6 +3,8 @@ import os
 import boto3
 from pycommon.api.secrets import store_secret_parameter, get_secret_parameter, delete_secret_parameter
 from pycommon.encoders import SmartDecimalEncoder
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 
 from pycommon.logger import getLogger
 logger = getLogger("rag_secrets")
@@ -193,6 +195,10 @@ def cleanup_missed_rag_secrets():
         }
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="rag_secrets_cleanup", account="system")
 def lambda_handler(event, context):
     """
     Lambda handler for the cleanup function.

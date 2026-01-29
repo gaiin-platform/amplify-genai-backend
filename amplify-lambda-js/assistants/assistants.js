@@ -13,6 +13,9 @@ import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
+import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
+import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
+import {chatWithDataStateless} from "../common/chatWithData.js";
 
 const logger = getLogger("assistants");
 
@@ -43,7 +46,7 @@ const defaultAssistant = {
         const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
         // ✅ Use token counting
         const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
-        const aboveLimit = requiredTokens >= limit;
+        const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
         logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
@@ -69,26 +72,14 @@ const defaultAssistant = {
             (body.imageSources && body.imageSources.length > 0) ||
             (params.body?.imageSources && params.body.imageSources.length > 0);
 
-        logger.debug("🎯 Assistant decision logic:", {
+        logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
             hasPreResolvedData,
-            preResolvedSources: preResolvedSources ? {
-                ragDataSources: preResolvedSources.ragDataSources?.length || 0,
-                dataSources: preResolvedSources.dataSources?.length || 0,
-                conversationDataSources: preResolvedSources.conversationDataSources?.length || 0,
-                attachedDataSources: preResolvedSources.attachedDataSources?.length || 0
-            } : "NULL_OR_MISSING",
-            // Show fallback checks
-            rawDataSources_length: dataSources?.length || 0,
-            bodyImageSources_length: body.imageSources?.length || 0,
-            paramsBodyImageSources_length: params.body?.imageSources?.length || 0,
             needsDataProcessing: needsDataProcessingDecision,
-            // Updated routing logic
-            isUserDefinedAssistant: !!body.options?.assistantId,
-            assistantId: body.options?.assistantId || "default",
-            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" : 
+            enableWebSearch: body?.options?.enableWebSearch,
+            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
@@ -98,14 +89,12 @@ const defaultAssistant = {
         if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit){
             logger.info("→ Using mapReduceAssistant (token limit exceeded)");
             
-            
-            
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
         } else {
             if (needsDataProcessingDecision) {
                 // Use chatWithDataStateless for RAG, document processing, conversation discovery  
                 logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
-                const {chatWithDataStateless} = await import("../common/chatWithData.js");
+    
                 
                 // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
                 const enhancedParams = params.preResolvedDataSourcesByUse ? {
@@ -121,18 +110,51 @@ const defaultAssistant = {
                 logger.info("→ Using direct native provider (no data sources needed)");
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
+
+                // Check if web search or MCP is enabled
+                let webSearchEnabled = shouldEnableWebSearch(body);
+                // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
+                const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
+
+                if (webSearchEnabled || mcpEnabled) {
+                    logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
+                    return await executeToolLoop(
+                        {
+                            account: params.account,
+                            options: {
+                                ...bodyWithImages.options,
+                                model,
+                                requestId: params.options?.requestId
+                            }
+                        },
+                        bodyWithImages.messages,
+                        model,
+                        responseStream,
+                        {
+                            max_tokens: bodyWithImages.max_tokens || 2000,
+                            imageSources: bodyWithImages.imageSources,
+                            // MCP tools sent from frontend need client-side execution
+                            // since they run on the user's local machine
+                            mcpClientSide: mcpEnabled,
+                            // Pass through any tools from the frontend (can be at top level or in options)
+                            tools: bodyWithImages.tools || bodyWithImages.options?.tools,
+                            webSearchEnabled: webSearchEnabled,
+                        },
+                    );
+                }
+
                 return await callUnifiedLLM(
-                    { 
-                        account: params.account, 
-                        options: { 
+                    {
+                        account: params.account,
+                        options: {
                             ...bodyWithImages.options,  // Include all options from body (including trackConversations)
-                            model, 
-                            requestId: params.options?.requestId 
-                        } 
+                            model,
+                            requestId: params.options?.requestId
+                        }
                     },
                     bodyWithImages.messages,
                     responseStream,
-                    { 
+                    {
                         max_tokens: bodyWithImages.max_tokens || 2000,
                         imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
                     }
@@ -255,16 +277,10 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
     }
     if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
-    
     sendStateEventToStream(responseStream, stateInfo);
 
-    sendStatusEventToStream(responseStream, newStatus(
-        {
-            inProgress: false,
-            message: "The \"" + selected.displayName + " Assistant\" is responding.",
-            icon: "assistant",
-            sticky: true
-        }));
+    // Note: "Assistant is responding" status message moved to router (after smart messages)
+
     forceFlush(responseStream);
 
     return selected;

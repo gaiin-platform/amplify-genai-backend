@@ -162,7 +162,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 account: params.account,
                 options: {
                     model,
-                    requestId: params.requestId
+                    requestId: params.requestId,
+                    disableReasoning: true
                 }
             },
             promptMessages,

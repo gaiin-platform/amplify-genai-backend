@@ -13,7 +13,7 @@ from service.handlers import *
 from service.workflow_handlers import *
 from service.scheduled_task_handlers import *
 from service.email_events_handlers import *
-
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 from pycommon.authz import validated
 
 from pycommon.logger import getLogger
@@ -44,8 +44,13 @@ def camel_to_snake(name):
 
 def common_handler(operation, func_schema, **optional_params):
     def handler(event, context, current_user, name, data):
+        # Initialize usage tracker for agent operations
+        from pycommon.metrics import get_usage_tracker
+        tracker = get_usage_tracker()
+        op_tracking_context = {}
+
         try:
-            logger.debug("Function schema: %s", func_schema)
+            logger.debug(f"Function schema: {func_schema}")
 
             wrapper_schema = {
                 "type": "object",
@@ -55,13 +60,13 @@ def common_handler(operation, func_schema, **optional_params):
 
             # Validate the data against the schema
             logger.debug("Validating request")
-            logger.debug("Data: %s", data)
-            logger.debug("Wrapper schema: %s", wrapper_schema)
+            logger.debug(f"Data: {data}")
+            logger.debug(f"Wrapper schema: {wrapper_schema}")
             try:
                 validate(data, wrapper_schema)
                 logger.debug("Request is valid")
             except ValidationError as e:
-                logger.error("Validation error: %s", str(e))
+                logger.error(f"Validation error: {str(e)}")
                 raise ValueError(f"Invalid request: {str(e)}")
 
             logger.debug("Converting parameters to snake case")
@@ -85,13 +90,85 @@ def common_handler(operation, func_schema, **optional_params):
                 if has_named_parameter(operation, param):
                     args[param] = value
 
+            # Start tracking agent operation
+            op_tracking_context = tracker.start_tracking(
+                user=current_user,
+                operation=operation.__name__ if hasattr(operation, '__name__') else 'unknown_operation',
+                endpoint=name,
+                api_accessed=data.get("api_accessed", False),
+                context=context,
+            )
+
             logger.debug("Invoking operation")
             response = operation(**args)
 
             success = response.get("success", True)
-            logger.debug("Returning response success: %s", success)
+            logger.debug(f"Returning response success: {success}")
+
+            # End tracking and record metrics
+            result_dict = {"statusCode": 200 if success else 500}
+            metrics = tracker.end_tracking(
+                tracking_context=op_tracking_context,
+                result=result_dict,
+                claims={
+                    "account": data.get("account"),
+                    "username": current_user,
+                    "api_key_id": data.get("api_key_id"),
+                },
+                error_type=None if success else "OperationReturnedFailure",
+            )
+            tracker.record_metrics(metrics)
+            
+            # CRITICAL: Agent operation returned success=False - workflow failed
+            if not success:
+                
+                import traceback
+                log_critical_error(
+                    function_name="common_handler_operation_failed",
+                    error_type="AgentOperationReturnedFailure",
+                    error_message=f"Agent operation returned success=False: {response.get('error', 'No error message')}",
+                    current_user=current_user,
+                    severity=SEVERITY_HIGH,
+                    stack_trace="",
+                    context={
+                        "operation_name": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                        "response_error": response.get('error', 'No error message'),
+                        "response_message": response.get('message', 'No message'),
+                        "response_keys": list(response.keys())
+                    }
+                )
+            
             return {"success": success, "data": response}
         except Exception as e:
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 500}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type=type(e).__name__,
+                )
+                tracker.record_metrics(metrics)
+
+            # CRITICAL: Agent operation failure = user workflow blocked
+            
+            import traceback
+            log_critical_error(
+                function_name="common_handler",
+                error_type="AgentOperationFailure",
+                error_message=f"Agent operation failed: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation_name": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "error_details": str(e)
+                }
+            )
             return {"success": False, "error": str(e)}
 
     return handler
@@ -104,15 +181,15 @@ def route(event, context, current_user, name, data):
         # get the request path from the event and remove the first component...if there aren't enough components
         # then the path is invalid
         target_path_string = event.get("path", event.get("rawPath", ""))
-        logger.debug("Route: %s", target_path_string)
+        logger.debug(f"Route: {target_path_string}")
 
-        logger.debug("Route data: %s", route_data.keys())
+        logger.debug(f"Route data: {route_data.keys()}")
 
         route_info = route_data.get(target_path_string, None)
         if not route_info:
-            logger.warning("Invalid path: %s", target_path_string)
+            logger.warning(f"Invalid path: {target_path_string}")
             return {"success": False, "error": "Invalid path"}
-        logger.debug("Route info: %s", route_info)
+        logger.debug(f"Route info: {route_info}")
         handler_func = route_info["handler"]
         func_schema = route_info["parameters"] or {}
 
@@ -120,6 +197,21 @@ def route(event, context, current_user, name, data):
             event, context, current_user, name, data
         )
     except Exception as e:
+        # CRITICAL: Route handler exception - agent routing failed
+        
+        import traceback
+        log_critical_error(
+            function_name="route_handler",
+            error_type="AgentRouteHandlerFailure",
+            error_message=f"Agent route handler failed: {str(e)}",
+            current_user=current_user if 'current_user' in locals() else 'unknown',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "target_path": event.get("path", event.get("rawPath", "unknown")),
+                "error_details": str(e)
+            }
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -204,4 +296,18 @@ def get_builtin_tools(event, context, current_user, name, data):
 
         return {"success": True, "data": serializable_tools}
     except Exception as e:
+        # CRITICAL: Get builtin tools failed
+        
+        import traceback
+        log_critical_error(
+            function_name="get_builtin_tools",
+            error_type="GetBuiltinToolsFailure",
+            error_message=f"Failed to get builtin tools: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "tools_count": len(tools) if 'tools' in locals() else 0
+            }
+        )
         return {"success": False, "error": str(e)}

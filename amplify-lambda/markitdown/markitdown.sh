@@ -24,42 +24,17 @@ git clone --depth 1 --branch v0.1.1 https://github.com/gaiin-platform/pycommon.g
 echo "Extracting minimal pycommon modules..."
 mkdir -p python/pycommon/api
 mkdir -p python/pycommon/llm
+mkdir -p python/pycommon/metrics
+mkdir -p python/pycommon/dal
+mkdir -p python/pycommon/tools
 
-# Copy only the specific files we need
+# Copy all API modules
 if [ -d "./tmp_pycommon/pycommon/api" ]; then
-    echo "Copying API modules..."
-    # Copy only the API modules we need
-    cp ./tmp_pycommon/pycommon/api/secrets.py python/pycommon/api/ 2>/dev/null || echo "secrets.py not found"
-    cp ./tmp_pycommon/pycommon/api/models.py python/pycommon/api/ 2>/dev/null || echo "models.py not found"
-    cp ./tmp_pycommon/pycommon/api/get_endpoint.py python/pycommon/api/ 2>/dev/null || echo "get_endpoint.py not found"
-    cp ./tmp_pycommon/pycommon/api/data_sources.py python/pycommon/api/ 2>/dev/null || echo "data_sources.py not found"
-    
-    # Create minimal __init__.py for api module (overwrite the one from GitHub)
-    cat > python/pycommon/api/__init__.py << 'EOF'
-# Minimal API module exports for RAG functionality
-# Only import the modules that were actually copied
-
-from .secrets import (
-    delete_secret_parameter,
-    get_secret_parameter,
-    store_secret_parameter,
-)
-
-# Import other copied modules
-from . import models
-from . import get_endpoint
-from . import data_sources
-
-__all__ = [
-    "get_secret_parameter",
-    "store_secret_parameter", 
-    "delete_secret_parameter",
-    "models",
-    "get_endpoint",
-    "data_sources",
-]
-EOF
-    echo "API modules copied with minimal __init__.py"
+    echo "Copying all API modules..."
+    # Copy the entire api folder to get all modules including critical_logging
+    cp -r ./tmp_pycommon/pycommon/api/* python/pycommon/api/ 2>/dev/null || echo "api folder not found"
+    # Ensure __init__.py exists (keep the one from GitHub with all exports)
+    echo "All API modules copied (including critical_logging)"
 fi
 
 if [ -d "./tmp_pycommon/pycommon/llm" ]; then
@@ -69,6 +44,38 @@ if [ -d "./tmp_pycommon/pycommon/llm" ]; then
     # Ensure __init__.py exists
     touch python/pycommon/llm/__init__.py
     echo "LLM modules copied"
+fi
+
+if [ -f "./tmp_pycommon/pycommon/metrics/usage_tracker.py" ]; then
+    echo "Copying usage_tracker.py from metrics..."
+    # Only copy usage_tracker.py, not the entire metrics folder
+    cp ./tmp_pycommon/pycommon/metrics/usage_tracker.py python/pycommon/metrics/ 2>/dev/null || echo "usage_tracker.py not found"
+    # Create minimal __init__.py for metrics module
+    cat > python/pycommon/metrics/__init__.py << 'METRICS_EOF'
+# Minimal metrics module - only usage_tracker
+from .usage_tracker import *
+
+__all__ = ["usage_tracker"]
+METRICS_EOF
+    echo "Usage tracker module copied (minimal metrics)"
+fi
+
+if [ -d "./tmp_pycommon/pycommon/dal" ]; then
+    echo "Copying DAL modules..."
+    # Copy the entire dal folder including providers subdirectory
+    cp -r ./tmp_pycommon/pycommon/dal/* python/pycommon/dal/ 2>/dev/null || echo "dal folder not found"
+    # Ensure __init__.py exists
+    touch python/pycommon/dal/__init__.py
+    echo "DAL modules copied (database access layer)"
+fi
+
+if [ -d "./tmp_pycommon/pycommon/tools" ]; then
+    echo "Copying tools modules..."
+    # Copy the entire tools folder
+    cp -r ./tmp_pycommon/pycommon/tools/* python/pycommon/tools/ 2>/dev/null || echo "tools folder not found"
+    # Ensure __init__.py exists
+    touch python/pycommon/tools/__init__.py
+    echo "Tools modules copied (needed by api/tools_ops.py)"
 fi
 
 # Copy encoders.py as a single file
@@ -92,6 +99,27 @@ if [ -f "./tmp_pycommon/pycommon/logger.py" ]; then
     echo "Logger module copied"
 fi
 
+# Copy decorators.py as a single file
+if [ -f "./tmp_pycommon/pycommon/decorators.py" ]; then
+    echo "Copying decorators.py..."
+    cp ./tmp_pycommon/pycommon/decorators.py python/pycommon/ 2>/dev/null || echo "decorators.py not found"
+    echo "Decorators module copied"
+fi
+
+# Copy exceptions.py as a single file
+if [ -f "./tmp_pycommon/pycommon/exceptions.py" ]; then
+    echo "Copying exceptions.py..."
+    cp ./tmp_pycommon/pycommon/exceptions.py python/pycommon/ 2>/dev/null || echo "exceptions.py not found"
+    echo "Exceptions module copied"
+fi
+
+# Copy lzw.py as a single file
+if [ -f "./tmp_pycommon/pycommon/lzw.py" ]; then
+    echo "Copying lzw.py..."
+    cp ./tmp_pycommon/pycommon/lzw.py python/pycommon/ 2>/dev/null || echo "lzw.py not found"
+    echo "LZW module copied"
+fi
+
 # Create minimal main __init__.py (overwrite the one from GitHub)
 cat > python/pycommon/__init__.py << 'EOF'
 # Minimal pycommon module exports for RAG functionality
@@ -102,6 +130,12 @@ from . import llm
 from . import encoders
 from . import const
 from . import logger
+from . import metrics
+from . import dal
+from . import decorators
+from . import exceptions
+from . import lzw
+from . import tools
 
 __all__ = [
     "api",
@@ -109,6 +143,12 @@ __all__ = [
     "encoders",
     "const",
     "logger",
+    "metrics",
+    "dal",
+    "decorators",
+    "exceptions",
+    "lzw",
+    "tools",
 ]
 EOF
 

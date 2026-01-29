@@ -24,8 +24,9 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
 
+
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -93,6 +94,7 @@ provider:
     SERVICE_NAME: ${self:service}
     VPC_CIDR: ${ssm:/amplify/${sls:stage}/VPC_CIDR}
     VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID}
+    EMBEDDING_DIM: ${ssm:/amplify/${sls:stage}/EMBEDDING_DIM, '1536'}
     # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
 
@@ -103,6 +105,7 @@ provider:
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
@@ -110,6 +113,7 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
     MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
@@ -118,6 +122,8 @@ provider:
     S3_FILE_TEXT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_FILE_TEXT_BUCKET_NAME}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_CHUNKS_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_CHUNKS_BUCKET_NAME}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
+    
     
   iam:
     role:
@@ -355,6 +361,7 @@ resources:
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
@@ -390,6 +397,18 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup

@@ -1092,7 +1092,7 @@ export class StateBasedAssistant {
             this.initialState);
     }
 
-    async handler(originalLLM, params, body, dataSources, responseStream) {
+    async handler(params, body, dataSources, responseStream) {
 
         const user = getUser(params).split("@")[0];
         const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
@@ -1103,7 +1103,6 @@ export class StateBasedAssistant {
 
         // 🚀 BREAKTHROUGH: Create InternalLLM for massive performance gains
         // This bypasses the expensive chatWithDataStateless pipeline for internal operations
-        // Keep original LLM for any operations that might need the full RAG pipeline
         const internalLLM = getInternalLLM(params.options.model, params.account, responseStream);
         // Merge params with body.options to include trackConversations and other flags
         internalLLM.params = { 
@@ -1131,8 +1130,7 @@ export class StateBasedAssistant {
             responseStream,
             params,
             body,
-            history: body.messages,
-            originalLLM // Keep reference to original LLM for fallback if needed
+            history: body.messages
         };
 
         const stateMachine = this.createAssistantStateMachine();

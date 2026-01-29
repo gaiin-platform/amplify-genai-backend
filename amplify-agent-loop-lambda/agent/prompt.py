@@ -8,7 +8,7 @@ from typing import List
 import litellm
 from attr import dataclass
 from litellm import completion
-from agent.accounting import record_usage
+from pycommon.api.accounting import record_usage
 import boto3
 from pycommon.api.secrets import get_secret_value
 from pycommon.authz import is_rate_limited
@@ -30,7 +30,7 @@ def generate_response(
     if rate_limit and os.environ.get("COST_CALCULATIONS_DYNAMO_TABLE"):
         rate_limited, message = is_rate_limited(account_details["user"], rate_limit)
         if rate_limited:
-            logger.warning("Rate limit exceeded: %s", message)
+            logger.warning(f"Rate limit exceeded: {message}")
             raise Exception(message)
 
     messages = prompt.messages
@@ -64,7 +64,7 @@ def generate_response(
                     tool_args = json.loads(tool.function.arguments)
                 except:
                     logger.error(
-                        "Error parsing tool arguments coming from litellm: %s", tool.function.arguments
+                        f"Error parsing tool arguments coming from litellm: {tool.function.arguments}"
                     )
 
                 result = {
@@ -75,7 +75,7 @@ def generate_response(
             else:
                 result = response.choices[0].message.content
 
-        logger.debug("Recording usage for litellm response id: %s", response.id)
+        logger.debug(f"Recording usage for litellm response id: {response.id}")
         model_id = model.split("/")[1]
 
         usage = response.get("usage", {})
@@ -100,50 +100,80 @@ def generate_response(
                 }
             except:
                 logger.error(
-                    "Error converting completion_tokens_details to dictionary: %s", completion_tokens_details
+                    f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}"
                 )
 
-        cached_tokens = 0
+        input_cached_tokens = 0  # Tokens read from cache (cache hit)
+        input_write_cached_tokens = 0  # Tokens written to cache (cache creation)
         if prompt_tokens_details:
             try:
+                # Extract both cached_tokens (read) and cache_creation_tokens (write)
+                input_cached_tokens = getattr(
+                    prompt_tokens_details, "cached_tokens", 0
+                )
+                input_write_cached_tokens = getattr(
+                    prompt_tokens_details, "cache_creation_tokens", 0
+                )
+
                 details["prompt_tokens_details"] = {
                     "reasoning_tokens": getattr(
                         prompt_tokens_details, "reasoning_tokens", 0
                     ),
                     "text_tokens": getattr(prompt_tokens_details, "text_tokens", None),
                     "image_tokens": getattr(prompt_tokens_details, "image_tokens", 0),
-                    "cached_tokens": getattr(prompt_tokens_details, "cached_tokens", 0),
+                    "cached_tokens": input_cached_tokens,
+                    "cache_creation_tokens": input_write_cached_tokens,
                 }
-                cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0)
             except:
                 logger.error(
-                    "Error converting prompt_tokens_details to dictionary: %s", prompt_tokens_details
+                    f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}"
                 )
 
         try:
+            
             token_cost = record_usage(
                 account_details,
                 response.id,
                 model_id,
                 input_tokens,
                 output_tokens,
-                cached_tokens,
+                input_cached_tokens,
+                input_write_cached_tokens,
                 details,
             )
+            logger.debug(f"Litellm - Recorded usage with cost: {token_cost}")
 
         except Exception as e:
-            logger.warning("Warning: Failed to record usage: %s", e)
+            logger.warning(f"Warning: Failed to record usage: {e}")
 
     except Exception as e:
-        logger.error("Error generating response: %s", e, exc_info=True)
+        logger.error(f"Error generating response: {e}", exc_info=True)
         logger.error("Prompt: ")
         for message in messages:
-            logger.error("Message: %s", message)
+            logger.error(f"Message: {message}")
         if tools:
             logger.error("Tools:")
             for tool in tools:
-                logger.error("Tool: %s", tool)
-        logger.error("Model: %s", model)
+                logger.error(f"Tool: {tool}")
+        logger.error(f"Model: {model}")
+        
+        # CRITICAL: LLM prompting failure = agent cannot function
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="generate_response",
+            error_type="LLMPromptingFailure",
+            error_message=f"Failed to generate LLM response: {str(e)}",
+            current_user=account_details.get('user') if account_details else 'system',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "model": model,
+                "num_messages": len(messages),
+                "has_tools": bool(tools),
+                "error_details": str(e)
+            }
+        )
 
         raise e
 
@@ -299,7 +329,7 @@ def create_llm(
             advanced_model_str = litellm_model_str(advanced_model)
     except Exception as e:
         logger.warning(
-            "Error creating advanced model: %s, using agent model as advanced model...", e
+            f"Error creating advanced model: {e}, using agent model as advanced model..."
         )
 
     account_details = {"user": current_user, "accessToken": access_token, **account}
@@ -312,7 +342,7 @@ def create_llm(
         if isinstance(prompt.metadata, dict) and prompt.metadata.get(
             "advanced_reasoning", False
         ):
-            logger.info("Prompting using advanced model: %s", advanced_model_str)
+            logger.info(f"Prompting using advanced model: {advanced_model_str}")
             model_str = advanced_model_str
 
         result, token_cost = generate_response(

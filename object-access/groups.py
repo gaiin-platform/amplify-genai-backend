@@ -33,6 +33,8 @@ import aiohttp
 import concurrent.futures
 
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
 logger = getLogger("object_access_ast_groups")
 
 # Setup AWS DynamoDB access
@@ -122,6 +124,22 @@ def group_creation(
     except Exception as e:
         # Handle potential errors during the DynamoDB operation
         logger.error(f"An error occurred while creating group '{group_name}': {e}")
+        
+        # CRITICAL: Group creation failure = team collaboration broken
+        log_critical_error(
+            function_name="create_group",
+            error_type="GroupCreationFailure",
+            error_message=f"Failed to create group in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "group_name": group_name,
+                "member_count": len(members) if members else 0,
+                "group_id": group_id if 'group_id' in locals() else 'unknown'
+            }
+        )
+        
         return {
             "success": False,
             "message": f"An error occurred while creating group: {str(e)}",
@@ -321,7 +339,7 @@ def update_members_permission(event, context, current_user, name, data):
 
     # Update the permission of the specified member
     current_members = item.get("members", [])
-    logger.debug("Before updates members: ", current_members)
+    logger.debug("Before updates members: %s", current_members)
     for affected_user, new_permission in affected_user_dict.items():
         memberPerms = current_members.get(affected_user, None)
         if not memberPerms:
@@ -888,7 +906,21 @@ async def process_groups_async(groups, current_user):
                 }
             )
 
-    if len(failed_to_list) == len(group_info):
+    if len(failed_to_list) == len(groups):
+        # CRITICAL: All groups failed to list assistants
+        log_critical_error(
+            function_name="process_groups_async",
+            error_type="AllGroupsAssistantListingFailure",
+            error_message=f"Failed to list assistants for all {len(failed_to_list)} groups",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "failed_groups": failed_to_list,
+                "total_groups": len(groups)
+            }
+        )
+        
         return {
             "success": False,
             "message": "Failed to retrive assistants for users groups",
@@ -917,6 +949,20 @@ def get_my_groups(current_user, token):
     except Exception as e:
         # Handle potential errors during the DynamoDB operation
         logger.error(f"An error occurred while retrieving groups and members: {e}")
+        
+        # CRITICAL: Cannot list groups = collaboration feature broken
+        log_critical_error(
+            function_name="get_my_groups",
+            error_type="GroupsListingFailure",
+            error_message=f"Failed to list user's groups from DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_details": str(e)
+            }
+        )
+        
         return {
             "success": False,
             "message": f"An error occurred while retrieving groups and members: {str(e)}",
@@ -1092,6 +1138,20 @@ def list_all_groups_for_admins(event, context, current_user, name, data):
         return {"success": True, "data": filtered_groups}
     except Exception as e:
         logger.error(f"An error occurred while retrieving groupss: {e}")
+        
+        # CRITICAL: Admin cannot list groups = admin operations blocked
+        log_critical_error(
+            function_name="list_all_groups_for_admins",
+            error_type="AdminGroupsListingFailure",
+            error_message=f"Failed to list all groups for admin: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_details": str(e)
+            }
+        )
+        
         return {
             "success": False,
             "message": f"An error occurred while retrieving groups: {str(e)}",

@@ -10,13 +10,13 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
 
-  serverless-offline: 
+  serverless-offline:
     custom:
-      config: ${file(../var/${self:provider.stage}-var.yml)} 
- 
+      config: ${file(../var/${self:provider.stage}-var.yml)}
+      
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
@@ -29,7 +29,7 @@ custom:
   prune:
     automatic: false
     includeLayers: true
-    number: 5    
+    number: 20    
 
 
 provider:
@@ -53,7 +53,6 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
-    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT, ''}
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
     BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
@@ -64,7 +63,6 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
-    TRACING_ENABLED: false
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
@@ -78,6 +76,7 @@ provider:
     CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
   
     # Imported Variables from Parameter Store
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
@@ -86,6 +85,7 @@ provider:
     ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
     HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
@@ -96,7 +96,8 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     AGENT_STATE_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-agent-loop/AGENT_STATE_DYNAMODB_TABLE}
-
+    USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
+    
   iam:
     role:
       managedPolicies:
@@ -107,7 +108,16 @@ provider:
 
 
 functions:
-  chat:
+  chat_stream: # API_BASE_URL + /chat_stream  -  API Gateway Streaming 
+    handler: index.streamHandler
+    memorySize: 1024
+    timeout: 900
+    tracing: Active
+    # NO http event - we manually define the API Gateway method in resources section
+    # to enable streaming with ContentHandling: CONVERT_TO_TEXT
+
+  # To be deprecated - kept for backward compatibility in the short term 
+  chat: # Function URL 
     handler: index.handler
     memorySize: 1024
     timeout: 900
@@ -116,16 +126,16 @@ functions:
       cors: true
       invokeMode: RESPONSE_STREAM
 
-  api_g_chat:
-    handler: indexApiG.handler
-    memorySize: 1024
-    timeout: 180
-    events:
-      - http:
-          path: api_g_chat/chat
-          method: post
-          cors: true
-
+  # UNCOMMENT ONLY FOR DEPLOYMENTS THAT DO NOT SUPPORT STREAMING TO THE CLIENT
+  # api_g_chat:
+  #   handler: indexApiG.handler
+  #   memorySize: 1024
+  #   timeout: 180
+  #   events:
+  #     - http:
+  #         path: api_g_chat/chat
+  #         method: post
+  #         cors: true
 
   reset_billing:
     handler: billing/reset.handler
@@ -261,6 +271,7 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -307,11 +318,24 @@ resources:
                 - !GetAtt ConversationAnalysisQueue.Arn
             - Effect: Allow
               Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+            - Effect: Allow
+              Action:
                 - ssm:GetParameter
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*  
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools*
+
+
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -443,9 +467,108 @@ resources:
               Resource:
                 - 'arn:aws:bedrock:*::foundation-model/*'
                 - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+
+    # =============================================================================
+    # API GATEWAY STREAMING CONFIGURATION
+    # =============================================================================
+    # Manually create API Gateway resources for streaming support.
+    # We removed the http event from the function definition because Serverless
+    # auto-generation doesn't support ContentHandling: CONVERT_TO_TEXT.
+    # =============================================================================
+
+    # Create /chat_stream resource
+    ApiGatewayResourceChatstream:
+      Type: AWS::ApiGateway::Resource
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ParentId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+        PathPart: chat_stream
+
+    # Lambda permission for API Gateway to invoke chat_stream function
+    ChatUnderscorestreamLambdaPermissionApiGateway:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !GetAtt ChatUnderscorestreamLambdaFunction.Arn
+        Action: lambda:InvokeFunction
+        Principal: apigateway.amazonaws.com
+        SourceArn:
+          Fn::Join:
+            - ""
+            - - "arn:"
+              - !Ref AWS::Partition
+              - ":execute-api:"
+              - !Ref AWS::Region
+              - ":"
+              - !Ref AWS::AccountId
+              - ":"
+              - Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+              - "/*/*"
+
+    # POST method with streaming configuration
+    ApiGatewayMethodChatstreamPost:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ResourceId: !Ref ApiGatewayResourceChatstream
+        HttpMethod: POST
+        AuthorizationType: NONE
+        Integration:
+          Type: AWS_PROXY
+          IntegrationHttpMethod: POST
+          Uri:
+            Fn::Join:
+              - ""
+              - - "arn:"
+                - !Ref AWS::Partition
+                - ":apigateway:"
+                - !Ref AWS::Region
+                - ":lambda:path/2021-11-15/functions/"
+                - !GetAtt ChatUnderscorestreamLambdaFunction.Arn
+                - "/response-streaming-invocations"
+
+          # Required: Must be STREAM when using /response-streaming-invocations endpoint
+          ResponseTransferMode: STREAM
+
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Content-Type: true
+
+    # OPTIONS method for CORS preflight
+    ApiGatewayMethodChatstreamOptions:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        ResourceId: !Ref ApiGatewayResourceChatstream
+        HttpMethod: OPTIONS
+        AuthorizationType: NONE
+        Integration:
+          Type: MOCK
+          RequestTemplates:
+            application/json: '{"statusCode": 200}'
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+              ResponseTemplates:
+                application/json: ''
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+
   Outputs:
     BedrockIAMPolicyArn:
-      Value: 
+      Value:
         Ref: BedrockIAMPolicy
       Export:
         Name: ${self:service}-${sls:stage}-BedrockIAMPolicyArn

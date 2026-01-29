@@ -38,8 +38,9 @@ custom:
     includeLayers: true
     number: 20
 
+
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
@@ -106,10 +107,12 @@ provider:
     USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-data-storage
 
     # Imported Variables from Parameter Store
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     EMBEDDING_PROGRESS_TABLE: ${ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
@@ -549,6 +552,7 @@ resources:
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -658,6 +662,18 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
     # ---- Lambda invoke permissions for S3 → Lambda ----
     ConvertInvokePermissionFromS3:

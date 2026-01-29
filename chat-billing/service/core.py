@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 import os
+import traceback
 import boto3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from model_rates.update_table import load_model_rate_table, get_csv_model_ids
@@ -11,6 +12,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 from pycommon.api.amplify_groups import get_user_affiliated_groups
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.ops import api_tool
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_CRITICAL
 
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
@@ -163,13 +165,25 @@ def get_user_available_models(event, context, current_user, name, data):
             affiliated_groups, _ = affiliated_groups_future.result()  
             default_results = default_models_future.result()
         except Exception as e:
+            # CRITICAL: Model availability failure = users can't chat (no models available)
+            log_critical_error(
+                function_name="get_user_available_models",
+                error_type="ModelAvailabilityFailure",
+                error_message=f"Failed to retrieve available models for user: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_CRITICAL,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "error_details": str(e)
+                }
+            )
             return {"success": False, "message": f"Error in parallel execution: {str(e)}"}
     
     if not supported_models_result.get("success"):
         return supported_models_result
 
     supported_models = supported_models_result.get("data", {}).items()
-    logger.debug("User affiliated_groups: ", affiliated_groups)
+    logger.debug("User affiliated_groups: %s", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
     available_models = [
@@ -427,7 +441,7 @@ def get_supported_models():
             if is_model_current(transformed_model):
                 return model_id, transformed_model
             else:
-                logger.debug("Skipping outdated model: ", model_id)
+                logger.debug("Skipping outdated model: %s", model_id)
                 return None, None
         except Exception as e:
             logger.error(f"Error processing model {model.get('ModelID', 'unknown')}: {str(e)}")
@@ -542,6 +556,22 @@ def update_supported_models(event, context, current_user, name, data):
                 
     except Exception as e:
         logger.error(f"Error batch writing models: {str(e)}")
+        
+        # CRITICAL: Model update failure = system-wide model config broken
+        log_critical_error(
+            function_name="update_supported_models",
+            error_type="ModelConfigUpdateFailure",
+            error_message=f"Failed to update model configurations in DynamoDB: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "models_to_add": len(models_to_add) if 'models_to_add' in locals() else 0,
+                "models_to_delete": len(models_to_delete) if 'models_to_delete' in locals() else 0,
+                "models_to_update": len(models_to_update) if 'models_to_update' in locals() else 0
+            }
+        )
+        
         return {"success": False, "message": f"Error batch writing models: {str(e)}"}
 
     return {"success": True, "message": "Model configurations updated successfully."}

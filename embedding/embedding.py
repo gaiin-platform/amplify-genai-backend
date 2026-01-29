@@ -26,11 +26,13 @@ from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
-from pycommon.decorators import required_env_vars
+from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation
 )
 from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_CRITICAL, SEVERITY_HIGH
+import traceback
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
@@ -224,6 +226,21 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             f"[CHILD_CHUNK_ERROR] Failed to update child chunk {child_chunk} status in DynamoDB: {str(e)}"
         )
         logger.exception(e)
+        
+        # CRITICAL: Child chunk status tracking failure = lost visibility
+        log_critical_error(
+            function_name="update_child_chunk_status",
+            error_type="ChildChunkStatusUpdateFailure",
+            error_message=f"Failed to update child chunk {child_chunk} status to '{new_status}': {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "object_id": object_id,
+                "child_chunk": child_chunk,
+                "new_status": new_status,
+                "error_message": error_message
+            }
+        )
 
 
 def update_parent_chunk_status(object_id, new_status=None, error_message=None):
@@ -395,6 +412,20 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
             f"[PARENT_CHUNK_ERROR] Failed to update parent chunk status for {object_id}: {str(e)}"
         )
         logger.exception(e)
+        
+        # CRITICAL: Parent chunk status tracking failure = document stuck in processing
+        log_critical_error(
+            function_name="update_parent_chunk_status",
+            error_type="ParentChunkStatusUpdateFailure",
+            error_message=f"Failed to update parent chunk status for {object_id}: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "object_id": object_id,
+                "new_status": new_status,
+                "error_message": error_message
+            }
+        )
 
 
 def table_exists(cursor, table_name):
@@ -475,6 +506,20 @@ def get_db_connection():
             logger.error(f"[DIAGNOSTIC] ❌ Database connection failed: {e}")
             logger.error(f"[DIAGNOSTIC] Error type: {type(e).__name__}")
             logger.error(f"[DIAGNOSTIC] SQLSTATE: {e.pgcode if hasattr(e, 'pgcode') else 'unknown'}")
+            
+            # CRITICAL: PostgreSQL connection failure = entire RAG system down
+            log_critical_error(
+                function_name="get_db_connection",
+                error_type="PostgreSQLConnectionFailure",
+                error_message=f"Failed to connect to PostgreSQL database: {str(e)}",
+                severity=SEVERITY_CRITICAL,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "host": pg_host,
+                    "database": pg_database,
+                    "error_code": e.pgcode if hasattr(e, 'pgcode') else 'unknown'
+                }
+            )
             raise
 
         # Once the database connection is established, check if the table exists
@@ -537,6 +582,21 @@ def insert_chunk_data_to_db(
         )  # Log first 30 characters of content
     except psycopg2.Error as e:
         logger.error(f"[DB_INSERT] ❌ Failed to insert data for chunk {child_chunk}: {e}")
+        
+        # CRITICAL: Database insert failure = embeddings generated but not stored
+        log_critical_error(
+            function_name="insert_chunk_data_to_db",
+            error_type="PostgreSQLInsertFailure",
+            error_message=f"Failed to insert embedding data into PostgreSQL: {str(e)}",
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src": src,
+                "child_chunk": child_chunk,
+                "embedding_index": embedding_index,
+                "error_code": e.pgcode if hasattr(e, 'pgcode') else 'unknown'
+            }
+        )
         raise
 
 
@@ -544,6 +604,10 @@ db_connection = None
 
 
 # AWS Lambda handler function
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="embedding_processor", account="system")
 def lambda_handler(event, context):
 
     logger.info(
@@ -892,9 +956,26 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.debug(f"[DIAGNOSTIC] ✅ Text preprocessing successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
-                    response_vector_embedding = generate_embeddings(clean_text)
+                    response_vector_embedding = generate_embeddings(clean_text, account_data, src)
                     if not response_vector_embedding["success"]:
                         logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
+                        
+                        # CRITICAL: Embedding generation failure = documents unsearchable
+                        log_critical_error(
+                            function_name="embed_chunks",
+                            error_type="EmbeddingGenerationFailure",
+                            error_message=f"Failed to generate vector embedding: {response_vector_embedding['error']}",
+                            current_user=account_data.get('user') if account_data else 'system',
+                            severity=SEVERITY_HIGH,
+                            stack_trace=traceback.format_exc(),
+                            context={
+                                "document": src,
+                                "child_chunk": childChunk,
+                                "local_chunk": local_chunk_index,
+                                "error_details": response_vector_embedding.get('error')
+                            }
+                        )
+                        
                         raise Exception(
                             f"Vector embedding generation failed: {response_vector_embedding['error']}"
                         )
@@ -905,6 +986,23 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     response_qa_summary = generate_questions(clean_text, account_data)
                     if not response_qa_summary["success"]:
                         logger.error(f"[DIAGNOSTIC] ❌ QA summary failed for local chunk {local_chunk_index}: {response_qa_summary['error']}")
+                        
+                        # CRITICAL: QA summary failure = degraded search quality
+                        log_critical_error(
+                            function_name="embed_chunks",
+                            error_type="QASummaryGenerationFailure",
+                            error_message=f"Failed to generate QA summary: {response_qa_summary['error']}",
+                            current_user=account_data.get('user') if account_data else 'system',
+                            severity=SEVERITY_HIGH,
+                            stack_trace=traceback.format_exc(),
+                            context={
+                                "document": src,
+                                "child_chunk": childChunk,
+                                "local_chunk": local_chunk_index,
+                                "error_details": response_qa_summary.get('error')
+                            }
+                        )
+                        
                         raise Exception(
                             f"QA summary generation failed: {response_qa_summary['error']}"
                         )
@@ -912,9 +1010,27 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
-                    response_qa_embedding = generate_embeddings(content=qa_summary)
+                    # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
+                    response_qa_embedding = generate_embeddings(qa_summary, None, src)
                     if not response_qa_embedding["success"]:
                         logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
+                        
+                        # CRITICAL: QA embedding failure = dual embedding system broken
+                        log_critical_error(
+                            function_name="embed_chunks",
+                            error_type="QAEmbeddingGenerationFailure",
+                            error_message=f"Failed to generate QA embedding: {response_qa_embedding['error']}",
+                            current_user=account_data.get('user') if account_data else 'system',
+                            severity=SEVERITY_HIGH,
+                            stack_trace=traceback.format_exc(),
+                            context={
+                                "document": src,
+                                "child_chunk": childChunk,
+                                "local_chunk": local_chunk_index,
+                                "error_details": response_qa_embedding.get('error')
+                            }
+                        )
+                        
                         raise Exception(
                             f"QA embedding generation failed: {response_qa_embedding['error']}"
                         )
@@ -956,6 +1072,24 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                 except Exception as e:
                     error_msg = f"Error processing local chunk {local_chunk_index} of child chunk {childChunk} in {src}: {str(e)}"
                     logger.error(f"[LOCAL_CHUNK_ERROR] ❌ {error_msg}")
+                    
+                    # CRITICAL: Local chunk processing failure = data loss
+                    log_critical_error(
+                        function_name="embed_chunks_local_processing",
+                        error_type="LocalChunkProcessingFailure",
+                        error_message=f"Failed to process local chunk: {str(e)}",
+                        current_user=account_data.get('user') if account_data else 'system',
+                        severity=SEVERITY_HIGH,
+                        stack_trace=traceback.format_exc(),
+                        context={
+                            "document": src,
+                            "child_chunk": childChunk,
+                            "local_chunk_index": local_chunk_index,
+                            "total_local_chunks": len(local_chunks),
+                            "error_details": str(e)
+                        }
+                    )
+                    
                     # Mark this child as failed
                     update_child_chunk_status(
                         trimmed_src, childChunk, "failed", error_msg
@@ -982,6 +1116,23 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
     except Exception as e:
         error_msg = f"Critical error in embed_chunks for child chunk {childChunk} of {src}: {str(e)}"
         logger.exception(f"[EMBED_CHUNKS_CRITICAL_ERROR] ❌ {error_msg}")
+        
+        # CRITICAL: Entire chunk processing failure
+        log_critical_error(
+            function_name="embed_chunks",
+            error_type="EmbedChunksCriticalFailure",
+            error_message=f"Critical error processing entire child chunk: {str(e)}",
+            current_user=account_data.get('user') if account_data else 'system',
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "document": src,
+                "child_chunk": childChunk,
+                "total_chunks": total_chunks,
+                "error_details": str(e)
+            }
+        )
+        
         if trimmed_src:
             update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
             # Immediately mark parent as failed

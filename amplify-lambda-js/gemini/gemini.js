@@ -3,6 +3,7 @@
 
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
@@ -30,13 +31,15 @@ export const chat = async (chatBody, writable) => {
         const modelId = (model && model.id) || "gemini-1.5-pro";
         const maxTokens = body.max_tokens || 2000;
 
-        let tools = options.tools;
+        // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
+        let tools = body.tools || options.tools;
         if(!tools && options.functions){
             tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
             // Removed debug logging for performance
         }
 
-        let tool_choice = options.tool_choice;
+        // Check for tool_choice in both body (from UnifiedLLMClient) and options (legacy)
+        let tool_choice = body.tool_choice || options.tool_choice;
         if(!tool_choice && options.function_call){
             if(options.function_call === 'auto' || options.function_call === 'none'){
                 tool_choice = options.function_call;
@@ -86,79 +89,84 @@ export const chat = async (chatBody, writable) => {
             data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
         }
         
-        if(tools){
+        // Gemini OpenAI compatibility endpoint accepts OpenAI format tools directly
+        // No transformation needed - just pass tools as-is
+        if(tools && tools.length > 0){
             data.tools = tools;
-        }
-        if(tool_choice){
+            // Default to auto if no tool_choice specified - this encourages the model to use tools
+            data.tool_choice = tool_choice || "auto";
+            logger.debug(`Passing ${tools.length} tools to Gemini OpenAI compatibility API with tool_choice: ${data.tool_choice}`);
+            logger.debug(`Tool definition: ${JSON.stringify(tools[0])}`);
+        } else if(tool_choice){
+            // OpenAI compatibility endpoint accepts tool_choice directly
             data.tool_choice = tool_choice;
         }
 
         if (data.imageSources) delete data.imageSources;
-        
+
+        // OpenAI compatibility endpoint uses OpenAI format - keep string content for text messages
+        // Only use array format for multimodal content (images)
         data.messages = data.messages.map(msg => {
-            // If content is a string, convert to proper format for Gemini
-            if (typeof msg.content === 'string') {
-                return {
-                    role: msg.role === 'system' ? 'user' : msg.role,
-                    content: [
-                        { 
-                            type: "text", 
-                            text: msg.content 
-                        }
-                    ]
-                };
-            }
+            // Convert system role to user if not supported (Gemini OpenAI compat handles this too)
+            const role = msg.role === 'system' && !model.supportsSystemPrompts ? 'user' : msg.role;
+
             // If content is already array (multimodal), ensure structure is correct
-            else if (Array.isArray(msg.content)) {
+            if (Array.isArray(msg.content)) {
                 // Make sure all text parts have proper structure
                 const formattedContent = msg.content.map(item => {
                     if (item.type === "text") {
-                        return { 
-                            type: "text", 
-                            text: item.text || "..." 
+                        return {
+                            type: "text",
+                            text: item.text || "..."
                         };
                     }
                     return item;
                 });
-                
+
                 return {
-                    role: msg.role === 'system' ? 'user' : msg.role,
+                    role,
                     content: formattedContent
                 };
             }
-            
-            return msg;
+
+            // String content - keep as string for OpenAI compatibility
+            return {
+                role,
+                content: msg.content || "..."
+            };
         });
 
-        // Validate messages to prevent empty text parameter error
+        // Validate messages to prevent empty content
         if (data.messages && Array.isArray(data.messages)) {
             data.messages = data.messages.map(message => {
                 // Handle message with empty content
                 if (!message.content) {
-                    // Empty message content, adding placeholder text
                     return { ...message, content: "..." };
                 }
-                
+
                 // Handle structured content (multimodal format)
                 if (Array.isArray(message.content)) {
                     const updatedContent = message.content.map(item => {
                         if (item.type === "text" && (!item.text || item.text.trim() === "")) {
-                            // Empty text field in multimodal content, adding placeholder text
                             return { ...item, text: "..." };
                         }
                         return item;
                     });
-                    
+
                     // Ensure at least one text item exists in the content array
                     const hasTextItem = updatedContent.some(item => item.type === "text" && item.text);
                     if (!hasTextItem) {
-                        // No text items found in multimodal content, adding placeholder text
                         updatedContent.push({ type: "text", text: "..." });
                     }
-                    
+
                     return { ...message, content: updatedContent };
                 }
-                
+
+                // Handle empty string content
+                if (typeof message.content === 'string' && !message.content.trim()) {
+                    return { ...message, content: "..." };
+                }
+
                 return message;
             });
         }
@@ -178,6 +186,31 @@ export const chat = async (chatBody, writable) => {
         return streamAxiosResponseToWritable(url, writable, null, data, headers);
     } catch (error) {
         console.error('Exception in chat function:', error);
+        
+        // CRITICAL: Gemini API failure - capture full axios error details before re-throwing
+        const sanitizedData = { ...data };
+        delete sanitizedData.messages;
+        delete sanitizedData.input;
+        
+        logCriticalError({
+            functionName: 'gemini_chat',
+            errorType: 'GeminiAPIFailure',
+            errorMessage: `Gemini API failed: ${error.message || "Unknown error"}`,
+            currentUser: options?.accountId || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestId: options?.requestId || 'unknown',
+                modelId: modelId || 'unknown',
+                httpStatus: error.response?.status || 'N/A',
+                httpStatusText: error.response?.statusText || 'N/A',
+                apiError: error.response?.data?.error || 'N/A',
+                apiErrorMessage: error.response?.data?.error?.message || error.response?.data?.message || 'N/A',
+                errorCode: error.code || 'N/A',
+                axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A',
+                requestConfig: sanitizedData
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
         
         try {
             if (writable.writable && !writable.writableEnded) {
@@ -206,13 +239,19 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
             const streamError = (err) => {
                 if (responseEnded) return;
                 responseEnded = true;
-                
+
                 if (statusTimer) clearTimeout(statusTimer);
-                
+
                 if (!writableStream.writableEnded && writableStream.writable) {
                     sendErrorMessage(writableStream);
+                    // Ensure stream is properly closed on error since we use { end: false }
+                    try {
+                        writableStream.end();
+                    } catch (endErr) {
+                        logger.error("Error ending stream:", endErr);
+                    }
                 }
-                
+
                 reject(err);
             };
 
@@ -239,7 +278,8 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
             });
             
             // Set up the pipe with proper error handling
-            response.data.pipe(writableStream);
+            // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
+            response.data.pipe(writableStream, { end: false });
             
             // Handle the stream completion
             response.data.on('end', () => {
@@ -275,9 +315,15 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
         })
         .catch((e) => {
             if (statusTimer) clearTimeout(statusTimer);
-            
+
             if (!writableStream.writableEnded && writableStream.writable) {
                 sendErrorMessage(writableStream);
+                // Ensure stream is properly closed on error since we use { end: false }
+                try {
+                    writableStream.end();
+                } catch (endErr) {
+                    logger.error("Error ending stream:", endErr);
+                }
             }
             
             let errorMessage = e.message;
