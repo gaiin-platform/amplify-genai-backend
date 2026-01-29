@@ -172,11 +172,11 @@ export const chatBedrock = async (chatBody, writable) => {
     } catch (error) {
         if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        
+
         // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
-        const sanitizedInput = { ...input };
-        delete sanitizedInput.messages;
-        delete sanitizedInput.system;
+        const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
+        if (sanitizedInput.messages) delete sanitizedInput.messages;
+        if (sanitizedInput.system) delete sanitizedInput.system;
         
         logCriticalError({
             functionName: 'chatBedrock',

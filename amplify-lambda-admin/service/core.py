@@ -1175,6 +1175,7 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
         AdminConfigTypes.AI_EMAIL_DOMAIN,
+        AdminConfigTypes.PROMPT_COST_ALERT,
     ]
     configs = {}
     for config_type in app_configs:
