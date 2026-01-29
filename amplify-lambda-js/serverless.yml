@@ -108,7 +108,7 @@ provider:
 
 
 functions:
-  chat_stream:
+  chat_stream: # API_BASE_URL + /chat_stream  -  API Gateway Streaming 
     handler: index.streamHandler
     memorySize: 1024
     timeout: 900
@@ -117,7 +117,7 @@ functions:
     # to enable streaming with ContentHandling: CONVERT_TO_TEXT
 
   # To be deprecated - kept for backward compatibility in the short term 
-  chat:
+  chat: # Function URL 
     handler: index.handler
     memorySize: 1024
     timeout: 900
@@ -126,16 +126,16 @@ functions:
       cors: true
       invokeMode: RESPONSE_STREAM
 
-  api_g_chat:
-    handler: indexApiG.handler
-    memorySize: 1024
-    timeout: 180
-    events:
-      - http:
-          path: api_g_chat/chat
-          method: post
-          cors: true
-
+  # UNCOMMENT ONLY FOR DEPLOYMENTS THAT DO NOT SUPPORT STREAMING TO THE CLIENT
+  # api_g_chat:
+  #   handler: indexApiG.handler
+  #   memorySize: 1024
+  #   timeout: 180
+  #   events:
+  #     - http:
+  #         path: api_g_chat/chat
+  #         method: post
+  #         cors: true
 
   reset_billing:
     handler: billing/reset.handler
