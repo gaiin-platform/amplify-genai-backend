@@ -127,11 +127,25 @@ def preprocess_visual_content(file_content, key):
 
 # Extract text from file and return an array of chunks
 async def extract_text_from_file(key, file_content, current_user=None, account_data=None):
-    # only need to process visuals if account_data is provided since it contains chat-js required data
-    processed_content, visual_map = preprocess_visual_content(file_content, key) if account_data else (file_content, {})
+    # Skip visual processing for large files to avoid Lambda timeout
+    # Visual processing (image transcription) is expensive and can take minutes
+    file_size_mb = len(file_content) / (1024 * 1024)
+    VISUAL_PROCESSING_SIZE_LIMIT_MB = 20
+
+    skip_visual_processing = file_size_mb > VISUAL_PROCESSING_SIZE_LIMIT_MB
+
+    if skip_visual_processing:
+        logger.info(
+            "⚠️ [LARGE FILE] Skipping visual processing for %s (%.2fMB > %dMB limit) to avoid timeout",
+            key, file_size_mb, VISUAL_PROCESSING_SIZE_LIMIT_MB
+        )
+        processed_content, visual_map = file_content, {}
+    else:
+        # only need to process visuals if account_data is provided since it contains chat-js required data
+        processed_content, visual_map = preprocess_visual_content(file_content, key) if account_data else (file_content, {})
 
     # Process visuals asynchronously if any exist
-    if current_user and visual_map:
+    if current_user and visual_map and not skip_visual_processing:
         logger.info("Processing %d visuals for %s", len(visual_map), key)
         try:
             # ! Import here to avoid circular imports

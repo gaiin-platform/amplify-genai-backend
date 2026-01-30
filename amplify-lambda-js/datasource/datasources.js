@@ -908,17 +908,18 @@ const getExtractedRelevantContext = async (resolutionEnv, context) => {
     // Calculate total tokens in the document
     const totalDocTokens = context.content.reduce((acc, item) => acc + (item.tokens || 0), 0);
 
-    // Get the model's output token limit for comparison
-    // We use a safety margin of 50% to account for prompt overhead and response formatting
-    const modelOutputLimit = model.outputTokenLimit || 16384; // Default to 16k if not specified
-    const safeOutputLimit = Math.floor(modelOutputLimit * 0.5); // Use 50% of limit for document content
+    // Get the model's INPUT context window limit for comparison
+    // The document goes into the INPUT (prompt), not the output
+    // We use 80% safety margin to leave room for system prompt, user question, and response
+    const modelInputLimit = model.inputContextWindow || model.actualTokenLimit || 128000;
+    const safeInputLimit = Math.floor(modelInputLimit * 0.8); // Use 80% of input limit for document content
 
-    logger.info(`🔥 [EXTRACTION CHECK] Document has ${totalDocTokens} tokens, model output limit: ${modelOutputLimit}, safe limit for document: ${safeOutputLimit}`);
+    logger.info(`🔥 [EXTRACTION CHECK] Document has ${totalDocTokens} tokens, model input limit: ${modelInputLimit}, safe limit for document: ${safeInputLimit}`);
 
     // If document exceeds safe limit, we need to split it into sections
-    if (totalDocTokens > safeOutputLimit) {
+    if (totalDocTokens > safeInputLimit) {
         logger.info(`🔥 [SPLITTING REQUIRED] Document exceeds safe limit - splitting into sections for extraction`);
-        return await getExtractedRelevantContextWithSplitting(resolutionEnv, context, model, safeOutputLimit);
+        return await getExtractedRelevantContextWithSplitting(resolutionEnv, context, model, safeInputLimit);
     }
 
     // 🔥 [NO SPLIT NEEDED] Process entire document in one pass
@@ -1057,16 +1058,16 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
  * @param resolutionEnv
  * @param context
  * @param model
- * @param safeOutputLimit - Max tokens per section
+ * @param safeInputLimit - Max tokens per section (based on model's input context window)
  * @returns {Promise<*>}
  */
-const getExtractedRelevantContextWithSplitting = async (resolutionEnv, context, model, safeOutputLimit) => {
+const getExtractedRelevantContextWithSplitting = async (resolutionEnv, context, model, safeInputLimit) => {
     const chatBody = resolutionEnv.chatRequest;
     const userMessage = chatBody.messages.slice(-1)[0].content;
 
     logger.info(`🔥 [SPLITTING START] Processing massive document with ${context.content.length} fragments`);
 
-    // Split content into sections that fit within the safe output limit
+    // Split content into sections that fit within the safe input limit
     const sections = [];
     let currentSection = [];
     let currentSectionTokens = 0;
@@ -1076,8 +1077,39 @@ const getExtractedRelevantContextWithSplitting = async (resolutionEnv, context, 
         const item = context.content[i];
         const itemTokens = item.tokens || 0;
 
+        // Handle case where a single fragment exceeds the safe limit
+        if (itemTokens > safeInputLimit) {
+            logger.warn(`🔥 [OVERSIZED FRAGMENT] Fragment ${i} exceeds safe limit (${itemTokens} tokens) - adding as standalone section`);
+
+            // Save current section if it has content
+            if (currentSection.length > 0) {
+                sections.push({
+                    content: currentSection,
+                    startIdx: sectionStartIdx,
+                    endIdx: i - 1,
+                    tokens: currentSectionTokens
+                });
+                logger.info(`🔥 [SECTION CREATED] Section ${sections.length}: indexes ${sectionStartIdx}-${i-1}, ${currentSectionTokens} tokens, ${currentSection.length} fragments`);
+            }
+
+            // Add oversized fragment as its own section
+            sections.push({
+                content: [item],
+                startIdx: i,
+                endIdx: i,
+                tokens: itemTokens
+            });
+            logger.info(`🔥 [SECTION CREATED] Section ${sections.length}: index ${i} (oversized fragment), ${itemTokens} tokens`);
+
+            // Reset for next section
+            currentSection = [];
+            currentSectionTokens = 0;
+            sectionStartIdx = i + 1;
+            continue;
+        }
+
         // Check if adding this item would exceed the limit
-        if (currentSectionTokens + itemTokens > safeOutputLimit && currentSection.length > 0) {
+        if (currentSectionTokens + itemTokens > safeInputLimit && currentSection.length > 0) {
             // Save current section and start a new one
             sections.push({
                 content: currentSection,
