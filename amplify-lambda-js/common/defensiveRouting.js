@@ -318,10 +318,10 @@ export const validateRequestBody = (body) => {
                         body.messages[i].content = message.content.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '?');
                     }
                     
-                    // Check for other problematic characters
-                    if (message.content.length > 100000) { // 100k character limit
-                        errors.push(`Message ${i} exceeds maximum length (100,000 characters)`);
-                    }
+                    // // Check for other problematic characters
+                    // if (message.content.length > 100000) { // 100k character limit
+                    //     errors.push(`Message ${i} exceeds maximum length (100,000 characters)`);
+                    // }
                 }
             }
         }
