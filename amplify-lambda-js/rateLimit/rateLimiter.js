@@ -396,10 +396,17 @@ function cleanupOldViolations() {
 }
 
 export async function isRateLimited(params) {
+    // // Skip rate limiting in local development mode
+    // const isLocalDevelopment = process.env.LOCAL_DEVELOPMENT === 'true';
+    // if (isLocalDevelopment) {
+    //     console.log("🔧 [LOCAL DEV] Skipping rate limiting checks");
+    //     return false;
+    // }
+
     // 🧹 CLEANUP: Periodically clean old records
     if (Math.random() < 0.01) cleanupOldViolations(); // 1% chance
-    
-    
+
+
     // 🛡️ EARLY EXIT: Check if user is in progressive timeout
     const timeoutStatus = isUserInTimeout(params.user);
     if (timeoutStatus.inTimeout) {
