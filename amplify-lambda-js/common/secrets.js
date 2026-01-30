@@ -74,44 +74,16 @@ const secret_name = process.env.LLM_ENDPOINTS_SECRETS_NAME;
 let secret_data;
 let parsed_secret;
 
-// Check if we're in local development mode
-const isLocalDevelopment = process.env.LOCAL_DEVELOPMENT === 'true';
-
-if (isLocalDevelopment) {
-    // For local development, use mock LLM endpoint configuration
-    logger.info(`[SECRETS_INIT] LOCAL_DEVELOPMENT mode - using mock LLM endpoints configuration`);
-    parsed_secret = {
-        models: [
-            {
-                "gpt-35-turbo": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                }
-            },
-            {
-                "gpt-4o": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                }
-            },
-            {
-                "gpt-4o-mini": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                }
-            }
-        ]
-    };
-    logger.info(`[SECRETS_INIT] Mock LLM endpoints configuration loaded successfully`);
-} else {
-    try {
-        logger.info(`[SECRETS_INIT] Loading LLM endpoints configuration from: ${secret_name}`);
-        secret_data = await getSecret(secret_name);
-        parsed_secret = JSON.parse(secret_data);
-        logger.info(`[SECRETS_INIT] Successfully loaded LLM endpoints configuration`);
-    } catch (error) {
-        logger.error(`[CRITICAL_SECRETS_ERROR] Failed to load LLM endpoints configuration during module initialization:`, error);
-        const criticalError = new Error(`LAMBDA_TERMINATION_REQUIRED: Critical error loading LLM endpoints configuration: ${error.message}`);
-        criticalError.isLambdaTermination = true;
-        throw criticalError;
-    }
+try {
+    logger.info(`[SECRETS_INIT] Loading LLM endpoints configuration from: ${secret_name}`);
+    secret_data = await getSecret(secret_name);
+    parsed_secret = JSON.parse(secret_data);
+    logger.info(`[SECRETS_INIT] Successfully loaded LLM endpoints configuration`);
+} catch (error) {
+    logger.error(`[CRITICAL_SECRETS_ERROR] Failed to load LLM endpoints configuration during module initialization:`, error);
+    const criticalError = new Error(`LAMBDA_TERMINATION_REQUIRED: Critical error loading LLM endpoints configuration: ${error.message}`);
+    criticalError.isLambdaTermination = true;
+    throw criticalError;
 }
 
 // The get_llm_config function converted to JavaScript
