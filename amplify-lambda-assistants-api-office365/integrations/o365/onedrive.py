@@ -360,19 +360,8 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
         label_name = label.get("displayName", label.get("name", "")).lower()
         label_id = label.get("id", "")
 
-        # Log all sensitivity labels for debugging
-        file_name = item.get('name', 'unknown')
-        file_ext = file_name.lower().split('.')[-1] if '.' in file_name else 'unknown'
-        is_excel = file_ext in ['xlsx', 'xls', 'xlsm', 'xlsb']
-
-        logger.info(f"🏷️ SENSITIVITY LABEL DETECTED - File: {file_name} ({file_ext}), DisplayName: '{label.get('displayName')}', LabelName (lowercase): '{label_name}', LabelId: {label_id}")
-
-        if is_excel:
-            logger.info(f"📊 EXCEL FILE DETECTED - {file_name}, checking sensitivity...")
-
         # Only process if there's an actual label (not empty)
         if not label_name or not label_id:
-            logger.warning(f"⚠️ Empty label detected for file {file_name}")
             return None
 
         # IMPORTANT: Check exact "level X" patterns FIRST to avoid false matches
@@ -380,7 +369,7 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
 
         # Level 4 (exact match first)
         if "level 4" in label_name:
-            logger.info(f"✅ LEVEL 4 DETECTED (exact) - File: {file_name}, Label: {label_name}")
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
             return {
                 "level": 4,
                 "label": "confidential",
@@ -391,9 +380,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
 
         # Level 3 (exact match first)
         if "level 3" in label_name:
-            logger.info(f"✅ LEVEL 3 DETECTED (exact) - File: {file_name}, Label: {label_name}")
-            if is_excel:
-                logger.info(f"📊 EXCEL FILE WITH LEVEL 3 - {file_name}")
             return {
                 "level": 3,
                 "label": "private",
@@ -404,7 +390,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
 
         # Level 2 (exact match first)
         if "level 2" in label_name:
-            logger.info(f"✅ LEVEL 2 DETECTED (exact) - File: {file_name}, Label: {label_name}")
             return {
                 "level": 2,
                 "label": "personal",
@@ -415,7 +400,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
 
         # Level 1 (exact match first)
         if "level 1" in label_name:
-            logger.info(f"✅ LEVEL 1 DETECTED (exact) - File: {file_name}, Label: {label_name}")
             return {
                 "level": 1,
                 "label": "normal",
@@ -425,11 +409,10 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
             }
 
         # Fallback: Check other keywords if no exact "level X" match
-        # Level 4 keywords (only if no exact level match above)
         level_4_keywords = ["critical", "confidential", "restricted", "secret",
             "highly confidential", "classified", "sensitive", "proprietary"]
         if any(keyword in label_name for keyword in level_4_keywords):
-            logger.info(f"✅ LEVEL 4 DETECTED (keyword) - File: {file_name}, Label: {label_name}")
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
             return {
                 "level": 4,
                 "label": "confidential",
@@ -441,7 +424,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
         # Level 3 keywords
         level_3_keywords = ["internal", "private", "company", "organization"]
         if any(keyword in label_name for keyword in level_3_keywords):
-            logger.info(f"✅ LEVEL 3 DETECTED (keyword) - File: {file_name}, Label: {label_name}")
             return {
                 "level": 3,
                 "label": "private",
@@ -452,7 +434,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
 
         # Level 2 keywords (fallback)
         if "personal" in label_name:
-            logger.info(f"✅ LEVEL 2 DETECTED (keyword) - File: {file_name}, Label: {label_name}")
             return {
                 "level": 2,
                 "label": "personal",
@@ -464,7 +445,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
         # Level 1 keywords (fallback)
         level_1_keywords = ["public", "non-sensitive", "general", "unrestricted"]
         if any(keyword in label_name for keyword in level_1_keywords):
-            logger.info(f"✅ LEVEL 1 DETECTED (keyword) - File: {file_name}, Label: {label_name}")
             return {
                 "level": 1,
                 "label": "normal",
@@ -472,8 +452,6 @@ def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
                 "displayName": label.get("displayName"),
                 "labelId": label_id
             }
-
-        logger.info(f"❌ NO LEVEL MATCHED - File: {file_name}, Label: '{label_name}'")
 
     return None
 
