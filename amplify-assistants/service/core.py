@@ -1,13 +1,14 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import os
 import time
 import boto3
 import json
 import uuid
+import concurrent.futures
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from decimal import Decimal
@@ -395,6 +396,7 @@ def list_assistants(event, context, current_user, name, data):
 def list_user_assistants(user_id):
     """
     Retrieves all assistants associated with the given user ID and returns them as a list of dictionaries.
+    ULTRA-OPTIMIZED: Only fetches unique assistantIds first, then queries for the latest version of each.
 
     Args:
         user_id (str): The ID of the user.
@@ -405,33 +407,73 @@ def list_user_assistants(user_id):
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
-    assistants = []
+    # Step 1: Get unique assistantIds for this user (only fetch assistantId field)
+    unique_assistant_ids = set()
     last_evaluated_key = None
 
     while True:
-        # Build the query parameters
         query_params = {
             "IndexName": "UserNameIndex",
             "KeyConditionExpression": Key("user").eq(user_id),
+            "ProjectionExpression": "assistantId",  # Only fetch assistantId
         }
 
-        # If there is a last evaluated key, include it in the query
         if last_evaluated_key:
             query_params["ExclusiveStartKey"] = last_evaluated_key
+
         response = assistants_table.query(**query_params)
 
-        assistants.extend(response.get("Items", []))
+        # Collect unique assistantIds
+        for item in response.get("Items", []):
+            assistant_id = item.get("assistantId")
+            if assistant_id:
+                unique_assistant_ids.add(assistant_id)
 
-        # Check if there's more data to retrieve
         last_evaluated_key = response.get("LastEvaluatedKey")
-
         if not last_evaluated_key:
-            logger.debug("No more data to retrieve")
-            # No more data to retrieve
             break
 
-    # filter out old versions
-    return get_latest_assistants(assistants)
+    if not unique_assistant_ids:
+        logger.debug("No assistants found for user %s", user_id)
+        return []
+
+    logger.debug("Found %s unique assistants for user %s", len(unique_assistant_ids), user_id)
+
+    # Step 2: For each unique assistantId, query AssistantIdIndex to get the latest version
+    # Using ScanIndexForward=False and Limit=1 to get only the highest version
+    # PARALLEL OPTIMIZATION: Query all assistants concurrently
+    def fetch_latest_version(assistant_id):
+        """Helper function to fetch the latest version of a single assistant"""
+        try:
+            response = assistants_table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ScanIndexForward=False,  # Sort descending by version (range key)
+                Limit=1  # Get only the latest version
+            )
+            items = response.get("Items", [])
+            return items[0] if items else None
+        except Exception as e:
+            logger.error("Error fetching latest version for assistant %s: %s", assistant_id, e)
+            return None
+
+    # Execute queries in parallel with ThreadPoolExecutor
+    latest_assistants = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all queries at once
+        future_to_assistant = {
+            executor.submit(fetch_latest_version, assistant_id): assistant_id
+            for assistant_id in unique_assistant_ids
+        }
+
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_assistant):
+            result = future.result()
+            if result:
+                latest_assistants.append(result)
+
+    logger.debug("Fetched %s latest assistant versions", len(latest_assistants))
+    return latest_assistants
 
 
 def get_latest_assistants(assistants):
@@ -1127,27 +1169,27 @@ def decimal_to_float(obj):
 def get_most_recent_assistant_version(assistants_table, assistant_public_id):
     """
     Retrieves the most recent version of an assistant from the DynamoDB table.
+    Uses AssistantIdIndex with ScanIndexForward=False to get the latest version directly.
 
     Args:
         assistants_table (boto3.Table): The DynamoDB table for assistants.
-        user_that_owns_the_assistant (str): The ID of the user that owns the assistant.
-        assistant_name (str): The name of the assistant.
-        assistant_public_id (str): The public ID of the assistant (optional).
+        assistant_public_id (str): The public ID of the assistant.
 
     Returns:
         dict: The most recent assistant item, or None if not found.
     """
-    if assistant_public_id:
-        response = assistants_table.query(
-            IndexName="AssistantIdIndex",
-            KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
-            Limit=1,
-            ScanIndexForward=False,
-        )
-        if response["Count"] > 0:
-            return max(response["Items"], key=lambda x: x.get("version", 1))
+    if not assistant_public_id:
+        return None
 
-    return None
+    response = assistants_table.query(
+        IndexName="AssistantIdIndex",
+        KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
+        ScanIndexForward=False,  # Sort by version DESC - highest version first
+        Limit=1  # Get only the latest version
+    )
+
+    items = response.get("Items", [])
+    return items[0] if items else None
 
 
 def save_assistant(
