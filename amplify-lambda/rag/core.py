@@ -910,7 +910,15 @@ def process_document_for_rag(event, context):
 
                             logger.info("RAG enabled: %s", rag_enabled)
 
-                            if not rag_enabled:
+                            # Check if document is massive (400K+ tokens) - skip chunking/embedding
+                            MASSIVE_DOCUMENT_TOKEN_THRESHOLD = 400000
+                            if total_tokens >= MASSIVE_DOCUMENT_TOKEN_THRESHOLD:
+                                logger.info(
+                                    "🔥 [MASSIVE DOCUMENT] Skipping chunk queue for %s (%d tokens >= %d threshold). "
+                                    "Document will use document cache with extractRelevantContext instead of embeddings.",
+                                    key, total_tokens, MASSIVE_DOCUMENT_TOKEN_THRESHOLD
+                                )
+                            elif not rag_enabled:
                                 logger.info( "RAG chunking is disabled, skipping chunk queue...")
                             else:
                                 chunk_queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
