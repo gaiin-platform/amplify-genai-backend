@@ -255,8 +255,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                 });
             }
-            
-            logger.info(`✅ Model validation passed: ${modelId}`);
 
             // override model in params/options so its from our backend end 
             params.model = model;
