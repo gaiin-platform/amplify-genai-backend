@@ -9,7 +9,8 @@ const logger = getLogger("rateLimiter");
 let adminRateLimitCache = null; // Admin limits (rarely change)
 let adminRateLimitCacheTime = 0;
 let groupRateLimitsCache = new Map(); // Group limits by user
-let lifetimeCalculationCache = new Map(); // Expensive lifetime calculations
+let historyCostCache = new Map(); // Cache ONLY historical costs (never changes)
+let lastPassedLimitCache = new Map();
 
 // 🛡️ PROGRESSIVE RATE LIMITING: Track consecutive violations
 let rateLimitViolations = new Map(); // userId -> { count, lastViolation, timeoutUntil }
@@ -26,55 +27,64 @@ const ERROR_TIMEOUT_MS = 10 * 60 * 1000; // 10 minute timeout for errors
 
 
 async function calculateTotalLifetimeCost(userEmail, accountInfo) {
-    const cacheKey = `${userEmail}:${accountInfo || 'all'}`;
-    
-    // 💰 Check 30-second cache for expensive lifetime calculations
-    const lifetimeCached = lifetimeCalculationCache.get(cacheKey);
-    if (lifetimeCached && (Date.now() - lifetimeCached.timestamp) < 30 * 1000) {
-        logger.debug(`Using 30s cached lifetime cost for ${userEmail}`);
-        return lifetimeCached.value;
-    }
-    
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const cacheKey = `${userEmail}:${accountInfo || 'all'}:${currentMonth}-${currentYear}`;
+
     const dynamodbClient = new DynamoDBClient();
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
     const historyTable = process.env.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE;
-    
+
     if (!costCalcTable || !historyTable) {
         logger.error('Missing required table environment variables for lifetime cost calculation');
         return 0;
     }
-    
+
     try {
-        let totalLifetimeCost = 0;
-        
-        // 1. Scan HISTORY table for all historical monthly costs
-        const historyCommand = new ScanCommand({
-            TableName: historyTable,
-            FilterExpression: accountInfo ? 
-                'begins_with(userDate, :userEmail) AND accountInfo = :accountInfo AND attribute_exists(monthlyCost) AND monthlyCost > :zero' :
-                'begins_with(userDate, :userEmail) AND attribute_exists(monthlyCost) AND monthlyCost > :zero',
-            ExpressionAttributeValues: accountInfo ? {
-                ':userEmail': { S: `${userEmail}#` },
-                ':accountInfo': { S: accountInfo },
-                ':zero': { N: '0' }
-            } : {
-                ':userEmail': { S: `${userEmail}#` },
-                ':zero': { N: '0' }
-            },
-            ProjectionExpression: 'monthlyCost'
-        });
-        
-        const historyResponse = await dynamodbClient.send(historyCommand);
-        
-        if (historyResponse.Items) {
-            for (const item of historyResponse.Items) {
-                const historyData = unmarshall(item);
-                const cost = parseFloat(historyData.monthlyCost) || 0;
-                if (cost > 0) totalLifetimeCost += cost;
+        let historicalCost = 0;
+
+        // 1. Check cache for HISTORY (never changes, safe to cache)
+        const cachedHistory = historyCostCache.get(cacheKey);
+        if (cachedHistory) {
+            logger.debug(`Using cached historical cost for ${userEmail}`);
+            historicalCost = cachedHistory;
+        } else {
+            // Scan HISTORY table for all historical monthly costs
+            const historyCommand = new ScanCommand({
+                TableName: historyTable,
+                FilterExpression: accountInfo ?
+                    'begins_with(userDate, :userEmail) AND accountInfo = :accountInfo AND attribute_exists(monthlyCost) AND monthlyCost > :zero' :
+                    'begins_with(userDate, :userEmail) AND attribute_exists(monthlyCost) AND monthlyCost > :zero',
+                ExpressionAttributeValues: accountInfo ? {
+                    ':userEmail': { S: `${userEmail}#` },
+                    ':accountInfo': { S: accountInfo },
+                    ':zero': { N: '0' }
+                } : {
+                    ':userEmail': { S: `${userEmail}#` },
+                    ':zero': { N: '0' }
+                },
+                ProjectionExpression: 'monthlyCost'
+            });
+
+            const historyResponse = await dynamodbClient.send(historyCommand);
+
+            if (historyResponse.Items) {
+                for (const item of historyResponse.Items) {
+                    const historyData = unmarshall(item);
+                    const cost = parseFloat(historyData.monthlyCost) || 0;
+                    if (cost > 0) historicalCost += cost;
+                }
             }
+
+            // Cache historical cost (never changes)
+            historyCostCache.set(cacheKey, historicalCost);
+            logger.debug(`Cached historical cost for ${userEmail}: ${historicalCost}`);
         }
-        
-        // 2. Query current COST_CALCULATIONS table for current month
+
+        // 2. ALWAYS fetch current month FRESH (changes every request)
+        let currentMonthCost = 0;
+
         if (accountInfo) {
             // Direct query for specific accountInfo
             const currentCommand = new QueryCommand({
@@ -89,15 +99,14 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
                 },
                 ProjectionExpression: 'monthlyCost, dailyCost'
             });
-            
+
             const currentResponse = await dynamodbClient.send(currentCommand);
-            
+
             if (currentResponse.Items && currentResponse.Items.length > 0) {
                 const currentData = unmarshall(currentResponse.Items[0]);
                 const dailyCost = parseFloat(currentData.dailyCost) || 0;
                 const monthlyCost = parseFloat(currentData.monthlyCost) || 0;
-                const currentMonthTotal = dailyCost + monthlyCost;
-                totalLifetimeCost += currentMonthTotal;
+                currentMonthCost = dailyCost + monthlyCost;
             }
         } else {
             // If no specific accountInfo, query all user records
@@ -112,30 +121,24 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
                 },
                 ProjectionExpression: 'monthlyCost, dailyCost'
             });
-            
+
             const currentResponse = await dynamodbClient.send(currentCommand);
-            
+
             if (currentResponse.Items) {
                 for (const item of currentResponse.Items) {
                     const currentData = unmarshall(item);
                     const dailyCost = parseFloat(currentData.dailyCost) || 0;
                     const monthlyCost = parseFloat(currentData.monthlyCost) || 0;
-                    const currentMonthTotal = dailyCost + monthlyCost;
-                    totalLifetimeCost += currentMonthTotal;
+                    currentMonthCost += dailyCost + monthlyCost;
                 }
             }
         }
-        
-        logger.debug(`Total lifetime cost for ${userEmail}: ${totalLifetimeCost}`);
-        
-        // 💰 CACHE: Store for 30 seconds
-        lifetimeCalculationCache.set(cacheKey, {
-            value: totalLifetimeCost,
-            timestamp: Date.now()
-        });
-        
+
+        const totalLifetimeCost = historicalCost + currentMonthCost;
+        logger.debug(`Total lifetime cost for ${userEmail}: ${totalLifetimeCost} (history: ${historicalCost}, current: ${currentMonthCost})`);
+
         return totalLifetimeCost;
-        
+
     } catch (error) {
         logger.error('Error calculating total lifetime cost:', error);
         return 0; // Default to 0 on error to avoid blocking
@@ -150,23 +153,32 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
 async function calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost = null) {
     const period = limit.period;
     let spent = 0;
-    
+
     if (period === 'Total') {
         // Use precomputed cost if available, otherwise calculate
-        spent = precomputedLifetimeCost !== null ? 
-            precomputedLifetimeCost : 
+        spent = precomputedLifetimeCost !== null ?
+            precomputedLifetimeCost :
             await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+    } else if (period === 'Monthly') {
+        const dailyCost = parseFloat(rateData.dailyCost) || 0;
+        const monthlyCost = parseFloat(rateData.monthlyCost) || 0;
+        spent = dailyCost + monthlyCost;
+    } else if (period === 'Hourly') {
+        const hourlyCost = rateData.hourlyCost || [];
+        const currentHour = new Date().getHours();
+        spent = parseFloat(hourlyCost[currentHour]?.N || hourlyCost[currentHour] || 0);
+    } else if (period === 'Daily') {
+        spent = parseFloat(rateData.dailyCost) || 0;
     } else {
         const colName = `${period.toLowerCase()}Cost`;
         spent = rateData[colName];
-        if (period === 'Hourly') spent = spent[new Date().getHours()];
     }
-    
+
     const isRateLimited = spent >= limit.rate;
     if (isRateLimited) {
         params.body.options.rateLimit.currentSpent = spent;
     }
-    return isRateLimited;
+    return { isRateLimited, spent };
 }
 
 /**
@@ -174,12 +186,13 @@ async function calcIsRateLimited(limit, rateData, params, precomputedLifetimeCos
  * Now accepts precomputed lifetime cost
  */
 async function checkAndSetLimit(limit, rateData, params, limitType, isAdminSet = false, groupName = null, precomputedLifetimeCost = null) {
-    const isLimited = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
-    if (isLimited) {
+    const { isRateLimited, spent } = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
+    if (isRateLimited) {
         params.body.options.rateLimit = {
             ...limit,
             limitType,
             adminSet: isAdminSet,
+            currentSpent: spent,
             ...(groupName && { groupName })
         };
         return true;
@@ -194,7 +207,7 @@ async function checkAndSetLimit(limit, rateData, params, limitType, isAdminSet =
 async function getUserGroupRateLimits(accessToken) {
     const cacheKey = `groups:${accessToken.slice(-8)}`; // Use token suffix for caching
     const cached = groupRateLimitsCache.get(cacheKey);
-    
+
     if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) {
         logger.debug('Using cached group rate limits');
         return cached.data;
@@ -423,21 +436,11 @@ export async function isRateLimited(params) {
         return true; // User is banned
     }
     
-    // Get rate limits from various sources
-    const userRateLimit = params.body.options.rateLimit; // NOT cached - from request
-    const adminRateLimit = await getAdminRateLimit(); // Cached 10 min
-    const groupRateLimits = params.accessToken ? 
-        await getUserGroupRateLimits(params.accessToken) : []; // Cached 5 min
-    
+    const userRateLimit = params.body.options.rateLimit;
+
     const noLimit = (limit) => {
         return !limit || limit.period?.toLowerCase() === 'unlimited';
     }
-    
-    // Rate limit checking order:
-    // 1. Collect all group limits + admin limit into a pool
-    // 2. If ANY limit in the pool passes, user is not rate limited
-    // 3. Only if ALL limits in pool fail, user is blocked
-    // 4. Finally check user's personal limit (always applies as a personal cap)
 
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
@@ -447,43 +450,70 @@ export async function isRateLimited(params) {
     }
 
     try {
-        // 📊 OPTIMIZATION: Fetch user's cost data ONCE
+        const accountId = params.body?.options?.accountId || 'general_account';
+        const apiKeyId = params.apiKeyId || 'NA';
+        const accountInfo = `${accountId}#${apiKeyId}`;
         const dynamodbClient = new DynamoDBClient();
         const command = new QueryCommand({
             TableName: costCalcTable,
-            KeyConditionExpression: '#id = :userid',
+            KeyConditionExpression: '#id = :userid AND accountInfo = :accountInfo',
             ExpressionAttributeNames: {
                 '#id': 'id'
             },
             ExpressionAttributeValues: {
-                ':userid': { S: params.user}
+                ':userid': { S: params.user },
+                ':accountInfo': { S: accountInfo }
             }
         });
 
-        logger.debug("Calling billing table.");
+        logger.debug("Calling billing table with specific accountInfo.");
         const response = await dynamodbClient.send(command);
 
-        const item = response.Items[0];
-
-        if (!item) {
-            logger.error("Table entry does not exist. Can not verify if rate limited");
-            return false;
-        }
-        const rateData = unmarshall(item);
-
-        // 🚀 OPTIMIZATION: Pre-calculate lifetime cost ONCE if any limit needs it
+        let rateData;
         let precomputedLifetimeCost = null;
-        const needsLifetimeCost =
-            (!noLimit(adminRateLimit) && adminRateLimit.period === 'Total') ||
-            groupRateLimits.some(g => !noLimit(g) && g.period === 'Total') ||
-            (!noLimit(userRateLimit) && userRateLimit.period === 'Total');
 
-        if (needsLifetimeCost) {
-            logger.debug("Pre-calculating lifetime cost once for all rate limit checks");
-            precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+        if (!response.Items || response.Items.length === 0) {
+            logger.warn(`No cost record found for accountInfo="${accountInfo}". User may not have any usage yet.`);
+            rateData = {
+                monthlyCost: 0,
+                dailyCost: 0,
+                hourlyCost: new Array(24).fill(0),
+                accountInfo: accountInfo
+            };
+
+        } else {
+            const item = response.Items[0];
+            rateData = unmarshall(item);
         }
 
-        // 1. Build the pool of limits to check (groups + admin)
+        if (!noLimit(userRateLimit)) {
+            if (userRateLimit.period === 'Total') {
+                logger.debug("Pre-calculating lifetime cost for user personal limit check");
+                precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+                logger.debug(`Total lifetime cost for ${params.user}: ${precomputedLifetimeCost}`);
+            }
+
+            const userLimited = await checkAndSetLimit(userRateLimit, rateData, params, 'user', false, null, precomputedLifetimeCost);
+
+            if (userLimited) {
+                recordRateLimitViolation(params.user);
+                return true;
+            }
+        }
+        const adminRateLimit = await getAdminRateLimit();
+        const groupRateLimits = params.accessToken ?
+            await getUserGroupRateLimits(params.accessToken) : [];
+
+        if (precomputedLifetimeCost === null) {
+            const needsLifetimeCost =
+                (!noLimit(adminRateLimit) && adminRateLimit.period === 'Total') ||
+                groupRateLimits.some(g => !noLimit(g) && g.period === 'Total');
+
+            if (needsLifetimeCost) {
+                logger.debug("Pre-calculating lifetime cost for pool checks");
+                precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+            }
+        }
         const limitPool = [];
 
         // Add all group limits to the pool
@@ -506,34 +536,49 @@ export async function isRateLimited(params) {
             });
         }
 
-        // Sort limits by check speed: fast (Hourly/Daily/Monthly) before slow (Total)
-        // This allows early exit on fast checks, avoiding expensive lifetime calculations
+        const lastPassed = lastPassedLimitCache.get(params.user);
+        if (lastPassed) {
+            const lastPassedIndex = limitPool.findIndex(entry =>
+                entry.limitType === lastPassed.limitType &&
+                entry.limit.period === lastPassed.period &&
+                (entry.limitType !== 'group' || entry.groupName === lastPassed.groupName)
+            );
+
+            if (lastPassedIndex !== -1) {
+                const [fastTrack] = limitPool.splice(lastPassedIndex, 1);
+                limitPool.unshift(fastTrack);
+            }
+        }
         const periodPriority = { 'Hourly': 1, 'Daily': 2, 'Monthly': 3, 'Total': 4 };
+        const firstItem = lastPassed && limitPool.length > 0 ? limitPool.shift() : null;
         limitPool.sort((a, b) =>
             (periodPriority[a.limit.period] || 3) - (periodPriority[b.limit.period] || 3)
         );
-
-        // 2. check all limits in the pool
+        if (firstItem) limitPool.unshift(firstItem);
         if (limitPool.length > 0) {
             let passedAny = false;
             let failedLimits = [];
 
             for (const entry of limitPool) {
-                const isLimited = await calcIsRateLimited(entry.limit, rateData, params, precomputedLifetimeCost);
-                if (!isLimited) {
+                const { isRateLimited, spent } = await calcIsRateLimited(entry.limit, rateData, params, precomputedLifetimeCost);
+
+                if (!isRateLimited) {
                     passedAny = true;
-                    break; // Found one that passes, user is in
+                    lastPassedLimitCache.set(params.user, {
+                        limitType: entry.limitType,
+                        period: entry.limit.period,
+                        groupName: entry.groupName
+                    });
+                    break;
                 } else {
                     failedLimits.push({
                         ...entry,
-                        currentSpent: params.body.options.rateLimit?.currentSpent
+                        currentSpent: spent
                     });
                 }
             }
 
             if (!passedAny && failedLimits.length > 0) {
-                // All limits in pool exceeded - user is blocked
-                // Report the limit with highest rate (most generous that still failed)
                 const mostGenerous = failedLimits.reduce((max, curr) =>
                     curr.limit.rate > max.limit.rate ? curr : max
                 );
@@ -545,14 +590,6 @@ export async function isRateLimited(params) {
                     currentSpent: mostGenerous.currentSpent,
                     ...(mostGenerous.groupName && { groupName: mostGenerous.groupName })
                 };
-                recordRateLimitViolation(params.user);
-                return true;
-            }
-        }
-
-        // 3. Finally check user's personal limit (always applies)
-        if (!noLimit(userRateLimit)) {
-            if (await checkAndSetLimit(userRateLimit, rateData, params, 'user', false, null, precomputedLifetimeCost)) {
                 recordRateLimitViolation(params.user);
                 return true;
             }

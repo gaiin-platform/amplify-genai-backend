@@ -196,6 +196,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     const rateLimitStr = `${rateLimitInfo.adminSet ? "Amplify " : ""}Set Rate limit: ${formatRateLimit(rateLimitInfo)}`;
                     errorMessage = `${errorMessage} ${currentRate} ${rateLimitStr}`;
                 }
+                logger.warn(`🚫 Rate limit exceeded for user ${params.user}: ${errorMessage}`);
                 return returnResponse(responseStream, {
                     statusCode: 429,
                     statusText: "Request limit reached. Please try again in a few minutes.",

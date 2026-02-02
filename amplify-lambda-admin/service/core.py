@@ -983,7 +983,7 @@ def get_configs(event, context, current_user, name, data):
                             }
                     elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
                         # Enrich web search config with masked API key from SSM
-                        provider = new_data.get("provider")
+                        provider = new_data and new_data.get("provider")
                         if provider:
                             try:
                                 ssm_client = boto3.client("ssm")
@@ -1154,6 +1154,8 @@ def initialize_config(config_type):
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
+    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+        item["data"] = None
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
