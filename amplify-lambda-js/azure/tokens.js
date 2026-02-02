@@ -99,6 +99,17 @@ export const createTokenCounter = () => {
 }
 
 export const countTokens = (text) => {
+    // Defensive: Ensure text is a string
+    if (typeof text !== 'string') {
+        if (typeof text === 'object') {
+            text = JSON.stringify(text);
+        } else if (text !== null && text !== undefined) {
+            text = String(text);
+        } else {
+            text = '';
+        }
+    }
+
     const encoding = new Tiktoken(
         tiktokenModel.bpe_ranks,
         tiktokenModel.special_tokens,
