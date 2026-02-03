@@ -10,7 +10,7 @@ package:
 plugins:
   - serverless-offline
   - serverless-prune-plugin
-  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
   - serverless-python-requirements
 
 custom:

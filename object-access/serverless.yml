@@ -12,7 +12,7 @@ plugins:
   - serverless-prune-plugin
   - serverless-deployment-bucket
   - serverless-iam-roles-per-function
-  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
 
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
