@@ -33,7 +33,7 @@ pillow==11.3.0
     #   python-pptx
 pycparser==2.22
     # via cffi
-pypdfium2==4.30.1
+pypdfium2==4.30.0
     # via -r requirements.in
 python-docx==1.1.2
     # via -r requirements.in
@@ -47,7 +47,7 @@ regex==2025.9.18
     #   tiktoken
 soupsieve==2.7
     # via beautifulsoup4
-tiktoken==0.12.0
+tiktoken==0.11.0
     # via -r requirements.in
 tqdm==4.67.1
     # via nltk
