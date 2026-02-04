@@ -128,6 +128,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             logger.debug(`🔑 Applying per-user circuit breaker for user ${userId.substring(0, 10)}...`);
         } else {
             logger.warn("⚠️ No user found - applying function-wide circuit breaker");
+            logger.debug("Event data: ", event); // Log first 500 chars
+            logger.debug("Extracted params: ", params); // Log first 500 chars
         }
         
         // Apply per-user circuit breaker protection to the main routing
