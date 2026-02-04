@@ -29,6 +29,9 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
+    slim: true
+    strip: true
+      
     # uncomment in case of issues with pythonRequirement layers not uploading to aws
     # useStaticCache: false
     # useDownloadCache: false
@@ -124,7 +127,12 @@ provider:
     role:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-ssm
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-s3
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-dynamodb
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-sqs
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
 
 functions:
 
@@ -534,11 +542,23 @@ functions:
     events: []
 
 resources:
+  # Use extensions to add DependsOn to the auto-generated role without overriding it
+  extensions:
+    IamRoleLambdaExecution:
+      DependsOn:
+        - LambdaIAMPolicySSM
+        - LambdaIAMPolicyS3
+        - LambdaIAMPolicyDynamoDB
+        - LambdaIAMPolicySQS
+        - LambdaIAMPolicySecrets
+        - LambdaIAMPolicyRDS
+
   Resources:
-    LambdaIAMPolicy:
+    # SSM Policy
+    LambdaIAMPolicySSM:
       Type: AWS::IAM::ManagedPolicy
       Properties:
-        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-ssm
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -560,24 +580,17 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+
+    # S3 Policy
+    LambdaIAMPolicyS3:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
             - Effect: Allow
               Action:
-                - s3:ListBucket
-                - s3:GetObject
-                - s3:PutObject
-                - s3:DeleteObject
-              Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}" #Marked for future deletion
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-                - dynamodb:Query
-                - dynamodb:Scan
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
-                - dynamodb:DeleteItem
                 - s3:GetObject
                 - s3:PutObject
                 - s3:PutObjectHold
@@ -588,43 +601,9 @@ resources:
                 - s3:CreateBucket
                 - s3:GetBucketNotification
                 - s3:PutBucketNotification
-                - sqs:SendMessage
-                - sqs:DeleteMessage
-                - sqs:ReceiveMessage
-                - sqs:GetQueueAttributes
-                - sqs:ChangeMessageVisibility
-                - rds-data:ExecuteStatement
-                - rds-data:BatchExecuteStatement
-                - rds-data:BeginTransaction
-                - rds-data:CommitTransaction
-                - rds-data:RollbackTransaction
-                - dynamodb:BatchGetItem
               Resource:
-                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}" #Marked for future deletion
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}/index/*" #Marked for future deletion
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}/index/*"
-                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}" #Marked for future deletion
@@ -635,17 +614,52 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
-                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
-                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
-                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
-                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}-dlq"
-                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}-dlq"
+
+    # DynamoDB Policy
+    LambdaIAMPolicyDynamoDB:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:BatchGetItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}" #Marked for future deletion
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}/index/*" #Marked for future deletion
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
@@ -653,27 +667,65 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}/index/*"
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
-                - dynamodb:Query
-              Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
+    # SQS Policy
+    LambdaIAMPolicySQS:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-sqs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
             - Effect: Allow
               Action:
                 - sqs:SendMessage
+                - sqs:DeleteMessage
+                - sqs:ReceiveMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
               Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}-dlq"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}-dlq"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
 
+    # Secrets Manager Policy
+    LambdaIAMPolicySecrets:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
             - Effect: Allow
               Action:
-                - dynamodb:PutItem
+                - secretsmanager:GetSecretValue
               Resource:
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${sls:stage}-openai-endpoints*'
+
+    # RDS Policy
+    LambdaIAMPolicyRDS:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+                - rds-data:BeginTransaction
+                - rds-data:CommitTransaction
+                - rds-data:RollbackTransaction
+              Resource: '*'
 
     # ---- Lambda invoke permissions for S3 → Lambda ----
     ConvertInvokePermissionFromS3:
@@ -958,7 +1010,7 @@ resources:
 
     ConversionOutputBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
-      DependsOn: LambdaIAMPolicy
+      #DependsOn: LambdaIAMPolicyS3
       Properties:
         BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
         CorsConfiguration:

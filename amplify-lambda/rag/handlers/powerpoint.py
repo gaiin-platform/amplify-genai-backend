@@ -535,12 +535,15 @@ class PPTXHandler(TextExtractionHandler):
         # Extract shape metadata (alt text, hyperlinks, etc.)
         metadata = self.extract_shape_metadata(shape)
 
+        # Add shape text to metadata if present
+        if shape_text:
+            metadata["shape_text"] = shape_text
+
         return self._create_visual_data_structure(
             visual_type,
             PNG,
             shape_image,
             content_hash,
-            shape_text,
             {"slide_number": slide_number},
             metadata,
             "",

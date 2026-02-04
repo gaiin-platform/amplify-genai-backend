@@ -516,7 +516,11 @@ def list_library_files(
         else:
             url = f"{GRAPH_ENDPOINT}/sites/{site_id}/drives/{drive_id}/root:/{folder_path}:/children"
 
-        params = {"$top": top, "$orderby": "name"}
+        params = {
+            "$top": top,
+            "$orderby": "name",
+            "$select": "id,name,size,file,folder,createdDateTime,lastModifiedDateTime,webUrl,createdBy,lastModifiedBy,parentReference,sensitivityLabel"
+        }
 
         response = session.get(url, params=params)
         
@@ -540,6 +544,8 @@ def get_file_download_url(
     """
     Gets download URL for a SharePoint file.
 
+    SECURITY: Blocks access to Level 4 (Critical/Confidential) files.
+
     Args:
         current_user: User identifier
         site_id: Site ID
@@ -551,14 +557,14 @@ def get_file_download_url(
 
     Raises:
         ItemNotFoundError: If file doesn't exist
-        SharePointError: For other failures
+        SharePointError: For other failures, including sensitivity restrictions
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
-        # Get file metadata first
+        # Get file metadata including sensitivity label
         url = f"{GRAPH_ENDPOINT}/sites/{site_id}/drives/{drive_id}/items/{item_id}"
-        params = {"$select": "id,name,size,createdDateTime,lastModifiedDateTime,@microsoft.graph.downloadUrl,file"}
+        params = {"$select": "id,name,size,createdDateTime,lastModifiedDateTime,@microsoft.graph.downloadUrl,file,sensitivityLabel"}
 
         response = session.get(url, params=params)
 
@@ -566,6 +572,17 @@ def get_file_download_url(
             handle_graph_error(response)
 
         item = response.json()
+
+        # SECURITY CHECK: Parse sensitivity label and block Level 4 files
+        sensitivity_info = parse_file_sensitivity_label(item)
+
+        if sensitivity_info and sensitivity_info.get("is_sensitive"):
+            file_name = item.get("name", "unknown")
+            logger.warning(f"🚫 [SHAREPOINT] BLOCKED DOWNLOAD ATTEMPT - Level 4 file: {file_name}, User: {current_user}")
+            raise SharePointError(
+                "This file contains sensitive data (Level 4 - Critical/Confidential) and cannot be downloaded. "
+                "Access to this file is restricted for security compliance."
+            )
 
         # Try to get @microsoft.graph.downloadUrl, but if it's not available,
         # use the /content endpoint as fallback
@@ -757,6 +774,120 @@ def format_document_library(library: Dict) -> Dict:
     }
 
 
+def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
+    """
+    Parse Microsoft Information Protection label from SharePoint file.
+
+    Args:
+        item: Raw drive item data from Graph API
+
+    Returns:
+        Dict containing sensitivity level and label information, or None if no label
+    """
+    # Check for sensitivityLabel property (Graph API v1.0+)
+    if "sensitivityLabel" in item:
+        label = item["sensitivityLabel"]
+        # Graph API uses 'displayName' not 'name'
+        label_name = label.get("displayName", label.get("name", "")).lower()
+        label_id = label.get("id", "")
+
+        # Only process if there's an actual label (not empty)
+        if not label_name or not label_id:
+            return None
+
+        # IMPORTANT: Check exact "level X" patterns FIRST to avoid false matches
+        # E.g., "Level 3 Restricted" should match Level 3, not Level 4's "restricted" keyword
+
+        # Level 4 (exact match first)
+        if "level 4" in label_name:
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
+            return {
+                "level": 4,
+                "label": "confidential",
+                "is_sensitive": True,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 3 (exact match first)
+        if "level 3" in label_name:
+            return {
+                "level": 3,
+                "label": "private",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 2 (exact match first)
+        if "level 2" in label_name:
+            return {
+                "level": 2,
+                "label": "personal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 1 (exact match first)
+        if "level 1" in label_name:
+            return {
+                "level": 1,
+                "label": "normal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Fallback: Check other keywords if no exact "level X" match
+        # Level 4 keywords (only if no exact level match above)
+        level_4_keywords = ["critical", "confidential", "restricted", "secret",
+            "highly confidential", "classified", "sensitive", "proprietary"]
+        if any(keyword in label_name for keyword in level_4_keywords):
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
+            return {
+                "level": 4,
+                "label": "confidential",
+                "is_sensitive": True,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 3 keywords
+        level_3_keywords = ["internal", "private", "company", "organization"]
+        if any(keyword in label_name for keyword in level_3_keywords):
+            return {
+                "level": 3,
+                "label": "private",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 2 keywords (fallback)
+        if "personal" in label_name:
+            return {
+                "level": 2,
+                "label": "personal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 1 keywords (fallback)
+        level_1_keywords = ["public", "non-sensitive", "general", "unrestricted"]
+        if any(keyword in label_name for keyword in level_1_keywords):
+            return {
+                "level": 1,
+                "label": "normal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+    return None
+
+
 def format_drive_item(item: Dict) -> Dict:
     """Format drive item (file/folder) data consistently"""
     # Determine mimeType: use file mimeType or folder type
@@ -765,7 +896,12 @@ def format_drive_item(item: Dict) -> Dict:
     else:
         mime_type = item.get("file", {}).get("mimeType", "application/octet-stream")
 
-    return {
+    # Parse sensitivity label for files (not folders)
+    sensitivity_info = None
+    if item.get("file"):  # Only check files, not folders
+        sensitivity_info = parse_file_sensitivity_label(item)
+
+    formatted = {
         "id": item["id"],
         "name": item.get("name", ""),
         "size": item.get("size", 0),
@@ -780,3 +916,15 @@ def format_drive_item(item: Dict) -> Dict:
         "lastModifiedBy": item.get("lastModifiedBy", {}),
         "parentReference": item.get("parentReference", {}),
     }
+
+    # Add sensitivity fields only if label exists
+    if sensitivity_info:
+        formatted["sensitivity"] = sensitivity_info["level"]
+        formatted["sensitivityLabel"] = sensitivity_info["label"]
+
+        # Add attention note for level 4 sensitive files
+        if sensitivity_info["is_sensitive"]:
+            formatted["attentionNote"] = "This file contains sensitive data and cannot be viewed."
+            formatted["downloadUrl"] = None  # Block download URL for sensitive files
+
+    return formatted
