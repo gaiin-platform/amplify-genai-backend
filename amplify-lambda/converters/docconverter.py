@@ -30,6 +30,26 @@ setup_validated(rules, get_permission_checker)
 s3 = boto3.client("s3")
 
 
+def sanitize_surrogates(text):
+    """
+    Remove or replace invalid UTF-16 surrogate characters that can't be encoded in UTF-8.
+    Surrogates (U+D800 to U+DFFF) are invalid in UTF-8 and cause encoding errors.
+    """
+    if not isinstance(text, str):
+        return text
+
+    # Remove surrogates character by character
+    cleaned = []
+    for char in text:
+        code = ord(char)
+        if 0xD800 <= code <= 0xDFFF:
+            # Skip surrogate characters
+            continue
+        cleaned.append(char)
+
+    return ''.join(cleaned)
+
+
 def download_file_from_s3(bucket, key, file_path):
     try:
         s3.download_file(bucket, key, file_path)
@@ -276,31 +296,36 @@ def handler(event, context):
         key = record["s3"]["object"]["key"]
 
         key = unquote(key)
+        # Sanitize key to prevent surrogate encoding errors in logs
+        safe_key = sanitize_surrogates(key)
 
-        logger.info("Processing document conversion for key: %s", key)
+        logger.info("Processing document conversion for key: %s", safe_key)
 
         input_bucket = record["s3"]["bucket"]["name"]
 
         # Extract user path from consolidation bucket format
         # Consolidation bucket keys: conversion/input/{user}/{uuid}-to-{format}.md
         if not key.startswith("conversion/input/"):
-            logger.error("Unexpected key format for document conversion: %s, expected conversion/input/ prefix", key)
+            logger.error("Unexpected key format for document conversion: %s, expected conversion/input/ prefix", safe_key)
             return
 
         user_path = key[len("conversion/input/"):]
         email, uuid, fmat, extension = parse_s3_key(user_path)
 
-        logger.info("bucket:%s user: %s, uuid: %s, format: %s, extension: %s", input_bucket, email, uuid, fmat, extension)
+        # Sanitize email for logging
+        safe_email = sanitize_surrogates(email) if email else email
+
+        logger.info("bucket:%s user: %s, uuid: %s, format: %s, extension: %s", input_bucket, safe_email, uuid, fmat, extension)
 
         if not email or not uuid or not fmat or not extension:
-            logger.error("Could not parse email, uuid, format, and extension from key: %s", key)
+            logger.error("Could not parse email, uuid, format, and extension from key: %s", safe_key)
             return
 
         output_file = tempfile.NamedTemporaryFile(suffix="." + fmat, delete=False)
 
         mime_type = supported_mime_types.get(fmat, "text/plain")
 
-        logger.debug("input_bucket: %s, key: %s, input_file: %s, output_file: %s, mime_type: %s", input_bucket, key, input_file.name, output_file.name, mime_type)
+        logger.debug("input_bucket: %s, key: %s, input_file: %s, output_file: %s, mime_type: %s", input_bucket, safe_key, input_file.name, output_file.name, mime_type)
 
         download_file_from_s3(input_bucket, key, input_file.name)
 
@@ -359,7 +384,7 @@ def handler(event, context):
                 logger.error("Error downloading template from S3: %s, template will not be used", str(e))
                 pass
 
-        logger.info("Converting %s %s using %s", input_bucket, key, input_file.name)
+        logger.info("Converting %s %s using %s", input_bucket, safe_key, input_file.name)
 
         args = []
         if has_template:
@@ -376,17 +401,18 @@ def handler(event, context):
 
         check_output(args)
 
-        logger.info("Converted %s %s to %s", input_bucket, key, output_file.name)
+        logger.info("Converted %s %s to %s", input_bucket, safe_key, output_file.name)
 
         output_key = f"conversion/output/{email}/{uuid}.{fmat}"
-        
-        logger.debug("Handler parsed email: '%s' from key: '%s'", email, key)
-        logger.debug("Handler saving file to output key: '%s'", output_key)
-        logger.info("Uploading %s %s using %s", consolidation_bucket_name, output_key, output_file.name)
+        safe_output_key = sanitize_surrogates(output_key)
+
+        logger.debug("Handler parsed email: '%s' from key: '%s'", safe_email, safe_key)
+        logger.debug("Handler saving file to output key: '%s'", safe_output_key)
+        logger.info("Uploading %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
 
         upload_file_to_s3(consolidation_bucket_name, output_key, output_file.name, mime_type)
 
-        logger.info("Uploaded %s %s using %s", consolidation_bucket_name, output_key, output_file.name)
+        logger.info("Uploaded %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
 
         input_file.close()
         output_file.close()

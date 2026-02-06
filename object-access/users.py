@@ -145,6 +145,10 @@ def _update_payload(payload: dict, data: dict | None) -> dict:
         if (email):
             logger.info(f"Email extracted from data field: {email}")
             payload["email"] = email
+        else:
+            logger.info("No email found in data field")
+            logger.debug(f"Payload: {payload}")
+            logger.debug(f"Data: {data}")
 
     # Extract given_name and family_name if not already in payload
     if not payload.get("given_name") or not payload.get("family_name"):
