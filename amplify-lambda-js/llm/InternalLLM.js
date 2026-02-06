@@ -22,10 +22,10 @@ export class InternalLLM {
         this.passThrough = false;
         this.params = {
             account,
-            options: { model }
+            options: { model, prompt: "" }
         };
         this.defaultBody = {
-            "max_tokens": 1000,
+            "max_tokens": model.outputTokenLimit || 4000,
             "temperature": 1.0,
             "top_p": 1,
             "n": 1,
