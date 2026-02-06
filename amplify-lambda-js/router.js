@@ -4,7 +4,7 @@
 import {getLogger} from "./common/logging.js";
 import {ModelTypes, getModelByType} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch, localKill} from "./requests/requestState.js";
-import {sendStateEventToStream, TraceStream, sendStatusEventToStream} from "./common/streams.js";
+import {sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush} from "./common/streams.js";
 import {resolveDataSources, getDataSourcesByUse} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
@@ -322,7 +322,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     sendStatusEventToStream(responseStream, newStatus({
                         summary: "Analyzing conversation context...",
                         inProgress: true,
-                        type: "info"
+                        type: "info",
+                        id: "smart-messages-processing"
                     }));
 
 
@@ -372,23 +373,16 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         assistantParams.body.messages = smartMessagesResult.filteredMessages;
                         logger.info(`✅ [Processing] Complete:`, smartMessagesResult._internal || {});
 
-                        // 🎨 APPEND ARTIFACT INSTRUCTIONS if backend determined they should be included
-                        if (smartMessagesResult.artifactInstructions) {
-                            const originalPromptLength = body.options.prompt?.length || 0;
-                            body.options.prompt = (body.options.prompt || '') + '\n\n' + smartMessagesResult.artifactInstructions;
-                            assistantParams.body.options.prompt = body.options.prompt;
-
-                            logger.info("✅ [Artifacts] Instructions added", {
-                                added: smartMessagesResult.artifactInstructions.length
-                            });
-                        }
+                        options.options.artifacts = smartMessagesResult.includeArtifactInstructions;
 
                         // Update status to show completion
                         sendStatusEventToStream(responseStream, newStatus({
                             summary: "Context analysis complete",
-                            inProgress: false,
-                            type: "success"
+                            inProgress: true,
+                            type: "success",
+                            id: "smart-messages-processing"
                         }));
+                        forceFlush(responseStream);
                     } else {
                         logger.debug(`⏭️ Smart messages complete: ${smartMessagesResult.filteredMessages?.length || body.messages.length} messages (unfiltered)`,
                                    smartMessagesResult._internal || {});
