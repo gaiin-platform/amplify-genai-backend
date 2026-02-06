@@ -1,7 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { sendStatusEventToStream } from "../../streams.js";
+import { sendStatusEventToStream, sendStateEventToStream } from "../../streams.js";
 import { newStatus } from "../../status.js";
 import { getLogger } from "../../logging.js";
 
@@ -38,6 +38,88 @@ export const openAiTransform = (event, responseStream = null, capturedContent = 
                 }));
             }
             return null; // Don't send this as content
+        }
+
+        // Handle web search events (OpenAI built-in web search)
+        if (event.type === "response.web_search_call.searching") {
+            if (responseStream) {
+                sendStatusEventToStream(responseStream, newStatus({
+                    id: "openai-web-search",
+                    summary: "Searching the web...",
+                    icon: "search",
+                    inProgress: true,
+                    animated: true,
+                }));
+            }
+            return null;
+        }
+
+        if (event.type === "response.web_search_call.completed") {
+            if (responseStream) {
+                sendStatusEventToStream(responseStream, newStatus({
+                    id: "openai-web-search",
+                    summary: "Web search completed",
+                    icon: "search",
+                    inProgress: false,
+                }));
+            }
+            return null;
+        }
+
+        // Capture web search sources from output_item.done
+        if (event.type === "response.output_item.done" && event.item?.type === "web_search_call") {
+            if (capturedContent && event.item.action?.url) {
+                // Initialize web search sources array if needed
+                if (!capturedContent.webSearchSources) {
+                    capturedContent.webSearchSources = [];
+                }
+                capturedContent.webSearchSources.push({
+                    url: event.item.action.url,
+                    // Title will be added from annotations if available
+                });
+                logger.debug(`Captured web search URL: ${event.item.action.url}`);
+            }
+            return null;
+        }
+
+        // Capture URL citations (contains title and URL)
+        if (event.type === "response.output_text.annotation.added" && event.annotation?.type === "url_citation") {
+            if (capturedContent) {
+                // Initialize annotations array if needed
+                if (!capturedContent.urlCitations) {
+                    capturedContent.urlCitations = [];
+                }
+                capturedContent.urlCitations.push({
+                    url: event.annotation.url,
+                    title: event.annotation.title,
+                    start_index: event.annotation.start_index,
+                    end_index: event.annotation.end_index,
+                });
+                logger.debug(`Captured URL citation: ${event.annotation.title} - ${event.annotation.url}`);
+            }
+            return null;
+        }
+
+        // When response completes, send collected web search sources to frontend
+        if (event.type === "response.done" || event.type === "response.completed") {
+            if (responseStream && capturedContent?.urlCitations && capturedContent.urlCitations.length > 0) {
+                // Format sources for frontend (similar to our web search tool format)
+                const sources = capturedContent.urlCitations.map(citation => ({
+                    name: citation.title,
+                    url: citation.url,
+                    content: citation.title  // Use title as content since we don't have snippets
+                }));
+
+                logger.info(`Sending ${sources.length} OpenAI web search sources to frontend`);
+                sendStateEventToStream(responseStream, {
+                    sources: {
+                        webSearch: {
+                            sources: sources
+                        }
+                    }
+                });
+            }
+            return null;
         }
 
         // Handle text delta from assistant response

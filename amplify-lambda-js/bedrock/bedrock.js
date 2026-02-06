@@ -117,10 +117,19 @@ export const chatBedrock = async (chatBody, writable) => {
             input.messages = sanitizedMessagesCopy;
         }
 
-        // Add tool configuration if tools are provided (for web search, etc.)
-        if (body.tools && body.tools.length > 0) {
+        // Check if messages contain tool-related content (toolUse or toolResult)
+        // Bedrock requires toolConfig to be present whenever tool blocks exist in conversation history
+        const hasToolRelatedContent = sanitizedMessages.some(msg =>
+            msg.content && Array.isArray(msg.content) &&
+            msg.content.some(block => block.toolUse || block.toolResult)
+        );
+
+        // Add tool configuration if tools are provided OR if messages contain tool content
+        if ((body.tools && body.tools.length > 0) || hasToolRelatedContent) {
+            const tools = body.tools && body.tools.length > 0 ? body.tools : [];
+
             input.toolConfig = {
-                tools: body.tools.map(tool => {
+                tools: tools.map(tool => {
                     // Convert OpenAI tool format to Bedrock toolSpec format
                     const fn = tool.function || tool;
                     return {
@@ -134,7 +143,12 @@ export const chatBedrock = async (chatBody, writable) => {
                     };
                 })
             };
-            logger.info(`Added ${body.tools.length} tools to Bedrock request`);
+
+            if (tools.length > 0) {
+                logger.info(`Added ${tools.length} tools to Bedrock request`);
+            } else {
+                logger.info('Added empty toolConfig (required for tool-related content in history)');
+            }
         }
 
         trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})

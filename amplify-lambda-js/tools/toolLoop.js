@@ -6,7 +6,7 @@
  */
 
 import { getLogger } from '../common/logging.js';
-import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, endStream } from '../common/streams.js';
+import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, endStream, forceFlush } from '../common/streams.js';
 import { newStatus } from '../common/status.js';
 import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
 import { getUserToolApiKeys } from './userToolKeys.js';
@@ -136,11 +136,13 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // If no tools available at all, just run without tools
     if (allTools.length === 0) {
         logger.warn('No tools available (no API keys and no MCP servers)');
+        // Remove tools from options to prevent confusion
+        const { tools, tool_choice, ...cleanOptions } = options;
         return await callUnifiedLLM(
-            { ...params, options: { ...params.options, model } },
+            { ...params, tools:[], options: { ...params.options, model, enableWebSearch: false, tools: [] } },
             messages,
             responseStream,
-            options
+            cleanOptions
         );
     }
 
@@ -189,13 +191,13 @@ export async function executeToolLoop(params, messages, model, responseStream, o
         // Call LLM
         // First iteration: stream to user but keep stream open for status updates
         // Subsequent iterations: don't stream (tool results go to messages)
+        const streamToUser = iteration === 1;
         const result = await callUnifiedLLM(
             { ...params, options: { ...params.options, model } },
             currentMessages,
-            iteration === 1 ? responseStream : null,
-            { ...toolOptions, keepStreamOpen: iteration === 1 } // Keep stream open during first iteration for tool execution
+            streamToUser ? responseStream : null,
+            { ...toolOptions, keepStreamOpen: streamToUser } // Keep stream open during first iteration for tool execution
         );
-
         // Check for tool calls
         const toolCalls = extractToolCalls(result);
 
@@ -227,7 +229,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
             // (iteration 1 already streams, but subsequent iterations pass null responseStream)
             if (iteration > 1 && responseStream && !responseStream.writableEnded && result.content) {
                 logger.info('Streaming final response from tool loop');
-                sendDeltaToStream(responseStream, 'answer', result.content);
+                sendDeltaToStream(responseStream, 'answer', ` ${result.content}`);
                 // Send end marker so frontend knows response is complete
                 endStream(responseStream);
             }
