@@ -23,6 +23,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
+import {ARTIFACTS_PROMPT} from "../common/conversations.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
@@ -237,7 +238,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
     const model = params.options?.model || params.model;
-    
+
     if (!model) {
         throw new Error('Model not specified');
     }
@@ -315,6 +316,24 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         }
         if (options.function_call) {
             chatBody.function_call = options.function_call;
+        }
+
+        // Handle artifact instructions - add as system message at the front
+        if (params.options?.options?.artifacts) {
+            // Insert system message at the beginning (after any existing system messages)
+            const firstNonSystemIndex = chatBody.messages.findIndex(m => m.role !== 'system');
+            const insertIndex = firstNonSystemIndex === -1 ? chatBody.messages.length : firstNonSystemIndex;
+
+            chatBody.messages = [
+                ...chatBody.messages.slice(0, insertIndex),
+                {
+                    role: 'system',
+                    content: ARTIFACTS_PROMPT
+                },
+                ...chatBody.messages.slice(insertIndex)
+            ];
+
+            logger.info("✅ [Artifacts] Instructions added as system message");
         }
 
         let result;

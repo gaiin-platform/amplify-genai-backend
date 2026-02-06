@@ -24,7 +24,7 @@ const additional_instructions = `
      - There will be no need for you to manage token constraints as I will monitor and provide additional tokens if needed.
      - You will need to output an identifier when you have the final finished artifact. I will handle the token limit constriant meaning you will continue to output the artifact
        even if you run out of context mid sentence. It is only when you have identified the artifact is at its absolutele final and complete form that will you output the identifier.
-       This means your response DOES NOT REQUIRE the identier at the end of your response. It is only required when detected the response is whole and complete, there is no more content needed to be returned to the user, it is not cut off.
+       This means your response DOES NOT REQUIRE the identier at the end of your response WHEN YOU KNOW YOU ARE NOT DONE/IT IS NOT COMPLETE. It is only required when detected the artifact is whole and complete, there is no more content needed to be returned to the user, it is not cut off.
        The identifer is    ${ARTIFACT_COMPLETE_MARKER} 
    
    - **Referencing Previous Artifacts:**
@@ -43,6 +43,7 @@ const additional_instructions = `
 
 Adhere to these guidelines to ensure the artifact is produced accurately and efficiently without unnecessary token wastage or superfluous content and 
 Remember that any charaters that are not a direct part of the artifact, such as explanations, overviews, or commentary should always be wrapped between the ${startMarker}  ${endMarker} tags.
+And REMEBER TO MARK AN ARTIFACT AS COMPLETE WITH THE IDENTIFIER ${ARTIFACT_COMPLETE_MARKER} WHEN YOU ARE DONE and not when it is truncated or incomplete.
 
 `
 
@@ -60,9 +61,10 @@ Guidelines:
        This is a samp
     - Then your response will continue right where it left off:
        le artifact that was cut off.
-       
+
 - You must still operate under the same **Token Limit:** Behavioral Guideline as instructed.
 - CRITICAL: Start your response with the exact next character/word that should continue the artifact. No explanations, no commentary, no introductions.
+- REMEMBER: If it looks complete, just respond with ${ARTIFACT_COMPLETE_MARKER}
 `;
 
 // Future expansion: mode long form, fast edit, etc.
@@ -84,9 +86,6 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
     // ArtifactMode doesn't need RAG/context chunking - just fast LLM responses for marker detection
     const llm = getInternalLLM(originalLLM.params.options.model, originalLLM.params.account, context.responseStream);
     llm.params = { ...originalLLM.params }; // Copy params for compatibility
-    
-    // 🚀 Increase token limits for artifact generation (artifacts can be large)
-    llm.defaultBody.max_tokens = 4000; // Increased from 1000 to 4000 for artifact generation
     
     logger.info("🚀 ArtifactMode using InternalLLM for high-speed generation");
     let retryCount = 0;
@@ -244,16 +243,22 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
             await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
             waitCount++;
         }
-        
+
         isComplete = streamHandler.isArtifactComplete();
         const currentResponse = streamHandler.getAccumulatedResponse();
-        
+
+        // FAILSAFE: In retry mode, check if LLM just responded with marker (meaning it detected completion)
+        if (!isComplete && retryCount > 0 && currentResponse.trim() === ARTIFACT_COMPLETE_MARKER) {
+            logger.info("✅ LLM confirmed artifact was already complete in retry");
+            isComplete = true;
+        }
+
         if (isComplete) {
             logger.info("✅ Artifact generation completed successfully");
         } else if (retryCount + 1 < MAX_RETRIES) {
             logger.warn(`⚠️ Artifact incomplete, will retry (attempt ${retryCount + 2}/${MAX_RETRIES})`);
         }
-        
+
         // Update accumulated response for next iteration if needed
         accumulatedResponse += currentResponse;
         retryCount++;

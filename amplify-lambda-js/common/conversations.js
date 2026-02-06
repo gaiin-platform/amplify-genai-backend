@@ -352,8 +352,39 @@ Guidelines for Evaluation:
 - Be selective - only include artifacts that are truly needed for the current query to save tokens.
 `;
 
-const SMART_INCLUDE_ARTIFACT_INSTRUCTIONS = (prompt, triggerConditions) => `
-Task 4 Instructions:
+const SMART_INCLUDE_ARTIFACT_INSTRUCTIONS = (prompt, triggerConditions, messages = []) => {
+    // Build conversation context (last 3 messages, truncated)
+    let conversationContext = '';
+
+    if (messages && messages.length > 1) {
+        const recentMessages = messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .slice(-4, -1); // Last 3 messages before current prompt (exclude the current one)
+
+        if (recentMessages.length > 0) {
+            conversationContext = '\n\nRecent Conversation Context (for understanding references like "it", "that", "the button"):\n';
+
+            recentMessages.forEach((msg, idx) => {
+                const role = msg.role === 'user' ? 'User' : 'Assistant';
+                const content = msg.content || '';
+
+                // Truncate long messages to 150 chars for context
+                const truncated = content.length > 150
+                    ? content.substring(0, 150) + '...[truncated]'
+                    : content;
+
+                // Detect if assistant created an artifact (contains autoArtifacts marker)
+                const hadArtifact = msg.role === 'assistant' && content.includes('```autoArtifacts');
+                const artifactNote = hadArtifact ? ' [📦 CREATED ARTIFACT]' : '';
+
+                conversationContext += `${idx + 1}. ${role}${artifactNote}: ${truncated}\n`;
+            });
+
+            conversationContext += '\n';
+        }
+    }
+
+    return `Task 4 Instructions:
 Determine if we should include the artifact creation instructions based on the current user prompt.
 
 CRITICAL: Only set includeInstructions=true if the user is requesting to CREATE, GENERATE, or BUILD something new.
@@ -369,9 +400,13 @@ Guidelines:
 - Evaluate User Input to determine if it matches the artifact trigger conditions based on keywords such as "create," "build," "generate," "make," "write," "develop," "outline," "full project," "detailed analysis," or "extensive documentation."
 - Consider the likelihood of the user wanting to CREATE A NEW artifact based on the request. Only likelihood above 60% should be included.
 - If the user is asking about or analyzing EXISTING artifacts, respond with false.
+- Use the conversation context below to understand references (e.g., if user says "make it bigger" and previous message created an artifact, include instructions).
+- If you see [📦 CREATED ARTIFACT] in recent context and the current prompt modifies/extends it, include instructions.
 - If you are unsure, err on the side of false to save tokens.
+${conversationContext}
 
-User Prompt:
+
+Current User Prompt:
 ${prompt}
 
 Response Format:
@@ -381,6 +416,7 @@ Response Format:
 
 IMPORTANT: You must respond to BOTH Task 3 (if artifacts exist) AND Task 4. Provide both response blocks.
 `;
+};
 
 /**
  * Gather topic data from conversation history
@@ -811,10 +847,11 @@ export const processSmartMessages = async ({
         if (!options.smartMessages && options.artifacts) {
             logger.info("⚡ [Smart Messages] Artifacts-only mode - running artifact creation detection only");
 
-            // Build TASK 4 instructions to determine if artifact instructions should be included
+            // Build TASK 4 instructions with conversation context
             let instructions = SMART_INCLUDE_ARTIFACT_INSTRUCTIONS(
                 messages[messages.length - 1].content,
-                ARTIFACT_TRIGGER_CONDITIONS
+                ARTIFACT_TRIGGER_CONDITIONS,
+                messages
             );
 
             // If artifacts exist, add TASK 3 instructions for artifact relevance detection
@@ -882,7 +919,8 @@ export const processSmartMessages = async ({
             return {
                 filteredMessages: updatedMessages,
                 metadata: { processed: true },
-                artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
+                includeArtifactInstructions: includeArtifactInstr,
+                // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
                 _internal: {
                     removedCount: 0,
                     relevantArtifactIds,
@@ -911,7 +949,8 @@ export const processSmartMessages = async ({
         if (options.artifacts) {
             instructions += "\n\n" + SMART_INCLUDE_ARTIFACT_INSTRUCTIONS(
                 messages[messages.length - 1].content,
-                ARTIFACT_TRIGGER_CONDITIONS
+                ARTIFACT_TRIGGER_CONDITIONS,
+                messages
             );
         }
 
@@ -1054,7 +1093,7 @@ export const processSmartMessages = async ({
             metadata: {
                 processed: true  // Only field actually used by router
             },
-            artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
+            // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
             // Internal fields for logging only (not sent to frontend)
             _internal: {
                 topicChange: topicEval,
