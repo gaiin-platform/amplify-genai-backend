@@ -188,16 +188,15 @@ export async function executeToolLoop(params, messages, model, responseStream, o
         iteration++;
         logger.info(`Tool loop iteration ${iteration}/${maxIterations}`);
 
-        // Call LLM
-        // First iteration: stream to user but keep stream open for status updates
-        // Subsequent iterations: don't stream (tool results go to messages)
-        const streamToUser = iteration === 1;
         const result = await callUnifiedLLM(
             { ...params, options: { ...params.options, model } },
             currentMessages,
-            streamToUser ? responseStream : null,
-            { ...toolOptions, keepStreamOpen: streamToUser } // Keep stream open during first iteration for tool execution
+            responseStream,
+            { ...toolOptions, keepStreamOpen: true } // Keep stream open during first iteration for tool execution
         );
+        if (responseStream && !responseStream.writableEnded && result.content) {
+                sendDeltaToStream(responseStream, 'answer', `\n\n`);
+        }
         // Check for tool calls
         const toolCalls = extractToolCalls(result);
 
@@ -225,15 +224,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                 });
             }
 
-            // For iterations > 1, we need to stream the final response to the user
-            // (iteration 1 already streams, but subsequent iterations pass null responseStream)
-            if (iteration > 1 && responseStream && !responseStream.writableEnded && result.content) {
-                logger.info('Streaming final response from tool loop');
-                sendDeltaToStream(responseStream, 'answer', ` ${result.content}`);
-                // Send end marker so frontend knows response is complete
-                endStream(responseStream);
-            }
-
+            
             return result;
         }
 
