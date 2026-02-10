@@ -1,14 +1,13 @@
 import json
-import os
 import ast
 import traceback
-from typing import Dict
 
 from agent.components.tool import register_tool
 from agent.core import ActionContext
 import ast
 import importlib
-import sys
+from pycommon.logger import getLogger
+logger = getLogger("tool_code_exec")
 
 
 @register_tool(tags=["code_exec"])
@@ -88,7 +87,7 @@ def get_imports_from_code(code_string):
                     [alias.name for alias in node.names]
                 )
     except SyntaxError:
-        print("Failed to parse code")
+        logger.warning("Failed to parse code")
         return {}
 
     return required_imports
@@ -116,7 +115,7 @@ def prepare_exec_globals(code_string, context_dict):
                         mod, name, None
                     )  # Store attribute directly
         except ImportError as e:
-            print(f"Warning: Could not import {module}: {e}")
+            logger.warning("Warning: Could not import %s: %s", module, e)
 
     exec_globals.update(context_dict)  # Merge additional execution context
     return exec_globals

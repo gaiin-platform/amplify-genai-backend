@@ -21,6 +21,10 @@ from datetime import datetime
 from botocore.config import Config
 from service.user_services import is_in_amp_group
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SecretsManagerOperation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -28,9 +32,30 @@ from schemata.permissions import get_permission_checker
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ADMIN.value])
 
+from pycommon.logger import getLogger
+logger = getLogger("admin")
+
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
+
+# Setup AWS SNS client for critical error notifications
+sns_client = boto3.client("sns")
+sts_client = boto3.client("sts")
+
+def get_sns_topic_arn(topic_name: str) -> str:
+    """
+    Construct SNS topic ARN from topic name using AWS account ID and region.
+    
+    Args:
+        topic_name: Name of the SNS topic
+    
+    Returns:
+        str: Full ARN of the SNS topic
+    """
+    account_id = sts_client.get_caller_identity()["Account"]
+    region = sns_client.meta.region_name
+    return f"arn:aws:sns:{region}:{account_id}:{topic_name}"
 
 
 class AdminConfigTypes(Enum):
@@ -52,17 +77,26 @@ class AdminConfigTypes(Enum):
     EMAIL_SUPPORT = "emailSupport"
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
     AI_EMAIL_DOMAIN = 'aiEmailDomain'
+    CRITICAL_ERRORS = "criticalErrors"
+    WEB_SEARCH_CONFIG = "webSearchConfig"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
 secret_name_map = {
     AdminConfigTypes.APP_VARS: os.environ["APP_ARN_NAME"],
     AdminConfigTypes.APP_SECRETS: os.environ["SECRETS_ARN_NAME"],
-    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"],
+    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ["LLM_ENDPOINTS_SECRETS_NAME"],
 }
 
 
 # flow, list of feature flags that are user based
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE, SecretsManagerOperation.PUT_SECRET_VALUE],
+})
 @validated(op="update")
 def update_configs(event, context, current_user, name, data):
     if not authorized_admin(current_user):
@@ -79,8 +113,8 @@ def update_configs(event, context, current_user, name, data):
         config_type_val = config["type"]
         config_type = AdminConfigTypes(config_type_val)
         update_data = config["data"]  # The data to update
-        print(f"\nUpdating: {config_type}")
-        print(f"Data: {update_data}\n")
+        logger.info("Updating: %s", config_type)
+        logger.debug("Data: %s", update_data)
 
         update_result = handle_update_config(config_type, update_data, token, invalid_users_set)
 
@@ -94,8 +128,8 @@ def update_configs(event, context, current_user, name, data):
         response_data[config_type_val] = update_result
 
     if all(value.get("success") == True for value in response_data.values()):
-        print("All successful")
-        print(response_data)
+        logger.info("All configuration updates successful")
+        logger.debug("Response data: %s", response_data)
         return {"success": True, "data": response_data}
     return {
         "success": False,
@@ -173,95 +207,418 @@ def validate_and_filter_users_in_config(config_type, update_data, invalid_users_
     return update_data
 
 
-def transform_integrations_data(update_data):
+def get_sns_subscription_status(email: str, topic_arn: str) -> dict:
     """
-    Transform integrations data from nested frontend format to DynamoDB storage format.
-
-    Frontend format:
-    {
-        "integrations": {"Microsoft": [...], "Google": [...]},
-        "provider_settings": {"Microsoft": {...}, "Google": {...}}
-    }
-
-    Storage format (returns dict with 'data' and 'provider_settings'):
-    {
-        "data": {
-            "microsoft": [...],
-            "google": [...]
-        },
-        "provider_settings": {
-            "microsoft": {...},
-            "google": {...}
+    Check the current subscription status for an email.
+    
+    Args:
+        email: Email address to check
+        topic_arn: ARN of the SNS topic
+    
+    Returns:
+        dict: Status information with keys:
+            - status: 'confirmed' | 'pending' | 'not_subscribed'
+            - subscription_arn: The ARN if subscribed
+            - message: Human-readable status message
+    """
+    try:
+        existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+        
+        for sub in existing_subscriptions.get("Subscriptions", []):
+            if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                subscription_arn = sub.get("SubscriptionArn")
+                
+                if subscription_arn == "PendingConfirmation":
+                    return {
+                        "status": "pending",
+                        "subscription_arn": None,
+                        "message": "Subscription pending email confirmation"
+                    }
+                else:
+                    return {
+                        "status": "confirmed",
+                        "subscription_arn": subscription_arn,
+                        "message": "Subscription confirmed and active"
+                    }
+        
+        return {
+            "status": "not_subscribed",
+            "subscription_arn": None,
+            "message": "Email not subscribed"
         }
+        
+    except ClientError as e:
+        logger.error("Error checking SNS subscription status: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Error checking status: {str(e)}"
+        }
+    except Exception as e:
+        logger.error("Unexpected error checking SNS subscription: %s", str(e))
+        return {
+            "status": "error",
+            "subscription_arn": None,
+            "message": f"Unexpected error: {str(e)}"
+        }
+
+
+def manage_sns_subscription(email: str, topic_arn: str, action: str) -> dict:
+    """
+    Subscribe or unsubscribe an email to/from an SNS topic.
+    
+    Args:
+        email: Email address to subscribe/unsubscribe
+        topic_arn: ARN of the SNS topic
+        action: Either 'subscribe' or 'unsubscribe'
+    
+    Returns:
+        dict: Success status and message
+    """
+    try:
+        if action == "subscribe":
+            # Check if email is already subscribed
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    if sub.get("SubscriptionArn") != "PendingConfirmation":
+                        logger.info("Email %s already subscribed to topic", email)
+                        return {"success": True, "message": "Email already subscribed"}
+                    else:
+                        logger.info("Email %s has pending confirmation", email)
+                        return {"success": True, "message": "Subscription pending confirmation"}
+            
+            # Subscribe new email
+            response = sns_client.subscribe(
+                TopicArn=topic_arn,
+                Protocol="email",
+                Endpoint=email,
+                ReturnSubscriptionArn=True
+            )
+            
+            logger.info("Subscribed %s to critical errors notifications (pending confirmation)", email)
+            return {
+                "success": True,
+                "message": f"Subscription email sent to {email}. Please check inbox to confirm.",
+                "subscription_arn": response.get("SubscriptionArn")
+            }
+            
+        elif action == "unsubscribe":
+            # Find and unsubscribe the email
+            existing_subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            
+            for sub in existing_subscriptions.get("Subscriptions", []):
+                if sub.get("Endpoint") == email and sub.get("Protocol") == "email":
+                    subscription_arn = sub.get("SubscriptionArn")
+                    
+                    if subscription_arn and subscription_arn != "PendingConfirmation":
+                        sns_client.unsubscribe(SubscriptionArn=subscription_arn)
+                        logger.info("Unsubscribed %s from critical errors notifications", email)
+                        return {"success": True, "message": f"Unsubscribed {email} from notifications"}
+                    else:
+                        logger.info("Subscription for %s is pending, cannot unsubscribe", email)
+                        return {"success": True, "message": "Subscription pending, cannot unsubscribe"}
+            
+            logger.warning("No subscription found for %s", email)
+            return {"success": True, "message": "No active subscription found"}
+        
+        else:
+            return {"success": False, "message": f"Invalid action: {action}"}
+            
+    except ClientError as e:
+        error_msg = f"SNS error: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+    except Exception as e:
+        error_msg = f"Error managing SNS subscription: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+
+
+def handle_critical_errors_config_update(update_data: dict) -> dict:
+    """
+    Handle critical errors configuration updates with sophisticated SNS subscription management.
+    
+    Handles all state transitions:
+    - Activating notifications: Subscribe new email
+    - Deactivating notifications: Unsubscribe current email
+    - Changing email: Unsubscribe old, subscribe new
+    - Email change while inactive: Just update config
+    
+    Args:
+        update_data: Dictionary with 'isActive' and 'email' keys
+    
+    Returns:
+        dict: Success status, message, and subscription_status object
+    """
+    is_active = update_data.get("isActive", False)
+    new_email = update_data.get("email", "").strip() if is_active else ""
+    
+    # Validation: Email required if activating
+    if is_active and not new_email:
+        return {"success": False, "message": "Email address is required for active notifications"}
+    
+    # Get SNS topic ARN from environment
+    topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+    if not topic_arn:
+        logger.error("CRITICAL_ERRORS_SNS_TOPIC_ARN not set")
+        return {"success": False, "message": "SNS topic ARN not configured"}
+    
+    # Get previous config to compare state changes
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.CRITICAL_ERRORS.value})
+        previous_config = response.get("Item", {}).get("data", {})
+        previous_active = previous_config.get("isActive", False)
+        previous_email = previous_config.get("email", "").strip()
+    except Exception as e:
+        logger.warning("Could not retrieve previous critical errors config: %s", str(e))
+        previous_active = False
+        previous_email = ""
+    
+    logger.info("🔄 Critical errors config update: active %s→%s, email '%s'→'%s'", 
+                previous_active, is_active, previous_email, new_email)
+    
+    # Determine subscription status based on state transition
+    subscription_status = None
+    sns_result = None
+    
+    # STATE TRANSITION 1: ACTIVATING (was off, now on)
+    if is_active and not previous_active:
+        logger.info("✅ ACTIVATING notifications for %s", new_email)
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation"
+            }
+            logger.info("📧 Subscription email sent to %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe %s: %s", new_email, sns_result.get("message"))
+    
+    # STATE TRANSITION 2: DEACTIVATING (was on, now off)
+    elif not is_active and previous_active:
+        logger.info("🛑 DEACTIVATING notifications for %s", previous_email)
+        
+        if previous_email:
+            sns_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if sns_result.get("success"):
+                logger.info("✅ Unsubscribed %s successfully", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe %s: %s", previous_email, sns_result.get("message"))
+        
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Notifications deactivated"
+        }
+    
+    # STATE TRANSITION 3: EMAIL CHANGED (while active)
+    elif is_active and previous_active and new_email != previous_email:
+        logger.info("🔄 CHANGING email from %s to %s", previous_email, new_email)
+        
+        # Unsubscribe old email
+        if previous_email:
+            unsubscribe_result = manage_sns_subscription(previous_email, topic_arn, "unsubscribe")
+            if unsubscribe_result.get("success"):
+                logger.info("✅ Unsubscribed old email %s", previous_email)
+            else:
+                logger.warning("⚠️ Failed to unsubscribe old email %s", previous_email)
+        
+        # Subscribe new email
+        sns_result = manage_sns_subscription(new_email, topic_arn, "subscribe")
+        
+        if sns_result.get("success"):
+            subscription_status = {
+                "status": "pending",
+                "message": "Subscription pending email confirmation for new address"
+            }
+            logger.info("📧 Subscription email sent to new address %s", new_email)
+        else:
+            subscription_status = {
+                "status": "error",
+                "message": f"Failed to subscribe new email: {sns_result.get('message')}"
+            }
+            logger.error("❌ Failed to subscribe new email %s", new_email)
+    
+    # STATE TRANSITION 4: EMAIL CHANGED (while inactive)
+    elif not is_active and new_email != previous_email:
+        logger.info("ℹ️ Email changed while inactive: %s → %s (no SNS action)", previous_email, new_email)
+        subscription_status = {
+            "status": "not_subscribed",
+            "message": "Email updated but notifications are inactive"
+        }
+        sns_result = {"success": True, "message": "Email updated (inactive)"}
+    
+    # STATE TRANSITION 5: NO CHANGES
+    else:
+        logger.info("ℹ️ No subscription changes needed")
+        # Don't touch subscription_status - let it be rechecked on next load
+        subscription_status = None  # Will be checked in real-time on next GET
+        sns_result = {"success": True, "message": "No subscription changes needed"}
+    
+    # Prepare data for DynamoDB (include subscription_status only if changed)
+    if subscription_status:
+        update_data_with_status = {**update_data, "subscription_status": subscription_status}
+    else:
+        # Remove subscription_status if present (will be rechecked on load)
+        update_data_with_status = {k: v for k, v in update_data.items() if k != "subscription_status"}
+    
+    # Update DynamoDB
+    db_result = update_admin_config_data(AdminConfigTypes.CRITICAL_ERRORS.value, update_data_with_status)
+    
+    if not db_result.get("success"):
+        logger.error("❌ Failed to update DynamoDB: %s", db_result.get("message"))
+        return db_result
+    
+    logger.info("✅ Critical errors config updated successfully")
+    
+    # Return combined result
+    if sns_result and not sns_result.get("success"):
+        logger.warning("⚠️ SNS operation failed but config saved: %s", sns_result.get("message"))
+        return {
+            "success": True,
+            "message": f"Config saved but SNS operation failed: {sns_result.get('message')}",
+            "warning": sns_result.get("message"),
+            "subscription_status": subscription_status
+        }
+    
+    return {
+        "success": True,
+        "message": sns_result.get("message", "Critical errors configuration updated successfully"),
+        "subscription_status": subscription_status
     }
+
+
+# Web Search Config Constants
+WEB_SEARCH_SUPPORTED_PROVIDERS = ["brave_search", "tavily", "serper", "serpapi"]
+WEB_SEARCH_SSM_PREFIX = "/tools/web_search"
+
+
+def build_web_search_parameter_name(provider: str) -> str:
+    """Build the SSM parameter name for a web search provider"""
+    stage = os.environ.get("INTEGRATION_STAGE", os.environ.get("STAGE", "dev"))
+    return f"{WEB_SEARCH_SSM_PREFIX}/{provider}/{stage}"
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for display, showing only first 4 and last 4 chars"""
+    if not key or len(key) < 12:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
+def handle_web_search_config_update(update_data: dict) -> dict:
+    """
+    Handle web search configuration updates.
+    Stores API key in SSM Parameter Store and provider config in DynamoDB.
 
     Args:
-        update_data: Data from frontend with nested structure
+        update_data: Dictionary with 'provider' and optionally 'api_key'
 
     Returns:
-        Dictionary with 'data' and optionally 'provider_settings' keys
+        dict: Success status and message
     """
-    result = {}
+    provider = update_data.get("provider")
+    api_key = update_data.get("api_key")
 
-    # Handle integrations array - convert provider keys to lowercase for data field
-    if "integrations" in update_data:
-        data_field = {}
-        for provider, integrations_list in update_data["integrations"].items():
-            # Store with lowercase key for backwards compatibility
-            data_field[provider.lower()] = integrations_list
-        result["data"] = data_field
+    # Validate provider
+    if provider and provider not in WEB_SEARCH_SUPPORTED_PROVIDERS:
+        return {
+            "success": False,
+            "message": f"Unsupported provider: {provider}. Supported: {', '.join(WEB_SEARCH_SUPPORTED_PROVIDERS)}"
+        }
 
-    # Handle provider_settings - keep lowercase keys to match data field
-    if "provider_settings" in update_data:
-        provider_settings_field = {}
-        for provider, settings in update_data["provider_settings"].items():
-            # Store with lowercase key to match the data field convention
-            provider_settings_field[provider.lower()] = settings
-        result["provider_settings"] = provider_settings_field
+    # If no provider, this is a delete/disable operation
+    if not provider:
+        # Delete the config from DynamoDB
+        try:
+            admin_table.delete_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
+            logger.info("Deleted web search config from admin table")
+            return {"success": True, "message": "Web search configuration disabled"}
+        except Exception as e:
+            logger.error("Error deleting web search config: %s", str(e))
+            return {"success": False, "message": f"Error deleting config: {str(e)}"}
+
+    # If API key provided, store it in SSM
+    if api_key and api_key.strip():
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+
+            ssm_client.put_parameter(
+                Name=param_name,
+                Value=api_key.strip(),
+                Type="SecureString",
+                Overwrite=True,
+                Description=f"Admin web search API key for {provider}"
+            )
+
+            logger.info("Stored web search API key in SSM: %s", param_name)
+        except ClientError as e:
+            logger.error("Error storing web search API key in SSM: %s", str(e))
+            return {"success": False, "message": f"Failed to store API key: {str(e)}"}
+
+    # Store config in DynamoDB (without the API key - that's in SSM)
+    config_data = {
+        "provider": provider,
+        "lastUpdated": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
+
+    if result.get("success"):
+        logger.info("Updated web search config in admin table for provider: %s", provider)
 
     return result
 
 
-def reverse_transform_integrations_data(storage_data, provider_settings):
+def get_web_search_config() -> dict:
     """
-    Transform integrations data from DynamoDB storage format back to frontend format.
-
-    Storage format:
-    {
-        "data": {
-            "microsoft": [...],
-            "google": [...]
-        },
-        "provider_settings": {
-            "microsoft": {...},
-            "google": {...}
-        }
-    }
-
-    Frontend format (returns nested structure):
-    {
-        "integrations": {"microsoft": [...], "google": [...]},
-        "provider_settings": {"microsoft": {...}, "google": {...}}
-    }
-
-    Args:
-        storage_data: Data field from DynamoDB (integrations by provider)
-        provider_settings: Provider settings field from DynamoDB
+    Get the current web search configuration with masked API key.
+    Used for admin UI display.
 
     Returns:
-        Dictionary with nested 'integrations' and 'provider_settings' structure
+        dict: Configuration data or None if not configured
     """
-    result = {}
+    try:
+        response = admin_table.get_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
 
-    # Convert data field to integrations nested structure
-    # Keep lowercase keys as the frontend should match backend
-    # Always include integrations key, even if empty (for frontend compatibility)
-    result["integrations"] = storage_data if storage_data is not None else {}
+        if "Item" not in response:
+            return None
 
-    # Add provider_settings, always include it for consistency
-    result["provider_settings"] = provider_settings if provider_settings is not None else {}
+        config = response["Item"].get("data", {})
+        provider = config.get("provider")
 
-    return result
+        if not provider:
+            return None
+
+        # Try to get the actual key to verify it exists and mask it
+        try:
+            ssm_client = boto3.client("ssm")
+            param_name = build_web_search_parameter_name(provider)
+            ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+            api_key = ssm_response["Parameter"]["Value"]
+
+            return {
+                "provider": provider,
+                "isEnabled": True,
+                "maskedKey": mask_api_key(api_key),
+                "lastUpdated": config.get("lastUpdated"),
+            }
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ParameterNotFound':
+                # Config exists but key was deleted from SSM
+                return None
+            raise
+
+    except Exception as e:
+        logger.error("Error getting web search config: %s", str(e))
+        return None
 
 
 def handle_update_config(config_type, update_data, token, invalid_users_set):
@@ -293,7 +650,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS ):
-            print(f"Updating {config_type.value} - {update_data}")
+            logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
         case AdminConfigTypes.AVAILABLE_MODELS:
@@ -305,6 +662,12 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
         case AdminConfigTypes.PPTX_TEMPLATES:
             return update_pptx_data(config_type.value, update_data)
 
+        case AdminConfigTypes.CRITICAL_ERRORS:
+            return handle_critical_errors_config_update(update_data)
+
+        case AdminConfigTypes.WEB_SEARCH_CONFIG:
+            return handle_web_search_config_update(update_data)
+
         case (AdminConfigTypes.APP_VARS
             | AdminConfigTypes.APP_SECRETS
             | AdminConfigTypes.OPENAI_ENDPOINTS):
@@ -315,7 +678,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             return {"success": False, "message": "Invalid Secret Name"}
 
         case _:
-            print("Unknown configuration type")
+            logger.error("Unknown configuration type")
             return {"success": False, "message": "Unknown configuration type"}
 
 
@@ -348,8 +711,60 @@ def update_admin_config_data(config_type, update_data):
         )
         return {"success": True, "data": f"{type_value} updated successfully."}
     except Exception as e:
-        print(f"Error updating {type_value}: {str(e)}")
+        logger.error("Error updating %s: %s", type_value, str(e))
         return {"success": False, "message": f"Error updating {type_value}: {str(e)}"}
+
+
+def transform_integrations_data(update_data):
+    """
+    Transform frontend integrations data format for DynamoDB storage.
+
+    Extracts provider_settings (if present) as a separate field for storage,
+    keeping the main integration data clean.
+
+    Args:
+        update_data: Dictionary from frontend with integration configuration
+
+    Returns:
+        Dictionary with 'data' and optionally 'provider_settings' fields
+    """
+    if not isinstance(update_data, dict):
+        return {"data": update_data}
+
+    # Check if provider_settings is embedded in the data
+    provider_settings = update_data.pop("provider_settings", None)
+
+    result = {"data": update_data}
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
+
+
+def reverse_transform_integrations_data(storage_data, provider_settings):
+    """
+    Transform stored integrations data back to frontend format.
+
+    Combines the separate storage_data and provider_settings back into
+    the format expected by the frontend.
+
+    Args:
+        storage_data: The main integrations data from DynamoDB 'data' field
+        provider_settings: The provider_settings from DynamoDB (may be empty)
+
+    Returns:
+        Combined dictionary in frontend format
+    """
+    if not isinstance(storage_data, dict):
+        return storage_data
+
+    result = dict(storage_data)
+
+    # Merge provider_settings back into the data if present
+    if provider_settings:
+        result["provider_settings"] = provider_settings
+
+    return result
 
 
 def update_integrations_config(config_type, transformed_data):
@@ -399,7 +814,7 @@ def get_secret(secret_name, region_name):
         secret_dict = json.loads(secret_string)
         return secret_dict
     except ClientError as e:
-        print(f"Error getting secret: {e}")
+        logger.error("Error getting secret: %s", e)
         return None
 
 
@@ -468,6 +883,14 @@ def update_pptx_data(pptx_type, update_data):
         return {"success": False, "message": f"Error updating {pptx_type}: {str(e)}"}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.LIST_BUCKET], #Marked for deletion
+    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="read")
 def get_configs(event, context, current_user, name, data):
     if not authorized_admin(current_user):
@@ -479,7 +902,7 @@ def get_configs(event, context, current_user, name, data):
     configurations = {}
 
     if lazy_load:
-        print("Loading admin table configs only")
+        logger.info("Loading admin table configs only")
         dynamo_config_types = [
             AdminConfigTypes.FEATURE_FLAGS,
             AdminConfigTypes.ADMINS,
@@ -492,6 +915,8 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.AI_EMAIL_DOMAIN,
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
+            AdminConfigTypes.CRITICAL_ERRORS,
+            AdminConfigTypes.WEB_SEARCH_CONFIG,
         ]
 
         for config_type in dynamo_config_types:
@@ -500,38 +925,96 @@ def get_configs(event, context, current_user, name, data):
                 config_item = admin_table.get_item(Key={"config_id": config_type.value})
                 new_data = None
                 if "Item" in config_item:
-                    # Special handling for integrations - retrieve both data and provider_settings
+                    new_data = config_item["Item"]["data"]
                     if config_type == AdminConfigTypes.INTEGRATIONS:
                         storage_data = config_item["Item"].get("data", {})
                         provider_settings = config_item["Item"].get("provider_settings", {})
                         # Transform back to frontend format
                         new_data = reverse_transform_integrations_data(storage_data, provider_settings)
-                    else:
-                        new_data = config_item["Item"]["data"]
-                        if config_type == AdminConfigTypes.FEATURE_FLAGS:
-                            # Check if any base feature flags are missing and add them
-                            missing_base_flags = check_and_update_missing_base_flags(
-                                new_data
+                    elif config_type == AdminConfigTypes.FEATURE_FLAGS:
+                        # Check if any base feature flags are missing and add them
+                        missing_base_flags = check_and_update_missing_base_flags(
+                            new_data
+                        )
+                        if missing_base_flags:
+                            new_data.update(missing_base_flags)
+                            logger.info(
+                                "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
-                            if missing_base_flags:
-                                new_data.update(missing_base_flags)
-                                print(
-                                    f"Added missing base feature flags: {list(missing_base_flags.keys())}"
-                                )
+                    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+                        # Check real-time SNS subscription status
+                        logger.info("🔍 Checking critical errors config - isActive: %s, email: %s", 
+                                   new_data.get("isActive"), new_data.get("email"))
+                        
+                        if new_data.get("isActive") and new_data.get("email"):
+                            try:
+                                topic_arn = os.environ.get("CRITICAL_ERRORS_SNS_TOPIC_ARN")
+                                logger.info("📧 Topic ARN from env: %s", topic_arn[:50] + "..." if topic_arn else "NOT SET")
+                                
+                                if topic_arn:
+                                    logger.info("✅ Checking SNS subscription for %s against topic %s", 
+                                               new_data["email"], topic_arn[-20:])
+                                    sns_status = get_sns_subscription_status(new_data["email"], topic_arn)
+                                    new_data["subscription_status"] = sns_status
+                                    logger.info("📊 SNS subscription status for %s: %s - %s", 
+                                               new_data["email"], 
+                                               sns_status.get("status"), 
+                                               sns_status.get("message"))
+                                else:
+                                    logger.error("❌ CRITICAL_ERRORS_SNS_TOPIC_ARN environment variable not set! Cannot check subscription status.")
+                                    logger.error("💡 This should be set in serverless.yml as: CRITICAL_ERRORS_SNS_TOPIC_ARN: !Ref CriticalErrorsNotificationTopic")
+                                    new_data["subscription_status"] = {
+                                        "status": "error",
+                                        "message": "SNS topic ARN not configured - check Lambda environment variables"
+                                    }
+                            except Exception as e:
+                                logger.error("⚠️ Exception while checking SNS status: %s", str(e), exc_info=True)
+                                new_data["subscription_status"] = {
+                                    "status": "error",
+                                    "message": f"Error checking subscription: {str(e)}"
+                                }
+                        else:
+                            # Not active or no email configured
+                            logger.info("ℹ️ Critical errors not active or no email - isActive: %s, email: %s",
+                                       new_data.get("isActive"), new_data.get("email"))
+                            new_data["subscription_status"] = {
+                                "status": "not_subscribed",
+                                "message": "Critical error notifications not enabled"
+                            }
+                    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+                        # Enrich web search config with masked API key from SSM
+                        provider = new_data and new_data.get("provider")
+                        if provider:
+                            try:
+                                ssm_client = boto3.client("ssm")
+                                param_name = build_web_search_parameter_name(provider)
+                                ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+                                api_key = ssm_response["Parameter"]["Value"]
+                                new_data["isEnabled"] = True
+                                new_data["maskedKey"] = mask_api_key(api_key)
+                            except ClientError as e:
+                                if e.response['Error']['Code'] == 'ParameterNotFound':
+                                    # Config exists but key was deleted from SSM
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
+                                else:
+                                    logger.error("Error getting web search API key: %s", str(e))
+                                    new_data["isEnabled"] = False
+                                    new_data["maskedKey"] = None
                 else:
                     # Configuration does not exist, initialize it
                     new_data = initialize_config(config_type)
                 configurations[config_type.value] = new_data
 
             except Exception as e:
-                print(f"Error retrieving or initializing {config_type.value}: {str(e)}")
+                logger.error("Error retrieving or initializing %s: %s", config_type.value, str(e))
                 return {
                     "success": False,
                     "message": f"Error retrieving or initializing {config_type.value}: {str(e)}",
                 }
 
     else:
-        print("Loading remaining configs only")
+        logger.info("Loading remaining configs only")
 
         region_name = os.environ.get("AWS_REGION", "us-east-1")
         # secrets manager info
@@ -540,10 +1023,8 @@ def get_configs(event, context, current_user, name, data):
                 secret_value = get_secret(secret_name, region_name)
                 configurations[config_type.value] = secret_value
             except ClientError as e:
-                print(f"Error retrieving {config_type.value}: {str(e)}")
+                logger.error("Error retrieving %s: %s", config_type.value, str(e))
         # dyanmo table rows
-
-        # print(data)
         token = data["access_token"]
 
         supported_models_result = get_supported_models(token)
@@ -569,7 +1050,7 @@ def get_configs(event, context, current_user, name, data):
 
 
 def initialize_config(config_type):
-    print("Initializing data: ", config_type.value)
+    logger.info("Initializing data: %s", config_type.value)
     item = {
         "config_id": config_type.value,
         "data": None,
@@ -599,33 +1080,46 @@ def initialize_config(config_type):
         item["data"] = transformed_flags
 
     elif config_type == AdminConfigTypes.PPTX_TEMPLATES:
-        # Initialize PPTX_TEMPLATES
-        output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        # Initialize PPTX_TEMPLATES - BACKWARD COMPATIBLE: Check both buckets
+        consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
         s3_client = boto3.client("s3")
 
-        try:
-            # List objects in the 'templates/' prefix
-            paginator = s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=output_bucket_name, Prefix="templates/")
+        templates = []
+        template_names_seen = set()  # Prevent duplicates across buckets
 
-            templates = []
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.endswith("/"):  # Skip folders
-                        continue
-                    # Remove 'templates/' prefix to get the name
-                    name = key[len("templates/") :]
-                    if name:
-                        templates.append(
-                            {"name": name, "isAvailable": False, "amplifyGroups": []}
-                        )
+        # Check both buckets for templates
+        buckets_to_check = [
+            (consolidation_bucket_name, "powerPointTemplates/"),  # New location
+            (legacy_bucket_name, "conversion/templates/"),         # Legacy location
+        ]
 
-            item["data"] = templates
+        for bucket_name, prefix in buckets_to_check:
+            try:
+                # List objects in the bucket with prefix
+                paginator = s3_client.get_paginator("list_objects_v2")
+                pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-        except Exception as e:
-            item["data"] = []
-            print(f"Error listing PPTX templates from S3: {str(e)}")
+                for page in pages:
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith("/"):  # Skip folders
+                            continue
+                        # Remove prefix to get the name
+                        name = key[len(prefix):]
+                        if name and name.endswith(".pptx") and name not in template_names_seen:
+                            template_names_seen.add(name)
+                            templates.append(
+                                {"name": name, "isAvailable": False, "amplifyGroups": []}
+                            )
+                            logger.info("Found PPTX template: %s in bucket %s", name, bucket_name)
+
+            except Exception as e:
+                logger.error("Error listing PPTX templates from bucket %s: %s", bucket_name, str(e))
+                continue  # Try next bucket
+
+        item["data"] = templates
+        logger.info("Initialized %d PPTX templates from both buckets", len(templates))
 
     elif config_type == AdminConfigTypes.AMPLIFY_GROUPS:
         item["data"] = (
@@ -656,19 +1150,26 @@ def initialize_config(config_type):
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
         item["data"] = ""
+    elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
+        item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
+    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+        item["data"] = None
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
         admin_table.put_item(Item=item)
-        print(f"Config Item Initialized: {config_type.value}")
+        logger.info("Config Item Initialized: %s", config_type.value)
     except Exception as e:
-        print(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
+        logger.error("Error initializing AMPLIFY_GROUPS config: %s", str(e))
 
     return item["data"]
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_user_app_configs(event, context, current_user, name, data):
     # For quick table data only, anything with more complex logic should be its own endpoint
@@ -676,6 +1177,7 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
         AdminConfigTypes.AI_EMAIL_DOMAIN,
+        AdminConfigTypes.PROMPT_COST_ALERT,
     ]
     configs = {}
     for config_type in app_configs:
@@ -684,7 +1186,7 @@ def get_user_app_configs(event, context, current_user, name, data):
             if "Item" in response:
                 configs[config_type.value] = response["Item"]["data"]
             else:
-                print(f"No {config_type.value} Data Found, skipping...")
+                logger.warning("No %s Data Found, skipping...", config_type.value)
         except Exception as e:
             return {
                 "success": False,
@@ -694,6 +1196,9 @@ def get_user_app_configs(event, context, current_user, name, data):
     return {"success": True, "data": configs}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="read")
 def get_user_feature_flags(event, context, current_user, name, data):
     # Retrieve feature flags from DynamoDB
@@ -707,8 +1212,8 @@ def get_user_feature_flags(event, context, current_user, name, data):
             missing_base_flags = check_and_update_missing_base_flags(feature_flags)
             if missing_base_flags:
                 feature_flags.update(missing_base_flags)
-                print(
-                    f"Added missing base feature flags: {list(missing_base_flags.keys())}"
+                logger.info(
+                    "Added missing base feature flags: %s", list(missing_base_flags.keys())
                 )
         else:
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
@@ -735,7 +1240,7 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
-    # print("users: ", user_feature_flags)
+    logger.debug("users: %s", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
 
@@ -763,7 +1268,7 @@ def check_and_update_missing_base_flags(stored_flags):
 
     # If we found missing flags, update the DynamoDB table
     if missing_flags:
-        print("Updating Missing flags: ", missing_flags.keys())
+        logger.info("Updating Missing flags: %s", list(missing_flags.keys()))
         # Create a new dictionary with all flags (existing + missing)
         updated_flags = {**stored_flags, **missing_flags}
 
@@ -776,17 +1281,20 @@ def check_and_update_missing_base_flags(stored_flags):
                     "last_updated": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            print(
-                f"Updated feature flags in DynamoDB with {len(missing_flags)} new base flags"
+            logger.info(
+                "Updated feature flags in DynamoDB with %d new base flags", len(missing_flags)
             )
         except Exception as e:
-            print(f"Error updating feature flags in DynamoDB: {str(e)}")
+            logger.error("Error updating feature flags in DynamoDB: %s", str(e))
             # We'll return an empty dict if we couldn't update the table
             return {}
 
     return missing_flags
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_pptx_for_users(event, context, current_user, name, data):
     try:
@@ -809,17 +1317,22 @@ def get_pptx_for_users(event, context, current_user, name, data):
             return {"success": True, "data": []}
 
     except Exception as e:
-        print(f"Error retrieving PPTX_TEMPLATES: {str(e)}")
+        logger.error("Error retrieving PPTX_TEMPLATES: %s", str(e))
         return {
             "success": False,
             "message": f"Error retrieving PPTX_TEMPLATES: {str(e)}",
         }
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
+})
 @validated(op="delete")
 def delete_pptx_by_admin(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     template_name = query_params.get("template_name", "")
     if not template_name or not template_name.endswith(".pptx"):
         return {
@@ -834,7 +1347,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         return {"success": False, "message": "User is not an authorized admin."}
 
     s3_client = boto3.client("s3")
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     try:
         # Retrieve Existing PPTX_TEMPLATES Configuration
@@ -864,15 +1377,38 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
             }
         )
 
-        #  Delete the PPTX File from S3
-        pptx_key = f"templates/{template_name}"
-        try:
-            s3_client.delete_object(Bucket=output_bucket_name, Key=pptx_key)
-        except Exception as e:
-            print(f"Error deleting PPTX file from S3: {str(e)}")
+        # BACKWARD COMPATIBLE: Delete the PPTX File from S3 (check both buckets)
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        
+        # Try to delete from both buckets (file might exist in either)
+        buckets_to_try = [
+            (consolidation_bucket_name, f"powerPointTemplates/{template_name}", "consolidation"),
+            (legacy_bucket_name, f"conversion/templates/{template_name}", "legacy")
+        ]
+        
+        deleted_from_bucket = None
+        for bucket_name, pptx_key, bucket_type in buckets_to_try:
+            try:
+                # First check if file exists in this bucket
+                s3_client.head_object(Bucket=bucket_name, Key=pptx_key)
+                # File exists, delete it
+                s3_client.delete_object(Bucket=bucket_name, Key=pptx_key)
+                deleted_from_bucket = bucket_type
+                logger.info("Deleted PPTX template from %s bucket: %s", bucket_type, template_name)
+                break  # Successfully deleted, don't try other bucket
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logger.debug("Template not found in %s bucket: %s", bucket_type, template_name)
+                    continue  # Try next bucket
+                else:
+                    logger.error("Error checking/deleting PPTX from %s bucket: %s", bucket_type, str(e))
+                    continue  # Try next bucket
+        
+        if not deleted_from_bucket:
+            logger.warning("Template %s not found in any bucket", template_name)
             return {
                 "success": False,
-                "message": f"Error deleting PPTX file from S3: {str(e)}",
+                "message": f"Template {template_name} not found in any S3 bucket",
             }
 
         return {
@@ -881,10 +1417,15 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        print(f"Error deleting template: {str(e)}")
+        logger.error("Error deleting template: %s", str(e))
         return {"success": False, "message": f"Error deleting template: {str(e)}"}
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated(op="upload")
 def generate_presigned_url_for_upload(event, context, current_user, name, data):
     data = data["data"]
@@ -915,8 +1456,8 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
     if not authorized_admin(current_user):
         return {"success": False, "message": "User is not an authorized admin."}
 
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
-    pptx_key = f"templates/{template_name}"
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    pptx_key = f"powerPointTemplates/{template_name}"
 
     try:
         config = Config(signature_version="s3v4")  # Force AWS Signature Version 4
@@ -925,7 +1466,7 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": output_bucket_name,
+                "Bucket": consolidation_bucket_name,
                 "Key": pptx_key,
                 "ContentType": content_type,
                 "Metadata": {
@@ -937,22 +1478,190 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
             ExpiresIn=3600,  # URL expires in 1 hour
         )
 
-        print("\n", presigned_url)
+        logger.debug("Generated presigned URL: %s", presigned_url)
 
         return {"success": True, "presigned_url": presigned_url}
     except ClientError as e:
-        print(f"Error generating presigned URL: {str(e)}")
+        logger.error("Error generating presigned URL: %s", str(e))
         return {
             "success": False,
             "message": f"Error generating presigned URL: {str(e)}",
         }
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def get_user_amplify_groups(event, context, current_user, name, data):
+    # will need some rework - for now we are just going to return all the groups
+    all_groups = get_all_amplify_groups()
+    if not all_groups:
+        return {"success": False, "message": "No Amplify Groups Found"}
+    return {"success": True, "data": list(all_groups.keys())}
 
+
+def get_all_amplify_groups():
+    try:
+        config_item = admin_table.get_item(
+            Key={"config_id": AdminConfigTypes.AMPLIFY_GROUPS.value}
+        )
+        if "Item" in config_item and "data" in config_item["Item"]:
+            return config_item["Item"]["data"]
+        else:
+            logger.warning("No Amplify Groups Found")
+    except Exception as e:
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
+    return None
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def get_user_affiliated_groups(event, context, current_user, name, data):
+    try:
+        all_groups = get_all_amplify_groups()
+        if not all_groups:
+            return {"success": False, "message": "No Amplify Groups Found"}
+        
+        affiliated_groups = find_all_user_groups(current_user, all_groups)
+        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
+    except Exception as e:
+        logger.error("Error retrieving user affiliated groups: %s", str(e))
+        return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
+
+
+def find_all_user_groups(current_user, all_groups):
+    """
+    Find all groups a user is affiliated with (direct and indirect membership).
+    
+    Returns a list of group names the user belongs to.
+    """
+    affiliated = []
+    
+    # Phase 1: Find all groups where user is a direct member
+    direct_groups = set()
+    for group_name, group_data in all_groups.items():
+        members = group_data.get("members", [])
+        if current_user in members:
+            direct_groups.add(group_name)
+            affiliated.append(group_name)
+    
+    # Phase 2: Find all groups that include user's groups (directly or indirectly)
+    # Use BFS to find all groups that eventually include user's direct groups
+    for group_name, group_data in all_groups.items():
+        if group_name not in direct_groups:  # Skip already found direct groups
+            visited = set()
+            if group_includes_user_groups(group_name, direct_groups, all_groups, visited):
+                affiliated.append(group_name)
+    
+    return affiliated
+
+
+def group_includes_user_groups(group_name, user_direct_groups, all_groups, visited):
+    """
+    Check if a group includes any of the user's direct groups through its includeFromOtherGroups chain.
+    """
+    if group_name not in all_groups or group_name in visited:
+        return False
+    
+    visited.add(group_name)
+    group_data = all_groups[group_name]
+    
+    # Check if this group directly includes any of user's direct groups
+    includes = group_data.get("includeFromOtherGroups", [])
+    for included_group in includes:
+        if included_group in user_direct_groups:
+            return True
+        # Recursively check if included group eventually includes user's groups
+        if group_includes_user_groups(included_group, user_direct_groups, all_groups, visited):
+            return True
+    
+    return False
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def verify_is_in_amp_group(event, context, current_user, name, data):
+    amp_groups = data["data"]["groups"]
+    try:
+        isMember = is_in_amp_group(current_user, amp_groups)
+        logger.debug("User %s is in group: %s", current_user, isMember)
+        return {"success": True, "isMember": isMember}
+    except Exception as e:
+        logger.error("Error verifying is in amp group: %s", str(e))
+        return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
+
+
+def is_in_amp_group(current_user, check_amplify_groups):
+    if len(check_amplify_groups) == 0:
+        return False
+    """
+    Given a current_user and a list of group names (check_amplify_groups), determine if the user
+    has access via direct or indirect (nested) membership in any of these groups.
+
+    Steps:
+    1. Retrieve all_amplify_groups from the admin table.
+    2. For each group in check_amplify_groups, check if the user is a member.
+    3. If found in any, return True. Otherwise, return False.
+    """
+
+    all_amplify_groups = get_all_amplify_groups()
+    if all_amplify_groups is None:
+        raise Exception("No Amplify Groups Found")
+    
+    if not all_amplify_groups or len(all_amplify_groups) == 0:
+        return False
+
+    # Check each provided group in check_amplify_groups for user membership
+    visited = set()
+    for group_name in check_amplify_groups:
+        if user_in_group(group_name, current_user, all_amplify_groups, visited):
+            return True
+
+    # If none of the groups matched, user is not in any Amplify Group
+    return False
+
+
+def user_in_group(group_name, current_user, all_amplify_groups, visited):
+    """
+    Checks if `current_user` is in `group_name` directly or through nested groups.
+    Avoids infinite loops using the `visited` set.
+    """
+    # If the group does not exist in the map, return False
+    # If we have already visited this group, return False to avoid cycles
+    if group_name not in all_amplify_groups or group_name in visited:
+        return False
+
+    visited.add(group_name)
+
+    cur_group = all_amplify_groups[group_name]
+
+    # Check direct membership
+    members = cur_group.get("members", [])
+    if current_user in members:
+        return True
+
+    # Check include groups
+    for include_group_name in cur_group.get("includeFromOtherGroups", []):
+        if user_in_group(include_group_name, current_user, all_amplify_groups, visited):
+            return True
+
+    # If user not found here or in any included groups
+    return False
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="read")
 def verify_valid_admin(event, context, current_user, name, data):
     purpose = data["data"]["purpose"]
-    print(f"{current_user} is being verified for the purpose of: {purpose}")
+    logger.info("%s is being verified for the purpose of: %s", current_user, purpose)
     log_item(None, current_user, f"Authentication user for the purpose of: {purpose}")
     return {"success": True, "isAdmin": authorized_admin(current_user)}
 
@@ -967,16 +1676,16 @@ def authorized_admin(current_user, forFeatureFlags=False):
         if "Item" in response:
             admins_list = response["Item"].get("data", [])
             if current_user in admins_list:
-                print(current_user + " is authorized to make changes.")
+                logger.info("%s is authorized to make changes.", current_user)
                 return True
         else:
-            print("No admins list in the admins table...")
+            logger.warning("No admins list in the admins table...")
             init_admins = initialize_config(AdminConfigTypes.ADMINS)
             return current_user in init_admins
 
     except Exception as e:
-        print(f"Error in authorized_admin: {str(e)}")
-    print(current_user + " is not authorized to make changes.")
+        logger.error("Error in authorized_admin: %s", str(e))
+    logger.warning("%s is not authorized to make changes.", current_user)
 
     # using for authentication
     if not forFeatureFlags:
@@ -1001,10 +1710,14 @@ def log_item(config_type, username, details):
     )
 
 
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="sync_assistant_admins", account="system")
 def sync_assistant_admins(event, context):
-    print("Syncing Assistant Admin Interface Users...")
+    logger.info("Syncing Assistant Admin Interface Users...")
     AST_ADMIN_UI_FLAG = "assistantAdminInterface"
-    groups_table = dynamodb.Table(os.environ["AMPLIFY_GROUPS_DYNAMODB_TABLE"])
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
     # Retrieve feature flags from DynamoDB
     feature_flags = None
     try:
@@ -1014,15 +1727,15 @@ def sync_assistant_admins(event, context):
         if "Item" in response:
             feature_flags = response["Item"].get("data", {})
         else:
-            print("Feature flags are being initialized..")
+            logger.info("Feature flags are being initialized..")
             # ast admin is set to false so it will get updated to the table
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
     except Exception as e:
-        print(f"Error retrieving feature flags: {str(e)}")
+        logger.error("Error retrieving feature flags: %s", str(e))
         return {"statusCode": 500, "body": f"Error retrieving feature flags: {str(e)}"}
 
     if not feature_flags or AST_ADMIN_UI_FLAG not in feature_flags:
-        print(f"Error retrieving feature flags")
+        logger.error("Error retrieving feature flags")
         return {"statusCode": 500, "body": f"Error retrieving feature flags"}
 
     admin_feature = feature_flags[AST_ADMIN_UI_FLAG]
@@ -1045,7 +1758,7 @@ def sync_assistant_admins(event, context):
             groups.extend(response.get("Items", []))
 
     except Exception as e:
-        print(f"An error occurred while retrieving groupss: {e}")
+        logger.error("An error occurred while retrieving groupss: %s", e)
         return {
             "statusCode": 500,
             "body": f"An error occurred while retrieving groupss: {e}",
@@ -1064,16 +1777,16 @@ def sync_assistant_admins(event, context):
     current_exceptions_set = set(user_exceptions)
 
     if current_exceptions_set == access_to_users_set:
-        print("No updates needed. ")
+        logger.info("No updates needed.")
         return {"statusCode": 200, "body": "No updates needed. "}
-    print("\nUsers needing access", access_to_users_set)
+    logger.info("Users needing access: %s", access_to_users_set)
 
     adding = access_to_users_set - current_exceptions_set
     if adding:
-        print("\nNew Users added:", adding)
+        logger.info("New Users added: %s", adding)
     removing = current_exceptions_set - access_to_users_set
     if removing:
-        print("Existing Users removed:", removing)
+        logger.info("Existing Users removed: %s", removing)
 
     admin_feature["userExceptions"] = list(
         access_to_users_set
@@ -1085,11 +1798,11 @@ def sync_assistant_admins(event, context):
         AdminConfigTypes.FEATURE_FLAGS.value, feature_flags
     )
     if not update_res["success"]:
-        print(f"Error updating feature flags: {update_res['message']}")
+        logger.error("Error updating feature flags: %s", update_res['message'])
         return {
             "statusCode": 500,
             "body": f"Error updating feature flags: {update_res['message']}",
         }
     else:
-        print("Feature flags updated successfully.")
+        logger.info("Feature flags updated successfully.")
         return {"statusCode": 200, "body": "Feature flags updated successfully."}

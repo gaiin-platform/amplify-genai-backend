@@ -8,13 +8,12 @@ from typing import List
 import litellm
 from attr import dataclass
 from litellm import completion
-from agent.accounting import record_usage
+from pycommon.api.accounting import record_usage
 import boto3
 from pycommon.api.secrets import get_secret_value
 from pycommon.authz import is_rate_limited
-
-dynamodb = boto3.client("dynamodb")
-
+from pycommon.logger import getLogger
+logger = getLogger("litellm")
 @dataclass
 class Prompt:
     messages: List[dict]
@@ -31,7 +30,7 @@ def generate_response(
     if rate_limit and os.environ.get("COST_CALCULATIONS_DYNAMO_TABLE"):
         rate_limited, message = is_rate_limited(account_details["user"], rate_limit)
         if rate_limited:
-            print(f"Rate limit exceeded: {message}")
+            logger.warning(f"Rate limit exceeded: {message}")
             raise Exception(message)
 
     messages = prompt.messages
@@ -42,7 +41,7 @@ def generate_response(
     try:
         response = None
         if not tools:
-            print("Prompting without tools.")
+            logger.debug("Prompting without tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -50,7 +49,7 @@ def generate_response(
             )
             result = response.choices[0].message.content
         else:
-            print("Prompting with tools.")
+            logger.debug("Prompting with tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -64,7 +63,7 @@ def generate_response(
                 try:
                     tool_args = json.loads(tool.function.arguments)
                 except:
-                    print(
+                    logger.error(
                         f"Error parsing tool arguments coming from litellm: {tool.function.arguments}"
                     )
 
@@ -76,8 +75,7 @@ def generate_response(
             else:
                 result = response.choices[0].message.content
 
-        # print(f"--litellm Response: {response}")
-        print("Recording usage for litellm response id: ", response.id)
+        logger.debug(f"Recording usage for litellm response id: {response.id}")
         model_id = model.split("/")[1]
 
         usage = response.get("usage", {})
@@ -101,52 +99,81 @@ def generate_response(
                     ),
                 }
             except:
-                print(
+                logger.error(
                     f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}"
                 )
 
-        cached_tokens = 0
+        input_cached_tokens = 0  # Tokens read from cache (cache hit)
+        input_write_cached_tokens = 0  # Tokens written to cache (cache creation)
         if prompt_tokens_details:
             try:
+                # Extract both cached_tokens (read) and cache_creation_tokens (write)
+                input_cached_tokens = getattr(
+                    prompt_tokens_details, "cached_tokens", 0
+                )
+                input_write_cached_tokens = getattr(
+                    prompt_tokens_details, "cache_creation_tokens", 0
+                )
+
                 details["prompt_tokens_details"] = {
                     "reasoning_tokens": getattr(
                         prompt_tokens_details, "reasoning_tokens", 0
                     ),
                     "text_tokens": getattr(prompt_tokens_details, "text_tokens", None),
                     "image_tokens": getattr(prompt_tokens_details, "image_tokens", 0),
-                    "cached_tokens": getattr(prompt_tokens_details, "cached_tokens", 0),
+                    "cached_tokens": input_cached_tokens,
+                    "cache_creation_tokens": input_write_cached_tokens,
                 }
-                cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0)
             except:
-                print(
+                logger.error(
                     f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}"
                 )
 
         try:
+            
             token_cost = record_usage(
                 account_details,
                 response.id,
                 model_id,
                 input_tokens,
                 output_tokens,
-                cached_tokens,
+                input_cached_tokens,
+                input_write_cached_tokens,
                 details,
             )
+            logger.debug(f"Litellm - Recorded usage with cost: {token_cost}")
 
         except Exception as e:
-            print(f"Warning: Failed to record usage: {e}")
+            logger.warning(f"Warning: Failed to record usage: {e}")
 
     except Exception as e:
-        traceback.print_exc()
-        print(f"Error generating response: {e}")
-        print(f"Prompt: ")
+        logger.error(f"Error generating response: {e}", exc_info=True)
+        logger.error("Prompt: ")
         for message in messages:
-            print(f"Message: {message}")
+            logger.error(f"Message: {message}")
         if tools:
-            print(f"Tools:")
+            logger.error("Tools:")
             for tool in tools:
-                print(f"Tool: {tool}")
-        print(f"Model: {model}")
+                logger.error(f"Tool: {tool}")
+        logger.error(f"Model: {model}")
+        
+        # CRITICAL: LLM prompting failure = agent cannot function
+        from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+        import traceback
+        log_critical_error(
+            function_name="generate_response",
+            error_type="LLMPromptingFailure",
+            error_message=f"Failed to generate LLM response: {str(e)}",
+            current_user=account_details.get('user') if account_details else 'system',
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "model": model,
+                "num_messages": len(messages),
+                "has_tools": bool(tools),
+                "error_details": str(e)
+            }
+        )
 
         raise e
 
@@ -209,10 +236,11 @@ def get_model_provider(model_id):
     """
     model_rate_table = os.environ.get("MODEL_RATE_TABLE")
     if not model_rate_table:
-        print("MODEL_RATE_TABLE is not provided in environment variables")
+        logger.error("MODEL_RATE_TABLE is not provided in environment variables")
         return None
     
     try:
+        dynamodb = boto3.client("dynamodb")
         model_rate_response = dynamodb.query(
             TableName=model_rate_table,
             KeyConditionExpression="ModelID = :modelId",
@@ -223,16 +251,16 @@ def get_model_provider(model_id):
             not model_rate_response.get("Items")
             or len(model_rate_response["Items"]) == 0
         ):
-            print(f"No model rate found for ModelID: {model_id}")
+            logger.info(f"No model rate found for ModelID: {model_id}")
             return None
             
         model_rate = model_rate_response["Items"][0]
         provider = model_rate.get("Provider", {}).get("S")
-        print(f"ModelID: {model_id} using provider: {provider}")
+        logger.info(f"ModelID: {model_id} using provider: {provider}")
         return provider
         
     except Exception as e:
-        print(f"Error looking up model provider: {e}")
+        logger.error(f"Error looking up model provider: {e}")
         return None
 
 
@@ -300,7 +328,7 @@ def create_llm(
         if advanced_model:
             advanced_model_str = litellm_model_str(advanced_model)
     except Exception as e:
-        print(
+        logger.warning(
             f"Error creating advanced model: {e}, using agent model as advanced model..."
         )
 
@@ -314,7 +342,7 @@ def create_llm(
         if isinstance(prompt.metadata, dict) and prompt.metadata.get(
             "advanced_reasoning", False
         ):
-            print("Prompting using advanced model: ", advanced_model_str)
+            logger.info(f"Prompting using advanced model: {advanced_model_str}")
             model_str = advanced_model_str
 
         result, token_cost = generate_response(

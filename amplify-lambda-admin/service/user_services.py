@@ -1,6 +1,7 @@
 
 import os
 import boto3
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -11,16 +12,18 @@ setup_validated(rules, get_permission_checker)
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
 
+from pycommon.logger import getLogger
+logger = getLogger("admin_user_services")
 
 @validated(op="read")
 def verify_is_in_amp_group(event, context, current_user, name, data):
     amp_groups = data["data"]["groups"]
     try:
         isMember = is_in_amp_group(current_user, amp_groups)
-        print(f"User {current_user} is in group: {isMember}")
+        logger.debug("User %s is in group: %s", current_user, isMember)
         return {"success": True, "isMember": isMember}
     except Exception as e:
-        print(f"Error verifying is in amp group: {str(e)}")
+        logger.error("Error verifying is in amp group: %s", str(e))
         return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
 
 
@@ -101,9 +104,24 @@ def get_all_amplify_groups():
         if "Item" in config_item and "data" in config_item["Item"]:
             return config_item["Item"]["data"]
         else:
-            print("No Amplify Groups Found")
+            logger.warning("No Amplify Groups Found")
     except Exception as e:
-        print(f"Error retrieving {AdminConfigTypes.AMPLIFY_GROUPS.value}: {str(e)}")
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
+        
+        # CRITICAL: Cannot retrieve amplify groups = access control broken
+        
+        import traceback
+        log_critical_error(
+            function_name="get_all_amplify_groups",
+            error_type="AmplifyGroupsRetrievalFailure",
+            error_message=f"Failed to retrieve amplify groups from DynamoDB: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "config_type": AdminConfigTypes.AMPLIFY_GROUPS.value,
+                "error_details": str(e)
+            }
+        )
     return None
 
 
@@ -117,7 +135,23 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         affiliated_groups = find_all_user_groups(current_user, all_groups)
         return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
     except Exception as e:
-        print(f"Error retrieving user affiliated groups: {str(e)}")
+        logger.error("Error retrieving user affiliated groups: %s", str(e))
+        
+        # CRITICAL: Cannot retrieve user groups = access control broken
+        
+        import traceback
+        log_critical_error(
+            function_name="get_user_affiliated_groups",
+            error_type="UserAffiliatedGroupsRetrievalFailure",
+            error_message=f"Failed to retrieve user's affiliated groups: {str(e)}",
+            current_user=current_user,
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "error_details": str(e)
+            }
+        )
+        
         return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
 
 

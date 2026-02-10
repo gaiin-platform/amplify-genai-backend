@@ -8,19 +8,20 @@ pypdfium2==4.30.1
     # via -r requirements.in
 python-docx==1.1.2
     # via -r requirements.in       
-tiktoken==0.8.0
+tiktoken==0.11.0
     # via -r requirements.in
 
 urllib3==2.3.0
     # via
     #   botocore
-    #   requestsnltk==3.8.1
+    #   requestsnltk==3.9.2
     # via -r requirements.in
-nltk==3.8.1
+nltk==3.9.2
     # via -r requirements.in
-pymupdf==1.25.1
+pymupdf==1.26.0
     # via -r requirements.in
 
 # Required for pycommon modules and rag/core
 pydantic>=2.0.0
+PyYAML>=6.0.0
 
