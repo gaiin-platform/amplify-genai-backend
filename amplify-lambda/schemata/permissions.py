@@ -9,6 +9,8 @@ Copyright (c) Vanderbilt University
 Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas, Sam Hays
 """
 
+from pycommon.logger import getLogger
+logger = getLogger("permissions")
 
 def can_share(user, data):
     return True
@@ -43,10 +45,9 @@ def can_chat(user, data):
 
 
 def get_permission_checker(user, type, op, data):
-    print(
-        "Checking permissions for user: {} and type: {} and op: {}".format(
-            user, type, op
-        )
+    logger.debug(
+        "Checking permissions for user: %s and type: %s and op: %s",
+        user, type, op
     )
     return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
 
@@ -96,4 +97,17 @@ permissions_by_state_type = {
     "/state/settings/get": {"get": can_read},
     "/files/reprocess/rag": {"upload": can_upload},
     "/state/register_ops": {"register_ops": can_save}, 
+    "/user-data/put": {"route": lambda for_user, with_data: True},
+    "/user-data/get": {"route": lambda for_user, with_data: True},
+    "/user-data/get-by-uuid": {"route": lambda for_user, with_data: True},
+    "/user-data/query-range": {"route": lambda for_user, with_data: True},
+    "/user-data/query-prefix": {"route": lambda for_user, with_data: True},
+    "/user-data/query-type": {"route": lambda for_user, with_data: True},
+    "/user-data/delete": {"route": lambda for_user, with_data: True},
+    "/user-data/batch-put": {"route": lambda for_user, with_data: True},
+    "/user-data/batch-get": {"route": lambda for_user, with_data: True},
+    "/user-data/batch-delete": {"route": lambda for_user, with_data: True},
+    "/user-data/delete-by-uuid": {"route": lambda for_user, with_data: True},
+    "/user-data/list-apps": {"route": lambda for_user, with_data: True},
+    "/user-data/list-entity-types": {"route": lambda for_user, with_data: True},
 }

@@ -13,6 +13,8 @@ import agent.tools.agent_communication
 import agent.agents.summarizer_agent
 from agent.tools.ops import register_op_actions
 from service.conversations import register_agent_conversation
+from pycommon.logger import getLogger
+logger = getLogger("workflow_agent")
 
 if __name__ == "__main__":
 
@@ -64,4 +66,4 @@ if __name__ == "__main__":
         access_token=access_token, input=user_input, memory=result
     )
 
-    print(result)
+    logger.info("Workflow agent result: %s", result)

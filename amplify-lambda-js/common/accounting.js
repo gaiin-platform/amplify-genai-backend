@@ -4,6 +4,7 @@
 import { DynamoDBClient, PutItemCommand, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import {getLogger} from "./logging.js";
+import {logCriticalError} from "./criticalLogger.js";
 
 const logger = getLogger("accounting");
 const dynamodbClient = new DynamoDBClient({});
@@ -13,7 +14,7 @@ const dynamoTableName = process.env.CHAT_USAGE_DYNAMO_TABLE;
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 const modelRateDynamoTable = process.env.MODEL_RATE_TABLE;
 
-export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, cachedTokens, details) => {
+export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, inputCachedTokens, inputWriteCachedTokens, details) => {
 
     if (!dynamoTableName) {
         logger.error("CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables.");
@@ -35,8 +36,15 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     try {
         const accountId = account.accountId || 'general_account';
+        
+        // Validate that account.user is not undefined
+        if (!account.user) {
+            logger.error("Missing account.user in recordUsage call");
+            return false;
+        }
 
         if (apiKeyId) details = {...details, api_key_id: apiKeyId};
+
 
         const item = {
             id: { S: `${uuidv4()}` },
@@ -55,9 +63,30 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             Item: item
         });
 
-        const response = await dynamodbClient.send(command);
+        await dynamodbClient.send(command);
 
     } catch (e) {
+        logger.error("Error recording usage:", e);
+        
+        // CRITICAL: Usage recording failed - billing data loss
+        logCriticalError({
+            functionName: 'recordUsage',
+            errorType: 'UsageRecordingFailure',
+            errorMessage: `Failed to record usage to DynamoDB: ${e.message || "Unknown error"}`,
+            currentUser: account?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: e.stack || '',
+            context: {
+                requestId: requestId || 'unknown',
+                modelId: model?.id || 'unknown',
+                accountId: account?.accountId || 'general_account',
+                inputTokens,
+                outputTokens,
+                apiKeyId: apiKeyId || 'N/A',
+                tableName: dynamoTableName
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         return false;
     }
 
@@ -78,12 +107,38 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const modelRate = modelRateResponse.Items[0];
         const inputCostPerThousandTokens = parseFloat(modelRate.InputCostPerThousandTokens.N);
         const outputCostPerThousandTokens = parseFloat(modelRate.OutputCostPerThousandTokens.N);
-        const cachedCostPerThousandTokens = modelRate.CachedCostPerThousandTokens ? parseFloat(modelRate.CachedCostPerThousandTokens.N) : 0;
+        
+        // Handle new cached token cost fields with backward compatibility
+        let inputCachedCostPerThousandTokens = 0;
+        let inputWriteCachedCostPerThousandTokens = 0;
+        
+        // Try new fields first
+        if (modelRate.InputCachedCostPerThousandTokens?.N !== undefined) {
+            inputCachedCostPerThousandTokens = parseFloat(modelRate.InputCachedCostPerThousandTokens.N);
+        }
+        if (modelRate.InputWriteCachedCostPerThousandTokens?.N !== undefined) {
+            inputWriteCachedCostPerThousandTokens = parseFloat(modelRate.InputWriteCachedCostPerThousandTokens.N);
+        }
+        
+        // Backward compatibility: if old field exists and new fields are missing, use old field
+        if (modelRate.CachedCostPerThousandTokens?.N !== undefined) {
+            const legacyCachedCost = parseFloat(modelRate.CachedCostPerThousandTokens.N);
+            // Only use legacy if new fields weren't explicitly set
+            if (modelRate.InputCachedCostPerThousandTokens?.N === undefined) {
+                inputCachedCostPerThousandTokens = legacyCachedCost;
+            }
+        }
 
         const inputCost = (inputTokens / 1000) * inputCostPerThousandTokens;
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
-        const cachedCost = (cachedTokens / 1000) * cachedCostPerThousandTokens;
-        const totalCost = inputCost + outputCost + cachedCost;
+        
+        // Calculate cached token costs separately for precision
+        const inputCachedCost = (inputCachedTokens / 1000) * inputCachedCostPerThousandTokens;
+        const inputWriteCachedCost = (inputWriteCachedTokens / 1000) * inputWriteCachedCostPerThousandTokens;
+        
+        // Note: inputWriteCachedCostPerThousandTokens is ready for future use when providers support output caching
+        
+        const totalCost = inputCost + outputCost + inputCachedCost + inputWriteCachedCost;
 
         // adds the totalCost to the dailyCost field
         // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)
@@ -138,6 +193,29 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         
     } catch (e) {
         logger.error("Error calculating or updating cost:", e);
+        
+        // CRITICAL: Cost calculation/update failed - billing/cost tracking data loss
+        logCriticalError({
+            functionName: 'recordUsage_costCalculation',
+            errorType: 'CostCalculationFailure',
+            errorMessage: `Failed to calculate or update cost in DynamoDB: ${e.message || "Unknown error"}`,
+            currentUser: account?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: e.stack || '',
+            context: {
+                requestId: requestId || 'unknown',
+                modelId: model?.id || 'unknown',
+                accountId: account?.accountId || 'general_account',
+                inputTokens,
+                outputTokens,
+                inputCachedTokens,
+                inputWriteCachedTokens,
+                apiKeyId: apiKeyId || 'N/A',
+                costTableName: costDynamoTableName,
+                modelRateTable: modelRateDynamoTable
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+        
         return false;
     }
 
@@ -145,6 +223,6 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 };
 
 const getApiKeyId = (account) => {
-    if (account.accessToken.startsWith("amp-") && account.apiKeyId) return account.apiKeyId;
+    if (account && account.accessToken?.startsWith("amp-") && account?.apiKeyId) return account.apiKeyId;
     return null;
 }
