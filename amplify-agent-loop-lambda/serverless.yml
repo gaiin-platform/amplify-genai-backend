@@ -71,7 +71,7 @@ provider:
     AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state #Marked for future deletion
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
-    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
+    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated-v2
     SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs #Marked for future deletion
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
