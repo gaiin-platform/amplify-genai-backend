@@ -566,6 +566,7 @@ def handle_web_search_config_update(update_data: dict) -> dict:
     # Store config in DynamoDB (without the API key - that's in SSM)
     config_data = {
         "provider": provider,
+        "allowUserWebSearchKeys": update_data.get("allowUserWebSearchKeys", False),
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1178,13 +1179,21 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
         AdminConfigTypes.AI_EMAIL_DOMAIN,
         AdminConfigTypes.PROMPT_COST_ALERT,
+        AdminConfigTypes.WEB_SEARCH_CONFIG,
     ]
     configs = {}
     for config_type in app_configs:
         try:
             response = admin_table.get_item(Key={"config_id": config_type.value})
             if "Item" in response:
-                configs[config_type.value] = response["Item"]["data"]
+                config_data = response["Item"]["data"]
+                # For web search config, only pass the allowUserWebSearchKeys flag
+                if config_type == AdminConfigTypes.WEB_SEARCH_CONFIG and config_data:
+                    configs[config_type.value] = {
+                        "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False)
+                    }
+                else:
+                    configs[config_type.value] = config_data
             else:
                 logger.warning("No %s Data Found, skipping...", config_type.value)
         except Exception as e:
