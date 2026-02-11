@@ -1,0 +1,37 @@
+# VDR (Visual Document Retrieval) Pipeline Dependencies
+
+# PDF to Image conversion
+pdf2image==1.17.0
+# Requires poppler-utils to be installed in Lambda layer or container
+# Download: https://github.com/oschwartz10612/poppler-windows/releases/ (Windows)
+# Linux Lambda: Include in layer with poppler binaries
+
+# Vision-Language Models
+transformers==4.38.0
+torch==2.2.0
+pillow==10.2.0
+
+# ColPali engine for VDR
+# colpali-engine==0.2.0  # Uncomment when available
+# Note: May need to install from source
+# pip install git+https://github.com/illuin-tech/colpali-engine.git
+
+# OCR for selective visual processing
+pytesseract==0.3.10
+# Requires tesseract-ocr to be installed in Lambda layer
+# Download: https://github.com/tesseract-ocr/tesseract
+
+# Image processing
+numpy==1.26.4
+scipy==1.12.0
+
+# Database
+psycopg2-binary==2.9.9
+
+# Async processing
+aiobotocore==2.11.2
+aiohttp==3.9.3
+
+# Existing dependencies (ensure compatibility)
+markitdown>=0.0.1a2
+pycommon>=1.0.0  # Internal package

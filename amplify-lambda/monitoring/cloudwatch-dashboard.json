@@ -1,0 +1,140 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "Invocations", { "stat": "Sum", "label": "Async Processor" } ],
+          [ "...", { "stat": "Sum", "label": "VDR Processor" } ],
+          [ "...", { "stat": "Sum", "label": "Text RAG Processor" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda Invocations",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "Duration", { "stat": "Average" } ],
+          [ "...", { "stat": "p99" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda Duration",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "Errors", { "stat": "Sum", "color": "#d13212" } ],
+          [ ".", "Throttles", { "stat": "Sum", "color": "#ff7f0e" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda Errors & Throttles",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/SQS", "ApproximateNumberOfMessagesVisible", { "label": "VDR Queue Depth" } ],
+          [ "...", { "label": "Text RAG Queue Depth" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "SQS Queue Depth",
+        "period": 60
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/SQS", "NumberOfMessagesSent", { "stat": "Sum" } ],
+          [ ".", "NumberOfMessagesDeleted", { "stat": "Sum" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "SQS Message Flow",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", { "stat": "Sum", "label": "Document Status Read" } ],
+          [ ".", "ConsumedWriteCapacityUnits", { "stat": "Sum", "label": "Document Status Write" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "DynamoDB Capacity",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/ApiGateway", "Count", { "label": "WebSocket Connections" } ],
+          [ ".", "IntegrationLatency", { "stat": "Average", "label": "WebSocket Latency" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "WebSocket API",
+        "period": 300
+      }
+    },
+    {
+      "type": "log",
+      "properties": {
+        "query": "SOURCE '/aws/lambda/amplify-rag-dev-async_document_processor'\n| fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 20",
+        "region": "us-east-1",
+        "stacked": false,
+        "title": "Recent Errors",
+        "view": "table"
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ { "expression": "m1/m2*100", "label": "Success Rate", "id": "e1" } ],
+          [ "AWS/Lambda", "Invocations", { "id": "m1", "visible": false } ],
+          [ ".", "Errors", { "id": "m2", "visible": false } ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Overall Success Rate",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "ConcurrentExecutions", { "stat": "Maximum" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda Concurrent Executions",
+        "period": 60
+      }
+    }
+  ]
+}

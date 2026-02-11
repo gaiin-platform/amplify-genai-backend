@@ -1,0 +1,671 @@
+# ============================================================================
+# SEPARATE ASYNC RAG SERVICE - STANDALONE DEPLOYMENT
+# ============================================================================
+# This deploys as a completely separate service from the existing RAG pipeline.
+# It does NOT modify the existing process_document_for_rag function.
+# Both old and new systems can coexist, allowing gradual migration.
+#
+# Service name: amplify-rag-async (vs existing: amplify-rag)
+# Function names: All prefixed with "async-v2-" to avoid conflicts
+#
+# ROUTING OPTIONS:
+# 1. Separate S3 bucket: s3://amplify-files-async-dev/
+# 2. Metadata tag: x-amz-tagging=pipeline=async
+# 3. API Gateway endpoint: POST /api/v2/process-document
+# ============================================================================
+
+service: amplify-rag-async
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  # Separate service - won't conflict with existing amplify-rag
+  stackName: ${self:service}-${sls:stage}
+
+  environment:
+    # Service identifier
+    SERVICE_VERSION: v2
+    PIPELINE_VERSION: async-v2
+
+    # Status tracking (new tables with -v2 suffix)
+    DOCUMENT_STATUS_TABLE: ${self:service}-${sls:stage}-status
+    WEBSOCKET_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-ws-connections
+
+    # WebSocket API
+    WEBSOCKET_API_ENDPOINT:
+      Fn::Sub: "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
+
+    # Queue URLs (new queues with -v2 suffix)
+    VDR_PROCESSING_QUEUE_URL:
+      Ref: VDRProcessingQueueV2
+    TEXT_RAG_PROCESSING_QUEUE_URL:
+      Ref: TextRagProcessingQueueV2
+
+    # Database endpoints (shared with existing system)
+    RAG_POSTGRES_DB_READ_ENDPOINT: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_READ_ENDPOINT}
+    RAG_POSTGRES_DB_WRITE_ENDPOINT: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_WRITE_ENDPOINT}
+    RAG_POSTGRES_DB_USERNAME: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_USERNAME}
+    RAG_POSTGRES_DB_NAME: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_NAME}
+    RAG_POSTGRES_DB_SECRET: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_SECRET}
+
+    # S3 buckets
+    FILES_BUCKET: ${ssm:/amplify/${sls:stage}/FILES_BUCKET}
+    FILES_BUCKET_ASYNC: ${self:service}-${sls:stage}-files  # Optional: separate bucket
+
+    # DynamoDB tables (shared with existing system)
+    FILES_DYNAMO_TABLE: ${ssm:/amplify/${sls:stage}/FILES_DYNAMO_TABLE}
+    USERS_DYNAMO_TABLE: ${ssm:/amplify/${sls:stage}/USERS_DYNAMO_TABLE}
+
+    # Feature flags
+    ENABLE_VDR_PIPELINE: true
+    ENABLE_HYBRID_SEARCH: true
+    ENABLE_SELECTIVE_VISUALS: true
+
+    # VDR configuration
+    VDR_MODEL_NAME: ModernVBERT/modernvbert-base
+    COLPALI_MODEL_NAME: vidore/colpali-v1.2
+
+  iam:
+    role:
+      name: ${self:service}-${sls:stage}-lambda-role
+      statements:
+        # DynamoDB - Status table (new)
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:DeleteItem
+          Resource:
+            - !GetAtt DocumentStatusTableV2.Arn
+            - !Sub "${DocumentStatusTableV2.Arn}/index/*"
+
+        # DynamoDB - WebSocket connections (new)
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+          Resource:
+            - !GetAtt WebSocketConnectionsTableV2.Arn
+            - !Sub "${WebSocketConnectionsTableV2.Arn}/index/*"
+
+        # DynamoDB - Shared tables (FILES, USERS)
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+          Resource:
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:provider.environment.FILES_DYNAMO_TABLE}
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:provider.environment.USERS_DYNAMO_TABLE}
+
+        # SQS - New queues
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            - sqs:ChangeMessageVisibility
+          Resource:
+            - !GetAtt VDRProcessingQueueV2.Arn
+            - !GetAtt TextRagProcessingQueueV2.Arn
+            - !GetAtt VDRProcessingDLQV2.Arn
+            - !GetAtt TextRagProcessingDLQV2.Arn
+
+        # S3 - Read/Write access
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:GetObjectTagging
+            - s3:PutObject
+            - s3:PutObjectTagging
+            - s3:DeleteObject
+          Resource:
+            - arn:aws:s3:::${self:provider.environment.FILES_BUCKET}/*
+            - arn:aws:s3:::${self:provider.environment.FILES_BUCKET_ASYNC}/*
+
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+          Resource:
+            - arn:aws:s3:::${self:provider.environment.FILES_BUCKET}
+            - arn:aws:s3:::${self:provider.environment.FILES_BUCKET_ASYNC}
+
+        # WebSocket API
+        - Effect: Allow
+          Action:
+            - execute-api:ManageConnections
+          Resource:
+            - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+        # Secrets Manager (for DB credentials)
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource:
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:${self:provider.environment.RAG_POSTGRES_DB_SECRET}*
+
+        # SSM Parameter Store
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:GetParameters
+          Resource:
+            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/amplify/${sls:stage}/*
+
+package:
+  individually: true
+  patterns:
+    - '!node_modules/**'
+    - '!.venv/**'
+    - '!.git/**'
+    - '!*.pyc'
+    - '!__pycache__/**'
+
+functions:
+  # ============================================================================
+  # ENTRY POINT: API Gateway Handler (NOT S3 trigger)
+  # ============================================================================
+  # This allows explicit routing - clients call this API to use async pipeline
+  # Old system continues using process_document_for_rag
+
+  async-v2-api-processor:
+    handler: rag/async_processor.async_document_processor
+    name: ${self:service}-${sls:stage}-api-processor
+    description: "Async RAG v2 - API entry point for explicit routing"
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    memorySize: 512
+    events:
+      - http:
+          path: /v2/process-document
+          method: post
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      VDR_PROCESSING_QUEUE_URL:
+        Ref: VDRProcessingQueueV2
+      TEXT_RAG_PROCESSING_QUEUE_URL:
+        Ref: TextRagProcessingQueueV2
+
+  # ============================================================================
+  # ALTERNATIVE ENTRY POINT: S3 Event Handler (Optional)
+  # ============================================================================
+  # Uncomment this if you want S3 uploads to separate bucket to trigger async pipeline
+  # This allows transparent migration by changing upload bucket
+
+  # async-v2-s3-processor:
+  #   handler: rag/async_processor.async_document_processor
+  #   name: ${self:service}-${sls:stage}-s3-processor
+  #   description: "Async RAG v2 - S3 event trigger for separate bucket"
+  #   layers:
+  #     - Ref: PythonRequirementsLambdaLayer
+  #   timeout: 30
+  #   memorySize: 512
+  #   events:
+  #     - s3:
+  #         bucket: ${self:provider.environment.FILES_BUCKET_ASYNC}
+  #         event: s3:ObjectCreated:*
+  #         existing: false
+  #   environment:
+  #     DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+  #     VDR_PROCESSING_QUEUE_URL:
+  #       Ref: VDRProcessingQueueV2
+  #     TEXT_RAG_PROCESSING_QUEUE_URL:
+  #       Ref: TextRagProcessingQueueV2
+
+  # ============================================================================
+  # BACKGROUND PROCESSORS
+  # ============================================================================
+
+  async-v2-vdr-processor:
+    handler: vdr/vdr_pipeline.process_document_vdr
+    name: ${self:service}-${sls:stage}-vdr-processor
+    description: "Async RAG v2 - VDR pipeline with ModernVBERT/ColPali"
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 900  # 15 minutes
+    memorySize: 10240  # 10GB for VDR models
+    reservedConcurrency: 5  # Limit concurrent executions (expensive)
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - VDRProcessingQueueV2
+              - Arn
+    environment:
+      VDR_MODEL_NAME: ${self:provider.environment.VDR_MODEL_NAME}
+      COLPALI_MODEL_NAME: ${self:provider.environment.COLPALI_MODEL_NAME}
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT}
+      RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+      RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+      RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET}
+
+  async-v2-text-rag-processor:
+    handler: rag/text_rag_pipeline.process_document_text_rag
+    name: ${self:service}-${sls:stage}-text-rag-processor
+    description: "Async RAG v2 - Text RAG with selective visual processing"
+    layers:
+      - Ref: MarkitdownLambdaLayer
+    timeout: 900  # 15 minutes
+    memorySize: 3008
+    reservedConcurrency: 10
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - TextRagProcessingQueueV2
+              - Arn
+    environment:
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      ENABLE_SELECTIVE_VISUALS: ${self:provider.environment.ENABLE_SELECTIVE_VISUALS}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT}
+
+  # ============================================================================
+  # WEBSOCKET HANDLERS
+  # ============================================================================
+
+  async-v2-websocket-connect:
+    handler: websocket/handlers.connect
+    name: ${self:service}-${sls:stage}-ws-connect
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $connect
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  async-v2-websocket-disconnect:
+    handler: websocket/handlers.disconnect
+    name: ${self:service}-${sls:stage}-ws-disconnect
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $disconnect
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  async-v2-websocket-default:
+    handler: websocket/handlers.default_handler
+    name: ${self:service}-${sls:stage}-ws-default
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $default
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  async-v2-websocket-subscribe:
+    handler: websocket/handlers.subscribe
+    name: ${self:service}-${sls:stage}-ws-subscribe
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: subscribe
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  # ============================================================================
+  # QUERY HANDLER (Hybrid Search)
+  # ============================================================================
+
+  async-v2-query-handler:
+    handler: rag/query_handler_hybrid.query_documents_hybrid
+    name: ${self:service}-${sls:stage}-query
+    description: "Async RAG v2 - Hybrid search query handler"
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    memorySize: 1024
+    events:
+      - http:
+          path: /v2/query
+          method: post
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      RAG_POSTGRES_DB_READ_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_READ_ENDPOINT}
+      RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+      RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+      RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET}
+      ENABLE_HYBRID_SEARCH: ${self:provider.environment.ENABLE_HYBRID_SEARCH}
+      ENABLE_VDR_PIPELINE: ${self:provider.environment.ENABLE_VDR_PIPELINE}
+
+# ============================================================================
+# LAYERS
+# ============================================================================
+
+layers:
+  PythonRequirementsLambdaLayer:
+    path: layers/python-requirements
+    name: ${self:service}-${sls:stage}-python-requirements
+    description: "Python dependencies for async RAG v2"
+    compatibleRuntimes:
+      - python3.11
+    retain: false
+
+  MarkitdownLambdaLayer:
+    path: layers/markitdown
+    name: ${self:service}-${sls:stage}-markitdown
+    description: "Markitdown + OCR dependencies"
+    compatibleRuntimes:
+      - python3.11
+    retain: false
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+
+resources:
+  Resources:
+    # ========================================================================
+    # DYNAMODB TABLES (New - v2 suffix)
+    # ========================================================================
+
+    DocumentStatusTableV2:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        AttributeDefinitions:
+          - AttributeName: statusId
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: statusId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    WebSocketConnectionsTableV2:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+          - AttributeName: statusId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: StatusIdIndex
+            KeySchema:
+              - AttributeName: statusId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    # ========================================================================
+    # SQS QUEUES (New - v2 suffix)
+    # ========================================================================
+
+    VDRProcessingQueueV2:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-vdr-queue
+        VisibilityTimeout: 900  # 15 minutes
+        MessageRetentionPeriod: 86400  # 24 hours
+        ReceiveMessageWaitTimeSeconds: 20  # Long polling
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [VDRProcessingDLQV2, Arn]
+          maxReceiveCount: 3
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    VDRProcessingDLQV2:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-vdr-dlq
+        MessageRetentionPeriod: 1209600  # 14 days
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    TextRagProcessingQueueV2:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-text-rag-queue
+        VisibilityTimeout: 900  # 15 minutes
+        MessageRetentionPeriod: 86400
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [TextRagProcessingDLQV2, Arn]
+          maxReceiveCount: 3
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    TextRagProcessingDLQV2:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-text-rag-dlq
+        MessageRetentionPeriod: 1209600
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Version
+            Value: v2
+
+    # ========================================================================
+    # WEBSOCKET API
+    # ========================================================================
+
+    WebSocketApi:
+      Type: AWS::ApiGatewayV2::Api
+      Properties:
+        Name: ${self:service}-${sls:stage}-websocket
+        ProtocolType: WEBSOCKET
+        RouteSelectionExpression: $request.body.action
+        Tags:
+          Service: ${self:service}
+          Version: v2
+
+    # ========================================================================
+    # API GATEWAY AUTHORIZER (Cognito)
+    # ========================================================================
+
+    ApiGatewayAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: ${self:service}-${sls:stage}-cognito-authorizer
+        Type: COGNITO_USER_POOLS
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ProviderARNs:
+          - ${ssm:/amplify/${sls:stage}/COGNITO_USER_POOL_ARN}
+
+    # ========================================================================
+    # CLOUDWATCH ALARMS
+    # ========================================================================
+
+    VDRProcessorErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-vdr-errors
+        AlarmDescription: "VDR processor errors exceed threshold"
+        MetricName: Errors
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: 300  # 5 minutes
+        EvaluationPeriods: 1
+        Threshold: 5
+        ComparisonOperator: GreaterThanThreshold
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:service}-${sls:stage}-vdr-processor
+
+    TextRagProcessorErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-text-rag-errors
+        AlarmDescription: "Text RAG processor errors exceed threshold"
+        MetricName: Errors
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 10
+        ComparisonOperator: GreaterThanThreshold
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:service}-${sls:stage}-text-rag-processor
+
+    VDRQueueDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-vdr-dlq-messages
+        AlarmDescription: "Messages in VDR DLQ"
+        MetricName: ApproximateNumberOfMessagesVisible
+        Namespace: AWS/SQS
+        Statistic: Average
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:service}-${sls:stage}-vdr-dlq
+
+  # ==========================================================================
+  # OUTPUTS
+  # ==========================================================================
+
+  Outputs:
+    ServiceVersion:
+      Description: "Async RAG service version"
+      Value: v2
+      Export:
+        Name: ${self:service}-${sls:stage}-version
+
+    ApiProcessorUrl:
+      Description: "API endpoint for async processing"
+      Value:
+        Fn::Sub: "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}/v2/process-document"
+      Export:
+        Name: ${self:service}-${sls:stage}-api-url
+
+    QueryHandlerUrl:
+      Description: "API endpoint for hybrid search queries"
+      Value:
+        Fn::Sub: "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}/v2/query"
+      Export:
+        Name: ${self:service}-${sls:stage}-query-url
+
+    WebSocketApiUrl:
+      Description: "WebSocket API URL for real-time status updates"
+      Value:
+        Fn::Sub: "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
+      Export:
+        Name: ${self:service}-${sls:stage}-websocket-url
+
+    DocumentStatusTableName:
+      Description: "Document status DynamoDB table"
+      Value: !Ref DocumentStatusTableV2
+      Export:
+        Name: ${self:service}-${sls:stage}-status-table
+
+    VDRProcessingQueueUrl:
+      Description: "VDR processing queue URL"
+      Value: !Ref VDRProcessingQueueV2
+      Export:
+        Name: ${self:service}-${sls:stage}-vdr-queue-url
+
+    TextRagProcessingQueueUrl:
+      Description: "Text RAG processing queue URL"
+      Value: !Ref TextRagProcessingQueueV2
+      Export:
+        Name: ${self:service}-${sls:stage}-text-rag-queue-url
+
+# ============================================================================
+# PLUGINS
+# ============================================================================
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-split-stacks
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    layer: true
+    slim: true
+    strip: false
+    pythonBin: python3.11
+
+  splitStacks:
+    perFunction: false
+    perType: true
+
+  prune:
+    automatic: true
+    number: 3

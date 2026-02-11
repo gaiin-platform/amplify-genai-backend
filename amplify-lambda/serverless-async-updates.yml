@@ -1,0 +1,338 @@
+# Serverless.yml Updates for Async Processing Architecture
+# Add these sections to amplify-lambda/serverless.yml
+
+# ====================
+# ENVIRONMENT VARIABLES (add to provider.environment section)
+# ====================
+
+provider:
+  environment:
+    # ... existing vars ...
+
+    # New async processing variables
+    DOCUMENT_STATUS_TABLE: ${self:service}-${sls:stage}-document-status
+    WEBSOCKET_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-websocket-connections
+    WEBSOCKET_API_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
+
+    # New queue names
+    SQS_VDR_PROCESSING_QUEUE: ${self:service}-${sls:stage}-vdr-processing
+    SQS_TEXT_RAG_PROCESSING_QUEUE: ${self:service}-${sls:stage}-text-rag-processing
+
+    # Queue URLs (set in functions)
+    VDR_PROCESSING_QUEUE_URL:
+      Ref: VDRProcessingQueue
+    TEXT_RAG_PROCESSING_QUEUE_URL:
+      Ref: TextRagProcessingQueue
+
+
+# ====================
+# NEW LAMBDA FUNCTIONS (add to functions section)
+# ====================
+
+functions:
+  # ... existing functions ...
+
+  # NEW: Async document processor (replaces process_document_for_rag as entry point)
+  async_document_processor:
+    handler: rag/async_processor.async_document_processor
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30  # Fast validation only (no timeout!)
+    memorySize: 512
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - RagDocumentIndexQueue
+              - Arn
+    environment:
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      VDR_PROCESSING_QUEUE_URL:
+        Ref: VDRProcessingQueue
+      TEXT_RAG_PROCESSING_QUEUE_URL:
+        Ref: TextRagProcessingQueue
+
+  # NEW: VDR pipeline processor
+  vdr_processor:
+    handler: vdr/vdr_pipeline.process_document_vdr
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 900  # 15 minutes (or use ECS for unlimited)
+    memorySize: 10240  # 10GB for model
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - VDRProcessingQueue
+              - Arn
+    environment:
+      VDR_MODEL_NAME: ModernVBERT/modernvbert-base
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_WRITE_ENDPOINT}
+      RAG_POSTGRES_DB_USERNAME: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_USERNAME}
+      RAG_POSTGRES_DB_NAME: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_NAME}
+      RAG_POSTGRES_DB_SECRET: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_SECRET}
+
+  # NEW: Text RAG processor (with selective visual processing)
+  text_rag_processor:
+    handler: rag/text_rag_pipeline.process_document_text_rag
+    layers:
+      - Ref: MarkitdownLambdaLayer
+    timeout: 900  # 15 minutes
+    memorySize: 3008
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - TextRagProcessingQueue
+              - Arn
+    environment:
+      DOCUMENT_STATUS_TABLE: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+      RAG_CHUNK_DOCUMENT_QUEUE_URL:
+        Ref: RagChunkDocumentQueue
+
+  # WebSocket handlers
+  websocket_connect:
+    handler: websocket/handlers.connect
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $connect
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  websocket_disconnect:
+    handler: websocket/handlers.disconnect
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $disconnect
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  websocket_default:
+    handler: websocket/handlers.default_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: $default
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+  websocket_subscribe:
+    handler: websocket/handlers.subscribe
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - websocket:
+          route: subscribe
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+
+
+# ====================
+# NEW RESOURCES (add to resources.Resources section)
+# ====================
+
+resources:
+  Resources:
+    # ... existing resources ...
+
+    # Document Status DynamoDB Table
+    DocumentStatusTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DOCUMENT_STATUS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        AttributeDefinitions:
+          - AttributeName: statusId
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: statusId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # WebSocket Connections DynamoDB Table
+    WebSocketConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.WEBSOCKET_CONNECTIONS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+          - AttributeName: statusId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: StatusIdIndex
+            KeySchema:
+              - AttributeName: statusId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    # VDR Processing Queue
+    VDRProcessingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.SQS_VDR_PROCESSING_QUEUE}
+        VisibilityTimeout: 900  # 15 minutes
+        MessageRetentionPeriod: 86400
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [VDRProcessingDLQ, Arn]
+          maxReceiveCount: 3
+
+    VDRProcessingDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.SQS_VDR_PROCESSING_QUEUE}-dlq
+        MessageRetentionPeriod: 1209600  # 14 days
+
+    # Text RAG Processing Queue
+    TextRagProcessingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.SQS_TEXT_RAG_PROCESSING_QUEUE}
+        VisibilityTimeout: 900  # 15 minutes
+        MessageRetentionPeriod: 86400
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [TextRagProcessingDLQ, Arn]
+          maxReceiveCount: 3
+
+    TextRagProcessingDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.SQS_TEXT_RAG_PROCESSING_QUEUE}-dlq
+        MessageRetentionPeriod: 1209600
+
+    # WebSocket API (for real-time status updates)
+    WebSocketApi:
+      Type: AWS::ApiGatewayV2::Api
+      Properties:
+        Name: ${self:service}-${sls:stage}-websocket
+        ProtocolType: WEBSOCKET
+        RouteSelectionExpression: $request.body.action
+
+  Outputs:
+    # ... existing outputs ...
+
+    DocumentStatusTableName:
+      Description: "Document status DynamoDB table"
+      Value: !Ref DocumentStatusTable
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-DocumentStatusTable"
+
+    WebSocketConnectionsTableName:
+      Description: "WebSocket connections DynamoDB table"
+      Value: !Ref WebSocketConnectionsTable
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-WebSocketConnectionsTable"
+
+    VDRProcessingQueueUrl:
+      Description: "VDR processing queue URL"
+      Value: !Ref VDRProcessingQueue
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-VDRProcessingQueueUrl"
+
+    TextRagProcessingQueueUrl:
+      Description: "Text RAG processing queue URL"
+      Value: !Ref TextRagProcessingQueue
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-TextRagProcessingQueueUrl"
+
+    WebSocketApiUrl:
+      Description: "WebSocket API URL"
+      Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-WebSocketApiUrl"
+
+
+# ====================
+# IAM PERMISSIONS (add to provider.iam.role.statements)
+# ====================
+
+# Add these permissions to Lambda execution role:
+provider:
+  iam:
+    role:
+      statements:
+        # ... existing statements ...
+
+        # DynamoDB access for status table
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:DeleteItem
+          Resource:
+            - !GetAtt DocumentStatusTable.Arn
+            - !Sub "${DocumentStatusTable.Arn}/index/*"
+
+        # DynamoDB access for WebSocket connections
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+          Resource:
+            - !GetAtt WebSocketConnectionsTable.Arn
+            - !Sub "${WebSocketConnectionsTable.Arn}/index/*"
+
+        # SQS access for new queues
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt VDRProcessingQueue.Arn
+            - !GetAtt TextRagProcessingQueue.Arn
+            - !GetAtt VDRProcessingDLQ.Arn
+            - !GetAtt TextRagProcessingDLQ.Arn
+
+        # WebSocket API access
+        - Effect: Allow
+          Action:
+            - execute-api:ManageConnections
+          Resource:
+            - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
