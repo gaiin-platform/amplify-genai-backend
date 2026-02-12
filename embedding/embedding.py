@@ -154,19 +154,26 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
         # Add timestamp for tracking processing age
         current_time = datetime.datetime.now().isoformat()
 
-        # Ensure parent structure exists in one operation to avoid overlapping paths
+        # Ensure parent structure exists before setting child properties
+        # Just initialize childChunks - DynamoDB will auto-create parent 'data' object
         try:
             table.update_item(
                 Key={"object_id": object_id},
-                UpdateExpression="SET #data = if_not_exists(#data, :full_structure)",
-                ExpressionAttributeNames={"#data": "data"},
-                ExpressionAttributeValues={":full_structure": {"childChunks": {}}}
+                UpdateExpression="SET #data.#childChunks = if_not_exists(#data.#childChunks, :empty_chunks)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                    "#childChunks": "childChunks",
+                },
+                ExpressionAttributeValues={
+                    ":empty_chunks": {},
+                }
             )
-        except Exception:
-            # Structure creation errors are non-critical, the main update below will handle missing paths
-            pass
+        except Exception as init_error:
+            logger.warning(f"Structure initialization warning (non-critical): {init_error}")
+            # Continue - the main update will handle it
 
-        # Now update the specific child chunk
+        # Now update the specific child chunk properties
+        # Use if_not_exists only on the version field to avoid overlap
         update_expression = """
             SET #data.#childChunks.#chunkId.#status = :new_status,
                 #data.#childChunks.#chunkId.#lastUpdated = :timestamp,
@@ -187,8 +194,6 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             ":timestamp": current_time,
             ":zero": 0,
             ":one": 1,
-            ":completed": "completed",
-            ":failed": "failed",
         }
 
         # Add error message if applicable
@@ -200,21 +205,45 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
                 f"[CHILD_CHUNK_FAILED] Child chunk {child_chunk} failed with error: {error_message}"
             )
 
-        # Define condition that prevents updating terminal states
-        # Allow creation if chunk doesn't exist, or update if not in terminal state
-        condition_expression = (
-            "attribute_not_exists(#data.#childChunks.#chunkId.#status) OR "
-            "(#data.#childChunks.#chunkId.#status <> :completed AND #data.#childChunks.#chunkId.#status <> :failed)"
-        )
+        # Build condition expression that prevents updating terminal states
+        # We need to handle cases where intermediate paths might not exist
+        # Since we already validated transitions in Python above (lines 141-152),
+        # and we're using SET (not ADD/DELETE), the condition mainly protects against race conditions
+        # where another process might have updated the status between our read and write
 
-        result = table.update_item(
-            Key={"object_id": object_id},
-            UpdateExpression=update_expression,
-            ExpressionAttributeNames=expression_attribute_names,
-            ExpressionAttributeValues=expression_attribute_values,
-            ConditionExpression=condition_expression,
-            ReturnValues="UPDATED_NEW",
-        )
+        # Only add condition if we're updating an existing chunk (not creating)
+        # This avoids path validation issues when creating new chunks
+        if current_status is not None:
+            # Chunk exists - prevent updates to terminal states
+            # We know the full path exists since we just read the current_status
+            condition_expression = (
+                "#data.#childChunks.#chunkId.#status <> :completed AND "
+                "#data.#childChunks.#chunkId.#status <> :failed"
+            )
+            # Add the terminal state values to expression_attribute_values
+            expression_attribute_values[":completed"] = "completed"
+            expression_attribute_values[":failed"] = "failed"
+        else:
+            # Creating new chunk - condition should allow creation
+            # We can't use attribute_not_exists on nested paths that might not exist
+            # Since we validated the transition above and are using if_not_exists in SET,
+            # we skip the condition for new chunks to avoid path issues
+            condition_expression = None
+
+        # Build update_item parameters
+        update_params = {
+            "Key": {"object_id": object_id},
+            "UpdateExpression": update_expression,
+            "ExpressionAttributeNames": expression_attribute_names,
+            "ExpressionAttributeValues": expression_attribute_values,
+            "ReturnValues": "UPDATED_NEW",
+        }
+
+        # Only add ConditionExpression if we have one (not None)
+        if condition_expression is not None:
+            update_params["ConditionExpression"] = condition_expression
+
+        result = table.update_item(**update_params)
 
         logger.info(f"Successfully updated child chunk status: {result}")
         logger.info(
