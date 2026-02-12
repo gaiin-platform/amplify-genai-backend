@@ -263,30 +263,48 @@ def generate_openai_embeddings(content, account_data=None, document_key=None):
 
 
 def truncate_content_for_model(content, model_name, max_tokens):
-    """Truncate content to fit within model's token limit"""
+    """
+    Truncate content to fit within model's token limit.
+
+    Uses tiktoken for OpenAI models when available, otherwise uses character-based estimation.
+    Character estimation: ~3.5 chars per token (conservative for both OpenAI and Claude)
+    """
+    # Try tiktoken for OpenAI models first
     try:
         encoding = tiktoken.encoding_for_model(model_name)
         tokens = encoding.encode(content)
-        
+
         if len(tokens) <= max_tokens:
             return content
-        
+
         # Truncate to max_tokens and decode back to text
         truncated_tokens = tokens[:max_tokens]
         truncated_content = encoding.decode(truncated_tokens)
-        
+
         logger.warning(f"[TOKEN_LIMIT] Content truncated from {len(tokens)} to {max_tokens} tokens for model {model_name}")
         return truncated_content
-        
-    except Exception as e:
-        logger.error(f"[TOKEN_LIMIT] Error truncating content: {e}")
-        # Fallback: truncate by character count (rough estimate)
-        char_limit = max_tokens * 4  # Rough estimate of 4 chars per token
-        if len(content) > char_limit:
-            truncated = content[:char_limit]
-            logger.warning(f"[TOKEN_LIMIT] Fallback truncation from {len(content)} to {char_limit} characters")
-            return truncated
-        return content
+
+    except (KeyError, Exception) as e:
+        # tiktoken doesn't support this model (e.g., Claude, Bedrock models)
+        # Fall back to character-based estimation
+        logger.debug(f"[TOKEN_LIMIT] Using character estimation for {model_name}: {e}")
+
+        # Conservative estimate: 3.5 characters per token
+        # This works well for both English text and code across OpenAI and Claude
+        chars_per_token = 3.5
+        char_limit = int(max_tokens * chars_per_token)
+
+        if len(content) <= char_limit:
+            return content
+
+        # Truncate by characters
+        truncated = content[:char_limit]
+        estimated_tokens = int(len(content) / chars_per_token)
+        logger.warning(
+            f"[TOKEN_LIMIT] Character-based truncation for {model_name}: "
+            f"{len(content)} chars (~{estimated_tokens} tokens) -> {char_limit} chars (~{max_tokens} tokens)"
+        )
+        return truncated
 
 
 def generate_questions(content, account_data = None):
