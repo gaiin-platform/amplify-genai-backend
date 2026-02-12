@@ -17,7 +17,7 @@ from integrations.oauth_encryption import (
 from integrations.scopes import scopes
 from msal import ConfidentialClientApplication
 from pycommon.api.auth_admin import verify_user_as_admin
-
+from pycommon.api.secrets import store_secret_parameter
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SSMOperation
@@ -534,7 +534,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
 
     # Update the integrations map for this integration.
     integration_map[integration] = encrypt_oauth_data(credentials_data)
-    logger.debug("Updated integrations map: %s", integration_map)
+    # logger.debug("Umltkx %s", integration_map)
     timestamp = datetime.now(timezone.utc).isoformat()
     try:
         # Store (or update) the new record in DynamoDB.
