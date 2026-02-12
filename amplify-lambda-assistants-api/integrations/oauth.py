@@ -301,7 +301,18 @@ def get_user_credentials(current_user, integration):
             integration_map = record["integrations"]
             credentials = integration_map.get(integration)
             if credentials:
-                return decrypt_oauth_data(credentials)
+                decrypted_credentials = decrypt_oauth_data(credentials)
+
+                # Check if decryption failed
+                if decrypted_credentials is None:
+                    logger.error(
+                        "Failed to decrypt credentials for user %s and integration %s", current_user, integration
+                    )
+                    raise Exception(
+                        f"Failed to decrypt credentials for user {current_user} and integration {integration}"
+                    )
+
+                return decrypted_credentials
         raise MissingCredentialsError(
             f"No credentials found for user {current_user} and integration {integration}"
         )
