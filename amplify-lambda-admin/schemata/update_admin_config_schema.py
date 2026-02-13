@@ -531,18 +531,25 @@ update_admin_config_schema = {
                                 "const": "webSearchConfig"
                             },
                             "data": {
-                                "type": "object",
-                                "properties": {
-                                    "provider": {
-                                        "type": "string",
-                                        "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "provider": {
+                                                "type": "string",
+                                                "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                            },
+                                            "isEnabled": {"type": "boolean"},
+                                            "allowUserWebSearchKeys": {"type": "boolean"},
+                                            "api_key": {"type": "string"}
+                                        },
+                                        "required": [],
+                                        "additionalProperties": False
                                     },
-                                    "api_key": {"type": "string"},
-                                    "isEnabled": {"type": "boolean"},
-                                    "allowUserWebSearchKeys": {"type": "boolean"}
-                                },
-                                "required": ["provider"],
-                                "additionalProperties": False
+                                    {
+                                        "type": "null"
+                                    }
+                                ]
                             }
                         },
                         "required": ["type", "data"],
