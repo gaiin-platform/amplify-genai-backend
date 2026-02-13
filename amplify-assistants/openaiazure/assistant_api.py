@@ -950,13 +950,15 @@ def record_thread_usage(op_details, info):
                 model_id=model,  # "gpt-4o"
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                cached_tokens=0,
+                input_cached_tokens=0,
+                input_write_cached_tokens=0,
                 details={
                     "assistant_id": info["assistant_id"],
                     "thread_id": info["thread_id"],
                     "operation_type": op_details["type"]
                 }
             )
+            
             logger.debug(f"Token cost recorded: ${token_cost} for {input_tokens} input + {output_tokens} output tokens")
         except Exception as e:
             # Never let cost tracking break the main flow
