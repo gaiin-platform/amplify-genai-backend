@@ -46,12 +46,15 @@ export const chatBedrock = async (chatBody, writable) => {
         }
     }
     const imageSources =  !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
-    
+
     // Parallelize ALL processing for faster execution
     const client = getBedrockClient();  // Get client immediately (already cached)
     const combinedMessages = combineMessages(withoutSystemMessages, prompt || BLANK_MSG);
     const sanitizedMessages = await sanitizeMessages(combinedMessages, imageSources, currentModel, writable);
-    
+
+    // Declare input at function scope so it's available in catch block
+    let input = null;
+
     try {
         // Client already fetched in parallel above
         // Initiating call to Bedrock
@@ -75,10 +78,10 @@ export const chatBedrock = async (chatBody, writable) => {
             "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens,
         };
 
-        const input = { modelId: currentModel.id,
-                        messages: sanitizedMessages,
-                        inferenceConfig: inferenceConfigs,
-                        }
+        input = { modelId: currentModel.id,
+                  messages: sanitizedMessages,
+                  inferenceConfig: inferenceConfigs,
+                }
 
         if (process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION) {
             logger.info("Using Bedrock Guardrail with ID:", process.env.BEDROCK_GUARDRAIL_ID);
@@ -92,13 +95,20 @@ export const chatBedrock = async (chatBody, writable) => {
 
         if (isReasoningEnabled) {
             const budget_tokens = getBudgetTokens({options}, maxTokens);
-            input.additionalModelRequestFields={
-                "reasoning_config": {
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens
-                },
+
+            // Final validation: Bedrock strictly requires maxTokens > budget_tokens
+            if (budget_tokens >= maxTokens) {
+                logger.warn(`Extended thinking disabled: budget_tokens (${budget_tokens}) >= maxTokens (${maxTokens}). Bedrock requires maxTokens > budget_tokens.`);
+                // Disable reasoning to prevent ValidationException
+            } else {
+                input.additionalModelRequestFields={
+                    "reasoning_config": {
+                        "type": "enabled",
+                        "budget_tokens": budget_tokens
+                    },
+                }
+                logger.info(`Extended thinking enabled with temperature=1.0 (original: ${options.temperature}), budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
             }
-            logger.info(`Extended thinking enabled with temperature=1.0 (original: ${options.temperature}), budget_tokens=${budget_tokens}`);
         } else if (currentModel.supportsReasoning && disableReasoning) {
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
         }
@@ -205,6 +215,7 @@ export const chatBedrock = async (chatBody, writable) => {
                 httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
                 awsReason: error.$response?.reason || 'N/A',
                 awsMessage: error.$response?.message || 'N/A',
+                fullError: error,
                 errorCode: error.code || error.name || 'N/A',
                 hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
                 bedrockConfig: sanitizedInput,
