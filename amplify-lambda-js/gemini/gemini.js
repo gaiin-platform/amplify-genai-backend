@@ -196,7 +196,7 @@ export const chat = async (chatBody, writable) => {
             functionName: 'gemini_chat',
             errorType: 'GeminiAPIFailure',
             errorMessage: `Gemini API failed: ${error.message || "Unknown error"}`,
-            currentUser: options?.accountId || 'unknown',
+            currentUser: options?.user || options?.accountId || 'unknown',
             severity: 'HIGH',
             stackTrace: error.stack || '',
             context: {
@@ -211,7 +211,10 @@ export const chat = async (chatBody, writable) => {
                 requestConfig: sanitizedData
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
-        
+
+        // Mark error as already having critical logging to prevent duplicate logging in router
+        error.criticalErrorLogged = true;
+
         try {
             if (writable.writable && !writable.writableEnded) {
                 sendErrorMessage(writable, "Error with Gemini request: " + (error.message || "Unknown error"));

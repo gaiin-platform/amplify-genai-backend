@@ -295,7 +295,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             options: {
                 ...params.options,
                 model,
-                requestId
+                requestId,
+                user: params?.account?.user || params.user || "unknown"// Pass user for critical error logging
             }
         };
 

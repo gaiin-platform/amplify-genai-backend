@@ -27,21 +27,14 @@ export const translateModelToOpenAI = (modelId) => {
 export const translateDataToResponseBody = (data) => {
     // Clean messages for responses API format
     // The responses API doesn't support tool_calls, tool_call_id in the same way as chat completions
+    // Also, the responses API expects content to be an array of objects with type: 'input_text' or 'input_image'
     const messages = data.messages.map(msg => {
-        const cleaned = {
-            role: msg.role,
-            content: msg.content
-        };
-        // Include name if present
-        if (msg.name) cleaned.name = msg.name;
+        let content = msg.content;
 
         // Convert tool messages to a format the responses API can understand
         // Tool results need to be converted to user messages with context
         if (msg.role === 'tool' && msg.tool_call_id) {
-            return {
-                role: 'user',
-                content: `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`
-            };
+            content = `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`;
         }
 
         // For assistant messages with tool_calls, include the tool call info in content
@@ -49,11 +42,33 @@ export const translateDataToResponseBody = (data) => {
             const toolCallInfo = msg.tool_calls.map(tc =>
                 `[Called tool: ${tc.function?.name || tc.name} with args: ${tc.function?.arguments || JSON.stringify(tc.arguments)}]`
             ).join('\n');
-            return {
-                role: 'assistant',
-                content: (msg.content || '') + '\n' + toolCallInfo
-            };
+            content = (msg.content || '') + '\n' + toolCallInfo;
         }
+
+        // Format content for responses API
+        // If content is already an array (with images), keep it
+        // Otherwise, wrap string content with the appropriate type based on role
+        // User/system messages use 'input_text', assistant messages use 'output_text'
+        const contentType = msg.role === 'assistant' ? 'output_text' : 'input_text';
+        const formattedContent = Array.isArray(content)
+            ? content.map(item => {
+                // If item already has type, use it; otherwise use role-appropriate type
+                if (item.type === 'text') {
+                    return { type: contentType, text: item.text };
+                } else if (item.type === 'image_url') {
+                    return { type: 'input_image', source: { type: 'url', url: item.image_url.url } };
+                }
+                return item; // Already formatted
+              })
+            : [{ type: contentType, text: content || '' }];
+
+        const cleaned = {
+            role: msg.role === 'tool' ? 'user' : msg.role, // Tool role becomes user
+            content: formattedContent
+        };
+
+        // Include name if present
+        if (msg.name) cleaned.name = msg.name;
 
         return cleaned;
     });
@@ -144,6 +159,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
+    // Capture webSearchEnabled before deleting it
+    const webSearchEnabled = data.webSearchEnabled;
     if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
     const config = await endpointProvider(modelId, model.provider);
@@ -236,9 +253,24 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     // 2. No custom tools are present (responses API doesn't support function calling properly)
     if (!isCompletionEndpoint && !hasTools) {
         data = translateDataToResponseBody(data);
-        // if contains a url the
-        if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
+        // if contains a url AND web search is enabled, add web search tool and convert to chat completions
+        // (responses API doesn't support tools)
+        if (isOpenAiEndpoint && webSearchEnabled && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
+            // Convert back from responses API format to chat completions format
+            data.messages = data.input;
+            data.max_tokens = data.max_output_tokens;
+            delete data.input;
+            delete data.max_output_tokens;
+            // Convert reasoning format from responses API to chat completions
+            if (data.reasoning && typeof data.reasoning === 'object' && data.reasoning.effort) {
+                data.reasoning_effort = data.reasoning.effort;
+                delete data.reasoning;
+            }
+            // Convert URL to chat completions endpoint
+            url = url.replace('/responses', '/chat/completions');
+            isCompletionEndpoint = true;
+            logger.info(`🔧 Converted to chat completions endpoint for web search tool: ${url}`);
         }
     }
 
@@ -255,13 +287,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         return new Promise((resolve, reject) => {
             // Use a copy of data for this attempt
             let requestData = {...data};
-            
+
             // If retrying, remove tools
             if (retryWithoutTools && requestData.tools) {
                 delete requestData.tools;
                 // Retrying request without tools
             }
-            
+
             axios({
                 data: requestData,
                 headers: headers,
@@ -366,12 +398,12 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     const sanitizedRequestData = { ...requestData };
                     delete sanitizedRequestData.messages;
                     delete sanitizedRequestData.input;
-                    
+
                     logCriticalError({
                         functionName: 'openai_streamAxiosResponseToWritable',
                         errorType: 'OpenAIAPIFailure',
                         errorMessage: `OpenAI/Azure API failed: ${e.message || "Unknown error"}`,
-                        currentUser: 'unknown', // No user context in this function
+                        currentUser: options?.user || 'unknown',
                         severity: 'HIGH',
                         stackTrace: e.stack || '',
                         context: {
@@ -387,8 +419,12 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             requestConfig: sanitizedRequestData
                         }
                     }).catch(err => logger.error('Failed to log critical error:', err));
-                    
+
+                    // Mark error as already having critical logging to prevent duplicate logging in router
+                    e.criticalErrorLogged = true;
+
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
+
                     if (e.response && e.response.data) {
                         logger.error("Error invoking OpenAI API:", e.response.statusText);
 
@@ -400,13 +436,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             });
                             e.response.data.on('end', () => {
                                 logger.error("Error data from OpenAI API:", errorData);
-                                reject(errorData);
+                                reject(e);
                                 return;
                             });
                         }
                     }
                     logger.error("Error invoking OpenAI API:", e.message);
-                    reject(e.message);
+                    reject(e);
                 });
         });
     }
@@ -520,4 +556,3 @@ async function includeImageSources(dataSources, messages, model, responseStream,
 }
 
 
-// Status messages removed for better performance - let the actual response be the indication
