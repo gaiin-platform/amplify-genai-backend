@@ -144,7 +144,8 @@ export const isDocument = ds =>
     (ds && ds.id && ds.id.indexOf("://") < 0) ||
     (ds && ds.key && ds.key.indexOf("://") < 0) ||
     (ds && ds.id && ds.id.startsWith("s3://")) ||
-    (ds && ds.key && ds.key.startsWith("s3://"));
+    (ds && ds.key && ds.key.startsWith("s3://")) ||
+    (ds && ds.id && ds.id.startsWith("bedrock-kb://"));
 
 
 export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
@@ -474,7 +475,8 @@ export const resolveDataSources = async (params, body, dataSources) => {
     ]
 
     const nonUserSources = allDataSources.filter(ds =>
-        !extractKey(ds.id).startsWith(params.user + "/")
+        !extractKey(ds.id).startsWith(params.user + "/") &&
+        !ds.id.startsWith("bedrock-kb://")
     );
 
     if (nonUserSources && nonUserSources.length > 0  || 
@@ -689,6 +691,11 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
         let key = ds.id;
 
         try {
+            // Bedrock KB sources don't need hash translation
+            if (key.startsWith("bedrock-kb://")) {
+                return ds;
+            }
+
             if (key.startsWith("s3://")) {
                 key = extractKey(key);
             }

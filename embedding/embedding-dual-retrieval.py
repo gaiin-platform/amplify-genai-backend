@@ -21,6 +21,8 @@ from shared_functions import generate_embeddings
 import boto3
 import asyncio
 from boto3.dynamodb.conditions import Key
+
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime")
 from pycommon.api.ops import api_tool
 from pycommon.api.amplify_groups import verify_user_in_amp_group
 from datetime import datetime, timezone
@@ -616,6 +618,76 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     return accessible_src_ids, access_denied_src_ids
 
 
+def retrieve_from_bedrock_kb(knowledge_base_id, query_text, limit=10):
+    """Retrieve relevant documents from a Bedrock Knowledge Base.
+
+    Args:
+        knowledge_base_id (str): The Bedrock Knowledge Base ID.
+        query_text (str): The user query to search for.
+        limit (int): Maximum number of results to return.
+
+    Returns:
+        list: List of result tuples matching the PostgreSQL retrieval format:
+              (content, src, locations, orig_indexes, char_index, token_count, id, score)
+    """
+    try:
+        response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={"text": query_text},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {
+                    "numberOfResults": limit,
+                }
+            },
+        )
+        results = []
+        for i, result in enumerate(response.get("retrievalResults", [])):
+            content = result.get("content", {}).get("text", "")
+            score = float(result.get("score", 0.0))
+            location = result.get("location", {})
+            source_uri = location.get("s3Location", {}).get("uri", "") or location.get("type", "")
+            # Format as tuple matching PostgreSQL result format:
+            # (content, src, locations, orig_indexes, char_index, token_count, id, score)
+            # locations must be an array of objects for the JS createSuperset() function
+            results.append((
+                content,                                    # content
+                f"bedrock-kb://{knowledge_base_id}",        # src (key)
+                [{"source": source_uri}],                   # locations (array of objects)
+                [],                                         # orig_indexes
+                0,                                          # char_index
+                len(content.split()),                       # token_count (approximate)
+                f"bedrock-kb-{knowledge_base_id}-{i}",      # id
+                score,                                      # score/distance
+            ))
+        logger.info(f"Retrieved {len(results)} results from Bedrock KB {knowledge_base_id}")
+        return results
+    except Exception as e:
+        logger.error(f"Error retrieving from Bedrock KB {knowledge_base_id}: {e}")
+        return []
+
+
+async def retrieve_from_all_bedrock_kbs(bedrock_kb_ids, query_text, limit=10):
+    """Retrieve from multiple Bedrock Knowledge Bases in parallel.
+
+    Args:
+        bedrock_kb_ids (list): List of Knowledge Base IDs.
+        query_text (str): The user query.
+        limit (int): Max results per KB.
+
+    Returns:
+        list: Combined results from all KBs.
+    """
+    tasks = [
+        asyncio.to_thread(retrieve_from_bedrock_kb, kb_id, query_text, limit)
+        for kb_id in bedrock_kb_ids
+    ]
+    results_per_kb = await asyncio.gather(*tasks)
+    combined = []
+    for results in results_per_kb:
+        combined.extend(results)
+    return combined
+
+
 @api_tool(
     path="/embedding-dual-retrieval",
     name="retrieveEmbeddings",
@@ -734,6 +806,22 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     raw_ast_src_ids = data.get("astDataSources", {})
     limit = data.get("limit", 10)
 
+    # Separate Bedrock KB datasources from standard datasources
+    bedrock_kb_ids = []
+    filtered_raw_src_ids = []
+    for src in raw_src_ids:
+        src_id = src if isinstance(src, str) else src.get("id", "")
+        if src_id.startswith("bedrock-kb://"):
+            kb_id = src_id.split("bedrock-kb://")[1]
+            if kb_id and kb_id not in bedrock_kb_ids:
+                bedrock_kb_ids.append(kb_id)
+        else:
+            filtered_raw_src_ids.append(src)
+    raw_src_ids = filtered_raw_src_ids
+
+    if bedrock_kb_ids:
+        logger.info(f"Found {len(bedrock_kb_ids)} Bedrock KB datasources: {bedrock_kb_ids}")
+
     # Run all permission checks in parallel - only run what's needed
     tasks = []
     results_map = {}
@@ -758,7 +846,7 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
     # CRITICAL: Check if we have any accessible sources before proceeding
-    if not src_ids:
+    if not src_ids and not bedrock_kb_ids:
         logger.error(f"[NO_ACCESSIBLE_SOURCES] No accessible sources after permission checks")
         logger.error(f"Raw sources provided: individual={len(raw_src_ids)}, groups={len(raw_group_src_ids)}, ast={len(raw_ast_src_ids)}")
 
@@ -785,6 +873,17 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
                 "total_sources_requested": len(raw_src_ids) + sum(len(v) for v in raw_group_src_ids.values()) + sum(len(v) for v in raw_ast_src_ids.values()),
                 "accessible_sources": 0
             }
+        }
+
+    # If only Bedrock KB sources exist (no standard sources), skip the embedding pipeline
+    if not src_ids and bedrock_kb_ids:
+        logger.info(f"Only Bedrock KB sources present, skipping standard embedding pipeline")
+        bedrock_kb_results = await retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit)
+        return {
+            "result": bedrock_kb_results,
+            "documents_processed": len(bedrock_kb_ids),
+            "results_returned": len(bedrock_kb_results),
+            "bedrock_kb_ids": bedrock_kb_ids,
         }
 
     # Advanced polling strategy with exponential backoff and early termination
@@ -885,6 +984,20 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     # CRITICAL: Verify we still have sources after polling loop
     if not src_ids:
+        # If Bedrock KB sources exist, fall back to KB-only retrieval
+        if bedrock_kb_ids:
+            logger.info(f"Standard sources failed but Bedrock KB sources available, falling back to KB-only retrieval")
+            bedrock_kb_results = await retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit)
+            return {
+                "result": bedrock_kb_results,
+                "documents_processed": len(bedrock_kb_ids),
+                "results_returned": len(bedrock_kb_results),
+                "bedrock_kb_ids": bedrock_kb_ids,
+                "warning": f"All standard data sources failed. Results from Bedrock KB only.",
+                "failed_documents": failed_documents,
+                "total_failed": len(failed_documents),
+            }
+
         logger.error(f"[NO_SOURCES_AFTER_POLLING] All sources were removed during polling loop")
         logger.error(f"Failed documents: {failed_documents}")
 
@@ -971,14 +1084,23 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     def get_similar_qas():
         return get_top_similar_qas(embeddings, src_ids, limit)
 
-    # Execute both retrieval operations in parallel
-    related_docs, related_qas = await asyncio.gather(
+    # Execute retrieval operations in parallel (including Bedrock KB if present)
+    retrieval_tasks = [
         asyncio.to_thread(get_similar_docs),
-        asyncio.to_thread(get_similar_qas)
-    )
-    
+        asyncio.to_thread(get_similar_qas),
+    ]
+    if bedrock_kb_ids:
+        retrieval_tasks.append(retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit))
+
+    retrieval_results = await asyncio.gather(*retrieval_tasks)
+
+    related_docs = retrieval_results[0]
+    related_qas = retrieval_results[1]
+    bedrock_kb_results = retrieval_results[2] if bedrock_kb_ids else []
+
     # Combine results
     related_docs.extend(related_qas)
+    related_docs.extend(bedrock_kb_results)
 
     logger.info(f"Retrieved {len(related_docs)} related documents/QAs")
 
@@ -1007,9 +1129,13 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     # Build response
     response = {
         "result": related_docs,
-        "documents_processed": len(src_ids),
+        "documents_processed": len(src_ids) + len(bedrock_kb_ids),
         "results_returned": len(related_docs)
     }
+
+    if bedrock_kb_ids:
+        response["bedrock_kb_ids"] = bedrock_kb_ids
+        response["bedrock_kb_results_count"] = len(bedrock_kb_results)
     
     # Add warning about failed documents if any
     if failed_documents:

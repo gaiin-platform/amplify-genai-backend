@@ -41,4 +41,5 @@ permissions_by_state_type = {
     "/embedding/check-completion": {"embeddings-check": can_retrieve},
     "/embedding/register_ops": {"register_ops": can_retrieve},
     "/embedding/status": {"get_status": can_retrieve},
+    "/bedrock-kb/download": {"bedrock-kb-download": can_retrieve},
 }

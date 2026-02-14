@@ -198,6 +198,7 @@ def get_data_source_details(data_sources):
     ]  # Get the table name from the environment variable
     dynamodb = boto3.resource("dynamodb")
     data_source_ids = []
+    bedrock_kb_sources = []
 
     for data_source in data_sources:
         id = None
@@ -207,6 +208,10 @@ def get_data_source_details(data_sources):
             id = data_source["id"]
 
         if id:
+            # Pass through Bedrock KB datasources without DynamoDB lookup
+            if id.startswith("bedrock-kb://"):
+                bedrock_kb_sources.append(data_source if isinstance(data_source, dict) else {"id": id, "type": "bedrock/knowledge-base"})
+                continue
             if id.startswith("s3://"):
                 id = id.split("s3://")[1]
             data_source_ids.append(id)
@@ -254,7 +259,7 @@ def get_data_source_details(data_sources):
     # Convert any Decimal objects to regular Python types
     formatted_sources = convert_decimal(formatted_sources)
 
-    return formatted_sources
+    return formatted_sources + bedrock_kb_sources
 
 
 def validate_assistant_id(assistant_id, access_token):

@@ -720,3 +720,9 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - bedrock:GetKnowledgeBase
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
