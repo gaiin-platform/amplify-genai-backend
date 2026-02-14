@@ -206,7 +206,7 @@ export const chatBedrock = async (chatBody, writable) => {
             functionName: 'chatBedrock',
             errorType: 'BedrockAPIFailure',
             errorMessage: `Bedrock API failed: ${error.message || error.$response?.message || "Unknown error"}`,
-            currentUser: options?.accountId || 'unknown',
+            currentUser: options?.user || options?.accountId || 'unknown',
             severity: 'HIGH',
             stackTrace: error.stack || '',
             context: {
@@ -222,8 +222,12 @@ export const chatBedrock = async (chatBody, writable) => {
                 hasToolContent: hasToolContent || false,
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
-        
+
+        // Mark error as already having critical logging to prevent duplicate logging in router
+        error.criticalErrorLogged = true;
+
         sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
+        throw error;
     }
 }
 

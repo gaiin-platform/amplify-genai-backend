@@ -411,8 +411,9 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 logger.error(`Request processing failed for user ${params.user}:`, error);
 
                 // CRITICAL: Assistant handler failure = user cannot get LLM response
-                // Skip critical error logging in local development
-                if (!isLocal) {
+                // Skip critical error logging in local development OR if provider already logged it
+                // Check if error was already logged by provider (OpenAI/Bedrock/Gemini)
+                if (!isLocal && !error.criticalErrorLogged) {
                     await logCriticalError({
                         functionName: 'routeRequest_assistantHandler',
                         errorType: 'AssistantHandlerFailure',
@@ -431,6 +432,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                             api_accessed: options?.api_accessed || false
                         }
                     });
+                } else if (error.criticalErrorLogged) {
+                    logger.info('Skipping router critical error logging - provider already logged it');
                 }
                 
                 // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
