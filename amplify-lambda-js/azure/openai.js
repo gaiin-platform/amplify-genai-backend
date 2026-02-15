@@ -159,8 +159,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
-    // Capture webSearchEnabled before deleting it
-    const webSearchEnabled = data.webSearchEnabled;
     if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
     const config = await endpointProvider(modelId, model.provider);
@@ -253,24 +251,11 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     // 2. No custom tools are present (responses API doesn't support function calling properly)
     if (!isCompletionEndpoint && !hasTools) {
         data = translateDataToResponseBody(data);
-        // if contains a url AND web search is enabled, add web search tool and convert to chat completions
-        // (responses API doesn't support tools)
-        if (isOpenAiEndpoint && webSearchEnabled && containsUrlQuery(data.input)) {
+        // For OpenAI provider only: add native web_search_preview tool when search intent detected
+        // Azure provider uses custom web_search function tool from toolLoop instead (controlled by webSearchEnabled)
+        // Note: web_search_preview works directly with Responses API - no need to convert to chat/completions
+        if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
-            // Convert back from responses API format to chat completions format
-            data.messages = data.input;
-            data.max_tokens = data.max_output_tokens;
-            delete data.input;
-            delete data.max_output_tokens;
-            // Convert reasoning format from responses API to chat completions
-            if (data.reasoning && typeof data.reasoning === 'object' && data.reasoning.effort) {
-                data.reasoning_effort = data.reasoning.effort;
-                delete data.reasoning;
-            }
-            // Convert URL to chat completions endpoint
-            url = url.replace('/responses', '/chat/completions');
-            isCompletionEndpoint = true;
-            logger.info(`🔧 Converted to chat completions endpoint for web search tool: ${url}`);
         }
     }
 
@@ -453,44 +438,76 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 const containsUrlQuery = (messages) => {
     if (!Array.isArray(messages)) return false;
 
+    // Check for actual URLs in text
     const isLikelyUrl = (text) => {
         if (typeof text !== 'string' || text.length === 0) return false;
         if (/^data:/i.test(text)) return false;
-        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:\/[^^\s<>"'()]*)?)/i;
+        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+/i;
         return urlPattern.test(text);
     };
 
+    // Keywords that suggest user wants to search the web (expanded list)
+    const searchKeywords = [
+        'search', 'lookup', 'look up', 'find out', 'research',
+        'latest', 'recent', 'current', 'today', 'yesterday', 'this week', 'this month', 'this year',
+        'news', 'update', 'updates', 'happening',
+        'what is', 'what are', 'what was', 'what were',
+        'who is', 'who are', 'who was', 'who were',
+        'when did', 'when was', 'when is', 'when are',
+        'where is', 'where are', 'where was', 'where were',
+        'how much', 'how many', 'how do', 'how does', 'how did', 'how to',
+        'tell me about', 'information about', 'learn about', 'explain',
+        'google', 'browse', 'look online', 'check online',
+        'weather', 'stock', 'price', 'score', 'results'
+    ];
+
+    const containsSearchIntent = (text) => {
+        if (typeof text !== 'string' || text.length === 0) return false;
+        const lowerText = text.toLowerCase();
+        return searchKeywords.some(keyword => lowerText.includes(keyword));
+    };
+
     let hasUrl = false;
+    let hasSearchIntent = false;
     let hasImageOnly = false;
 
     messages.forEach((message) => {
+        // Only check user messages for search intent
+        if (message.role !== 'user') return;
+
         const content = message && message.content;
         if (typeof content === 'string') {
             if (isLikelyUrl(content)) hasUrl = true;
+            if (containsSearchIntent(content)) hasSearchIntent = true;
         }
         if (Array.isArray(content)) {
             let hasTextUrl = false;
+            let hasSearchText = false;
             let hasImage = false;
-            
+
             content.forEach((part) => {
                 if (!part) return;
-                if (typeof part === 'string' && isLikelyUrl(part)) {
-                    hasTextUrl = true;
+                if (typeof part === 'string') {
+                    if (isLikelyUrl(part)) hasTextUrl = true;
+                    if (containsSearchIntent(part)) hasSearchText = true;
                 }
                 if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
                     if (isLikelyUrl(part.text)) hasTextUrl = true;
+                    if (containsSearchIntent(part.text)) hasSearchText = true;
                 }
                 if (part.type === 'image' || part.type === 'input_image' || part.type === 'image_url') {
                     hasImage = true;
                 }
             });
-            
+
             if (hasTextUrl) hasUrl = true;
-            if (hasImage && !hasTextUrl) hasImageOnly = true;
+            if (hasSearchText) hasSearchIntent = true;
+            if (hasImage && !hasTextUrl && !hasSearchText) hasImageOnly = true;
         }
     });
 
-    return hasUrl && !hasImageOnly;
+    // Return true if has URL or search intent, but not if image-only query
+    return (hasUrl || hasSearchIntent) && !hasImageOnly;
 }
 
 async function includeImageSources(dataSources, messages, model, responseStream, isNonStandardOpenAI = false) {
