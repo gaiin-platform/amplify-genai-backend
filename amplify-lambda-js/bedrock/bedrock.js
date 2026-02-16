@@ -54,6 +54,8 @@ export const chatBedrock = async (chatBody, writable) => {
 
     // Declare input at function scope so it's available in catch block
     let input = null;
+    // Declare hasToolRelatedContent at function scope so it's available in catch block for error logging
+    let hasToolRelatedContent = false;
 
     try {
         // Client already fetched in parallel above
@@ -129,7 +131,7 @@ export const chatBedrock = async (chatBody, writable) => {
 
         // Check if messages contain tool-related content (toolUse or toolResult)
         // Bedrock requires toolConfig to be present whenever tool blocks exist in conversation history
-        const hasToolRelatedContent = sanitizedMessages.some(msg =>
+        hasToolRelatedContent = sanitizedMessages.some(msg =>
             msg.content && Array.isArray(msg.content) &&
             msg.content.some(block => block.toolUse || block.toolResult)
         );
@@ -219,7 +221,7 @@ export const chatBedrock = async (chatBody, writable) => {
                 errorCode: error.code || error.name || 'N/A',
                 hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
                 bedrockConfig: sanitizedInput,
-                hasToolContent: hasToolContent || false,
+                hasToolContent: hasToolRelatedContent || false,
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
 
