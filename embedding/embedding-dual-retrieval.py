@@ -764,7 +764,7 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
         log_critical_error(
             function_name="_async_process_input_with_dual_retrieval_no_access",
-            error_type="NoAccessibleDataSources",
+            error_type=f"NoAccessibleDataSources {raw_ast_src_ids or raw_group_src_ids or raw_src_ids}",
             error_message=f"User has no access to any of the provided data sources",
             current_user=current_user,
             severity=SEVERITY_HIGH,
