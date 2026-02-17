@@ -52,9 +52,13 @@ export const translateDataToResponseBody = (data) => {
         const contentType = msg.role === 'assistant' ? 'output_text' : 'input_text';
         const formattedContent = Array.isArray(content)
             ? content.map(item => {
-                // If item already has type, use it; otherwise use role-appropriate type
+                // Handle all content type conversions for Responses API
                 if (item.type === 'text') {
+                    // Convert 'text' to role-appropriate type
                     return { type: contentType, text: item.text };
+                } else if (item.type === 'input_text' || item.type === 'output_text') {
+                    // Already in Responses API format, return as-is
+                    return item;
                 } else if (item.type === 'image_url') {
                     // Handle both formats: object {url, detail} or string
                     // Chat completions uses: { type: 'image_url', image_url: {url: '...', detail: 'high'} }
@@ -66,8 +70,11 @@ export const translateDataToResponseBody = (data) => {
                 } else if (item.type === 'input_image') {
                     // Already in Responses API format, return as-is
                     return item;
+                } else {
+                    // Unknown type - treat as text and log warning
+                    logger.warn(`Unknown content type '${item.type}' converted to ${contentType}`);
+                    return { type: contentType, text: item.text || JSON.stringify(item) };
                 }
-                return item; // Already formatted
               })
             : [{ type: contentType, text: content || '' }];
 
@@ -375,7 +382,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     
                     
                 })
-                .catch((e)=>{
+                .catch(async (e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
 
                     // If we have tools and haven't already retried, try again without tools
@@ -396,34 +403,52 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         }
                     }
 
-                    // CRITICAL: OpenAI/Azure API failure - capture full axios error details
-                    const sanitizedRequestData = { ...requestData };
-                    delete sanitizedRequestData.messages;
-                    delete sanitizedRequestData.input;
+                    // Helper function to log critical error with full details
+                    const logApiError = async (errorDetails = null) => {
+                        const sanitizedRequestData = { ...requestData };
+                        delete sanitizedRequestData.messages;
+                        delete sanitizedRequestData.input;
 
-                    logCriticalError({
-                        functionName: 'openai_streamAxiosResponseToWritable',
-                        errorType: 'OpenAIAPIFailure',
-                        errorMessage: `OpenAI/Azure API failed: ${e.message || "Unknown error"}`,
-                        currentUser: options?.user || 'unknown',
-                        severity: 'HIGH',
-                        stackTrace: e.stack || '',
-                        context: {
-                            httpStatus: e.response?.status || 'N/A',
-                            httpStatusText: e.response?.statusText || 'N/A',
-                            apiError: e.response?.data?.error || 'N/A',
-                            apiErrorMessage: e.response?.data?.error?.message || 'N/A',
-                            errorCode: e.code || 'N/A',
-                            url: url || 'unknown',
-                            modelId: data?.model || 'unknown',
-                            hasTools: !!(data?.tools && data.tools.length > 0),
-                            isRetry: !!retryWithoutTools,
-                            requestConfig: sanitizedRequestData
+                        // Parse error details if it's a string
+                        let apiError = errorDetails;
+                        let apiErrorMessage = 'N/A';
+
+                        if (typeof errorDetails === 'string') {
+                            try {
+                                const parsed = JSON.parse(errorDetails);
+                                apiError = parsed.error || parsed;
+                                apiErrorMessage = parsed.error?.message || parsed.message || errorDetails;
+                            } catch {
+                                apiErrorMessage = errorDetails;
+                            }
+                        } else if (errorDetails) {
+                            apiErrorMessage = errorDetails.error?.message || errorDetails.message || 'N/A';
                         }
-                    }).catch(err => logger.error('Failed to log critical error:', err));
 
-                    // Mark error as already having critical logging to prevent duplicate logging in router
-                    e.criticalErrorLogged = true;
+                        await logCriticalError({
+                            functionName: 'openai_streamAxiosResponseToWritable',
+                            errorType: 'OpenAIAPIFailure',
+                            errorMessage: `OpenAI/Azure API failed: ${apiErrorMessage}`,
+                            currentUser: options?.user || 'unknown',
+                            severity: 'HIGH',
+                            stackTrace: e.stack || '',
+                            context: {
+                                httpStatus: e.response?.status || 'N/A',
+                                httpStatusText: e.response?.statusText || 'N/A',
+                                apiError: apiError || e.response?.data?.error || 'N/A',
+                                apiErrorMessage: apiErrorMessage,
+                                errorCode: e.code || 'N/A',
+                                url: url || 'unknown',
+                                modelId: data?.model || 'unknown',
+                                hasTools: !!(data?.tools && data.tools.length > 0),
+                                isRetry: !!retryWithoutTools,
+                                requestConfig: sanitizedRequestData
+                            }
+                        }).catch(err => logger.error('Failed to log critical error:', err));
+
+                        // Mark error as already having critical logging to prevent duplicate logging in router
+                        e.criticalErrorLogged = true;
+                    };
 
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
 
@@ -433,16 +458,49 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         if (e.response.data.readable) {
                             // Stream the data to a variable or process it as it comes
                             let errorData = '';
+                            let streamEnded = false;
+
                             e.response.data.on('data', (chunk) => {
                                 errorData += chunk;
                             });
-                            e.response.data.on('end', () => {
+
+                            e.response.data.on('end', async () => {
+                                if (streamEnded) return; // Prevent double processing
+                                streamEnded = true;
+
                                 logger.error("Error data from OpenAI API:", errorData);
+                                // Log critical error with the full error data
+                                await logApiError(errorData || null);
                                 reject(e);
-                                return;
                             });
+
+                            e.response.data.on('error', async (streamErr) => {
+                                if (streamEnded) return; // Prevent double processing
+                                streamEnded = true;
+
+                                logger.error("Error reading error stream:", streamErr);
+                                // Log with whatever we have, even if incomplete
+                                await logApiError(errorData || null);
+                                reject(e);
+                            });
+
+                            return; // Don't continue, wait for stream to finish or error
+                        } else if (typeof e.response.data === 'object') {
+                            // Data is already an object
+                            await logApiError(e.response.data);
+                        } else if (typeof e.response.data === 'string') {
+                            // Data is a string
+                            await logApiError(e.response.data);
+                        } else {
+                            // Unknown data type
+                            logger.warn("Unknown error data type:", typeof e.response.data);
+                            await logApiError();
                         }
+                    } else {
+                        // No response data at all
+                        await logApiError();
                     }
+
                     logger.error("Error invoking OpenAI API:", e.message);
                     reject(e);
                 });
