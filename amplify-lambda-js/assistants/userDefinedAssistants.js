@@ -594,6 +594,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             if (assistant.data && assistant.data.trackConversations) {
                 body.options.trackConversations = true;
+                logger.info('✅ [User Defined Assistant] Set trackConversations=true for assistant:', assistant.name);
             }
 
             const instructions = await fillInTemplate(

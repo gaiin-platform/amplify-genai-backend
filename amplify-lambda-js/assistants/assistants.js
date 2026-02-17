@@ -99,9 +99,19 @@ const defaultAssistant = {
                 // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
                 const enhancedParams = params.preResolvedDataSourcesByUse ? {
                     ...params,
+                    options: {
+                        ...params.options,
+                        ...body.options  // Merge body.options to include trackConversations and other flags
+                    },
                     preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
-                } : params;
-                
+                } : {
+                    ...params,
+                    options: {
+                        ...params.options,
+                        ...body.options  // Merge body.options to include trackConversations and other flags
+                    }
+                };
+
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
                 return chatWithDataStateless(enhancedParams, model, bodyWithImages, dataSources, responseStream);

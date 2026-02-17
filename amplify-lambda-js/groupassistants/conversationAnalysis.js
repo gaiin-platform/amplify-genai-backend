@@ -353,6 +353,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
             // Validate and parse the response
             let analysis = null;
             if (analysisResult && analysisResult.systemRating) {
+                logger.debug("System rating received from analysis:", analysisResult.systemRating);
                 try {
                     const systemRating = parseInt(analysisResult.systemRating);
                     if (!isNaN(systemRating) && systemRating >= 1 && systemRating <= 5) {
@@ -471,14 +472,15 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
  */
 export async function queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
     try {
-        logger.info("Conversation analysis with async queueing initiated");
 
         const queueUrl = process.env.CONVERSATION_ANALYSIS_QUEUE_URL;
-        
+
         if (!queueUrl) {
-            logger.error("CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
+            logger.error("❌ CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
             return false;
         }
+
+        logger.info("📮 Queue URL found, preparing message:", { queueUrl });
         
         const messageBody = {
             chatRequest,
@@ -507,9 +509,10 @@ export async function queueConversationAnalysis(chatRequest, llmResponse, accoun
             }
         });
         
+        logger.info("📤 Sending message to SQS...");
         const result = await sqsClient.send(command);
-        
-        logger.debug('Successfully queued conversation analysis', {
+
+        logger.info('✅ Successfully queued conversation analysis', {
             messageId: result.MessageId,
             conversationId: chatRequest?.options?.conversationId,
             assistantId: chatRequest?.options?.assistantId,
@@ -572,7 +575,7 @@ export async function queueConversationAnalysisWithFallback(chatRequest, llmResp
  * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
  */
 // Wrap with trackExecution for automatic usage tracking
-export const sqsProcessorHandler = trackExecution(async (event, context) => {
+export const sqsProcessorHandler = trackExecution("conversation_analysis", "system", "system")(async (event, context) => {
     const startTime = Date.now();
     logger.info('🚀 Starting SQS conversation analysis processing', { 
         recordCount: event.Records?.length,
