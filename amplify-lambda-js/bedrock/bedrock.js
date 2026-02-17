@@ -85,6 +85,12 @@ export const chatBedrock = async (chatBody, writable) => {
                   inferenceConfig: inferenceConfigs,
                 }
 
+        // Add structured output configuration if provided
+        if (body.outputConfig) {
+            input.outputConfig = body.outputConfig;
+            logger.info('\u2705 [Bedrock] Added native structured output configuration');
+        }
+
         if (process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION) {
             logger.info("Using Bedrock Guardrail with ID:", process.env.BEDROCK_GUARDRAIL_ID);
             // Using guardrail

@@ -83,6 +83,8 @@ Where:
  - newTopic: Specify the title of the new topic if isNewTopic is true. This should be a concise title of no more than 6 words.
  - currentTopicDescription: Provide a 1-3 line description of the conversation history you received, specifically those messages that fall under "Current Topic", helping to clarify the context or main idea. Applicable only if isNewTopic is true. If current topic is 'NO CURRENT TOPIC' then omit currentTopicDescription
 
+CRITICAL: If currentTopic is "NO CURRENT TOPIC", this means no topic has been established yet. You MUST set isNewTopic=true and provide a newTopic based on what the conversation is about. This establishes the initial topic for tracking.
+
 Example Valid Responses:
 
 Example 1 (Introducing a New Topic):
@@ -584,7 +586,8 @@ const parseTopicEvaluation = (response, currentTopic, currentTopicStart, current
         return undefined;
     }
 
-    const isNewTopicMatch = response.match(/isNewTopic=\{(true|false)\}/);
+    // Handle both formats: isNewTopic={true} and isNewTopic=true
+    const isNewTopicMatch = response.match(/isNewTopic=\{?(true|false)\}?/);
     const isNewTopic = isNewTopicMatch ? isNewTopicMatch[1] === 'true' : false;
 
     logger.debug("🔍 [parseTopicEvaluation] Parsing:", {
@@ -594,11 +597,12 @@ const parseTopicEvaluation = (response, currentTopic, currentTopicStart, current
 
     if (isNewTopic) {
         const topicData = { currentTopic: '' };
-        const newTopicMatch = response.match(/newTopic=\{([^}]+)\}/);
-        const topicDescriptionMatch = response.match(/currentTopicDescription=\{([^}]+)\}/);
+        // Handle both formats: newTopic={value} and newTopic=value
+        const newTopicMatch = response.match(/newTopic=\{([^}]+)\}/) || response.match(/newTopic=([^\n\/]+)/);
+        const topicDescriptionMatch = response.match(/currentTopicDescription=\{([^}]+)\}/) || response.match(/currentTopicDescription=([^\n\/]+)/);
 
-        const newTopic = newTopicMatch ? newTopicMatch[1] : null;
-        const topicDescription = topicDescriptionMatch ? topicDescriptionMatch[1] : null;
+        const newTopic = newTopicMatch ? newTopicMatch[1].trim() : null;
+        const topicDescription = topicDescriptionMatch ? topicDescriptionMatch[1].trim() : null;
 
         logger.debug("🔍 [parseTopicEvaluation] Extracted:", {
             newTopic,
@@ -1091,7 +1095,8 @@ export const processSmartMessages = async ({
         const result = {
             filteredMessages,
             metadata: {
-                processed: true  // Only field actually used by router
+                processed: true,
+                topicChange: topicEval  // Sent to frontend, saved to message.data.state.smartMessages
             },
             // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
             // Internal fields for logging only (not sent to frontend)

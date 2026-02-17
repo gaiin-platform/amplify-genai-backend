@@ -485,96 +485,59 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
-    params, 
-    messages, 
+    params,
+    messages,
     outputFormat,
     _responseStream = null // Currently unused, kept for API compatibility
 ) {
     const model = params.options?.model || params.model;
-    
+
     if (!model) {
         throw new Error('Model not specified');
     }
 
-    // Convert output format to function schema
-    const functionSchema = {
-        name: 'extract_data',
-        description: 'Extract structured data from the response',
-        parameters: outputFormat
-    };
-
-    // Determine if model supports function calling based on provider and model type
-    // OpenAI and Gemini models support functions, regardless of which provider serves them
-    // DISABLED: Function calling has parsing issues with Azure OpenAI SSE responses, always use JSON schema
-    //  const supportsFunctions = model.provider === 'OpenAI' || 
-    //                         model.provider === 'Azure' || 
-    //                         model.provider === 'Gemini' || 
-    //                         (model.provider === 'Bedrock' && (isOpenAIModel(model.id) || isGeminiModel(model.id)));
-    
-    const supportsFunctions = false; // Was: model.provider === 'OpenAI' || model.provider === 'Azure' || ...
-
-    if (supportsFunctions) {
-        // Use function calling
-        const result = await callUnifiedLLM(
-            params,
-            messages,
-            null, // No streaming for structured data
-            {
-                tools: [{ type: 'function', function: functionSchema }],
-                tool_choice: { type: 'function', function: { name: 'extract_data' } }
-            }
-        );
-
-        // Parse function call response
-        if (result.content) {
-            try {
-                // Check if response contains tool calls
-                const response = typeof result.content === 'string'
-                    ? JSON.parse(result.content)
-                    : result.content;
-
-                if (response.tool_calls?.[0]?.function?.arguments) {
-                    const parsed = JSON.parse(response.tool_calls[0].function.arguments);
-                    logger.debug('✅ [promptUnifiedLLMForData] Function calling succeeded, returning parsed result');
-                    return parsed;
-                }
-
-                // Sometimes the response is directly in the content
-                if (typeof response === 'object' && !response.choices) {
-                    logger.debug('✅ [promptUnifiedLLMForData] Direct object response, returning as-is');
-                    return response;
-                }
-
-                logger.warn('⚠️ [promptUnifiedLLMForData] Function call response format unexpected, falling back to JSON schema', {
-                    hasToolCalls: !!response.tool_calls,
-                    responseType: typeof response,
-                    hasChoices: !!response.choices
-                });
-            } catch (e) {
-                logger.error('❌ [promptUnifiedLLMForData] Failed to parse function call response, falling back to JSON schema:', e.message);
-            }
-        } else {
-            logger.warn('⚠️ [promptUnifiedLLMForData] No content in function call result, falling back to JSON schema');
-        }
-    }
-
-    // Fallback: Use JSON schema in prompt
+    // Always include JSON instructions in messages (works with all models/endpoints)
     const jsonPrompt = `
 Please respond with a JSON object that matches this schema:
 ${JSON.stringify(outputFormat, null, 2)}
 
 Respond ONLY with valid JSON, no explanation or markdown.`;
 
-    const enhancedMessages = [
+    const finalMessages = [
         ...messages,
         { role: 'system', content: jsonPrompt }
     ];
 
-    const result = await callUnifiedLLM(params, enhancedMessages, null);
-    
+    // Prepare structured output options based on provider (additional enforcement if supported)
+    const provider = model?.provider;
+    let structuredOutputOptions = {};
+
+    if (provider === 'Bedrock') {
+        structuredOutputOptions.outputConfig = {
+            textFormat: {
+                type: "json_schema",
+                structure: {
+                    jsonSchema: {
+                        schema: JSON.stringify(outputFormat)
+                    }
+                }
+            }
+        };
+    } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
+        structuredOutputOptions.response_format = {
+            type: "json_schema",
+            json_schema: {
+                name: "data_extraction",
+                strict: true,
+                schema: { ...outputFormat, additionalProperties: false }
+            }
+        };
+    }
+
+    const result = await callUnifiedLLM(params, finalMessages, null, structuredOutputOptions);
+
     try {
         const content = result.content || '';
-        // Try to extract JSON from response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             return JSON.parse(jsonMatch[0]);
@@ -582,9 +545,9 @@ Respond ONLY with valid JSON, no explanation or markdown.`;
         return JSON.parse(content);
     } catch (e) {
         logger.error('Failed to parse JSON response:', e);
-        // Response was unparseable
         throw new Error('Failed to extract structured data from response');
     }
+
 }
 
 /**

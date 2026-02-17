@@ -276,6 +276,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         logger.debug(`🔧 Full request data: ${JSON.stringify(data, null, 2)}`);
     }
 
+    // Add structured output configuration if provided
+    // NOTE: response_format only works with /chat/completions endpoint, not /responses
+    if (body.response_format && isCompletionEndpoint) {
+        data.response_format = body.response_format;
+        logger.info('\u2705 [OpenAI] Added native structured output configuration');
+    }
+
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
     function streamAxiosResponseToWritable(url, writableStream, statusTimer, retryWithoutTools = false) {
