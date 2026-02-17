@@ -254,7 +254,12 @@ def update_progress(bucket, key, progress, stage=None, details=None):
     if details:
         metadata.update(details)
 
-    status = stage if stage else get_document_status(bucket, key).get('status', DocumentStatus.PROCESSING_STARTED)
+    # Fix: Handle None return value from get_document_status
+    if stage:
+        status = stage
+    else:
+        current_status = get_document_status(bucket, key)
+        status = current_status.get('status', DocumentStatus.PROCESSING_STARTED) if current_status else DocumentStatus.PROCESSING_STARTED
 
     update_document_status(bucket, key, status, metadata)
 

@@ -36,9 +36,10 @@ provider:
     DOCUMENT_STATUS_TABLE: ${self:service}-${sls:stage}-status
     WEBSOCKET_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-ws-connections
 
-    # WebSocket API
+    # WebSocket API Management Endpoint (for Lambda to send messages)
+    # Note: Use HTTPS not WSS for API Gateway Management API
     WEBSOCKET_API_ENDPOINT:
-      Fn::Sub: "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
+      Fn::Sub: "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}"
 
     # Queue URLs (new queues with -v2 suffix)
     VDR_PROCESSING_QUEUE_URL:

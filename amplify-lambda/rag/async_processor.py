@@ -47,9 +47,21 @@ def async_document_processor(event, context):
 
     for record in event["Records"]:
         try:
-            # Parse S3 event
-            s3_event = json.loads(record["body"])
-            s3_record = s3_event["Records"][0] if "Records" in s3_event else s3_event
+            # Parse SQS message body (handle both JSON string and dict)
+            body = record["body"]
+            s3_event = json.loads(body) if isinstance(body, str) else body
+
+            # Handle both direct S3 events and wrapped events
+            if "Records" in s3_event:
+                s3_record = s3_event["Records"][0]
+            else:
+                s3_record = s3_event
+
+            # Validate required fields
+            if "s3" not in s3_record:
+                logger.error(f"Invalid event format: missing 's3' field in record")
+                continue
+
             s3_info = s3_record["s3"]
 
             bucket = s3_info["bucket"]["name"]
