@@ -95,9 +95,24 @@ def _ensure_nltk_data():
 
         # Verify download succeeded by actually using the tokenizer
         logger.info("Verifying punkt_tab download...")
-        sent_tokenize("Test sentence.")
-        logger.info("✅ NLTK punkt_tab data successfully downloaded and verified")
-        _nltk_data_initialized = True
+        try:
+            sent_tokenize("Test sentence.")
+            logger.info("✅ NLTK punkt_tab data successfully downloaded and verified")
+            _nltk_data_initialized = True
+        except LookupError:
+            # punkt_tab didn't work, try the old punkt tokenizer (for older NLTK versions)
+            logger.warning("punkt_tab downloaded but sent_tokenize still failed, trying old 'punkt' tokenizer...")
+            logger.info("Downloading punkt (legacy) to %s", tmp_path)
+            download_result_legacy = nltk.download("punkt", download_dir=tmp_path, quiet=False)
+
+            if not download_result_legacy:
+                raise RuntimeError("nltk.download('punkt') returned False - download may have failed")
+
+            # Verify the old tokenizer works
+            logger.info("Verifying punkt (legacy) download...")
+            sent_tokenize("Test sentence.")
+            logger.info("✅ NLTK punkt (legacy) data successfully downloaded and verified")
+            _nltk_data_initialized = True
 
     except Exception as e:
         logger.error("Failed to initialize NLTK data: %s", str(e), exc_info=True)
@@ -339,7 +354,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
     total_chunks = 0  # Initialize total_chunks
     # HARD LIMIT: 26,000 chars = ~6,500 tokens (20% safety buffer from 8,192 token API limit)
-    max_sentence_chars = 26,000
+    max_sentence_chars = 26000  # Fixed: was 26,000 which creates a tuple (26, 0) instead of int
     
     # Track sentence splitting for reprocessing logic
     has_sentence_splits = False
