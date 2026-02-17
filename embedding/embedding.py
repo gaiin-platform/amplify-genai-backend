@@ -254,15 +254,20 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
         # Only add condition if we're updating an existing chunk (not creating)
         # This avoids path validation issues when creating new chunks
         if current_status is not None:
-            # Chunk exists - prevent updates to terminal states
-            # We know the full path exists since we just read the current_status
-            condition_expression = (
-                "#data.#childChunks.#chunkId.#status <> :completed AND "
-                "#data.#childChunks.#chunkId.#status <> :failed"
-            )
-            # Add the terminal state values to expression_attribute_values
-            expression_attribute_values[":completed"] = "completed"
-            expression_attribute_values[":failed"] = "failed"
+            # Chunk exists - prevent updates to terminal states UNLESS we're setting the same status (idempotent)
+            # Allow: pending->processing, processing->completed, processing->failed, completed->completed (retry), failed->failed (retry)
+            # Prevent: completed->processing, failed->processing (can't undo terminal states to different state)
+            if new_status != current_status and current_status in ["completed", "failed"]:
+                # Trying to change from terminal state to different state - block this
+                condition_expression = (
+                    "#data.#childChunks.#chunkId.#status <> :completed AND "
+                    "#data.#childChunks.#chunkId.#status <> :failed"
+                )
+                expression_attribute_values[":completed"] = "completed"
+                expression_attribute_values[":failed"] = "failed"
+            else:
+                # Either updating to same status (idempotent retry) or valid state transition - allow without condition
+                condition_expression = None
         else:
             # Creating new chunk - condition should allow creation
             # We can't use attribute_not_exists on nested paths that might not exist
