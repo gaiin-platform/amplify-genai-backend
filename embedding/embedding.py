@@ -1077,10 +1077,18 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         clean_text = clean_text[:21000]
                         logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated to 21000 characters for chunk {local_chunk_index}")
 
-                    # VALIDATION: Ensure content is not empty after truncation
+                    # VALIDATION: Skip chunks that are empty after preprocessing and truncation
+                    # This is normal - chunks with only symbols/punctuation/whitespace have no content to embed
                     if not clean_text or len(clean_text.strip()) == 0:
-                        logger.error(f"[VALIDATION] Chunk content is empty after truncation for chunk {local_chunk_index}")
-                        raise Exception("Chunk content is empty after preprocessing and truncation")
+                        logger.info(f"[SKIP_EMPTY_CHUNK] Chunk {local_chunk_index} is empty after preprocessing - marking as completed (nothing to embed)")
+                        # Mark as completed since there's nothing wrong - just no content to embed
+                        update_child_chunk_status(
+                            src,
+                            childChunk,
+                            "completed",
+                            error_message=None
+                        )
+                        continue  # Skip to next chunk
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
                     response_vector_embedding = generate_embeddings(clean_text, account_data, src)
