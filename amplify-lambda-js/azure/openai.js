@@ -56,7 +56,16 @@ export const translateDataToResponseBody = (data) => {
                 if (item.type === 'text') {
                     return { type: contentType, text: item.text };
                 } else if (item.type === 'image_url') {
-                    return { type: 'input_image', source: { type: 'url', url: item.image_url.url } };
+                    // Handle both formats: object {url, detail} or string
+                    // Chat completions uses: { type: 'image_url', image_url: {url: '...', detail: 'high'} }
+                    // Need to convert to Responses API format: { type: 'input_image', image_url: '...' }
+                    const imageUrl = typeof item.image_url === 'string'
+                        ? item.image_url
+                        : item.image_url?.url || item.image_url;
+                    return { type: 'input_image', image_url: imageUrl };
+                } else if (item.type === 'input_image') {
+                    // Already in Responses API format, return as-is
+                    return item;
                 }
                 return item; // Already formatted
               })
@@ -250,6 +259,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     // 1. Not a completions endpoint AND
     // 2. No custom tools are present (responses API doesn't support function calling properly)
     if (!isCompletionEndpoint && !hasTools) {
+        logger.info(`🔄 Converting to Responses API format for model: ${modelId}`);
         data = translateDataToResponseBody(data);
         // For OpenAI provider only: add native web_search_preview tool when search intent detected
         // Azure provider uses custom web_search function tool from toolLoop instead (controlled by webSearchEnabled)
