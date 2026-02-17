@@ -199,11 +199,25 @@ export const chatBedrock = async (chatBody, writable) => {
         if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
 
+        // Capture raw response body for HTML error pages (502 Bad Gateway, etc.)
+        let rawResponsePreview = 'N/A';
+        if (error.$response?.body) {
+            try {
+                // Try to read the body as text if it's an HTML error page
+                const bodyText = typeof error.$response.body === 'string'
+                    ? error.$response.body
+                    : JSON.stringify(error.$response.body);
+                rawResponsePreview = bodyText.substring(0, 500); // First 500 chars
+            } catch (e) {
+                rawResponsePreview = 'Unable to read response body';
+            }
+        }
+
         // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
         const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
         if (sanitizedInput.messages) delete sanitizedInput.messages;
         if (sanitizedInput.system) delete sanitizedInput.system;
-        
+
         logCriticalError({
             functionName: 'chatBedrock',
             errorType: 'BedrockAPIFailure',
@@ -217,6 +231,7 @@ export const chatBedrock = async (chatBody, writable) => {
                 httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
                 awsReason: error.$response?.reason || 'N/A',
                 awsMessage: error.$response?.message || 'N/A',
+                rawResponsePreview: rawResponsePreview,
                 fullError: error,
                 errorCode: error.code || error.name || 'N/A',
                 hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
