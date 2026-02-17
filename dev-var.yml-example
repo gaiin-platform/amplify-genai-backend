@@ -1,4 +1,5 @@
 # amplify-lambda
+API_GATEWAY_MAX_TIMEOUT_MS: "" #Max timeout in ms for API Gateway streaming endpoints (recommended 180000 if AWS approved, leave empty to disable)
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
 BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
