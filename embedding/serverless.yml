@@ -89,6 +89,7 @@ provider:
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+    RAG_POSTGRES_DB_PORT: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_PORT, '3306'}
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
     SERVICE_NAME: ${self:service}
@@ -425,12 +426,12 @@ resources:
         VpcId: ${self:provider.environment.VPC_ID}
         SecurityGroupIngress:
           - IpProtocol: tcp
-            FromPort: 3306
-            ToPort: 3306
+            FromPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
+            ToPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
             CidrIp: ${self:provider.environment.VPC_CIDR}
           - IpProtocol: tcp
-            FromPort: 3306
-            ToPort: 3306
+            FromPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
+            ToPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
             CidrIp: '10.2.224.0/20'
     
     LambdaSecurityGroup:
@@ -478,13 +479,14 @@ resources:
         DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
         Engine: aurora-postgresql
         EngineVersion: '15.12' # Specify the compatible engine version for Serverless v2
+        Port: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
         ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
           MinCapacity: ${self:provider.environment.MIN_ACU}
           MaxCapacity: ${self:provider.environment.MAX_ACU}
         EnableHttpEndpoint: true
         EnableCloudwatchLogsExports:
           - postgresql
-        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}  
+        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
         MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
         VpcSecurityGroupIds:
           - !Ref RagPostgresDbSecurityGroup

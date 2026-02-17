@@ -45,6 +45,8 @@ pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
+pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
+
 
 # Model names imported from shared_functions to avoid duplicate get_embedding_models() calls
 
@@ -54,7 +56,6 @@ embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
 embedding_chunks_index_queue = os.environ["EMBEDDING_CHUNKS_INDEX_QUEUE"]
 table_name = "embeddings"
 pg_password = get_credentials(rag_pg_password)
-
 
 # Add this at the top of the file as documentation
 
@@ -602,7 +603,7 @@ def get_db_connection():
                 database=pg_database,
                 user=pg_user,
                 password=pg_password,
-                port=3306,  # ensure the port matches the PostgreSQL port which is 5432 by default
+                port=pg_port,  # ensure the port matches the PostgreSQL port which is 5432 by default
             )
             logger.debug(f"[DIAGNOSTIC] ✅ Database connection successful - connection ID: {id(db_connection)}")
         except psycopg2.Error as e:
