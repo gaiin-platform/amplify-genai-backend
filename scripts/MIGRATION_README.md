@@ -12,9 +12,9 @@
 1. Update scripts/config.py with your DEP_NAME and STAGE
 2. Add LOG_LEVEL to your /var/{stage}-var.yml files
 3. Run: python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
-4. Deploy services normally: serverless amplify-lambda:deploy --stage dev
-   # Don't forget: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
-5. Done! 🎉
+4. Run markitdown FIRST: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+5. Deploy services: serverless amplify-lambda:deploy --stage dev
+6. Done! 🎉
 ```
 
 **Continue reading only if you have existing deployments with data to migrate.**
@@ -180,11 +180,11 @@ aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --se
 # Remove basic-ops service completely (frees /user-data endpoint)
 serverless amplify-lambda-basic-ops:remove --stage dev
 
+# 🚨 CRITICAL: Run markitdown BEFORE deploying amplify-lambda
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+
 # Now deploy amplify-lambda (endpoint is free)
 serverless amplify-lambda:deploy --stage dev
-
-# 🚨 CRITICAL: After deployment, run the markitdown script
-cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..  
 ```
 
 **➡️ Skip to [3a.3: Deploy Other Services](#3a3-deploy-other-services)**
@@ -207,11 +207,11 @@ cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
 # Then redeploy basic-ops without the endpoint
 serverless amplify-lambda-basic-ops:deploy --stage dev
 
-# Now deploy amplify-lambda (endpoint is free) 
-serverless amplify-lambda:deploy --stage dev
+# 🚨 CRITICAL: Run markitdown BEFORE deploying amplify-lambda
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
 
-# 🚨 CRITICAL: After deployment, run the markitdown script
-cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..  
+# Now deploy amplify-lambda (endpoint is free)
+serverless amplify-lambda:deploy --stage dev
 ```
 
 **Alternative Options to Free Endpoint:**
@@ -245,12 +245,14 @@ serverless amplify-lambda-js:deploy --stage dev
 ```bash
 # Deploy services in dependency order from repository root
 # amplify-lambda is the BASE DEPENDENCY - deploy it FIRST
-serverless amplify-lambda:deploy --stage dev
 
-# 🚨 CRITICAL: After amplify-lambda deployment, run the markitdown script
+# 🚨 CRITICAL: Run markitdown BEFORE deploying amplify-lambda
 cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
 
-# Now deploy other services that depend on amplify-lambda
+# Now deploy amplify-lambda
+serverless amplify-lambda:deploy --stage dev
+
+# Then deploy other services that depend on amplify-lambda
 serverless amplify-assistants:deploy --stage dev
 serverless amplify-lambda-js:deploy --stage dev
 # Continue for other services...
@@ -394,11 +396,19 @@ karnsab,karnsab
 
 **🚨 IMPORTANT: Choose the right command for your situation:**
 
+**FIRST - Ensure amplify-lambda is deployed with markitdown:**
+```bash
+# Run markitdown BEFORE deploying amplify-lambda
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+serverless amplify-lambda:deploy --stage dev
+```
+
+**THEN - Run consolidation migration:**
 ```bash
 # 1. ALWAYS start with dry run to see what will happen (no ID changes, just consolidation)
 python3 scripts/id_migration.py --no-id-change --dry-run --log consolidation_dryrun.log
 
-# 2. STANDARD consolidation (script will handle backups automatically)  
+# 2. STANDARD consolidation (script will handle backups automatically)
 python3 scripts/id_migration.py --no-id-change --log migration_consolidation.log
 
 # 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
@@ -421,6 +431,15 @@ python3 scripts/id_migration.py --no-id-change --region us-west-2 --log migratio
 #### 4a.2: Run Migration
 
 **🚨 IMPORTANT: Choose the right command for your situation:**
+
+**FIRST - Ensure amplify-lambda is deployed with markitdown:**
+```bash
+# Run markitdown BEFORE deploying amplify-lambda
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+serverless amplify-lambda:deploy --stage dev
+```
+
+**THEN - Run migration:**
 
 **For Cognito Sub Migration (Recommended - Auto-generates CSV):**
 ```bash
@@ -1103,6 +1122,9 @@ aws dynamodb list-tables --max-items 5
 
 **SOLUTION**: Deploy amplify-lambda service first (before migration), which creates all required infrastructure:
 ```bash
+# Run markitdown BEFORE deploying amplify-lambda
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+
 # This creates the consolidation bucket and user data storage table
 serverless amplify-lambda:deploy --stage dev
 ```
@@ -1132,10 +1154,10 @@ Ensure Lambda execution roles have Parameter Store access:
 ```bash
 # Steps 1 & 2 only - no migration needed!
 1. Update scripts/config.py (DEP_NAME and STAGE)
-2. Add LOG_LEVEL to /var/{stage}-var.yml files  
+2. Add LOG_LEVEL to /var/{stage}-var.yml files
 3. Run: python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
-4. Deploy: serverless amplify-lambda:deploy --stage dev
-5. Run: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+4. Run markitdown FIRST: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+5. Deploy: serverless amplify-lambda:deploy --stage dev
 # You're done! 🎉
 ```
 
@@ -1200,7 +1222,7 @@ python3 scripts/id_migration.py --no-id-change --log consolidation.log
 
 ### 🎯 **CRITICAL REMINDERS**
 - 🥇 **Deploy amplify-lambda FIRST**: It's the base dependency all other services need
-- 🚨 **After deploying amplify-lambda**: Run `cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..`
+- 🚨 **BEFORE deploying amplify-lambda**: ALWAYS run `cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..` FIRST
 - 🔒 **Backups are critical**: Migration deletes old data after copying
 - 🏗️ **Future cleanup**: S3 consolidation prepares for eventual bucket deletion
 - 🧹 **Basic-ops cleanup**: Remove basic-ops service AFTER migration completes (Step 5)
