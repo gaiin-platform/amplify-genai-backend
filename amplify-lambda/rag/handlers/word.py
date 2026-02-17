@@ -531,7 +531,8 @@ class DOCXHandler(TextExtractionHandler):
         section_headers = {}
 
         for i, paragraph in enumerate(doc.paragraphs, start=1):
-            if paragraph.style.name.startswith("Heading"):
+            # Defensive: Skip paragraphs with no style (corrupted/malformed documents)
+            if paragraph.style and paragraph.style.name and paragraph.style.name.startswith("Heading"):
                 current_section_index += 1
                 section_headers[current_section_index] = paragraph.text
 
