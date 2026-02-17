@@ -21,7 +21,9 @@ def create_table():
     pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
     pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
     pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
+    pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
     rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
+    
     
     # Get embedding dimension from environment, default to 1536 for backward compatibility
     # This is only used during initial table creation
@@ -36,7 +38,7 @@ def create_table():
         "user": pg_user,
         "password": pg_password,
         "host": pg_host,
-        "port": 3306,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
+        "port": pg_port,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
     }
 
     # SQL commands to create the embeddings table and related components

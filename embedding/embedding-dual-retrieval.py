@@ -7,6 +7,7 @@ import json
 import os
 import time
 import asyncio
+import math
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from pycommon.decorators import required_env_vars
@@ -40,12 +41,14 @@ logger = getLogger("embedding_dual_retrieval")
 pg_host = os.environ["RAG_POSTGRES_DB_READ_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
+pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 api_version = os.environ["API_VERSION"]
 object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
 queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
 s3_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 sqs = boto3.client("sqs")
+
 
 # Define the permission levels that grant access
 permission_levels = ["read", "write", "owner"]
@@ -186,12 +189,29 @@ performance_cache = EmbeddingPerformanceCache()
 
 
 def get_top_similar_qas(query_embedding, src_ids, limit=5):
+    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+    if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
+        logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_qas - refusing to query PostgreSQL")
+        log_critical_error(
+            function_name="get_top_similar_qas",
+            error_type="NaNInQAQueryEmbedding",
+            error_message="NaN or empty values detected in query embedding before PostgreSQL vector search",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src_ids_count": len(src_ids) if src_ids else 0,
+                "limit": limit,
+                "embedding_length": len(query_embedding) if query_embedding else 0
+            }
+        )
+        return []  # Return empty results instead of crashing PostgreSQL
+
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
         user=pg_user,
         password=pg_password,
-        port=3306,
+        port=pg_port,
     ) as conn:
 
         # Register pgvector extension
@@ -258,12 +278,29 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
 
 
 def get_top_similar_docs(query_embedding, src_ids, limit=5):
+    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+    if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
+        logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_docs - refusing to query PostgreSQL")
+        log_critical_error(
+            function_name="get_top_similar_docs",
+            error_type="NaNInDocQueryEmbedding",
+            error_message="NaN or empty values detected in query embedding before PostgreSQL vector search",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src_ids_count": len(src_ids) if src_ids else 0,
+                "limit": limit,
+                "embedding_length": len(query_embedding) if query_embedding else 0
+            }
+        )
+        return []  # Return empty results instead of crashing PostgreSQL
+
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
         user=pg_user,
         password=pg_password,
-        port=3306,
+        port=pg_port,
     ) as conn:
 
         # Register pgvector extension
@@ -925,6 +962,28 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         embeddings = response_embeddings["data"]
         token_count = response_embeddings["token_count"]
         logger.info(f"Generated embeddings with {token_count} tokens")
+
+        # VALIDATION: Check for NaN values in embedding vector before using in PostgreSQL queries
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embeddings):
+            logger.error(f"[VALIDATION] NaN detected in query embedding vector. Content length: {len(content)}, Preview: {content[:200]}")
+            log_critical_error(
+                function_name="_async_process_input_with_dual_retrieval",
+                error_type="NaNInQueryEmbedding",
+                error_message="NaN values detected in query embedding vector - cannot perform PostgreSQL vector search",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "content_length": len(content),
+                    "content_preview": content[:200],
+                    "token_count": token_count,
+                    "src_ids_count": len(src_ids)
+                }
+            )
+            return {
+                "error": "Query embedding generation produced invalid NaN values",
+                "content_preview": content[:200]
+            }
     else:
         error = response_embeddings["error"]
         logger.error(f"Embedding generation failed: {error}")
@@ -954,7 +1013,7 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             database=pg_database,
             user=pg_user,
             password=pg_password,
-            port=3306,
+            port=pg_port,
         ) as conn:
             with conn.cursor() as cur:
                 # Query to check if any rows exist with these src values

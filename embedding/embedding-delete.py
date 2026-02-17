@@ -62,12 +62,14 @@ def delete_embeddings_from_db(src_id, child_chunks=None):
         src_id: The source document ID
         child_chunks: Optional list of specific chunks to delete. If None, deletes all chunks.
     """
+    pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
+
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
         user=pg_user,
         password=rag_pg_password,
-        port=3306,
+        port=pg_port,
     ) as conn:
         with conn.cursor() as cur:
             try:
