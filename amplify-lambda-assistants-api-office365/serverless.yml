@@ -89,7 +89,7 @@ functions:
 
   microsoftIntegrationsRouter:
     handler: service/core.route_request
-    timeout: 30
+    timeout: 300
     events:
       - http:
           path: microsoft/integrations/{proxy+}
@@ -110,6 +110,20 @@ functions:
 
 resources:
   Resources:
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: microsoftIntegrationsRouter
+            path: /microsoft/integrations/{proxy+}
+            method: POST
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

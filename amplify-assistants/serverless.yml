@@ -336,6 +336,22 @@ functions:
 
 resources:
   Resources:
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: create_ast
+            path: /assistant/create
+            method: POST
+          - name: chat_code_int_ast
+            path: /assistant/chat/codeinterpreter
+            method: POST
 
     AssistantLookupDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

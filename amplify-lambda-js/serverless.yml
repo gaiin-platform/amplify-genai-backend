@@ -215,6 +215,20 @@ functions:
 
 resources:
   Resources:
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: chat_stream
+            path: /chat_stream
+            method: POST
+
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

@@ -214,7 +214,7 @@ class ParameterStorePopulator:
                 
                 # Define the shared variables to migrate
                 shared_var_names = [
-                    'ADMINS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
+                    'ADMINS', 'API_GATEWAY_MAX_TIMEOUT_MS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
                     'LOG_LEVEL', 'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
                     'ASSISTANTS_OPENAI_PROVIDER', 'LLM_ENDPOINTS_SECRETS_NAME_ARN',
                     'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
