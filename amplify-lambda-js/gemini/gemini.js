@@ -385,10 +385,12 @@ async function includeImageSources(imageSources, messages, model, responseStream
         // Process all images
         const imagePromises = imageSources.map(async (source) => {
             const base64Content = await getImageBase64Content(source);
+            // Use source.type (e.g., "image/png") - mimeType doesn't exist on image data sources
+            const mimeType = source.type || source.mimeType || 'image/png';
             return {
                 type: "image_url",
                 image_url: {
-                    url: `data:${source.mimeType};base64,${base64Content}`
+                    url: `data:${mimeType};base64,${base64Content}`
                 }
             };
         });
