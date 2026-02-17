@@ -144,13 +144,23 @@ def generate_embeddings(content, account_data=None, document_key=None):
     return {"success": False, "error": f"Invalid embedding provider: {embedding_provider}"}
 
 def generate_bedrock_embeddings(content, account_data=None, document_key=None):
+    # VALIDATION: Check content before sending to Bedrock
+    if not content or not isinstance(content, str):
+        logger.error(f"Invalid content type or empty content: {type(content)}")
+        return {"success": False, "error": "Content must be a non-empty string"}
+
+    content_stripped = content.strip()
+    if not content_stripped:
+        logger.error("Content is empty or whitespace only")
+        return {"success": False, "error": "Content is empty after stripping whitespace"}
+
     try:
         client = boto3.client("bedrock-runtime", region_name=region)
         model_id = embedding_model_name
 
         # Check if using Nova Multimodal Embeddings
         is_nova = "nova" in model_id.lower()
-        
+
         if is_nova:
             # Nova Multimodal Embeddings uses a different API structure
             embedding_dim = int(os.environ.get("EMBEDDING_DIM", "3072"))
@@ -163,13 +173,13 @@ def generate_bedrock_embeddings(content, account_data=None, document_key=None):
                     "embeddingDimension": embedding_dim,
                     "text": {
                         "truncationMode": "END",
-                        "value": content
+                        "value": content_stripped
                     }
                 }
             }
         else:
             # Standard Bedrock embeddings (Titan, Cohere, etc.)
-            native_request = {"inputText": content}
+            native_request = {"inputText": content_stripped}
         
         request = json.dumps(native_request)
 
@@ -189,6 +199,12 @@ def generate_bedrock_embeddings(content, account_data=None, document_key=None):
             embeddings = model_response["embedding"]
             input_token_count = model_response.get("inputTextTokenCount", 0)
 
+        # VALIDATION: Check for NaN in embedding response
+        import math
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embeddings):
+            logger.error(f"Bedrock returned NaN in embedding vector. Content length: {len(content_stripped)}, Preview: {content_stripped[:200]}")
+            return {"success": False, "error": "Bedrock API returned NaN values in embedding vector"}
+
         # Record embedding cost
         cost = record_embedding_cost(model_id, input_token_count, account_data, document_key)
 
@@ -204,13 +220,30 @@ def generate_azure_embeddings(content, account_data=None, document_key=None):
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
     logger.info(f"Endpoint: {endpoint}")
 
+    # VALIDATION: Check content before sending to Azure
+    if not content or not isinstance(content, str):
+        logger.error(f"Invalid content type or empty content: {type(content)}")
+        return {"success": False, "error": "Content must be a non-empty string"}
+
+    content_stripped = content.strip()
+    if not content_stripped:
+        logger.error("Content is empty or whitespace only")
+        return {"success": False, "error": "Content is empty after stripping whitespace"}
+
     client = AzureOpenAI(
         api_key=api_key, azure_endpoint=endpoint, api_version=api_version
     )
     try:
-        response = client.embeddings.create(input=content, model=embedding_model_name)
+        response = client.embeddings.create(input=content_stripped, model=embedding_model_name)
         embedding = response.data[0].embedding
-        token_count = num_tokens_from_text(content, embedding_model_name)
+
+        # VALIDATION: Check for NaN in embedding response
+        import math
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embedding):
+            logger.error(f"Azure returned NaN in embedding vector. Content length: {len(content_stripped)}, Preview: {content_stripped[:200]}")
+            return {"success": False, "error": "Azure API returned NaN values in embedding vector"}
+
+        token_count = num_tokens_from_text(content_stripped, embedding_model_name)
 
         # Record embedding cost
         cost = record_embedding_cost(embedding_model_name, token_count, account_data, document_key)

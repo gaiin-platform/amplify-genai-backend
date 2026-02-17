@@ -17,7 +17,7 @@ from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SQSOperation, SecretsManagerOperation
 )
 from pycommon.api.credentials import get_credentials
-from shared_functions import generate_embeddings
+from shared_functions import generate_embeddings, truncate_content_for_model, embedding_model_name
 import boto3
 import asyncio
 from boto3.dynamodb.conditions import Key
@@ -911,6 +911,13 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     # Parallel embedding generation and retrieval
     logger.info(f"Starting embedding generation for user input query with {len(src_ids)} accessible sources")
     logger.info(f"Source IDs for retrieval: {src_ids}")
+
+    # SAFETY NET: Truncate user input to prevent token limit errors (defense in depth)
+    # This catches edge cases where user input might exceed embedding model token limit
+    original_length = len(content)
+    content = truncate_content_for_model(content, embedding_model_name, 8192)
+    if len(content) < original_length:
+        logger.warning(f"[TOKEN_SAFETY] User input truncated from {original_length} to {len(content)} chars to fit embedding token limit")
 
     response_embeddings = generate_embeddings(content)
 

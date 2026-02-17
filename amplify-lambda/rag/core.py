@@ -339,7 +339,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
     total_chunks = 0  # Initialize total_chunks
     # HARD LIMIT: 26,000 chars = ~6,500 tokens (20% safety buffer from 8,192 token API limit)
-    max_sentence_chars = 30000
+    max_sentence_chars = 26,000
     
     # Track sentence splitting for reprocessing logic
     has_sentence_splits = False

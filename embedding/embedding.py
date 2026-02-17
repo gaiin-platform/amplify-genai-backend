@@ -15,6 +15,7 @@ from shared_functions import (
     preprocess_text,
     embedding_model_name,
     qa_model_name,
+    truncate_content_for_model,
 )
 import urllib
 from create_table import create_table
@@ -139,6 +140,13 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
 
         # Validate the transition if there's a current status
         if current_status:
+            # Idempotent: If already in the target state, treat as success
+            if current_status == new_status:
+                logger.info(
+                    f"[CHILD_CHUNK_IDEMPOTENT] Chunk {child_chunk} already in state '{new_status}', skipping update (idempotent)"
+                )
+                return  # Already in target state, no-op
+
             if current_status in ["completed", "failed"]:
                 logger.warning(
                     f"[CHILD_CHUNK_TERMINAL] Cannot update chunk {child_chunk} status from {current_status} to {new_status} (already in terminal state)"
@@ -155,8 +163,21 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
         current_time = datetime.datetime.now().isoformat()
 
         # Ensure parent structure exists before setting child properties
-        # Just initialize childChunks - DynamoDB will auto-create parent 'data' object
+        # DynamoDB requires parent paths to exist before nested paths can be created
+        # First ensure 'data' exists, then ensure 'childChunks' exists
         try:
+            # Step 1: Ensure 'data' object exists
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #data = if_not_exists(#data, :empty_data)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                },
+                ExpressionAttributeValues={
+                    ":empty_data": {},
+                }
+            )
+            # Step 2: Ensure 'data.childChunks' exists (now that 'data' exists)
             table.update_item(
                 Key={"object_id": object_id},
                 UpdateExpression="SET #data.#childChunks = if_not_exists(#data.#childChunks, :empty_chunks)",
@@ -173,7 +194,26 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             # Continue - the main update will handle it
 
         # Now update the specific child chunk properties
-        # Use if_not_exists only on the version field to avoid overlap
+        # First ensure the chunk object exists, then update/increment version
+        try:
+            # Initialize the chunk object if it doesn't exist
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #data.#childChunks.#chunkId = if_not_exists(#data.#childChunks.#chunkId, :empty_chunk)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                    "#childChunks": "childChunks",
+                    "#chunkId": str(child_chunk),
+                },
+                ExpressionAttributeValues={
+                    ":empty_chunk": {},
+                }
+            )
+        except Exception as chunk_init_error:
+            logger.warning(f"Chunk object initialization warning (non-critical): {chunk_init_error}")
+            # Continue - the chunk might already exist
+
+        # Now safely update the chunk properties (chunk object now guaranteed to exist)
         update_expression = """
             SET #data.#childChunks.#chunkId.#status = :new_status,
                 #data.#childChunks.#chunkId.#lastUpdated = :timestamp,
@@ -294,7 +334,17 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
             item = response.get("Item")
 
             if not item:
-                raise ValueError(f"No item found with object_id {object_id}")
+                # DEFENSIVE: If parent record doesn't exist when auto-determining status,
+                # this means child chunks are trying to update before parent was initialized.
+                # This is a race condition or missing initialization - log and skip gracefully.
+                logger.warning(
+                    f"[PARENT_CHUNK_MISSING] No item found for {object_id} during auto-status update. "
+                    f"This may indicate a race condition or missing parent initialization. "
+                    f"The parent record should be created before child chunks are processed."
+                )
+                # Don't raise - allow the process to continue
+                # The parent record will be created by explicit status updates (e.g., 'processing')
+                return
 
             child_chunks = item.get("data", {}).get("childChunks", {})
             current_status = item.get("parentChunkStatus", "")
@@ -380,6 +430,25 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
 
         # Update the status with timestamp
         current_time = datetime.datetime.now().isoformat()
+
+        # DEFENSIVE: Ensure the item exists before updating nested properties
+        # DynamoDB update operations will fail if the item doesn't exist and we're using conditions
+        # First, ensure the base record exists with object_id
+        try:
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #oid = if_not_exists(#oid, :oid)",
+                ExpressionAttributeNames={
+                    "#oid": "object_id",
+                },
+                ExpressionAttributeValues={
+                    ":oid": object_id,
+                }
+            )
+            logger.debug(f"[PARENT_CHUNK_INIT] Ensured base record exists for {object_id}")
+        except Exception as init_error:
+            logger.debug(f"Base record initialization (non-critical): {init_error}")
+            # Continue - the record might already exist
 
         update_expression = "SET parentChunkStatus = :status, lastUpdated = :timestamp"
 
@@ -591,6 +660,16 @@ def insert_chunk_data_to_db(
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     try:
+        # Strip NULL bytes from content (PostgreSQL doesn't allow \x00 in text fields)
+        cleaned_content = content.replace('\x00', '') if content else content
+
+        # Log if NULL bytes were found and removed
+        if content and '\x00' in content:
+            null_count = content.count('\x00')
+            logger.warning(
+                f"[DB_INSERT_NULL_BYTES] Removed {null_count} NULL byte(s) from content for chunk {child_chunk} (src: {src})"
+            )
+
         cursor.execute(
             insert_query,
             (
@@ -601,7 +680,7 @@ def insert_chunk_data_to_db(
                 char_index,
                 token_count,
                 embedding_index,
-                content,
+                cleaned_content,
                 vector_embedding,
                 qa_vector_embedding,
             ),
@@ -984,36 +1063,92 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     clean_text = response_clean_text["data"]
                     logger.debug(f"[DIAGNOSTIC] ✅ Text preprocessing successful for local chunk {local_chunk_index}")
 
+                    # SAFETY NET: Truncate chunk content to prevent token limit errors (defense in depth)
+                    # Use conservative 6000 token limit to leave room for overhead/formatting
+                    original_length = len(clean_text)
+                    clean_text = truncate_content_for_model(clean_text, embedding_model_name, 6000)
+                    if len(clean_text) < original_length:
+                        logger.warning(f"[TOKEN_SAFETY] Chunk content truncated from {original_length} to {len(clean_text)} chars for chunk {local_chunk_index} (model: {embedding_model_name})")
+
+                    # AGGRESSIVE FALLBACK: If still too large (>21,000 chars ~= 6,000 tokens), hard truncate
+                    # This handles cases where truncate_content_for_model fails or uses char estimation
+                    if len(clean_text) > 21000:
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Content still too large ({len(clean_text)} chars), applying hard character limit")
+                        clean_text = clean_text[:21000]
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated to 21000 characters for chunk {local_chunk_index}")
+
+                    # VALIDATION: Ensure content is not empty after truncation
+                    if not clean_text or len(clean_text.strip()) == 0:
+                        logger.error(f"[VALIDATION] Chunk content is empty after truncation for chunk {local_chunk_index}")
+                        raise Exception("Chunk content is empty after preprocessing and truncation")
+
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
                     response_vector_embedding = generate_embeddings(clean_text, account_data, src)
+
+                    # Check if embedding failed due to NaN - if so, try sanitized retry immediately
                     if not response_vector_embedding["success"]:
-                        logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
-                        
-                        # CRITICAL: Embedding generation failure = documents unsearchable
-                        log_critical_error(
-                            function_name="embed_chunks",
-                            error_type="EmbeddingGenerationFailure",
-                            error_message=f"Failed to generate vector embedding: {response_vector_embedding['error']}",
-                            current_user=account_data.get('user') if account_data else 'system',
-                            severity=SEVERITY_HIGH,
-                            stack_trace=traceback.format_exc(),
-                            context={
-                                "document": src,
-                                "child_chunk": childChunk,
-                                "local_chunk": local_chunk_index,
-                                "error_details": response_vector_embedding.get('error')
-                            }
-                        )
-                        
-                        raise Exception(
-                            f"Vector embedding generation failed: {response_vector_embedding['error']}"
-                        )
+                        error_msg = response_vector_embedding.get('error', '')
+
+                        # Special handling for NaN errors - try sanitized text retry
+                        if 'NaN' in error_msg:
+                            logger.warning(f"[NaN_DETECTED] NaN error from API for chunk {local_chunk_index}, attempting retry with sanitized text")
+
+                            # RETRY: Clean text more aggressively and retry once
+                            sanitized_text = ''.join(char for char in clean_text if ord(char) < 128 and (char.isprintable() or char.isspace()))
+                            sanitized_text = ' '.join(sanitized_text.split())  # Normalize whitespace
+
+                            if sanitized_text and len(sanitized_text.strip()) > 0:
+                                logger.info(f"[NaN_RETRY] Retrying with ASCII-only text (original: {len(clean_text)} chars, sanitized: {len(sanitized_text)} chars)")
+                                response_retry = generate_embeddings(sanitized_text, account_data, src)
+
+                                if response_retry["success"]:
+                                    logger.info(f"[NaN_RETRY] ✅ Retry succeeded with sanitized text")
+                                    response_vector_embedding = response_retry
+                                    clean_text = sanitized_text  # Use sanitized text going forward
+                                else:
+                                    logger.error(f"[NaN_RETRY] Retry failed: {response_retry.get('error')}, failing chunk")
+                                    # Fall through to regular error handling below
+                            else:
+                                logger.error(f"[NaN_RETRY] Sanitized text is empty, failing chunk")
+
+                        # If still failed (or not a NaN error), handle as critical error
+                        if not response_vector_embedding["success"]:
+                            logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
+
+                            # CRITICAL: Embedding generation failure = documents unsearchable
+                            log_critical_error(
+                                function_name="embed_chunks",
+                                error_type="EmbeddingGenerationFailure",
+                                error_message=f"Failed to generate vector embedding: {response_vector_embedding['error']}",
+                                current_user=account_data.get('user') if account_data else 'system',
+                                severity=SEVERITY_HIGH,
+                                stack_trace=traceback.format_exc(),
+                                context={
+                                    "document": src,
+                                    "child_chunk": childChunk,
+                                    "local_chunk": local_chunk_index,
+                                    "error_details": response_vector_embedding.get('error')
+                                }
+                            )
+
+                            raise Exception(
+                                f"Vector embedding generation failed: {response_vector_embedding['error']}"
+                            )
+
                     vector_embedding = response_vector_embedding["data"]
+
                     logger.debug(f"[DIAGNOSTIC] ✅ Vector embedding successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] ❓ Generating QA summary for local chunk {local_chunk_index}")
                     response_qa_summary = generate_questions(clean_text, account_data)
-                    if not response_qa_summary["success"]:
+
+                    # DEFENSIVE: Handle unexpected response format (should always be dict, but protect against edge cases)
+                    if not isinstance(response_qa_summary, dict):
+                        error_msg = f"Unexpected response type from generate_questions: {type(response_qa_summary).__name__}"
+                        logger.error(f"[DIAGNOSTIC] ❌ {error_msg}")
+                        response_qa_summary = {"success": False, "error": error_msg}
+
+                    if not response_qa_summary.get("success", False):
                         logger.error(f"[DIAGNOSTIC] ❌ QA summary failed for local chunk {local_chunk_index}: {response_qa_summary['error']}")
                         
                         # CRITICAL: QA summary failure = degraded search quality
@@ -1038,32 +1173,76 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     qa_summary = response_qa_summary["data"]
                     logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
+                    # SAFETY NET: Truncate QA summary to prevent token limit errors (defense in depth)
+                    # Use conservative 6000 token limit to leave room for overhead/formatting
+                    original_qa_length = len(qa_summary)
+                    qa_summary = truncate_content_for_model(qa_summary, embedding_model_name, 6000)
+                    if len(qa_summary) < original_qa_length:
+                        logger.warning(f"[TOKEN_SAFETY] QA summary truncated from {original_qa_length} to {len(qa_summary)} chars for chunk {local_chunk_index} (model: {embedding_model_name})")
+
+                    # AGGRESSIVE FALLBACK: If still too large (>21,000 chars ~= 6,000 tokens), hard truncate
+                    # This handles cases where truncate_content_for_model fails or uses char estimation
+                    if len(qa_summary) > 21000:
+                        logger.warning(f"[TOKEN_SAFETY_HARD] QA summary still too large ({len(qa_summary)} chars), applying hard character limit")
+                        qa_summary = qa_summary[:21000]
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated QA summary to 21000 characters for chunk {local_chunk_index}")
+
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
                     # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
                     response_qa_embedding = generate_embeddings(qa_summary, None, src)
+
+                    # Check if QA embedding failed due to NaN - if so, try sanitized retry immediately
                     if not response_qa_embedding["success"]:
-                        logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
-                        
-                        # CRITICAL: QA embedding failure = dual embedding system broken
-                        log_critical_error(
-                            function_name="embed_chunks",
-                            error_type="QAEmbeddingGenerationFailure",
-                            error_message=f"Failed to generate QA embedding: {response_qa_embedding['error']}",
-                            current_user=account_data.get('user') if account_data else 'system',
-                            severity=SEVERITY_HIGH,
-                            stack_trace=traceback.format_exc(),
-                            context={
-                                "document": src,
-                                "child_chunk": childChunk,
-                                "local_chunk": local_chunk_index,
-                                "error_details": response_qa_embedding.get('error')
-                            }
-                        )
-                        
-                        raise Exception(
-                            f"QA embedding generation failed: {response_qa_embedding['error']}"
-                        )
+                        error_msg = response_qa_embedding.get('error', '')
+
+                        # Special handling for NaN errors - try sanitized text retry
+                        if 'NaN' in error_msg:
+                            logger.warning(f"[NaN_DETECTED] NaN error from API for QA chunk {local_chunk_index}, attempting retry with sanitized text")
+
+                            # RETRY: Clean QA summary more aggressively and retry once
+                            sanitized_qa = ''.join(char for char in qa_summary if ord(char) < 128 and (char.isprintable() or char.isspace()))
+                            sanitized_qa = ' '.join(sanitized_qa.split())  # Normalize whitespace
+
+                            if sanitized_qa and len(sanitized_qa.strip()) > 0:
+                                logger.info(f"[NaN_RETRY] Retrying QA with ASCII-only text (original: {len(qa_summary)} chars, sanitized: {len(sanitized_qa)} chars)")
+                                response_retry_qa = generate_embeddings(sanitized_qa, None, src)
+
+                                if response_retry_qa["success"]:
+                                    logger.info(f"[NaN_RETRY] ✅ QA retry succeeded with sanitized text")
+                                    response_qa_embedding = response_retry_qa
+                                    qa_summary = sanitized_qa  # Use sanitized text going forward
+                                else:
+                                    logger.error(f"[NaN_RETRY] QA retry failed: {response_retry_qa.get('error')}, failing chunk")
+                                    # Fall through to regular error handling below
+                            else:
+                                logger.error(f"[NaN_RETRY] Sanitized QA summary is empty, failing chunk")
+
+                        # If still failed (or not a NaN error), handle as critical error
+                        if not response_qa_embedding["success"]:
+                            logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
+
+                            # CRITICAL: QA embedding failure = dual embedding system broken
+                            log_critical_error(
+                                function_name="embed_chunks",
+                                error_type="QAEmbeddingGenerationFailure",
+                                error_message=f"Failed to generate QA embedding: {response_qa_embedding['error']}",
+                                current_user=account_data.get('user') if account_data else 'system',
+                                severity=SEVERITY_HIGH,
+                                stack_trace=traceback.format_exc(),
+                                context={
+                                    "document": src,
+                                    "child_chunk": childChunk,
+                                    "local_chunk": local_chunk_index,
+                                    "error_details": response_qa_embedding.get('error')
+                                }
+                            )
+
+                            raise Exception(
+                                f"QA embedding generation failed: {response_qa_embedding['error']}"
+                            )
+
                     qa_vector_embedding = response_qa_embedding["data"]
+
                     logger.debug(f"[DIAGNOSTIC] ✅ QA embedding successful for local chunk {local_chunk_index}")
 
                     vector_token_count = response_vector_embedding["token_count"]
