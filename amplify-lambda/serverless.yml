@@ -134,7 +134,7 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-sqs
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-apigateway
+        - !Ref LambdaIAMPolicyAPIGateway
 
 functions:
 
@@ -264,7 +264,7 @@ functions:
           path: files/upload
           method: post
           cors: true
-    timeout: 9
+    timeout: 90
 
   download_file:
     handler: files/file.get_presigned_download_url
