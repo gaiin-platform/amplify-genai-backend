@@ -177,8 +177,8 @@ functions:
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
         LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-        MODEL_RATE_TABLE: amplify-${self:custom.depName}-chat-billing-${sls:stage}-model-rates
-        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs
+        MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+        AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}
         API_VERSION: ${self:provider.environment.API_VERSION}
         EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
         REGION: ${self:provider.region}
@@ -357,8 +357,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-dlq"
+                - !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueArn"
+                - !ImportValue "${sls:stage}-EmbeddingChunksIndexDlqArn"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
@@ -372,7 +372,7 @@ resources:
               Action:
                 - sqs:SendMessage
               Resource:
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-lambda-${sls:stage}-rag-document-chunk-queue"
+                - !ImportValue "${sls:stage}-RagChunkDocumentQueueArn"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
