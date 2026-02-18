@@ -36,7 +36,7 @@ Navigate to: https://github.com/gaiin-platform/amplify-genai-backend/issues/new
 
 1. Click **"New Issue"**
 2. **Title:** `Add Model Alias Support for Auto-Updating to Latest Versions`
-3. **Body:** Copy content from `.github-issues/ISSUE_1_Model_Alias_Support.md`
+3. **Body:** Copy content from `.github-issues/ISSUE_283_Model_Alias_Support.md`
 4. **Labels:** Add `enhancement`, `models`, `backend`, `high-priority`
 5. **Milestone:** (if applicable)
 6. Click **"Submit new issue"**
@@ -46,7 +46,7 @@ Navigate to: https://github.com/gaiin-platform/amplify-genai-backend/issues/new
 
 1. Click **"New Issue"**
 2. **Title:** `Add Admin API Endpoints for Model Alias Management`
-3. **Body:** Copy content from `.github-issues/ISSUE_2_Alias_Management_APIs.md`
+3. **Body:** Copy content from `.github-issues/ISSUE_284_Alias_Management_APIs.md`
 4. **Labels:** Add `enhancement`, `api`, `backend`
 5. **Milestone:** (if applicable)
 6. Click **"Submit new issue"**
@@ -199,8 +199,8 @@ b0efffb3 feat: Add model alias management API endpoints
 ## Quick Reference
 
 ### Issue Templates
-- `.github-issues/ISSUE_1_Model_Alias_Support.md`
-- `.github-issues/ISSUE_2_Alias_Management_APIs.md`
+- `.github-issues/ISSUE_283_Model_Alias_Support.md`
+- `.github-issues/ISSUE_284_Alias_Management_APIs.md`
 
 ### PR Template
 - `.github-issues/PR_DESCRIPTION.md`

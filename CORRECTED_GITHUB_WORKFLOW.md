@@ -15,7 +15,7 @@ Navigate to: https://github.com/gaiin-platform/amplify-genai-backend/issues/new
 #### Issue #1: Model Alias Support
 1. Click **"New Issue"**
 2. **Title:** `Add Model Alias Support for Auto-Updating to Latest Versions`
-3. **Body:** Copy from `.github-issues/ISSUE_1_Model_Alias_Support.md`
+3. **Body:** Copy from `.github-issues/ISSUE_283_Model_Alias_Support.md`
 4. **Labels:** `enhancement`, `models`, `backend`, `high-priority`
 5. Click **"Submit new issue"**
 6. **📝 IMPORTANT: Note the issue number** (e.g., #123)
@@ -23,7 +23,7 @@ Navigate to: https://github.com/gaiin-platform/amplify-genai-backend/issues/new
 #### Issue #2: Alias Management APIs
 1. Click **"New Issue"**
 2. **Title:** `Add Admin API Endpoints for Model Alias Management`
-3. **Body:** Copy from `.github-issues/ISSUE_2_Alias_Management_APIs.md`
+3. **Body:** Copy from `.github-issues/ISSUE_284_Alias_Management_APIs.md`
 4. **Labels:** `enhancement`, `api`, `backend`
 5. Click **"Submit new issue"**
 6. **📝 IMPORTANT: Note the issue number** (e.g., #124)
