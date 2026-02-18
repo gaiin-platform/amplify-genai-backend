@@ -19,9 +19,14 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
-    slim: true    
+    slim: true
+    slimPatternsAppendDefaults: true
+    slimPatterns:
+      - "**/*.egg-info*"
+      - "**/tests/**"
+      - "**/googleapiclient/discovery_cache/documents/**"
     useStaticCache: false
-    useDownloadCache: false             
+    useDownloadCache: false
 
 
   cf-changesets:
