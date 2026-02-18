@@ -12,6 +12,17 @@ When AWS deprecates a model (e.g., Claude 3.5 Sonnet retired Jan 2026), deployme
 ### The Solution
 Aliases automatically resolve to the latest model version. When maintainers update the alias mappings and deploy, all users automatically get the new model—controlled, testable, and auditable.
 
+### The Organizational Benefit
+**Having `opus-latest` always available and active makes it effortless to ensure everyone uses the best possible model:**
+
+✅ **Default to Best** - New users automatically start with the latest model
+✅ **No Research Required** - Users don't need to track which version is newest
+✅ **Automatic Upgrades** - Update the alias once, everyone benefits
+✅ **Organizational Standards** - Standardize on "use `opus-latest` for production"
+✅ **Consistent Quality** - Everyone gets improvements simultaneously
+
+This is especially valuable for onboarding, internal policies, and quality assurance across your organization.
+
 ## Quick Examples
 
 ### For Users
