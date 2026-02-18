@@ -4,7 +4,7 @@
 
 This PR implements user-friendly model aliases (e.g., `opus-latest`, `sonnet-latest`) that automatically resolve to the latest AWS Bedrock model versions, preventing silent model degradation when models are deprecated.
 
-**Closes:** #XXX, #XXX (replace with actual issue numbers)
+**Closes:** #283, #284
 
 ## Problem Solved
 
