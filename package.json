@@ -1,4 +1,6 @@
 {
+  "name": "amplify-genai-backend",
+  "version": "0.9.0",
   "devDependencies": {
     "@serverless/compose": "^1.3.0",
     "serverless-cloudformation-changesets-v3": "^0.1.0",
