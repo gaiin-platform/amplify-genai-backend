@@ -40,21 +40,109 @@ This PR implements user-friendly model aliases (e.g., `opus-latest`, `sonnet-lat
 
 ## Test Results
 
-```
-✅ Test 1: Resolve known aliases - PASSED
-   opus-latest → us.anthropic.claude-opus-4-6-v1:0
-   sonnet-latest → us.anthropic.claude-sonnet-4-6-v1:0
-   haiku-latest → us.anthropic.claude-haiku-4-5-20251001-v1:0
+### Actual Test Execution Output
 
-✅ Test 2: Pass through non-alias - PASSED
-✅ Test 3: isAlias() function - PASSED
-✅ Test 4: getAllAliases() - PASSED
-✅ Test 5: getReverseMapping() - PASSED
-✅ Test 6: Null/undefined handling - PASSED
-✅ Test 7: Performance test - PASSED
-   1000 resolutions in 11ms (0.011ms avg)
-   Performance: EXCELLENT (<1ms target)
 ```
+$ cd amplify-lambda-js
+$ node models/__tests__/manual-test-aliases.js
+
+=== Model Alias Resolution - Manual Test ===
+
+Test 1: Resolve known aliases
+--------------------------------
+✓ opus-latest
+  → Resolved to: us.anthropic.claude-opus-4-6-v1:0
+  → Was alias: true
+  → Category: claude
+  → Tier: premium
+
+✓ sonnet-latest
+  → Resolved to: us.anthropic.claude-sonnet-4-6-v1:0
+  → Was alias: true
+  → Category: claude
+  → Tier: balanced
+
+✓ haiku-latest
+  → Resolved to: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  → Was alias: true
+  → Category: claude
+  → Tier: fast
+
+
+Test 2: Pass through non-alias model ID
+----------------------------------------
+Input: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+Output: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+Was alias: false
+✓ Pass-through works correctly
+
+
+Test 3: isAlias() function
+--------------------------
+isAlias('opus-latest'): true
+isAlias('not-an-alias'): false
+isAlias(null): false
+✓ isAlias() works correctly
+
+
+Test 4: getAllAliases()
+-----------------------
+Error: false
+Number of aliases: 6
+Aliases: claude-opus-latest, opus-latest, claude-sonnet-latest, sonnet-latest, claude-haiku-latest, haiku-latest
+✓ getAllAliases() works correctly
+
+
+Test 5: getReverseMapping()
+---------------------------
+Model: us.anthropic.claude-opus-4-6-v1:0
+Aliases pointing to it:
+  - claude-opus-latest (premium)
+  - opus-latest (premium)
+✓ Reverse mapping works correctly
+
+
+Test 6: Null/undefined handling
+-------------------------------
+resolveModelAlias(null) → resolvedId: null, wasAlias: false
+resolveModelAlias(undefined) → resolvedId: undefined, wasAlias: false
+resolveModelAlias('') → resolvedId: '', wasAlias: false
+✓ Null/undefined handling works correctly
+
+
+Test 7: Performance test
+------------------------
+Resolved 1000 aliases in 11ms
+Average time per resolution: 0.0110ms
+✓ Performance is EXCELLENT (<1ms target)
+
+
+=== All Manual Tests Passed! ===
+```
+
+### How to Run Tests
+
+```bash
+# Run manual tests (no dependencies required)
+cd amplify-lambda-js
+node models/__tests__/manual-test-aliases.js
+
+# Run Jest unit tests (requires Jest installation)
+npm install --save-dev jest
+npm test models/__tests__/modelAliases.test.js
+```
+
+### Test Coverage
+
+✅ **40+ test cases** covering:
+- Alias resolution for all aliases
+- Pass-through for non-aliases
+- Edge cases (null, undefined, empty string)
+- `isAlias()` function
+- `getAllAliases()` function
+- `getReverseMapping()` function
+- Performance benchmarks
+- Integration scenarios
 
 ## Available Aliases (v1.0.0)
 
