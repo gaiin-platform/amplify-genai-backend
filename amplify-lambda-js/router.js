@@ -10,6 +10,7 @@ import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
+import {resolveModelAlias} from "./models/modelAliases.js";
 // Removed AWS X-Ray for performance optimization
 import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
 import {logCriticalError} from "./common/criticalLogger.js";
@@ -225,7 +226,19 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             params.body.options.numberPrompts = calculatedPrompts;
             options.numberPrompts = calculatedPrompts; // Set it in the new options object too
             
-            const modelId = (options.model && options.model.id);
+            const rawModelId = (options.model && options.model.id);
+
+            // 🔄 MODEL ALIAS RESOLUTION: Convert user-friendly aliases to actual model IDs
+            const { resolvedId: modelId, wasAlias, aliasInfo } = resolveModelAlias(rawModelId);
+
+            if (wasAlias) {
+                logger.info(`🔄 Model alias resolved: '${rawModelId}' -> '${modelId}'`, aliasInfo);
+                // Track alias usage for analytics and debugging
+                options.requestedAlias = rawModelId;
+                options.resolvedFromAlias = true;
+                // Update model.id so validation and downstream processing use resolved ID
+                options.model.id = modelId;
+            }
 
             // 🛡️ STRICT VALIDATION: Bad data = immediate rejection, no fallbacks
             let model;
@@ -236,7 +249,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     error.code = "MISSING_MODEL_ID";
                     throw error;
                 }
-                
+
                 // Use defensive validation instead of direct access
                 model = validateModelConfiguration(models, modelId, options.model, params.user);
                 logger.info(`✅ Model validation passed: ${modelId}`);
