@@ -1,6 +1,10 @@
 import Handlebars from "handlebars";
 import yaml from "js-yaml";
 import {formatOps, getOps} from "../ops/ops.js";
+import {sendStateEventToStream} from "../../common/streams.js";
+import {getLogger} from "../../common/logging.js";
+
+const logger = getLogger("assistants.instructions.templating");
 
 
 function parseAllOpsOccurrences(templateStr) {
@@ -19,7 +23,8 @@ function parseAllOpsOccurrences(templateStr) {
     return results;
   }
 
-export const fillInTemplate = async (llm, params, body, ds, templateStr, contextData) => {
+export const fillInTemplate = async (responseStream, params, body, ds, templateStr, contextData) => {
+    // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
     contextData = {
         ...contextData,
@@ -47,7 +52,7 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
         }
 
         if ( includedOperations.length > 0) { 
-            llm.sendStateEventToStream({ resolvedOps: includedOperations });
+            sendStateEventToStream(responseStream, { resolvedOps: includedOperations });
             contextData[ASSISTANT_OPS_STR] = includedOperations;
             
             if (!hasTemplateForOps) {
@@ -63,7 +68,6 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
         })
         Handlebars.registerHelper("ops", function (opKey) {
             if (!opKey || !opsFormatMap[opKey]) return "";
-            // console.log("opsFormatMap[opKey]: ", opsFormatMap[opKey]);
             return opsFormatMap[opKey];
           });
    
@@ -117,7 +121,7 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
         result = template(contextData);
 
     } catch (e) {
-        console.error(e);
+        logger.error("Error in templating:", e);
     }
 
     return result;

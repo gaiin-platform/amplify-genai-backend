@@ -7,7 +7,8 @@ from agent.core import Capability, ActionContext, Memory, Action
 from agent.prompt import Prompt
 from agent.tools.planning import create_plan, determine_progress
 from datetime import datetime
-
+from pycommon.logger import getLogger
+logger = getLogger("agent_capabilities")
 
 def get_results_map(agent, action_context, response):
     environment = action_context.get_environment()
@@ -80,7 +81,7 @@ class PlanFirstCapability(Capability):
                     }
                 )
             else:
-                print("Plan was empty, not adding to memory")
+                logger.debug("Plan was empty, not adding to memory")
 
     def process_new_memories(
         self,
@@ -144,14 +145,14 @@ class TimeAwareCapability(Capability):
                 "%H:%M %A, %B %d, %Y"
             )  # Desired format
 
-            print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
-            print(
-                f"Formatted Date: {formatted_date}"
+            logger.debug("ISO Time: %s", iso_time)  # Example: 2025-02-09T01:11:00-0600
+            logger.debug(
+                "Formatted Date: %s", formatted_date
             )  # Example: 01:11 Friday, February 9, 2025
 
-            print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
-            print(
-                f"Formatted Date: {formatted_date}"
+            logger.debug("ISO Time: %s", iso_time)  # Example: 2025-02-09T01:11:00-0600
+            logger.debug(
+                "Formatted Date: %s", formatted_date
             )  # Example: 01:11 Friday, February 9, 2025
 
             memory = action_context.get_memory()
@@ -165,10 +166,7 @@ class TimeAwareCapability(Capability):
                 }
             )
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            print("Error getting time zone, disabling time aware capability", e)
+            logger.warning("Error getting time zone, disabling time aware capability: %s", e, exc_info=True)
 
 
 class PassResultsCapability(Capability):

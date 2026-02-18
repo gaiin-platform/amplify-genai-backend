@@ -14,6 +14,10 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.ops import api_tool
 from pycommon.api.auth_admin import verify_user_as_admin
 from botocore.config import Config
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -22,8 +26,12 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.API_KEY.value])
 
+from pycommon.logger import getLogger
+logger = getLogger("api_service")
+
 s3 = boto3.client("s3")
-bucket_name = os.environ["S3_API_DOCUMENTATION_BUCKET"]
+consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+api_documentation_bucket_name = os.environ["S3_API_DOCUMENTATION_BUCKET"]  # Legacy bucket for backward compatibility
 dynamodb = boto3.resource("dynamodb")
 api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
 table = dynamodb.Table(api_keys_table_name)
@@ -35,13 +43,16 @@ class APIFile(Enum):
     JSON = "Postman_Amplify_API_Collection.json"
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("read")
 def get_api_keys_for_user(event, context, user, name, data):
     return get_api_keys(user)
 
 
 def get_api_keys(user):
-    print("Getting keys from dyanmo")
+    logger.info("Getting keys from dynamo")
     try:
         # Use a Scan operation with a FilterExpression to find items where the user is the owner or the delegate
         # Use a ProjectionExpression to specify the attributes to retrieve (excluding 'apiKey')
@@ -55,7 +66,7 @@ def get_api_keys(user):
         )
         # Check if any items were found
         if "Items" in response and response["Items"]:
-            print(f"API keys found for user {user}")
+            logger.info("API keys found for user %s", user)
             for item in response["Items"]:
                 item['needs_rotation'] = item.get("active", False) and (not item.get("purpose")) and (item.get('apiKey', '').startswith('amp-') or item.get('apiKey') == 'MIGRATED')
                 del item['apiKey']
@@ -66,17 +77,17 @@ def get_api_keys(user):
                 # check if key is expired, if so deactivate key
                 expiration = item.get("expirationDate")
                 if item.get("active") and expiration and is_expired(expiration):
-                    print( f"Key {item.get('applicationName')} is expired and will be deactivated ")
+                    logger.warning("Key %s is expired and will be deactivated", item.get('applicationName'))
                     deactivate_key_in_dynamo(user, item.get("api_owner_id"))
                     item["active"] = False
 
             return {"success": True, "data": response["Items"]}
         else:
-            print(f"User {user} has no API keys. ")
+            logger.info("User %s has no API keys", user)
             return {"success": True, "data": [], "message": "User has no API keys."}
     except Exception as e:
         # Handle potential errors
-        print(f"An error occurred while retrieving API keys for user {user}: {e}")
+        logger.error("An error occurred while retrieving API keys for user %s: %s", user, e)
         return {"success": False, "data": [], "message": str(e)}
 
 
@@ -127,6 +138,9 @@ def get_api_keys(user):
     },
 )
 # for api key ast 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("read")
 def get_api_keys_for_assistant(event, context, user, name, data):
     # Fetch API keys
@@ -185,6 +199,9 @@ def is_valid_account(coa):
     return bool(pattern.match(coa))
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated("create")
 def create_api_keys(event, context, user, name, data):
     # api keys/get
@@ -192,13 +209,13 @@ def create_api_keys(event, context, user, name, data):
 
     can_create, message = can_create_api_key(api_key_data.get("delegate"), api_key_data["account"], data["access_token"])
     if not can_create:
-        print(f"Error: {message}")
+        logger.error("Validation error: %s", message)
         return {"success": False, "message": message}
     return create_api_key_for_user(user, api_key_data)
 
 
 def create_api_key_for_user(user, api_key):
-    print("Validated and now creating api key")
+    logger.info("Validated and now creating api key")
     api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
     table = dynamodb.Table(api_keys_table_name)
     delegate = api_key.get("delegate")
@@ -220,7 +237,7 @@ def create_api_key_for_user(user, api_key):
         sys_id = f"{app_name.strip().replace(' ', '-')}-{''.join(random.choices('0123456789', k=6))}"  # system Id
 
     try:
-        print("Put entry in api keys table")
+        logger.info("Put entry in api keys table")
 
         # For delegate keys, don't store the hash initially (one-time retrieval)
         hash_to_store = "MIGRATED" if delegate else api_key_hash
@@ -248,7 +265,7 @@ def create_api_key_for_user(user, api_key):
 
         # Check if the response was successful
         if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-            print(f"API key for user {user} created successfully")
+            logger.info("API key for user %s created successfully", user)
             return {
                 "success": True,
                 "data": {"id": id, 
@@ -257,17 +274,20 @@ def create_api_key_for_user(user, api_key):
                 "message": "API key created successfully",
             }
         else:
-            print(f"Failed to create API key for user {user}")
+            logger.error("Failed to create API key for user %s", user)
             return {"success": False, "message": "Failed to create API key"}
     except Exception as e:
         # Handle potential errors
-        print(f"An error occurred while saving API key for user {user}: {e}")
+        logger.error("An error occurred while saving API key for user %s: %s", user, e)
         return {
             "success": False,
             "message": f"An error occurred while saving API key: {str(e)}",
         }
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("update")
 def update_api_keys_for_user(event, context, user, name, data):
     failed = []
@@ -292,7 +312,7 @@ def update_api_key(item_id, updates, user):
             or is_expired(key_data["expirationDate"])
             or user != key_data["owner"]
         ):
-            print("Failed at initial screening")
+            logger.warning("Failed at initial screening")
             return {
                 "success": False,
                 "error": "API key is inactive or expired or does not exist or you are unauthorized to make updates",
@@ -305,14 +325,14 @@ def update_api_key(item_id, updates, user):
     update_expression = []
     expression_attribute_values = {}
     expression_attribute_names = {}
-    print("Updates to perform on key: ", key_name)
+    logger.info("Updates to perform on key: %s", key_name)
     for field, value in updates.items():
         if field in updatable_fields:
-            print("updates: ", field, "-", value)
+            logger.debug("updates: %s - %s", field, value)
         if field == "account":
             if not is_valid_account(value["id"]):
                 warning = "Warning: Invalid COA string attached to account"
-                print(warning)  # or use a logging mechanism
+                logger.warning(warning)
             # Continue with key creation despite the warning
         if field == "rateLimit":
             value = formatRateLimit(value)
@@ -344,10 +364,13 @@ def update_api_key(item_id, updates, user):
         )
         return {"success": True, "updated_attributes": response["Attributes"]}
     except ClientError as e:
-        print("Updates save error: ", e)
+        logger.error("Updates save error: %s", e)
         return {"success": False, "error": str(e), "key_name": key_name}
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("deactivate")
 def deactivate_key(event, context, user, name, data):
     item_id = data["data"]["apiKeyId"]
@@ -363,7 +386,7 @@ def deactivate_key_in_dynamo(user, key_id):
             item = response["Item"]
 
             if item["owner"] == user or item["delegate"] == user:
-                print("updating key")
+                logger.info("updating key")
                 update_response = table.update_item(
                     Key={"api_owner_id": key_id},
                     UpdateExpression="SET active = :val",
@@ -373,7 +396,7 @@ def deactivate_key_in_dynamo(user, key_id):
 
                 # Check if the item was successfully updated
                 if not update_response["Attributes"]["active"]:
-                    print("successfully deactivated")
+                    logger.info("successfully deactivated")
                     return {
                         "success": True,
                         "message": "API key successfully deactivated.",
@@ -393,12 +416,12 @@ def deactivate_key_in_dynamo(user, key_id):
 
     except Exception as e:
         # Handle potential errors
-        print(f"An error occurred: {e}")
+        logger.error("An error occurred: %s", e)
         return {"success": False, "error": "Failed to deactivate API key"}
 
 
 def is_valid_id_format(id):
-    print("Validating key id: ", id)
+    logger.debug("Validating key id: %s", id)
     regex = r"^[^/]+/(ownerKey|delegateKey|systemKey)/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     match = re.fullmatch(regex, id, re.IGNORECASE)
     return bool(match)
@@ -411,9 +434,12 @@ def is_expired(date_str):
     return date <= datetime.now()
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated("read")
 def get_system_ids(event, context, current_user, name, data):
-    print("Getting system-specific API keys from DynamoDB")
+    logger.info("Getting system-specific API keys from DynamoDB")
     try:
         # Use a Scan operation with a FilterExpression to find items where the user is the owner and systemId is not null
         response = table.scan(
@@ -430,11 +456,11 @@ def get_system_ids(event, context, current_user, name, data):
         )
         # Check if any items were found
         if "Items" in response and response["Items"]:
-            print(f"System API keys found for owner {current_user}")
-            print(f"items {response['Items']}")
+            logger.info("System API keys found for owner %s", current_user)
+            logger.debug("items %s", response['Items'])
             return {"success": True, "data": response["Items"]}
         else:
-            print(f"No active system API keys found for owner {current_user}")
+            logger.info("No active system API keys found for owner %s", current_user)
             return {
                 "success": True,
                 "data": [],
@@ -442,15 +468,18 @@ def get_system_ids(event, context, current_user, name, data):
             }
     except Exception as e:
         # Handle potential errors
-        print(
-            f"An error occurred while retrieving system API keys for owner {current_user}: {e}"
+        logger.error(
+            "An error occurred while retrieving system API keys for owner %s: %s", current_user, e
         )
         return {"success": False, "message": str(e)}
 
 
+@required_env_vars({
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated("read")
 def get_documentation(event, context, current_user, name, data):
-    print(f"Getting presigned download URL for user {current_user}")
+    logger.info("Getting presigned download URL for user %s", current_user)
 
     doc_presigned_url = generate_presigned_url(APIFile.PDF.value)
     csv_presigned_url = generate_presigned_url(APIFile.CSV.value)
@@ -467,25 +496,45 @@ def get_documentation(event, context, current_user, name, data):
     if len(res) > 1:
         return res
     else:
-        print("Failed to retrieve a new presigned url")
+        logger.error("Failed to retrieve a new presigned url")
         return {"success": False, "message": "Files not found"}
 
 
 def generate_presigned_url(file):
     s3 = boto3.client("s3")
-    try:
-        return s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": bucket_name,
-                "Key": file,
-                "ResponseContentDisposition": f"attachment; filename={file}",
-            },
-            ExpiresIn=7200,  # Expires in 3 hrs
-        )
-    except ClientError as e:
-        print(f"Error generating presigned download URL for file {file}: {e}")
-        return None
+    
+    # BACKWARD COMPATIBILITY: Try consolidation bucket first, then fall back to legacy bucket
+    buckets_to_try = [
+        (consolidation_bucket_name, f"apiDocumentation/{file}"),  # New location
+        (api_documentation_bucket_name, file)  # Legacy location (direct file, no subfolder)
+    ]
+    
+    for bucket_name, key in buckets_to_try:
+        try:
+            # First check if file exists in this bucket/location
+            s3.head_object(Bucket=bucket_name, Key=key)
+            
+            # File exists, generate presigned URL
+            logger.info("Found %s in bucket %s at key %s", file, bucket_name, key)
+            return s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": bucket_name,
+                    "Key": key,
+                    "ResponseContentDisposition": f"attachment; filename={file}",
+                },
+                ExpiresIn=7200,  # Expires in 2 hrs
+            )
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                logger.debug("File %s not found in bucket %s at key %s", file, bucket_name, key)
+                continue  # Try next bucket
+            else:
+                logger.error("Error checking file %s in bucket %s: %s", file, bucket_name, e)
+                continue  # Try next bucket
+    
+    logger.warning("File %s not found in any bucket", file)
+    return None
 
 
 def formatRateLimit(rateLimit):
@@ -494,6 +543,9 @@ def formatRateLimit(rateLimit):
     return rateLimit
 
 
+@required_env_vars({
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated("upload")
 def get_api_doc_presigned_urls(event, context, current_user, name, data):
     # verify they are an admin
@@ -507,7 +559,7 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
         APIFile.CSV.value: "text/csv",
         APIFile.JSON.value: "application/json",
     }
-    print("Uploading: ", file_names[filename])
+    logger.info("Uploading: %s", file_names[filename])
     if not filename in file_names.keys():
         return {"success": False, "error": "File name does not match the preset names."}
 
@@ -517,84 +569,108 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
         presigned = s3.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": bucket_name,
-                "Key": filename,
+                "Bucket": consolidation_bucket_name,
+                "Key": f"apiDocumentation/{filename}",
                 "ContentType": file_names[filename],
                 "ContentMD5": md5_content,
             },
             ExpiresIn=3600,
         )
-        print("Presigned url generated")
+        logger.info("Presigned url generated")
         return {"success": True, "presigned_url": presigned}
     except ClientError as e:
-        print(f"Error generating presigned upload URL: {e}")
+        logger.error("Error generating presigned upload URL: %s", e)
         return {
             "success": False,
             "error": f"Error generating presigned upload URL: {e}",
         }
 
 
+@required_env_vars({
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 @validated("read")
 def get_api_document_templates(event, context, current_user, name, data):
-    templates_key = "Amplify_API_Templates.zip"
+    templates_key_new = "apiDocumentation/Amplify_API_Templates.zip"  # New location
+    templates_key_legacy = "Amplify_API_Templates.zip"  # Legacy location
+    filename = "Amplify_API_Templates.zip"
+
+    # BACKWARD COMPATIBILITY: Check both buckets
+    file_exists = False
+    templates_key = None
+    bucket_to_use = None
 
     try:
-        # List objects in the bucket and check if templates file exists
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=templates_key)
-        file_exists = response.get("Contents") and any(
-            obj["Key"] == templates_key for obj in response.get("Contents", [])
-        )
-
-        if not file_exists:
-            print("templates.zip does not exist in S3. Uploading now...")
-            # Upload from local to S3
-            try:
-
-                file_path = os.path.abspath(
-                    os.path.join(
-                        os.path.dirname(__file__),
-                        "..",
-                        "api_documentation",
-                        "templates",
-                        "Amplify_API_Templates.zip",
-                    )
-                )
-
-                with open(file_path, "rb") as f:
-                    s3.put_object(
-                        Bucket=bucket_name,
-                        Key=templates_key,
-                        Body=f,
-                        ContentType="application/zip",  # Content type for a zip file
-                    )
-                print("Succesfully put templates.zip in the s3 bucket")
-            except FileNotFoundError:
-                print("Local templates.zip file not found in the Lambda package")
-                return {
-                    "success": False,
-                    "message": "Local templates.zip file not found in the Lambda package",
-                }
-            except ClientError as e:
-                print(f"Error uploading {templates_key} to S3: {e}")
-                return {
-                    "success": False,
-                    "message": f"Error uploading {templates_key} to S3: {e}",
-                }
+        # First try consolidation bucket (new location)
+        response = s3.list_objects_v2(Bucket=consolidation_bucket_name, Prefix=templates_key_new)
+        if response.get("Contents") and any(obj["Key"] == templates_key_new for obj in response.get("Contents", [])):
+            file_exists = True
+            templates_key = templates_key_new
+            bucket_to_use = consolidation_bucket_name
+            logger.info("Found templates in consolidation bucket: %s", templates_key)
         else:
-            print("templates.zip exists in S3")
-
+            # Try legacy bucket
+            response = s3.list_objects_v2(Bucket=api_documentation_bucket_name, Prefix=templates_key_legacy)
+            if response.get("Contents") and any(obj["Key"] == templates_key_legacy for obj in response.get("Contents", [])):
+                file_exists = True
+                templates_key = templates_key_legacy
+                bucket_to_use = api_documentation_bucket_name
+                logger.info("Found templates in legacy bucket: %s", templates_key)
     except ClientError as e:
-        print(f"Error checking for template in S3: {e}")
-        return {"success": False, "message": f"Failed to check for template file: {e}"}
+        logger.error("Error checking for templates in buckets: %s", e)
+        # Continue to upload logic if needed
 
-    # Now that the file should be in S3, generate the presigned URL
-    presigned_url = generate_presigned_url(templates_key)
+    if not file_exists:
+        logger.info("templates.zip does not exist in either bucket. Uploading to consolidation bucket...")
+        # Upload from local to consolidation bucket (new location)
+        try:
+            file_path = os.path.abspath(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "api_documentation",
+                    "templates",
+                    "Amplify_API_Templates.zip",
+                )
+            )
+
+            with open(file_path, "rb") as f:
+                s3.put_object(
+                    Bucket=consolidation_bucket_name,
+                    Key=templates_key_new,  # Use new location for uploads
+                    Body=f,
+                    ContentType="application/zip",
+                )
+            logger.info("Successfully put templates.zip in the consolidation bucket")
+            templates_key = templates_key_new
+            bucket_to_use = consolidation_bucket_name
+        except FileNotFoundError:
+            logger.error("Local templates.zip file not found in the Lambda package")
+            return {
+                "success": False,
+                "message": "Local templates.zip file not found in the Lambda package",
+            }
+        except ClientError as e:
+            logger.error("Error uploading %s to S3: %s", templates_key_new, e)
+            return {
+                "success": False,
+                "message": f"Error uploading {templates_key_new} to S3: {e}",
+            }
+    else:
+        logger.info("templates.zip exists in S3: %s/%s", bucket_to_use, templates_key)
+
+    # Generate presigned URL using the backward-compatible function
+    presigned_url = generate_presigned_url(filename)
     if presigned_url:
         return {"success": True, "presigned_url": presigned_url}
     else:
         return {"success": False, "message": "Failed to generate presigned URL"}
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("rotate")
 def rotate_api_key(event, context, user, name, data):
     """
@@ -607,7 +683,7 @@ def rotate_api_key(event, context, user, name, data):
     
     try:
         # First, retrieve the current key from DynamoDB
-        print('Retrieve the item from DynamoDB for rotation')
+        logger.info("Retrieve the item from DynamoDB for rotation")
         current_key = table.get_item(Key={"api_owner_id": api_key_id})
         
         if "Item" not in current_key:
@@ -644,7 +720,7 @@ def rotate_api_key(event, context, user, name, data):
             ReturnValues="UPDATED_NEW",
         )
         
-        print(f"API key rotated successfully for key ID: {api_key_id}")
+        logger.info("API key rotated successfully for key ID: %s", api_key_id)
         return {
             "success": True,
             "data": {"apiKey": new_api_key_raw},
@@ -652,7 +728,7 @@ def rotate_api_key(event, context, user, name, data):
         }
         
     except Exception as e:
-        print(f"An error occurred while rotating API key {api_key_id}: {e}")
+        logger.error("An error occurred while rotating API key %s: %s", api_key_id, e)
         return {
             "success": False,
             "error": f"An error occurred while rotating API key: {str(e)}",
@@ -674,7 +750,7 @@ def backfill_api_keys_to_token_v1():
     
     This should only be run once during migration from old to new key format.
     """
-    print("Starting backfill process for API keys to TokenV1 format...")
+    logger.info("Starting backfill process for API keys to TokenV1 format...")
     
     try:
         # Scan the entire table to find items with apiKey column that starts with 'amp-'
@@ -694,10 +770,10 @@ def backfill_api_keys_to_token_v1():
             items = response.get('Items', [])
             
             if not items:
-                print("No more items with apiKey starting with 'amp-' found.")
+                logger.info("No more items with apiKey starting with 'amp-' found.")
                 break
             
-            print(f"Processing batch of {len(items)} items...")
+            logger.info("Processing batch of %d items...", len(items))
             
             for item in items:
                 items_processed += 1
@@ -707,7 +783,7 @@ def backfill_api_keys_to_token_v1():
                 owner = item.get('owner', 'Unknown')
                 
                 try:
-                    print(f"Processing key: {app_name} (Owner: {owner}, ID: {api_key_id})")
+                    logger.info("Processing key: %s (Owner: %s, ID: %s)", app_name, owner, api_key_id)
                     
                     # Create TokenV1 from existing API key
                     token = TokenV1(old_api_key)
@@ -723,11 +799,11 @@ def backfill_api_keys_to_token_v1():
                     )
                     
                     items_updated += 1
-                    print(f"✅ Successfully updated key: {app_name}")
+                    logger.info("Successfully updated key: %s", app_name)
                     
                 except Exception as e:
                     items_failed += 1
-                    print(f"❌ Failed to update key: {app_name} - Error: {str(e)}")
+                    logger.error("Failed to update key: %s - Error: %s", app_name, str(e))
                     continue
             
             # Check if there are more items to scan
@@ -736,13 +812,13 @@ def backfill_api_keys_to_token_v1():
             
             scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         
-        print("\n" + "="*50)
-        print("BACKFILL PROCESS COMPLETED")
-        print("="*50)
-        print(f"Total items processed: {items_processed}")
-        print(f"Successfully updated: {items_updated}")
-        print(f"Failed updates: {items_failed}")
-        print("="*50)
+        logger.info("\n" + "="*50)
+        logger.info("BACKFILL PROCESS COMPLETED")
+        logger.info("="*50)
+        logger.info("Total items processed: %d", items_processed)
+        logger.info("Successfully updated: %d", items_updated)
+        logger.info("Failed updates: %d", items_failed)
+        logger.info("="*50)
         
         return {
             "success": True,
@@ -752,7 +828,7 @@ def backfill_api_keys_to_token_v1():
         }
         
     except Exception as e:
-        print(f"❌ Critical error during backfill process: {str(e)}")
+        logger.error("Critical error during backfill process: %s", str(e))
         return {
             "success": False,
             "error": str(e),
@@ -773,7 +849,7 @@ def clear_amp_api_keys():
     
     Use this to clean up any remaining 'amp-' prefixed keys after migration.
     """
-    print("Starting process to clear API keys that start with 'amp-'...")
+    logger.info("Starting process to clear API keys that start with 'amp-'...")
     
     try:
         # Scan the entire table to find items with apiKey column that starts with 'amp-'
@@ -793,10 +869,10 @@ def clear_amp_api_keys():
             items = response.get('Items', [])
             
             if not items:
-                print("No more items with apiKey starting with 'amp-' found.")
+                logger.info("No more items with apiKey starting with 'amp-' found.")
                 break
             
-            print(f"Processing batch of {len(items)} items...")
+            logger.info("Processing batch of %d items...", len(items))
             
             for item in items:
                 items_processed += 1
@@ -806,8 +882,8 @@ def clear_amp_api_keys():
                 owner = item.get('owner', 'Unknown')
                 
                 try:
-                    print(f"Clearing key: {app_name} (Owner: {owner}, ID: {api_key_id})")
-                    print(f"  Current apiKey: {old_api_key[:10]}...")
+                    logger.info("Clearing key: %s (Owner: %s, ID: %s)", app_name, owner, api_key_id)
+                    logger.debug("  Current apiKey: %s...", old_api_key[:10])
                     
                     # Set the apiKey to "MIGRATED" to indicate it has been processed
                     update_response = table.update_item(
@@ -818,11 +894,11 @@ def clear_amp_api_keys():
                     )
                     
                     items_updated += 1
-                    print(f"✅ Successfully cleared key: {app_name}")
+                    logger.info("Successfully cleared key: %s", app_name)
                     
                 except Exception as e:
                     items_failed += 1
-                    print(f"❌ Failed to clear key: {app_name} - Error: {str(e)}")
+                    logger.error("Failed to clear key: %s - Error: %s", app_name, str(e))
                     continue
             
             # Check if there are more items to scan
@@ -831,13 +907,13 @@ def clear_amp_api_keys():
             
             scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         
-        print("\n" + "="*50)
-        print("CLEAR AMP- KEYS PROCESS COMPLETED")
-        print("="*50)
-        print(f"Total items processed: {items_processed}")
-        print(f"Successfully cleared: {items_updated}")
-        print(f"Failed clears: {items_failed}")
-        print("="*50)
+        logger.info("\n" + "="*50)
+        logger.info("CLEAR AMP- KEYS PROCESS COMPLETED")
+        logger.info("="*50)
+        logger.info("Total items processed: %d", items_processed)
+        logger.info("Successfully cleared: %d", items_updated)
+        logger.info("Failed clears: %d", items_failed)
+        logger.info("="*50)
         
         return {
             "success": True,
@@ -847,7 +923,7 @@ def clear_amp_api_keys():
         }
         
     except Exception as e:
-        print(f"❌ Critical error during clear process: {str(e)}")
+        logger.error("Critical error during clear process: %s", str(e))
         return {
             "success": False,
             "error": str(e),
@@ -868,7 +944,7 @@ def check_for_amp_api_keys():
     
     Use this to verify that migration/cleanup is complete.
     """
-    print("Checking for API keys that start with 'amp-'...")
+    logger.info("Checking for API keys that start with 'amp-'...")
     
     try:
         # Scan the table to find items with apiKey column that starts with 'amp-'
@@ -883,24 +959,24 @@ def check_for_amp_api_keys():
         items = response.get('Items', [])
         
         if items:
-            print(f"❌ Found {len(items)} item(s) with apiKey starting with 'amp-'")
+            logger.warning("Found %d item(s) with apiKey starting with 'amp-'", len(items))
             for item in items:
                 app_name = item.get('applicationName', 'Unknown')
                 owner = item.get('owner', 'Unknown')
                 api_key = item.get('apiKey', '')
-                print(f"  - {app_name} (Owner: {owner}) - Key: {api_key[:10]}...")
+                logger.info("  - %s (Owner: %s) - Key: %s...", app_name, owner, api_key[:10])
             
             # Check if there are more items
             if 'LastEvaluatedKey' in response:
-                print("  ... and potentially more items exist")
+                logger.info("  ... and potentially more items exist")
             
             return True
         else:
-            print("✅ No API keys starting with 'amp-' found")
+            logger.info("No API keys starting with 'amp-' found")
             return False
             
     except Exception as e:
-        print(f"❌ Error checking for amp- keys: {str(e)}")
+        logger.error("Error checking for amp- keys: %s", str(e))
         return False
 
 

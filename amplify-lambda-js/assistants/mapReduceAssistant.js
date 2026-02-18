@@ -2,10 +2,10 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {getLogger} from "../common/logging.js";
 import {executeWorkflow} from "../workflow/workflow.js";
+import {getLogger} from "../common/logging.js";
 
-const logger = getLogger("sequentialChat");
+const logger = getLogger("assistants.mapReduceAssistant");
 
 
 export const mapReduceAssistant = {
@@ -18,16 +18,34 @@ export const mapReduceAssistant = {
         return true;
     },
     description: "An assistant that can handle requests that are larger than the model's context window.",
-    handler: async (llm, params, body, dataSources, responseStream) => {
+    handler: async (params, body, dataSources, responseStream) => {
+        // 🚀 BREAKTHROUGH: No longer need LLM parameter - create our own LiteLLM chatFn
+
+        // 🔍 DEBUG: Log incoming dataSources
+        logger.info("🔍 DEBUG - MapReduce received dataSources:", {
+            dataSources_length: dataSources?.length || 0,
+            dataSources_sample: dataSources?.slice(0, 3)?.map(ds => ({
+                id: ds?.id || "MISSING_ID",
+                type: ds?.type || "MISSING_TYPE", 
+                content_length: ds?.content?.length || 0,
+                hasContent: !!ds?.content
+            })) || []
+        });
+        
 
         const task = body.messages.slice(-1)[0].content;
+
+        const workflowInput = dataSources.map(ds => ds.id);
+        
+        // 🔍 DEBUG: Log workflow input IDs
+        logger.info("🔍 DEBUG - MapReduce workflow input IDs:", workflowInput);
 
         const workflow = {
             resultKey: "answer",
             steps: [
                 {
                     prompt:"__use_body__",
-                    input: dataSources.map(ds => ds.id),
+                    input: workflowInput,
                     outputTo: "parts"
                 },
                 {
@@ -50,21 +68,22 @@ access to that information and you should use them to provide the best answer po
             ]
         }
 
-        console.log("Starting local workflow....");
+        logger.info("Starting local workflow....");
 
-        const response = await executeWorkflow(
+        // ✅ PHASE 1.3: Use model directly for workflow engine
+        await executeWorkflow(
             {
                 workflow,
                 body,
                 params,
-                chatFn:llm.chatFn,
+                model: params.model,
                 chatRequest:body,
                 dataSources,
                 responseStream,
                 initialState:{}
             });
 
-        console.log("Local workflow finished.");
+        logger.info("Local workflow finished.");
 
         responseStream.end();
         //return llm.prompt(body, dataSources);

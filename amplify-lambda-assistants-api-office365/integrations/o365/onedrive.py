@@ -7,6 +7,8 @@ integration_name = "microsoft_drive"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 MAX_SIMPLE_UPLOAD_SIZE = 4 * 1024 * 1024  # 4 MB
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class DriveError(Exception):
     """Base exception for drive operations"""
@@ -63,8 +65,8 @@ def list_drive_items(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        # Try to request download URL in the listing (though MS Graph may not honor this for listings)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{folder_id}/children?$top={page_size}&$select=id,name,size,file,folder,createdDateTime,lastModifiedDateTime,shared,createdBy,lastModifiedBy"
+        # Request sensitivity label along with other metadata
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{folder_id}/children?$top={page_size}&$select=id,name,size,file,folder,createdDateTime,lastModifiedDateTime,shared,createdBy,lastModifiedBy,sensitivityLabel"
 
         all_items = []
         while url:
@@ -78,8 +80,20 @@ def list_drive_items(
             # Process each item
             formatted_items = []
             for item in items:
+                # Log raw item to see what Graph API returns
+                logger.info(f"RAW ITEM FROM GRAPH API: {json.dumps(item, indent=2)}")
+
+                # Specifically check for sensitivityLabel
+                if "sensitivityLabel" in item:
+                    logger.info(f"✓ FOUND sensitivityLabel in item {item.get('name')}: {item['sensitivityLabel']}")
+                else:
+                    logger.warning(f"✗ NO sensitivityLabel in item {item.get('name')} - Graph API did not return it!")
+
                 # Format the basic item data
                 formatted_item = format_drive_item(item)
+
+                # Log formatted item to see what we're returning
+                logger.info(f"FORMATTED ITEM AFTER format_drive_item: {json.dumps(formatted_item, indent=2)}")
 
                 formatted_items.append(formatted_item)
 
@@ -88,8 +102,16 @@ def list_drive_items(
             # Handle pagination
             url = data.get("@odata.nextLink")
 
+        # Log before convert_dictionaries
+        logger.info(f"BEFORE convert_dictionaries: {json.dumps(all_items, indent=2)}")
+
         # Convert to standardized format before returning
-        return convert_dictionaries(all_items)
+        result = convert_dictionaries(all_items)
+
+        # Log after convert_dictionaries
+        logger.info(f"AFTER convert_dictionaries: {json.dumps(result, indent=2)}")
+
+        return result
 
     except requests.RequestException as e:
         raise DriveError(f"Network error while listing drive items: {str(e)}")
@@ -200,6 +222,8 @@ def download_file(current_user: str, item_id: str, access_token: str = None) -> 
     """
     Gets a download URL for a file from OneDrive instead of returning raw bytes.
 
+    SECURITY: Blocks access to Level 4 (Critical/Confidential) files.
+
     Args:
         current_user: User identifier
         item_id: ID of the file to download
@@ -210,19 +234,31 @@ def download_file(current_user: str, item_id: str, access_token: str = None) -> 
 
     Raises:
         ItemNotFoundError: If file doesn't exist
-        DriveError: For other download failures
+        DriveError: For other download failures, including sensitivity restrictions
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
-        # First get file metadata to get name and download URL
+        # Get file metadata including sensitivity label
         url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}"
-        response = session.get(url)
+        params = {"$select": "id,name,file,sensitivityLabel,@microsoft.graph.downloadUrl"}
+        response = session.get(url, params=params)
 
         if not response.ok:
             handle_graph_error(response)
 
         file_data = response.json()
+
+        # SECURITY CHECK: Parse sensitivity label and block Level 4 files
+        sensitivity_info = parse_file_sensitivity_label(file_data)
+
+        if sensitivity_info and sensitivity_info.get("is_sensitive"):
+            file_name = file_data.get("name", "unknown")
+            logger.warning(f"🚫 BLOCKED DOWNLOAD ATTEMPT - Level 4 file: {file_name}, User: {current_user}")
+            raise DriveError(
+                "This file contains sensitive data (Level 4 - Critical/Confidential) and cannot be downloaded. "
+                "Access to this file is restricted for security compliance."
+            )
 
         # Return a dict with the download URL and file metadata
         return {
@@ -295,8 +331,129 @@ def convert_dictionaries(input_list: List[Dict]) -> List[Dict]:
         if "size" in item:
             file_data["size"] = item.get("size", 0)
 
+        # Pass through sensitivity fields if present
+        if "sensitivity" in item:
+            file_data["sensitivity"] = item.get("sensitivity")
+        if "sensitivityLabel" in item:
+            file_data["sensitivityLabel"] = item.get("sensitivityLabel")
+        if "attentionNote" in item:
+            file_data["attentionNote"] = item.get("attentionNote")
+
         result.append(file_data)
     return result
+
+
+def parse_file_sensitivity_label(item: Dict) -> Optional[Dict]:
+    """
+    Parse Microsoft Information Protection label from OneDrive/SharePoint file.
+
+    Args:
+        item: Raw drive item data from Graph API
+
+    Returns:
+        Dict containing sensitivity level and label information, or None if no label
+    """
+    # Check for sensitivityLabel property (Graph API v1.0+)
+    if "sensitivityLabel" in item:
+        label = item["sensitivityLabel"]
+        # Graph API uses 'displayName' not 'name'
+        label_name = label.get("displayName", label.get("name", "")).lower()
+        label_id = label.get("id", "")
+
+        # Only process if there's an actual label (not empty)
+        if not label_name or not label_id:
+            return None
+
+        # IMPORTANT: Check exact "level X" patterns FIRST to avoid false matches
+        # E.g., "Level 3 Restricted" should match Level 3, not Level 4's "restricted" keyword
+
+        # Level 4 (exact match first)
+        if "level 4" in label_name:
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
+            return {
+                "level": 4,
+                "label": "confidential",
+                "is_sensitive": True,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 3 (exact match first)
+        if "level 3" in label_name:
+            return {
+                "level": 3,
+                "label": "private",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 2 (exact match first)
+        if "level 2" in label_name:
+            return {
+                "level": 2,
+                "label": "personal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 1 (exact match first)
+        if "level 1" in label_name:
+            return {
+                "level": 1,
+                "label": "normal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Fallback: Check other keywords if no exact "level X" match
+        level_4_keywords = ["critical", "confidential", "restricted", "secret",
+            "highly confidential", "classified", "sensitive", "proprietary"]
+        if any(keyword in label_name for keyword in level_4_keywords):
+            logger.warning(f"Level 4 sensitive file detected: {item.get('name', 'unknown')}")
+            return {
+                "level": 4,
+                "label": "confidential",
+                "is_sensitive": True,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 3 keywords
+        level_3_keywords = ["internal", "private", "company", "organization"]
+        if any(keyword in label_name for keyword in level_3_keywords):
+            return {
+                "level": 3,
+                "label": "private",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 2 keywords (fallback)
+        if "personal" in label_name:
+            return {
+                "level": 2,
+                "label": "personal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+        # Level 1 keywords (fallback)
+        level_1_keywords = ["public", "non-sensitive", "general", "unrestricted"]
+        if any(keyword in label_name for keyword in level_1_keywords):
+            return {
+                "level": 1,
+                "label": "normal",
+                "is_sensitive": False,
+                "displayName": label.get("displayName"),
+                "labelId": label_id
+            }
+
+    return None
 
 
 def format_drive_item(item: Dict) -> Dict:
@@ -309,7 +466,12 @@ def format_drive_item(item: Dict) -> Dict:
     Returns:
         Dict containing formatted item details
     """
-    return {
+    # Parse sensitivity label for files (not folders)
+    sensitivity_info = None
+    if item.get("file"):  # Only check files, not folders
+        sensitivity_info = parse_file_sensitivity_label(item)
+
+    formatted = {
         "id": item["id"],
         "name": item.get("name", ""),
         "size": item.get("size", 0),
@@ -329,6 +491,18 @@ def format_drive_item(item: Dict) -> Dict:
         .get("user", {})
         .get("displayName", ""),
     }
+
+    # Add sensitivity fields only if label exists
+    if sensitivity_info:
+        formatted["sensitivity"] = sensitivity_info["level"]
+        formatted["sensitivityLabel"] = sensitivity_info["label"]
+
+        # Add attention note for level 4 sensitive files
+        if sensitivity_info["is_sensitive"]:
+            formatted["attentionNote"] = "This file contains sensitive data and cannot be viewed."
+            formatted["downloadUrl"] = None  # Block download URL for sensitive files
+
+    return formatted
 
 
 def get_drive_item(current_user: str, item_id: str, access_token: str) -> Dict:
@@ -373,7 +547,7 @@ def update_drive_item(
         url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}"
         response = session.patch(url, json=updates)
         if not response.ok:
-            print(f"Drive item update failed. Status: {response.status_code}, Response: {response.text}")
+            logger.warning("Drive item update failed. Status: %s, Response: %s", response.status_code, response.text)
             handle_graph_error(response)
         return format_drive_item(response.json())
     except requests.RequestException as e:

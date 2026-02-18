@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api
+service: amplify-${self:custom.depName}-assistants-api
 
 frameworkVersion: "3"
 
@@ -13,14 +13,32 @@ plugins:
   - serverless-prune-plugin
   - serverless-cloudformation-changesets-v3
 custom:
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
+
   pythonRequirements:
-    dockerizePip: non-linux
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+    dockerizePip: true
+    layer: true
+    slim: true
+    slimPatternsAppendDefaults: true
+    slimPatterns:
+      - "**/*.egg-info*"
+      - "**/tests/**"
+      - "**/googleapiclient/discovery_cache/documents/**"
+    useStaticCache: false
+    useDownloadCache: false
+
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+ 
   stages:
     - dev
     - staging
     - prod
 
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
     
 provider:
   name: aws
@@ -36,25 +54,39 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+
+    API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     INTEGRATION_STAGE: ${self:provider.stage}
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    OAUTH_STATE_TABLE: ${self:service}-${sls:stage}-oauth-state
-    OAUTH_USER_TABLE: ${self:service}-${sls:stage}-user-oauth-integrations
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
-    OP_LOG_DYNAMO_TABLE: ${self:service}-${sls:stage}-op-log
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
     OP_TRACING_ENABLED: true
     OP_TRACING_REQUEST_DETAILS_ENABLED: true
     OP_TRACING_RESULT_DETAILS_ENABLED: true
-    JOB_STATUS_TABLE: ${self:service}-${sls:stage}-job-status
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
     JOB_RESULTS_BUCKET: ${self:service}-${sls:stage}-job-results
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output # temp storage for downloaded integration file
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    JOB_STATUS_TABLE: ${self:service}-${sls:stage}-job-status
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    OAUTH_STATE_TABLE: ${self:service}-${sls:stage}-oauth-state
+    OAUTH_USER_TABLE: ${self:service}-${sls:stage}-user-oauth-integrations
+    OP_LOG_DYNAMO_TABLE: ${self:service}-${sls:stage}-op-log
+    
+    # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
 
   iam:
     role:
@@ -67,6 +99,8 @@ functions:
 
   getSupportedIntegrations:
     handler: integrations/oauth.get_supported_integrations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -75,6 +109,8 @@ functions:
 
   listConnectedUserIntegrations:
     handler: integrations/oauth.list_connected_integrations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -83,6 +119,8 @@ functions:
 
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
       - http:
@@ -91,6 +129,8 @@ functions:
 
   uploadIntegrationFiles:
     handler: integrations/drive_files.drive_files_to_data_sources
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
       - http:
@@ -102,6 +142,8 @@ functions:
 
   downloadIntegrationFile:
     handler: integrations/drive_files.download_integration_file
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -112,6 +154,8 @@ functions:
 
   registerIntegrationSecret:
     handler: integrations/oauth.regiser_secret
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -122,6 +166,8 @@ functions:
       
   refreshIntegrationsToken:
     handler: integrations/oauth.refresh_integration_tokens
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -132,6 +178,8 @@ functions:
       
   execute_custom_auto:
     handler: service/core.execute_custom_auto
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -141,6 +189,8 @@ functions:
 
   get_job_result:
     handler: service/core.get_job_result
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -149,6 +199,8 @@ functions:
           cors: true
   set_job_result:
     handler: service/core.update_job_result
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -157,6 +209,8 @@ functions:
           cors: true
   startAuth:
     handler: integrations/oauth.start_auth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -164,6 +218,8 @@ functions:
           method: post
   authCallback:
     handler: integrations/oauth.auth_callback
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -174,16 +230,115 @@ functions:
   
   deleteUserIntegration:
     handler: integrations/oauth.handle_delete_integration
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
           path: integrations/oauth/user/delete
           method: post
 
+  # MCP Server Management Endpoints
+  listMCPServers:
+    handler: integrations/mcp_servers.list_mcp_servers
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers
+          method: get
+
+  addMCPServer:
+    handler: integrations/mcp_servers.add_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers
+          method: post
+
+  getMCPServer:
+    handler: integrations/mcp_servers.get_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/get
+          method: post
+
+  updateMCPServer:
+    handler: integrations/mcp_servers.update_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/update
+          method: post
+
+  deleteMCPServer:
+    handler: integrations/mcp_servers.delete_mcp_server
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/delete
+          method: post
+
+  testMCPConnection:
+    handler: integrations/mcp_servers.test_mcp_connection
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/servers/test
+          method: post
+
+  getMCPServerTools:
+    handler: integrations/mcp_servers.get_mcp_server_tools
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/tools
+          method: post
+
+  refreshMCPServerTools:
+    handler: integrations/mcp_servers.refresh_mcp_server_tools
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/refresh
+          method: post
 
 
 resources:
   Resources:
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: uploadIntegrationFiles
+            path: /integrations/user/files/upload
+            method: POST
+          - name: listIntegrationFiles
+            path: /integrations/user/files
+            method: POST
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -198,6 +353,7 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
                 - s3:GetObject
                 - s3:PutObject
                 - s3:ListBucket
@@ -213,6 +369,11 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -221,6 +382,18 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools/web_search/*"
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource:
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:alias/aws/ssm"
+                - "arn:aws:kms:${self:provider.region}:${aws:accountId}:key/*"
+              Condition:
+                StringEquals:
+                  "kms:ViaService": "ssm.${self:provider.region}.amazonaws.com"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -238,12 +411,34 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.JOB_STATUS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OP_LOG_DYNAMO_TABLE}"
-            - Effect: Allow  
+            - Effect: Allow
               Action:
-                - s3:PutObject
-                - s3:GetObject
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+            
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
 
     OauthStateTable:
       Type: AWS::DynamoDB::Table
@@ -256,6 +451,9 @@ resources:
           - AttributeName: state
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
