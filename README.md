@@ -1,5 +1,14 @@
 # amplify-genai-backend
 
+> ## :warning: v0.9.0 Breaking Change
+>
+> **Version 0.9.0 migrates all shared environment variables to AWS Parameter Store.** Existing deployments upgrading from v0.8.x **must** run `populate_parameter_store.py` before deploying.
+>
+> - See the [Migration Guide](./scripts/MIGRATION_README.md) for required steps.
+> - Deploy the backend **before** upgrading the frontend.
+> - We recommend testing in your development environment first and backing up production resources (DynamoDB tables, etc.) before deploying to prod.
+> - Use the CloudFormation changeset plugin (`CHANGE_SET_BOOLEAN: true` in your var file) to review infrastructure changes before applying.
+
 ## Overview
 
 This repository serves as a Mono Repo for managing all Amplify Lambda functions. It is part of a larger deployment for Amplify GenAI which can be found at https://github.com/gaiin-platform.
