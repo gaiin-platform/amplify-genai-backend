@@ -28,7 +28,7 @@ openai_provider = os.environ["ASSISTANTS_OPENAI_PROVIDER"]
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
-model = "gpt-4o"
+model = "gpt-5-mini"
 tools = [{"type": "code_interpreter"}]
 
 
@@ -958,7 +958,7 @@ def record_thread_usage(op_details, info):
                     "operation_type": op_details["type"]
                 }
             )
-            
+
             logger.debug(f"Token cost recorded: ${token_cost} for {input_tokens} input + {output_tokens} output tokens")
         except Exception as e:
             # Never let cost tracking break the main flow
