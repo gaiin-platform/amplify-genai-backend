@@ -6,6 +6,7 @@
 >
 > - See the [Migration Guide](./scripts/MIGRATION_README.md) for required steps.
 > - Deploy the backend **before** upgrading the frontend.
+> - **If you have the `amplify-lambda-basic-ops` service**, you must handle the `/user-data` endpoint migration before deploying `amplify-lambda`. See the [Migration Guide](./scripts/MIGRATION_README.md) for detailed steps.
 > - We recommend testing in your development environment first and backing up production resources (DynamoDB tables, etc.) before deploying to prod.
 > - Use the CloudFormation changeset plugin (`CHANGE_SET_BOOLEAN: true` in your var file) to review infrastructure changes before applying.
 
