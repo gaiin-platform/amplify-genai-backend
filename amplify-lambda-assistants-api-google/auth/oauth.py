@@ -2,9 +2,12 @@ import os
 import requests
 import json
 
+from pycommon.logger import getLogger
+logger = getLogger("google_refresh_oauth")
+
 
 def refresh_integration_token(access_token, integration):
-    print("Initiate refresh integration token call")
+    logger.info("Initiating refresh integration token call")
 
     refresh_endpoint = os.environ["API_BASE_URL"] + "/integrations/oauth/refresh_token"
 
@@ -19,7 +22,7 @@ def refresh_integration_token(access_token, integration):
         response = requests.post(
             refresh_endpoint, headers=headers, data=json.dumps(request)
         )
-        print("Response: ", response.content)
+        logger.debug("Response: %s", response.content)
         response_content = (
             response.json()
         )  # to adhere to object access return response dict
@@ -30,12 +33,12 @@ def refresh_integration_token(access_token, integration):
             return True
 
     except Exception as e:
-        print(f"Error refreshing integration token: {e}")
+        logger.error("Error refreshing integration token: %s", e)
         return False
 
 
 def get_user_integrations(access_token):
-    print("Initiate get user integrations call")
+    logger.info("Initiating get user integrations call")
 
     endpoint = os.environ["API_BASE_URL"] + "/integrations/oauth/user/list"
 
@@ -49,7 +52,7 @@ def get_user_integrations(access_token):
             endpoint,
             headers=headers,
         )
-        print("Response: ", response.content)
+        logger.debug("Response: %s", response.content)
         response_content = (
             response.json()
         )  # to adhere to object access return response dict
@@ -60,5 +63,5 @@ def get_user_integrations(access_token):
             return response_content.get("data", None)
 
     except Exception as e:
-        print(f"Error getting user integrations: {e}")
+        logger.error("Error getting user integrations: %s", e)
         return None

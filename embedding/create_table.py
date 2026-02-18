@@ -21,7 +21,14 @@ def create_table():
     pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
     pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
     pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
+    pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
     rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
+    
+    
+    # Get embedding dimension from environment, default to 1536 for backward compatibility
+    # This is only used during initial table creation
+    embedding_dim = int(os.environ.get("EMBEDDING_DIM", "1536"))
+    logger.info(f"Using embedding dimension: {embedding_dim}")
 
     pg_password = get_credentials(rag_pg_password)
 
@@ -31,11 +38,13 @@ def create_table():
         "user": pg_user,
         "password": pg_password,
         "host": pg_host,
-        "port": 3306,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
+        "port": pg_port,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
     }
 
     # SQL commands to create the embeddings table and related components
-    create_table_command = """
+    # Note: The vector dimension is only applied during initial table creation (CREATE TABLE IF NOT EXISTS)
+    # Existing tables will not be modified, ensuring backward compatibility
+    create_table_command = f"""
     -- Enable extension for vector operations if it doesn't exist.
     CREATE EXTENSION IF NOT EXISTS vector;
     -- Create the embeddings table
@@ -49,16 +58,16 @@ def create_table():
         embedding_index INTEGER,
         owner_email VARCHAR(255),
         content TEXT,
-        vector_embedding vector(1536),
-        qa_vector_embedding vector(1536),
+        vector_embedding vector({embedding_dim}),
+        qa_vector_embedding vector({embedding_dim}),
         content_tsvector TSVECTOR
     );
     -- Create an index on the 'vector_embedding' column using the hnsw method.
-    CREATE INDEX embeddings_vector_embedding_hnsw_idx ON embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
+    CREATE INDEX IF NOT EXISTS embeddings_vector_embedding_hnsw_idx ON embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
     -- Create an index on the 'vector_embedding_qa' column using the hnsw method.
-    CREATE INDEX embeddings_vector_qa_embedding_hnsw_idx ON embeddings USING hnsw (qa_vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
+    CREATE INDEX IF NOT EXISTS embeddings_vector_qa_embedding_hnsw_idx ON embeddings USING hnsw (qa_vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
     -- Define the trigger function to update the 'content_tsvector' column before insert or update
-    CREATE INDEX idx_src ON embeddings (src);
+    CREATE INDEX IF NOT EXISTS idx_src ON embeddings (src);
     CREATE OR REPLACE FUNCTION update_tsvector_column() RETURNS trigger AS $$
     BEGIN
     NEW.content_tsvector := to_tsvector('english', coalesce(NEW.content, ''));
@@ -66,10 +75,11 @@ def create_table():
     END;
     $$ LANGUAGE plpgsql;
     -- Create a trigger that calls the trigger function before insert or update operations
+    DROP TRIGGER IF EXISTS content_vector_update ON embeddings;
     CREATE TRIGGER content_vector_update BEFORE INSERT OR UPDATE ON embeddings
     FOR EACH ROW EXECUTE FUNCTION update_tsvector_column();
     -- Create an index on the 'content_tsvector' column using the GIN method
-    CREATE INDEX content_vector_idx ON embeddings USING GIN (content_tsvector);
+    CREATE INDEX IF NOT EXISTS content_vector_idx ON embeddings USING GIN (content_tsvector);
 
     """
 

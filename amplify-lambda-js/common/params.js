@@ -1,10 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {chat as openaiChat} from "../azure/openai.js";
-import {chat as geminiChat} from "../gemini/gemini.js";
-import { chatBedrock } from "../bedrock/bedrock.js";
-import {getLLMConfig} from "../common/secrets.js";
+// Removed chatFn imports - now using LiteLLM unified interface
 
 export const getRequestId = (params) => {
     return params.requestId;
@@ -56,34 +53,25 @@ export const getMaxTokens = (params) => {
 
 export const getBudgetTokens = (params, maxTokens) => {
     const reasoning_effort = params.options.reasoningLevel ?? "low";
-    let budget_tokens = 1024;
-    switch (reasoning_effort) {
-        case "medium":
-            budget_tokens = 2048;
-            break;
-        case "high":
-            budget_tokens = 4096;
-            break;
-    }
-    if (budget_tokens > maxTokens) {
-        budget_tokens = Math.max(maxTokens / 2, 1024);
-    }
-    return budget_tokens;
 
-}
+    // Desired budget based on reasoning level (from original implementation)
+    const BUDGET_BY_LEVEL = { low: 1024, medium: 2048, high: 4096 };
+    const desiredBudget = BUDGET_BY_LEVEL[reasoning_effort] || 1024;
 
-export const getChatFn = (model, body, writable, context) => {
+    // Bedrock constraint: maxTokens MUST be strictly greater than budget_tokens
+    // Reserve a reasonable buffer for the actual response (20% of maxTokens, minimum 256)
+    const MIN_OUTPUT_RESERVE = Math.max(Math.floor(maxTokens * 0.2), 256);
+    const maxAllowedBudget = maxTokens - MIN_OUTPUT_RESERVE;
 
-    if (isOpenAIModel(model.id)) {
-        return openaiChat(getLLMConfig, body, writable, context);
-    } else if (model.provider === 'Bedrock') {
-        return chatBedrock(body, writable, context);
-    } else if (isGeminiModel(model.id)) {
-        return geminiChat(body, writable, context);
-    } else {
-        console.log(`Error: Model ${model} does not have a corresponding chatFn`)
-        return null;
+    // If desired budget fits within constraints, use it
+    if (desiredBudget < maxAllowedBudget) {
+        return desiredBudget;
     }
+
+    // Otherwise scale down, but maintain minimum 1024 budget (original behavior)
+    // If maxTokens is too small for minimum budget, caller should disable reasoning
+    return Math.max(maxAllowedBudget, 1024);
+
 }
 
 
@@ -91,6 +79,3 @@ export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
 }
 
-export const isGeminiModel = (modelId) => {
-    return modelId && modelId.includes("gemini");
-}

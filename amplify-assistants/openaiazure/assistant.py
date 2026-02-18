@@ -10,8 +10,15 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SecretsManagerOperation
+)
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value])
+
+from pycommon.logger import getLogger
+logger = getLogger("code_interpreter")
 
 @api_tool(
     path="/assistant/chat/codeinterpreter",
@@ -148,6 +155,18 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for future deletion
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="chat")
 def chat_with_code_interpreter(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -157,7 +176,7 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
             "message": "API key does not have access to assistant functionality",
         }
 
-    print("Chat_with_code_interpreter validated")
+    logger.debug("Chat_with_code_interpreter validated")
     assistant_id = data["data"]["assistantId"]
     messages = data["data"]["messages"]
 
@@ -260,6 +279,13 @@ def generate_req_id():
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="create")
 def create_code_interpreter_assistant(event, context, current_user, name, data):
     extracted_data = data["data"]
@@ -316,10 +342,15 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     assistant_id = query_params.get("assistantId", "")
     if not assistant_id or not is_valid_query_param_id(
         assistant_id, current_user, "ast"
@@ -328,7 +359,7 @@ def delete_assistant(event, context, current_user, name, data):
             "success": False,
             "message": "Invalid or missing assistant id parameter",
         }
-    print(f"Deleting assistant: {assistant_id}")
+    logger.info("Deleting assistant: %s", assistant_id)
     return assistants.delete_assistant_by_id(assistant_id, current_user)
 
 
@@ -368,10 +399,15 @@ def delete_assistant(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="delete")
 def delete_assistant_thread(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     thread_id = query_params.get("threadId", "")
     if not thread_id or not is_valid_query_param_id(thread_id, current_user, "thr"):
         return {"success": False, "message": "Invalid or missing thread id parameter"}
@@ -428,6 +464,12 @@ def delete_assistant_thread(event, context, current_user, name, data):
         "required": ["success", "downloadUrl"],
     },
 )
+@required_env_vars({
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for future deletion
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="download")
 def get_presigned_url_code_interpreter(event, context, current_user, name, data):
     data = data["data"]
@@ -438,7 +480,7 @@ def get_presigned_url_code_interpreter(event, context, current_user, name, data)
 
 
 def is_valid_query_param_id(id, current_user, prefix):
-    pattern = f"^{re.escape(current_user)}/{re.escape(prefix)}/[0-9a-fA-F-]{{36}}$"
+    pattern = f"^[^/]+/{re.escape(prefix)}/[0-9a-fA-F-]{{36}}$"
     if re.match(pattern, id):
         return True
     return False

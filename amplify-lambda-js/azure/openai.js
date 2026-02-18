@@ -4,6 +4,7 @@
 
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
+import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
@@ -24,9 +25,72 @@ export const translateModelToOpenAI = (modelId) => {
 }
 
 export const translateDataToResponseBody = (data) => {
-    const messages = [...data.messages];
+    // Clean messages for responses API format
+    // The responses API doesn't support tool_calls, tool_call_id in the same way as chat completions
+    // Also, the responses API expects content to be an array of objects with type: 'input_text' or 'input_image'
+    const messages = data.messages.map(msg => {
+        let content = msg.content;
+
+        // Convert tool messages to a format the responses API can understand
+        // Tool results need to be converted to user messages with context
+        if (msg.role === 'tool' && msg.tool_call_id) {
+            content = `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`;
+        }
+
+        // For assistant messages with tool_calls, include the tool call info in content
+        if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+            const toolCallInfo = msg.tool_calls.map(tc =>
+                `[Called tool: ${tc.function?.name || tc.name} with args: ${tc.function?.arguments || JSON.stringify(tc.arguments)}]`
+            ).join('\n');
+            content = (msg.content || '') + '\n' + toolCallInfo;
+        }
+
+        // Format content for responses API
+        // If content is already an array (with images), keep it
+        // Otherwise, wrap string content with the appropriate type based on role
+        // User/system messages use 'input_text', assistant messages use 'output_text'
+        const contentType = msg.role === 'assistant' ? 'output_text' : 'input_text';
+        const formattedContent = Array.isArray(content)
+            ? content.map(item => {
+                // Handle all content type conversions for Responses API
+                if (item.type === 'text') {
+                    // Convert 'text' to role-appropriate type
+                    return { type: contentType, text: item.text };
+                } else if (item.type === 'input_text' || item.type === 'output_text') {
+                    // Already in Responses API format, return as-is
+                    return item;
+                } else if (item.type === 'image_url') {
+                    // Handle both formats: object {url, detail} or string
+                    // Chat completions uses: { type: 'image_url', image_url: {url: '...', detail: 'high'} }
+                    // Need to convert to Responses API format: { type: 'input_image', image_url: '...' }
+                    const imageUrl = typeof item.image_url === 'string'
+                        ? item.image_url
+                        : item.image_url?.url || item.image_url;
+                    return { type: 'input_image', image_url: imageUrl };
+                } else if (item.type === 'input_image') {
+                    // Already in Responses API format, return as-is
+                    return item;
+                } else {
+                    // Unknown type - treat as text and log warning
+                    logger.warn(`Unknown content type '${item.type}' converted to ${contentType}`);
+                    return { type: contentType, text: item.text || JSON.stringify(item) };
+                }
+              })
+            : [{ type: contentType, text: content || '' }];
+
+        const cleaned = {
+            role: msg.role === 'tool' ? 'user' : msg.role, // Tool role becomes user
+            content: formattedContent
+        };
+
+        // Include name if present
+        if (msg.name) cleaned.name = msg.name;
+
+        return cleaned;
+    });
+
     data.input = messages;
-    data.max_output_tokens = data.max_tokens || data.max_completion_tokens || 1000;
+    data.max_output_tokens = data.max_output_tokens || data.max_tokens || data.max_completion_tokens || 4096;
     if (data.max_output_tokens < 16) data.max_output_tokens = 16;
     delete data.messages;
     delete data.max_tokens;
@@ -52,13 +116,15 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const model = options.model;
     const modelId = (model && model.id) || "gpt-4-1106-Preview";
 
-    let tools = options.tools;
+    // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
+    let tools = body.tools || options.tools;
     if(!tools && options.functions){
         tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
-        logger.debug(tools);
+        // Removed debug logging for performance
     }
 
-    let tool_choice = options.tool_choice;
+    // Check for tool_choice in both body (from UnifiedLLMClient) and options (legacy)
+    let tool_choice = body.tool_choice || options.tool_choice;
     if(!tool_choice && options.function_call){
         if(options.function_call === 'auto' || options.function_call === 'none'){
             tool_choice = options.function_call;
@@ -66,13 +132,24 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         else {
             tool_choice = {type: 'function', function: {name: options.function_call}};
         }
-        logger.debug(tool_choice);
+        // Removed debug logging for performance
     }
 
-    logger.debug("Calling OpenAI API with modelId: "+modelId);
+    // Removed debug logging for performance
+
+    // Clean messages - remove fields that OpenAI doesn't accept
+    const cleanMessages = body.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        ...(msg.name && { name: msg.name }),
+        ...(msg.function_call && { function_call: msg.function_call }),
+        ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+        ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id })
+    }));
 
     let data = {
        ...body,
+       messages: cleanMessages,
        "model": modelId,
        "stream": true,
        "stream_options": {"include_usage": true}
@@ -92,24 +169,48 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             return (m.role === 'system') ? {...m, role: 'user'} : m}
         );
     }
-    if (!options.dataSourceOptions?.disableDataSources) {
-        const config = await endpointProvider(modelId, model.provider);
-        const isOpenAI = config?.url && isOpenAIEndpoint(config.url);
-        const isNonStandardOpenAI = isOpenAI && !isCompletionsEndpoint(config.url) && !config.url.includes('/chat/completions');
-        data.messages = await includeImageSources(body.imageSources, data.messages, model, writable, isNonStandardOpenAI);
-    }
-    
 
     if (tools) data.tools = tools;
     if (tool_choice) data.tool_choice = tool_choice;
 
-    if (data.imageSources) delete data.imageSources;
+    if (data.hasOwnProperty('imageSources')) delete data.imageSources;
+    if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
+    if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
     const config = await endpointProvider(modelId, model.provider);
 
-    const url = config.url;
+    if (!config || !config.url) {
+        throw new Error('Failed to get LLM endpoint configuration');
+    }
+
+    let url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
-    const isCompletionEndpoint = isCompletionsEndpoint(url);
+    let isCompletionEndpoint = isCompletionsEndpoint(url);
+
+    // When tools are present, we MUST use the chat completions endpoint
+    // The responses API doesn't support function calling properly
+    if (tools && tools.length > 0 && !isCompletionEndpoint) {
+        // Convert responses API URL to chat completions URL
+        if (url.includes('/responses')) {
+            url = url.replace('/responses', '/chat/completions');
+            isCompletionEndpoint = true;
+            logger.info(`🔧 Converted to chat completions endpoint for tool support: ${url}`);
+        } else if (url.includes('/openai/deployments/')) {
+            // Azure format - append /chat/completions if not present
+            const baseUrl = url.split('?')[0];
+            const queryString = url.includes('?') ? url.substring(url.indexOf('?')) : '';
+            if (!baseUrl.endsWith('/chat/completions')) {
+                url = baseUrl + '/chat/completions' + queryString;
+                isCompletionEndpoint = true;
+                logger.info(`🔧 Appended /chat/completions for tool support: ${url}`);
+            }
+        }
+    }
+
+    if (!options.dataSourceOptions?.disableDataSources) {
+        const isNonStandardOpenAI = isOpenAiEndpoint && !isCompletionEndpoint && !url.includes('/chat/completions');
+        data.messages = await includeImageSources(body.imageSources, data.messages, model, writable, isNonStandardOpenAI);
+    }
 
     const headers = isOpenAiEndpoint ?
         {
@@ -124,30 +225,70 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
 
     const isOmodel = /^o\d/.test(modelId) || /^gpt-5/.test(modelId);
+    const hasTools = tools && tools.length > 0;
 
-    if (isOmodel) {
+    if (isOmodel && !hasTools) {
+        // Only use O-model special handling when no tools are present
+        // When tools are present, use standard chat completions format for function calling support
         data = {[isCompletionEndpoint ? "max_completion_tokens" : "max_output_tokens"]: model.outputTokenLimit,
                 messages: data.messages, model: modelId, stream: true
                 }
+    } else if (isOmodel && hasTools) {
+        // O-model with tools: use chat completions format with max_completion_tokens
+        // The responses API doesn't support function calling properly
+        // Build a clean request with only supported fields
+        data = {
+            model: modelId,
+            messages: data.messages,
+            tools: data.tools,
+            tool_choice: data.tool_choice || 'auto',
+            max_completion_tokens: data.max_tokens || options.maxTokens || model.outputTokenLimit,
+            stream: true
+        };
+        // Note: stream_options and reasoning_effort are NOT included for O-models with tools
+        // as they may cause 400 errors
     }
-    if (model.supportsReasoning) {
+    // Only add reasoning for non-tool requests (reasoning can conflict with tool calling)
+    const disableReasoning = options.disableReasoning;
+    if (model.supportsReasoning && !hasTools && !disableReasoning) {
         const reasoningLvl = options.reasoningLevel ?? "low";
         if (isCompletionEndpoint) {
             data.reasoning_effort = reasoningLvl;
         } else {
             data.reasoning = {effort: reasoningLvl, summary: "auto"};
         }
+        logger.info(`Reasoning enabled with level: ${reasoningLvl}`);
+    } else if (model.supportsReasoning && disableReasoning) {
+        logger.info(`Reasoning disabled by user (disableReasoning=true)`);
     }
     
-    if (!isCompletionEndpoint) {
+    // Only use responses API format when:
+    // 1. Not a completions endpoint AND
+    // 2. No custom tools are present (responses API doesn't support function calling properly)
+    if (!isCompletionEndpoint && !hasTools) {
+        logger.info(`🔄 Converting to Responses API format for model: ${modelId}`);
         data = translateDataToResponseBody(data);
-        // if contains a url the 
+        // For OpenAI provider only: add native web_search_preview tool when search intent detected
+        // Azure provider uses custom web_search function tool from toolLoop instead (controlled by webSearchEnabled)
+        // Note: web_search_preview works directly with Responses API - no need to convert to chat/completions
         if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
     }
 
-    logger.debug("Calling OpenAI API with url: "+url);
+    // Debug logging for tool requests
+    if (hasTools) {
+        logger.info(`🔧 OpenAI request with tools - isOmodel: ${isOmodel}, isCompletionEndpoint: ${isCompletionEndpoint}`);
+        logger.info(`🔧 Request data keys: ${Object.keys(data).join(', ')}`);
+        logger.debug(`🔧 Full request data: ${JSON.stringify(data, null, 2)}`);
+    }
+
+    // Add structured output configuration if provided
+    // NOTE: response_format only works with /chat/completions endpoint, not /responses
+    if (body.response_format && isCompletionEndpoint) {
+        data.response_format = body.response_format;
+        logger.info('\u2705 [OpenAI] Added native structured output configuration');
+    }
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
@@ -155,13 +296,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         return new Promise((resolve, reject) => {
             // Use a copy of data for this attempt
             let requestData = {...data};
-            
+
             // If retrying, remove tools
             if (retryWithoutTools && requestData.tools) {
                 delete requestData.tools;
-                logger.debug("Retrying request without tools");
+                // Retrying request without tools
             }
-            
+
             axios({
                 data: requestData,
                 headers: headers,
@@ -174,6 +315,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     const streamError = (err) => {
                         clearTimeout(statusTimer);
                         sendErrorMessage(writableStream, err.response?.status, err.response?.statusText);
+                        // Ensure stream is properly closed on error since we use { end: false }
+                        if (!writableStream.writableEnded && writableStream.writable) {
+                            try {
+                                writableStream.end();
+                            } catch (endErr) {
+                                logger.error("Error ending stream:", endErr);
+                            }
+                        }
                         reject(err);
                     };
                     const finalizeSuccess = () => {
@@ -189,7 +338,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         response.data.on('data', chunk => {
                           jsonBuffer += chunk.toString();
                           numOfChunks++;
-                          console.log("O1 chunks recieved: ",numOfChunks)
+                          // O1 chunks received
                         });
                     
                         response.data.on('end', () => {
@@ -202,7 +351,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             finalizeSuccess();
                           } catch (err) {
                             // handle JSON parse error
-                            console.log("O1 model error: ", err);
+                            logger.error("O1 model error:", err);
                             streamError(err);
                           }
                         });
@@ -216,8 +365,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
 
                     } else {
-                        response.data.pipe(writableStream);
-                        // Handle the 'finish' event to resolve the promise
+                        // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
+                        response.data.pipe(writableStream, { end: false });
+
+                        // Handle the response data 'end' event to resolve the promise
+                        // (with { end: false }, the pipe won't trigger 'finish' on writableStream)
+                        response.data.on('end', finalizeSuccess);
+
+                        // Handle the 'finish' event as backup
                         writableStream.on('finish', finalizeSuccess);
 
                         // Handle errors
@@ -227,95 +382,207 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     
                     
                 })
-                .catch((e)=>{
+                .catch(async (e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
-                    
+
                     // If we have tools and haven't already retried, try again without tools
                     if (!retryWithoutTools && data.tools && data.tools.length > 0) {
-                        logger.debug("Request failed with tools, retrying without tools");
+                        // Request failed with tools, retrying without tools
                         streamAxiosResponseToWritable(url, writableStream, statusTimer, true)
                             .then(resolve)
                             .catch(reject);
                         return;
                     }
-                    
+
+                    // Ensure stream is properly closed on error since we use { end: false }
+                    if (!writableStream.writableEnded && writableStream.writable) {
+                        try {
+                            writableStream.end();
+                        } catch (endErr) {
+                            logger.error("Error ending stream:", endErr);
+                        }
+                    }
+
+                    // Helper function to log critical error with full details
+                    const logApiError = async (errorDetails = null) => {
+                        const sanitizedRequestData = { ...requestData };
+                        delete sanitizedRequestData.messages;
+                        delete sanitizedRequestData.input;
+
+                        // Parse error details if it's a string
+                        let apiError = errorDetails;
+                        let apiErrorMessage = 'N/A';
+
+                        if (typeof errorDetails === 'string') {
+                            try {
+                                const parsed = JSON.parse(errorDetails);
+                                apiError = parsed.error || parsed;
+                                apiErrorMessage = parsed.error?.message || parsed.message || errorDetails;
+                            } catch {
+                                apiErrorMessage = errorDetails;
+                            }
+                        } else if (errorDetails) {
+                            apiErrorMessage = errorDetails.error?.message || errorDetails.message || 'N/A';
+                        }
+
+                        await logCriticalError({
+                            functionName: 'openai_streamAxiosResponseToWritable',
+                            errorType: 'OpenAIAPIFailure',
+                            errorMessage: `OpenAI/Azure API failed: ${apiErrorMessage}`,
+                            currentUser: options?.user || 'unknown',
+                            severity: 'HIGH',
+                            stackTrace: e.stack || '',
+                            context: {
+                                httpStatus: e.response?.status || 'N/A',
+                                httpStatusText: e.response?.statusText || 'N/A',
+                                apiError: apiError || e.response?.data?.error || 'N/A',
+                                apiErrorMessage: apiErrorMessage,
+                                errorCode: e.code || 'N/A',
+                                url: url || 'unknown',
+                                modelId: data?.model || 'unknown',
+                                hasTools: !!(data?.tools && data.tools.length > 0),
+                                isRetry: !!retryWithoutTools,
+                                requestConfig: sanitizedRequestData
+                            }
+                        }).catch(err => logger.error('Failed to log critical error:', err));
+
+                        // Mark error as already having critical logging to prevent duplicate logging in router
+                        e.criticalErrorLogged = true;
+                    };
+
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
+
                     if (e.response && e.response.data) {
-                        console.log("Error invoking OpenAI API: ",e.response.statusText);
+                        logger.error("Error invoking OpenAI API:", e.response.statusText);
 
                         if (e.response.data.readable) {
                             // Stream the data to a variable or process it as it comes
                             let errorData = '';
+                            let streamEnded = false;
+
                             e.response.data.on('data', (chunk) => {
                                 errorData += chunk;
                             });
-                            e.response.data.on('end', () => {
-                                console.log("Error data from OpenAI API: ", errorData);
-                                reject(errorData);
-                                return;
+
+                            e.response.data.on('end', async () => {
+                                if (streamEnded) return; // Prevent double processing
+                                streamEnded = true;
+
+                                logger.error("Error data from OpenAI API:", errorData);
+                                // Log critical error with the full error data
+                                await logApiError(errorData || null);
+                                reject(e);
                             });
+
+                            e.response.data.on('error', async (streamErr) => {
+                                if (streamEnded) return; // Prevent double processing
+                                streamEnded = true;
+
+                                logger.error("Error reading error stream:", streamErr);
+                                // Log with whatever we have, even if incomplete
+                                await logApiError(errorData || null);
+                                reject(e);
+                            });
+
+                            return; // Don't continue, wait for stream to finish or error
+                        } else if (typeof e.response.data === 'object') {
+                            // Data is already an object
+                            await logApiError(e.response.data);
+                        } else if (typeof e.response.data === 'string') {
+                            // Data is a string
+                            await logApiError(e.response.data);
+                        } else {
+                            // Unknown data type
+                            logger.warn("Unknown error data type:", typeof e.response.data);
+                            await logApiError();
                         }
+                    } else {
+                        // No response data at all
+                        await logApiError();
                     }
-                    console.log("Error invoking OpenAI API: "+e.message);
-                    reject(e.message);
+
+                    logger.error("Error invoking OpenAI API:", e.message);
+                    reject(e);
                 });
         });
     }
-    let statusTimer = null;
-    const statusInterval = model.supportsReasoning ? 15000: 8000;
-    const handleSendStatusMessage = () => {
-        // console.log("Sending status message...");
-        sendStatusMessage(writable);
-        statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
-        };
-
-        // Start the timer
-    statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
-
-    return streamAxiosResponseToWritable(url, writable, statusTimer);
+    // No status timer - let the actual response be the indication
+    return streamAxiosResponseToWritable(url, writable, null);
 }
 
 const containsUrlQuery = (messages) => {
     if (!Array.isArray(messages)) return false;
 
+    // Check for actual URLs in text
     const isLikelyUrl = (text) => {
         if (typeof text !== 'string' || text.length === 0) return false;
         if (/^data:/i.test(text)) return false;
-        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:\/[^^\s<>"'()]*)?)/i;
+        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+/i;
         return urlPattern.test(text);
     };
 
+    // Keywords that suggest user wants to search the web (expanded list)
+    const searchKeywords = [
+        'search', 'lookup', 'look up', 'find out', 'research',
+        'latest', 'recent', 'current', 'today', 'yesterday', 'this week', 'this month', 'this year',
+        'news', 'update', 'updates', 'happening',
+        'what is', 'what are', 'what was', 'what were',
+        'who is', 'who are', 'who was', 'who were',
+        'when did', 'when was', 'when is', 'when are',
+        'where is', 'where are', 'where was', 'where were',
+        'how much', 'how many', 'how do', 'how does', 'how did', 'how to',
+        'tell me about', 'information about', 'learn about', 'explain',
+        'google', 'browse', 'look online', 'check online',
+        'weather', 'stock', 'price', 'score', 'results'
+    ];
+
+    const containsSearchIntent = (text) => {
+        if (typeof text !== 'string' || text.length === 0) return false;
+        const lowerText = text.toLowerCase();
+        return searchKeywords.some(keyword => lowerText.includes(keyword));
+    };
+
     let hasUrl = false;
+    let hasSearchIntent = false;
     let hasImageOnly = false;
 
     messages.forEach((message) => {
+        // Only check user messages for search intent
+        if (message.role !== 'user') return;
+
         const content = message && message.content;
         if (typeof content === 'string') {
             if (isLikelyUrl(content)) hasUrl = true;
+            if (containsSearchIntent(content)) hasSearchIntent = true;
         }
         if (Array.isArray(content)) {
             let hasTextUrl = false;
+            let hasSearchText = false;
             let hasImage = false;
-            
+
             content.forEach((part) => {
                 if (!part) return;
-                if (typeof part === 'string' && isLikelyUrl(part)) {
-                    hasTextUrl = true;
+                if (typeof part === 'string') {
+                    if (isLikelyUrl(part)) hasTextUrl = true;
+                    if (containsSearchIntent(part)) hasSearchText = true;
                 }
                 if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
                     if (isLikelyUrl(part.text)) hasTextUrl = true;
+                    if (containsSearchIntent(part.text)) hasSearchText = true;
                 }
                 if (part.type === 'image' || part.type === 'input_image' || part.type === 'image_url') {
                     hasImage = true;
                 }
             });
-            
+
             if (hasTextUrl) hasUrl = true;
-            if (hasImage && !hasTextUrl) hasImageOnly = true;
+            if (hasSearchText) hasSearchIntent = true;
+            if (hasImage && !hasTextUrl && !hasSearchText) hasImageOnly = true;
         }
     });
 
-    return hasUrl && !hasImageOnly;
+    // Return true if has URL or search intent, but not if image-only query
+    return (hasUrl || hasSearchIntent) && !hasImageOnly;
 }
 
 async function includeImageSources(dataSources, messages, model, responseStream, isNonStandardOpenAI = false) {
@@ -381,28 +648,3 @@ async function includeImageSources(dataSources, messages, model, responseStream,
 }
 
 
-const forceFlush = (responseStream) => {
-    sendStatusEventToStream(responseStream, newStatus(
-        {
-            inProgress: false,
-            message: " ".repeat(100000)
-        }
-    ));
-
-}
-
-const sendStatusMessage = (responseStream) => {
-    const statusInfo = { id: "openai",
-                         animated: true,
-                         inProgress: true,
-                         sticky: true,
-                         summary: getThinkingMessage(),
-                         icon: "info",
-                         type: "info",
-                       };
-
-    sendStatusEventToStream(responseStream, statusInfo);
-
-    forceFlush(responseStream);
-    
-}

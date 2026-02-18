@@ -10,7 +10,8 @@ from agent.core import (
     UnknownActionError,
 )
 from agent.prompt import Prompt
-
+from pycommon.logger import getLogger
+logger = getLogger("agent_language")
 
 def to_json_memory_messages_format(items):
     mapped_items = []
@@ -202,7 +203,7 @@ You must ALWAYS respond in this format:
             ].strip()
             return json.loads(stripped_response)
         except Exception as e:
-            print(f"Agent language failed to parse response: {str(e)}")
+            logger.error("Agent language failed to parse response: %s", str(e))
             raise e
 
 
@@ -303,11 +304,11 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                 # to terminate.
                 return {"tool": "terminate", "args": {"message": response}}
             else:
-                print(f"Agent language failed to parse response: {response}")
+                logger.error("Agent language failed to parse response: %s", response)
                 # Added Exit logic
                 if isinstance(response, str):
                     if "EXIT_AGENT_LOOP" in response:
-                        print("Agent loop terminated early")
+                        logger.info("Agent loop terminated early")
                         return {
                             "tool": "terminate",
                             "args": {

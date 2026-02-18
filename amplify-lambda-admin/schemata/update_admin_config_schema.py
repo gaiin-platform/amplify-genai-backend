@@ -206,7 +206,10 @@ update_admin_config_schema = {
                                              "outputTokenCost": {
                                                 "type": "number"
                                             },
-                                             "cachedTokenCost": {
+                                            "inputCachedTokenCost" : {
+                                                "type": "number"
+                                            },
+                                            "inputWriteCachedTokenCost" : {
                                                 "type": "number"
                                             },
                                             "exclusiveGroupAvailability": {
@@ -219,7 +222,7 @@ update_admin_config_schema = {
                                         "required": ["id","name", "provider", "description", "isAvailable",  "isBuiltIn",
                                                      "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
                                                      "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", 
-                                                     "cachedTokenCost", "exclusiveGroupAvailability"],
+                                                     "inputCachedTokenCost",  "inputWriteCachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
                                 },
@@ -268,9 +271,6 @@ update_admin_config_schema = {
                                     "^.*$": {
                                         "type": "object",
                                         "properties": {
-                                            "groupName": {
-                                                "type": "string"
-                                            },
                                             "createdBy": {
                                                 "type": "string"
                                             },
@@ -291,7 +291,7 @@ update_admin_config_schema = {
                                                 "type": "boolean"
                                             }
                                         },
-                                        "required": ["groupName", "createdBy", "members", "rateLimit", "isBillingGroup"],
+                                        "required": ["createdBy", "members", "rateLimit", "isBillingGroup"],
                                         "additionalProperties": False
 
                                     }
@@ -457,24 +457,99 @@ update_admin_config_schema = {
                             },
                             "data": {
                                 "type": "object",
-                                "patternProperties": {
-                                    "^(google|microsoft|drive|github|slack)$": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "id": {"type": "string"},
-                                                "icon": {"type": "string"},
-                                                "description": {"type": "string"},
-                                                "isAvailable": {"type": "boolean"},
-                                            },
-                                            "required": ["name", "id", "icon", "description"],
-                                            "additionalProperties": False
+                                "properties": {
+                                    "integrations": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(google|microsoft|drive|github|slack)$": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "name": {"type": "string"},
+                                                        "id": {"type": "string"},
+                                                        "description": {"type": "string"},
+                                                        "isAvailable": {"type": "boolean"},
+                                                    },
+                                                    "required": ["name", "id", "description"],
+                                                    "additionalProperties": True
+                                                },
+                                            }
                                         },
+                                        "additionalProperties": False
+                                    },
+                                    "provider_settings": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(google|microsoft)$": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "azure_admin_consent_provided": {"type": "boolean"}
+                                                },
+                                                "additionalProperties": False
+                                            }
+                                        },
+                                        "additionalProperties": False
                                     }
                                 },
+                                "required": ["integrations"],
                                 "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'criticalErrors'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "criticalErrors"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "email": {
+                                        "type": "string"
+                                    },
+                                },
+                                "required": ["isActive", "email"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'webSearchConfig'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "webSearchConfig"
+                            },
+                            "data": {
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "provider": {
+                                                "type": "string",
+                                                "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                            },
+                                            "isEnabled": {"type": "boolean"},
+                                            "allowUserWebSearchKeys": {"type": "boolean"},
+                                            "api_key": {"type": "string"}
+                                        },
+                                        "required": [],
+                                        "additionalProperties": False
+                                    },
+                                    {
+                                        "type": "null"
+                                    }
+                                ]
                             }
                         },
                         "required": ["type", "data"],

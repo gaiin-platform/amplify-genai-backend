@@ -1,5 +1,5 @@
 # amplify-lambda
-AGENT_ENDPOINT: "" #leave blank for future release
+API_GATEWAY_MAX_TIMEOUT_MS: "" #Max timeout in ms for API Gateway streaming endpoints (recommended 180000 if AWS approved, leave empty to disable)
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
 BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
@@ -30,6 +30,13 @@ VPC_ID: "" #vpc_id of deployment from IAC output
 #
 API_VERSION: "2024-02-15-preview"
 ASSISTANTS_OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the OpenAI service APIs
+EMBEDDING_DIM: "" #Vector dimension for embeddings, defaults to 1536 if not overriden here
+# 3072 is default for Amazon Nova MME that supports multiple dimensions.
+# This is set at table creation and in embedding functions with Nova models.
+EMBEDDING_PURPOSE: "GENERIC_INDEX"
+# This will change which embedding purpose is used in Amazon Nova MME.
+RAG_POSTGRES_DB_PORT: "" #Optional: PostgreSQL port (defaults to 3306 if not specified)
+
 
 # These Amazon Aurora RDS can be adjusted to suit your deployment needs for scaling.
 #
@@ -38,3 +45,5 @@ MAX_ACU: "16"
 
 # Var for Admin interface access
 ADMINS: "" #CSV list of email usernames that need admin access. Can add secondary admins once deployed
+
+LOG_LEVEL: "INFO" # Valid Values Include: DEBUG | INFO | WARNING | ERROR | CRITICAL

@@ -1,9 +1,9 @@
 import psycopg2
 from psycopg2.extras import Json
+from psycopg2 import errors
 import json
 import os
 import boto3
-import logging
 import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -13,10 +13,12 @@ from shared_functions import (
     generate_embeddings,
     generate_questions,
     preprocess_text,
+    embedding_model_name,
+    qa_model_name,
+    truncate_content_for_model,
 )
 import urllib
 from create_table import create_table
-from embedding_models import get_embedding_models
 import datetime
 import time
 from rag.rag_secrets import get_rag_secrets_for_document
@@ -25,29 +27,28 @@ from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
+from pycommon.decorators import required_env_vars, track_execution
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_CRITICAL, SEVERITY_HIGH
+import traceback
+
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
 sqs = boto3.client("sqs")
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logger = getLogger("embeddings")
 
 pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
+pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
 
-embedding_model_name = None
-qa_model_name = None
-model_result = get_embedding_models()
-print("Model_result", model_result)
 
-if model_result["success"]:
-    data = model_result["data"]
-    embedding_model_name = data["embedding"]["model_id"]
-    qa_model_name = data["qa"]["model_id"]
+# Model names imported from shared_functions to avoid duplicate get_embedding_models() calls
 
 
 endpoints_arn = os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"]
@@ -55,7 +56,6 @@ embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
 embedding_chunks_index_queue = os.environ["EMBEDDING_CHUNKS_INDEX_QUEUE"]
 table_name = "embeddings"
 pg_password = get_credentials(rag_pg_password)
-
 
 # Add this at the top of the file as documentation
 
@@ -103,7 +103,7 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             "failed": [],     # Terminal state
         }
 
-        logging.info(
+        logger.info(
             f"[CHILD_CHUNK_UPDATE] Updating child chunk {child_chunk} for '{object_id}' to '{new_status}'"
         )
 
@@ -131,24 +131,31 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
                     current_status = child_chunks[str(child_chunk)].get("status")
 
         if current_status is None:
-            logging.info(
+            logger.info(
                 f"[CHILD_CHUNK_CREATE] Child chunk {child_chunk} does not exist, creating with status: '{new_status}'"
             )
         else:
-            logging.info(
+            logger.info(
                 f"[CHILD_CHUNK_STATUS] Child chunk {child_chunk} current status: '{current_status}' -> requested status: '{new_status}'"
             )
 
         # Validate the transition if there's a current status
         if current_status:
+            # Idempotent: If already in the target state, treat as success
+            if current_status == new_status:
+                logger.info(
+                    f"[CHILD_CHUNK_IDEMPOTENT] Chunk {child_chunk} already in state '{new_status}', skipping update (idempotent)"
+                )
+                return  # Already in target state, no-op
+
             if current_status in ["completed", "failed"]:
-                logging.warning(
+                logger.warning(
                     f"[CHILD_CHUNK_TERMINAL] Cannot update chunk {child_chunk} status from {current_status} to {new_status} (already in terminal state)"
                 )
                 return  # Skip the update, already in terminal state
 
             if new_status not in valid_transitions.get(current_status, []):
-                logging.warning(
+                logger.warning(
                     f"[CHILD_CHUNK_INVALID_TRANSITION] Invalid transition from {current_status} to {new_status} for chunk {child_chunk}"
                 )
                 return  # Skip the invalid transition
@@ -156,19 +163,58 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
         # Add timestamp for tracking processing age
         current_time = datetime.datetime.now().isoformat()
 
-        # Ensure parent structure exists in one operation to avoid overlapping paths
+        # Ensure parent structure exists before setting child properties
+        # DynamoDB requires parent paths to exist before nested paths can be created
+        # First ensure 'data' exists, then ensure 'childChunks' exists
         try:
+            # Step 1: Ensure 'data' object exists
             table.update_item(
                 Key={"object_id": object_id},
-                UpdateExpression="SET #data = if_not_exists(#data, :full_structure)",
-                ExpressionAttributeNames={"#data": "data"},
-                ExpressionAttributeValues={":full_structure": {"childChunks": {}}}
+                UpdateExpression="SET #data = if_not_exists(#data, :empty_data)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                },
+                ExpressionAttributeValues={
+                    ":empty_data": {},
+                }
             )
-        except Exception:
-            # Structure creation errors are non-critical, the main update below will handle missing paths
-            pass
+            # Step 2: Ensure 'data.childChunks' exists (now that 'data' exists)
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #data.#childChunks = if_not_exists(#data.#childChunks, :empty_chunks)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                    "#childChunks": "childChunks",
+                },
+                ExpressionAttributeValues={
+                    ":empty_chunks": {},
+                }
+            )
+        except Exception as init_error:
+            logger.warning(f"Structure initialization warning (non-critical): {init_error}")
+            # Continue - the main update will handle it
 
-        # Now update the specific child chunk
+        # Now update the specific child chunk properties
+        # First ensure the chunk object exists, then update/increment version
+        try:
+            # Initialize the chunk object if it doesn't exist
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #data.#childChunks.#chunkId = if_not_exists(#data.#childChunks.#chunkId, :empty_chunk)",
+                ExpressionAttributeNames={
+                    "#data": "data",
+                    "#childChunks": "childChunks",
+                    "#chunkId": str(child_chunk),
+                },
+                ExpressionAttributeValues={
+                    ":empty_chunk": {},
+                }
+            )
+        except Exception as chunk_init_error:
+            logger.warning(f"Chunk object initialization warning (non-critical): {chunk_init_error}")
+            # Continue - the chunk might already exist
+
+        # Now safely update the chunk properties (chunk object now guaranteed to exist)
         update_expression = """
             SET #data.#childChunks.#chunkId.#status = :new_status,
                 #data.#childChunks.#chunkId.#lastUpdated = :timestamp,
@@ -189,8 +235,6 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             ":timestamp": current_time,
             ":zero": 0,
             ":one": 1,
-            ":completed": "completed",
-            ":failed": "failed",
         }
 
         # Add error message if applicable
@@ -198,36 +242,80 @@ def update_child_chunk_status(object_id, child_chunk, new_status, error_message=
             update_expression += ", #data.#childChunks.#chunkId.#error = :error"
             expression_attribute_names["#error"] = "error"
             expression_attribute_values[":error"] = error_message
-            logging.error(
+            logger.error(
                 f"[CHILD_CHUNK_FAILED] Child chunk {child_chunk} failed with error: {error_message}"
             )
 
-        # Define condition that prevents updating terminal states
-        # Allow creation if chunk doesn't exist, or update if not in terminal state
-        condition_expression = (
-            "attribute_not_exists(#data.#childChunks.#chunkId.#status) OR "
-            "(#data.#childChunks.#chunkId.#status <> :completed AND #data.#childChunks.#chunkId.#status <> :failed)"
-        )
+        # Build condition expression that prevents updating terminal states
+        # We need to handle cases where intermediate paths might not exist
+        # Since we already validated transitions in Python above (lines 141-152),
+        # and we're using SET (not ADD/DELETE), the condition mainly protects against race conditions
+        # where another process might have updated the status between our read and write
 
-        result = table.update_item(
-            Key={"object_id": object_id},
-            UpdateExpression=update_expression,
-            ExpressionAttributeNames=expression_attribute_names,
-            ExpressionAttributeValues=expression_attribute_values,
-            ConditionExpression=condition_expression,
-            ReturnValues="UPDATED_NEW",
-        )
+        # Only add condition if we're updating an existing chunk (not creating)
+        # This avoids path validation issues when creating new chunks
+        if current_status is not None:
+            # Chunk exists - prevent updates to terminal states UNLESS we're setting the same status (idempotent)
+            # Allow: pending->processing, processing->completed, processing->failed, completed->completed (retry), failed->failed (retry)
+            # Prevent: completed->processing, failed->processing (can't undo terminal states to different state)
+            if new_status != current_status and current_status in ["completed", "failed"]:
+                # Trying to change from terminal state to different state - block this
+                condition_expression = (
+                    "#data.#childChunks.#chunkId.#status <> :completed AND "
+                    "#data.#childChunks.#chunkId.#status <> :failed"
+                )
+                expression_attribute_values[":completed"] = "completed"
+                expression_attribute_values[":failed"] = "failed"
+            else:
+                # Either updating to same status (idempotent retry) or valid state transition - allow without condition
+                condition_expression = None
+        else:
+            # Creating new chunk - condition should allow creation
+            # We can't use attribute_not_exists on nested paths that might not exist
+            # Since we validated the transition above and are using if_not_exists in SET,
+            # we skip the condition for new chunks to avoid path issues
+            condition_expression = None
 
-        logging.info(f"Successfully updated child chunk status: {result}")
-        logging.info(
+        # Build update_item parameters
+        update_params = {
+            "Key": {"object_id": object_id},
+            "UpdateExpression": update_expression,
+            "ExpressionAttributeNames": expression_attribute_names,
+            "ExpressionAttributeValues": expression_attribute_values,
+            "ReturnValues": "UPDATED_NEW",
+        }
+
+        # Only add ConditionExpression if we have one (not None)
+        if condition_expression is not None:
+            update_params["ConditionExpression"] = condition_expression
+
+        result = table.update_item(**update_params)
+
+        logger.info(f"Successfully updated child chunk status: {result}")
+        logger.info(
             f"[CHILD_CHUNK_SUCCESS] Successfully updated child chunk {child_chunk} to '{new_status}' for object_id '{object_id}'"
         )
 
     except Exception as e:
-        logging.error(
+        logger.error(
             f"[CHILD_CHUNK_ERROR] Failed to update child chunk {child_chunk} status in DynamoDB: {str(e)}"
         )
-        logging.exception(e)
+        logger.exception(e)
+        
+        # CRITICAL: Child chunk status tracking failure = lost visibility
+        log_critical_error(
+            function_name="update_child_chunk_status",
+            error_type="ChildChunkStatusUpdateFailure",
+            error_message=f"Failed to update child chunk {child_chunk} status to '{new_status}': {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "object_id": object_id,
+                "child_chunk": child_chunk,
+                "new_status": new_status,
+                "error_message": error_message
+            }
+        )
 
 
 def update_parent_chunk_status(object_id, new_status=None, error_message=None):
@@ -235,13 +323,13 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
     table = get_progress_table()
 
     try:
-        logging.info(
+        logger.info(
             f"[PARENT_CHUNK_UPDATE] Updating parent chunk status for object_id: {object_id}"
         )
         if new_status:
-            logging.info(f"[PARENT_CHUNK_UPDATE] Requested status: {new_status}")
+            logger.info(f"[PARENT_CHUNK_UPDATE] Requested status: {new_status}")
         else:
-            logging.info(
+            logger.info(
                 f"[PARENT_CHUNK_UPDATE] Auto-determining status based on child chunks"
             )
 
@@ -252,15 +340,25 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
             item = response.get("Item")
 
             if not item:
-                raise ValueError(f"No item found with object_id {object_id}")
+                # DEFENSIVE: If parent record doesn't exist when auto-determining status,
+                # this means child chunks are trying to update before parent was initialized.
+                # This is a race condition or missing initialization - log and skip gracefully.
+                logger.warning(
+                    f"[PARENT_CHUNK_MISSING] No item found for {object_id} during auto-status update. "
+                    f"This may indicate a race condition or missing parent initialization. "
+                    f"The parent record should be created before child chunks are processed."
+                )
+                # Don't raise - allow the process to continue
+                # The parent record will be created by explicit status updates (e.g., 'processing')
+                return
 
             child_chunks = item.get("data", {}).get("childChunks", {})
             current_status = item.get("parentChunkStatus", "")
 
-            logging.info(
+            logger.info(
                 f'[PARENT_CHUNK_STATUS] Current parent status: "{current_status}"'
             )
-            logging.info(
+            logger.info(
                 f"[PARENT_CHUNK_ANALYSIS] Analyzing {len(child_chunks)} child chunks"
             )
 
@@ -272,7 +370,7 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
 
             for chunk_id, chunk_data in child_chunks.items():
                 chunk_status = chunk_data.get("status", "unknown")
-                logging.info(
+                logger.info(
                     f"[CHILD_CHUNK_STATUS_CHECK] Chunk {chunk_id}: {chunk_status}"
                 )
 
@@ -285,7 +383,7 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
                 elif chunk_status == "starting":
                     starting_count += 1
 
-            logging.info(
+            logger.info(
                 f"[PARENT_CHUNK_SUMMARY] Child chunk counts - Completed: {completed_count}, Failed: {failed_count}, Processing: {processing_count}, Starting: {starting_count}"
             )
             
@@ -299,15 +397,15 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
                                  if chunk_data.get("status") == "starting"]
                 
                 if processing_chunks:
-                    logging.info(f"[PARENT_CHUNK_DEBUG] Processing chunks: {processing_chunks[:10]}{'...' if len(processing_chunks) > 10 else ''}")
+                    logger.info(f"[PARENT_CHUNK_DEBUG] Processing chunks: {processing_chunks[:10]}{'...' if len(processing_chunks) > 10 else ''}")
                 if failed_chunks:
-                    logging.info(f"[PARENT_CHUNK_DEBUG] Failed chunks: {failed_chunks[:10]}{'...' if len(failed_chunks) > 10 else ''}")
+                    logger.info(f"[PARENT_CHUNK_DEBUG] Failed chunks: {failed_chunks[:10]}{'...' if len(failed_chunks) > 10 else ''}")
                 if starting_chunks:
-                    logging.info(f"[PARENT_CHUNK_DEBUG] Starting chunks: {starting_chunks[:10]}{'...' if len(starting_chunks) > 10 else ''}")
+                    logger.info(f"[PARENT_CHUNK_DEBUG] Starting chunks: {starting_chunks[:10]}{'...' if len(starting_chunks) > 10 else ''}")
 
             # Skip if already completed or failed
             if current_status in ["completed", "failed"]:
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_TERMINAL] Parent chunk already in terminal state: {current_status}"
                 )
                 return
@@ -322,22 +420,41 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
 
             if any_failed:
                 new_status = "failed"
-                logging.warning(
+                logger.warning(
                     f"[PARENT_CHUNK_DECISION] Setting parent to FAILED - {failed_count} child chunks failed"
                 )
             elif all_complete:
                 new_status = "completed"
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_DECISION] Setting parent to COMPLETED - all {completed_count} child chunks completed"
                 )
             else:
                 new_status = "processing"
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_DECISION] Setting parent to PROCESSING - still has chunks in progress"
                 )
 
         # Update the status with timestamp
         current_time = datetime.datetime.now().isoformat()
+
+        # DEFENSIVE: Ensure the item exists before updating nested properties
+        # DynamoDB update operations will fail if the item doesn't exist and we're using conditions
+        # First, ensure the base record exists with object_id
+        try:
+            table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET #oid = if_not_exists(#oid, :oid)",
+                ExpressionAttributeNames={
+                    "#oid": "object_id",
+                },
+                ExpressionAttributeValues={
+                    ":oid": object_id,
+                }
+            )
+            logger.debug(f"[PARENT_CHUNK_INIT] Ensured base record exists for {object_id}")
+        except Exception as init_error:
+            logger.debug(f"Base record initialization (non-critical): {init_error}")
+            # Continue - the record might already exist
 
         update_expression = "SET parentChunkStatus = :status, lastUpdated = :timestamp"
 
@@ -358,7 +475,7 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
         if error_message and new_status == "failed":
             update_expression += ", errorMessage = :error"
             expression_values[":error"] = error_message
-            logging.error(
+            logger.error(
                 f"[PARENT_CHUNK_ERROR] Parent failure with error: {error_message}"
             )
 
@@ -369,36 +486,50 @@ def update_parent_chunk_status(object_id, new_status=None, error_message=None):
                 ExpressionAttributeValues=expression_values,
                 ConditionExpression=condition_expression,
             )
-            logging.info(
+            logger.info(
                 f'[PARENT_CHUNK_SUCCESS] ✅ Parent chunk status updated to "{new_status}" for object_id: {object_id}'
             )
 
             # Add specific logging for terminal states
             if new_status == "completed":
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_COMPLETED] 🎉 Document {object_id} embedding process COMPLETED successfully!"
                 )
             elif new_status == "failed":
-                logging.error(
+                logger.error(
                     f"[PARENT_CHUNK_FAILED] ❌ Document {object_id} embedding process FAILED!"
                 )
             elif new_status == "processing":
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_PROCESSING] 🔄 Document {object_id} is actively processing"
                 )
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                logging.info(
+                logger.info(
                     f"[PARENT_CHUNK_RACE_CONDITION] Parent chunk already in terminal state, not updating to {new_status}"
                 )
             else:
                 raise
     except Exception as e:
-        logging.error(
+        logger.error(
             f"[PARENT_CHUNK_ERROR] Failed to update parent chunk status for {object_id}: {str(e)}"
         )
-        logging.exception(e)
+        logger.exception(e)
+        
+        # CRITICAL: Parent chunk status tracking failure = document stuck in processing
+        log_critical_error(
+            function_name="update_parent_chunk_status",
+            error_type="ParentChunkStatusUpdateFailure",
+            error_message=f"Failed to update parent chunk status for {object_id}: {str(e)}",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "object_id": object_id,
+                "new_status": new_status,
+                "error_message": error_message
+            }
+        )
 
 
 def table_exists(cursor, table_name):
@@ -410,24 +541,50 @@ def table_exists(cursor, table_name):
 
 
 def ensure_child_chunk_column_exists(cursor):
-    """Check if child_chunk column exists, add it if not."""
+    """Ensure child_chunk column exists using atomic operations (race condition safe)."""
     try:
-        # Check if column exists
+        logger.info("[SCHEMA_UPDATE] 🔧 Starting child_chunk column verification")
+        logger.info(f"[SCHEMA_UPDATE] Database connection ID: {id(cursor.connection)}")
+        
+        # Check if column already exists first (for better logging)
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
             WHERE table_name = 'embeddings' AND column_name = 'child_chunk'
         """)
+        existing_column = cursor.fetchone()
         
-        if not cursor.fetchone():
-            logging.info("[SCHEMA_UPDATE] Adding child_chunk column to embeddings table")
-            cursor.execute("ALTER TABLE embeddings ADD COLUMN child_chunk VARCHAR(10)")
-            cursor.execute("CREATE INDEX idx_src_child_chunk ON embeddings (src, child_chunk)")
-            logging.info("[SCHEMA_UPDATE] ✅ child_chunk column and index added successfully")
+        if existing_column:
+            logger.info("[SCHEMA_UPDATE] ✅ child_chunk column already exists")
         else:
-            logging.info("[SCHEMA_UPDATE] child_chunk column already exists")
+            logger.info("[SCHEMA_UPDATE] 🔨 Creating child_chunk column (atomic operation)")
+            
+        # Atomic operation - no race condition possible
+        cursor.execute("ALTER TABLE embeddings ADD COLUMN IF NOT EXISTS child_chunk VARCHAR(10)")
+        logger.info("[SCHEMA_UPDATE] ✅ ALTER TABLE command completed successfully")
+        
+        # Check if index already exists
+        cursor.execute("""
+            SELECT indexname 
+            FROM pg_indexes 
+            WHERE tablename = 'embeddings' AND indexname = 'idx_src_child_chunk'
+        """)
+        existing_index = cursor.fetchone()
+        
+        if existing_index:
+            logger.info("[SCHEMA_UPDATE] ✅ idx_src_child_chunk index already exists")
+        else:
+            logger.info("[SCHEMA_UPDATE] 🔨 Creating idx_src_child_chunk index")
+            
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_src_child_chunk ON embeddings (src, child_chunk)")
+        logger.info("[SCHEMA_UPDATE] ✅ CREATE INDEX command completed successfully")
+        
+        logger.info("[SCHEMA_UPDATE] ✅ child_chunk column and index verification complete")
     except Exception as e:
-        logging.error(f"[SCHEMA_UPDATE] ❌ Error checking/adding child_chunk column: {e}")
+        logger.error(f"[SCHEMA_UPDATE] ❌ CRITICAL ERROR ensuring child_chunk column: {e}")
+        logger.error(f"[SCHEMA_UPDATE] Error type: {type(e).__name__}")
+        logger.error(f"[SCHEMA_UPDATE] Database connection state: {cursor.connection.closed}")
+        logger.exception("[SCHEMA_UPDATE] Full stack trace:")
         raise
 
 
@@ -439,39 +596,49 @@ db_connection = None
 def get_db_connection():
     global db_connection
     if db_connection is None or db_connection.closed:
-        admin_conn_params = {
-            "dbname": pg_database,
-            "user": pg_user,
-            "password": pg_password,
-            "host": pg_host,
-            "port": 3306,  # ensure the port matches the PostgreSQL port which is 5432 by default
-        }
         try:
+            logger.debug(f"[DIAGNOSTIC] 🔌 Connecting to database - host: {pg_host}, db: {pg_database}, user: {pg_user}")
             db_connection = psycopg2.connect(
                 host=pg_host,
                 database=pg_database,
                 user=pg_user,
                 password=pg_password,
-                port=3306,  # ensure the port matches the PostgreSQL port which is 5432 by default
+                port=pg_port,  # ensure the port matches the PostgreSQL port which is 5432 by default
             )
-            logging.info("Database connection established.")
+            logger.debug(f"[DIAGNOSTIC] ✅ Database connection successful - connection ID: {id(db_connection)}")
         except psycopg2.Error as e:
-            logging.error(f"Failed to connect to the database: {e}")
+            logger.error(f"[DIAGNOSTIC] ❌ Database connection failed: {e}")
+            logger.error(f"[DIAGNOSTIC] Error type: {type(e).__name__}")
+            logger.error(f"[DIAGNOSTIC] SQLSTATE: {e.pgcode if hasattr(e, 'pgcode') else 'unknown'}")
+            
+            # CRITICAL: PostgreSQL connection failure = entire RAG system down
+            log_critical_error(
+                function_name="get_db_connection",
+                error_type="PostgreSQLConnectionFailure",
+                error_message=f"Failed to connect to PostgreSQL database: {str(e)}",
+                severity=SEVERITY_CRITICAL,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "host": pg_host,
+                    "database": pg_database,
+                    "error_code": e.pgcode if hasattr(e, 'pgcode') else 'unknown'
+                }
+            )
             raise
 
         # Once the database connection is established, check if the table exists
         with db_connection.cursor() as cursor:
             if not table_exists(cursor, table_name):
-                logging.info(
+                logger.info(
                     f"Table {table_name} does not exist. Attempting to create table..."
                 )
                 if create_table():
-                    logging.info(f"Table {table_name} created successfully.")
+                    logger.info(f"Table {table_name} created successfully.")
                 else:
-                    logging.error(f"Failed to create the table {table_name}.")
+                    logger.error(f"Failed to create the table {table_name}.")
                     raise Exception(f"Table {table_name} creation failed.")
             else:
-                logging.info(f"Table {table_name} exists.")
+                logger.info(f"Table {table_name} exists.")
             
             # Ensure child_chunk column exists (safe to run multiple times)
             ensure_child_chunk_column_exists(cursor)
@@ -499,6 +666,16 @@ def insert_chunk_data_to_db(
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     try:
+        # Strip NULL bytes from content (PostgreSQL doesn't allow \x00 in text fields)
+        cleaned_content = content.replace('\x00', '') if content else content
+
+        # Log if NULL bytes were found and removed
+        if content and '\x00' in content:
+            null_count = content.count('\x00')
+            logger.warning(
+                f"[DB_INSERT_NULL_BYTES] Removed {null_count} NULL byte(s) from content for chunk {child_chunk} (src: {src})"
+            )
+
         cursor.execute(
             insert_query,
             (
@@ -509,16 +686,31 @@ def insert_chunk_data_to_db(
                 char_index,
                 token_count,
                 embedding_index,
-                content,
+                cleaned_content,
                 vector_embedding,
                 qa_vector_embedding,
             ),
         )
-        logging.info(
+        logger.info(
             f"[DB_INSERT] ✅ Data inserted for chunk {child_chunk}."
         )  # Log first 30 characters of content
     except psycopg2.Error as e:
-        logging.error(f"[DB_INSERT] ❌ Failed to insert data for chunk {child_chunk}: {e}")
+        logger.error(f"[DB_INSERT] ❌ Failed to insert data for chunk {child_chunk}: {e}")
+        
+        # CRITICAL: Database insert failure = embeddings generated but not stored
+        log_critical_error(
+            function_name="insert_chunk_data_to_db",
+            error_type="PostgreSQLInsertFailure",
+            error_message=f"Failed to insert embedding data into PostgreSQL: {str(e)}",
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src": src,
+                "child_chunk": child_chunk,
+                "embedding_index": embedding_index,
+                "error_code": e.pgcode if hasattr(e, 'pgcode') else 'unknown'
+            }
+        )
         raise
 
 
@@ -526,34 +718,52 @@ db_connection = None
 
 
 # AWS Lambda handler function
+@required_env_vars({
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@track_execution(operation_name="embedding_processor", account="system")
 def lambda_handler(event, context):
-    logging.basicConfig(level=logging.INFO)
 
-    logging.info(
+    logger.info(
         f"[LAMBDA_START] 🚀 Lambda function started - processing {len(event['Records'])} SQS messages"
     )
+    
+    # Enhanced logging for debugging
+    for i, record in enumerate(event['Records']):
+        try:
+            s3_event = json.loads(record["body"])
+            s3_record = s3_event["Records"][0]
+            object_key = urllib.parse.unquote(s3_record["s3"]["object"]["key"])
+            chunk_num = extract_child_chunk_number_from_src(object_key)
+            logger.info(f"[LAMBDA_QUEUE_ANALYSIS] Message {i+1}: chunk {chunk_num}, key: {object_key}")
+        except Exception as e:
+            logger.warning(f"[LAMBDA_QUEUE_ANALYSIS] Failed to parse message {i+1}: {e}")
 
     account_data = None
 
     for record_index, record in enumerate(event["Records"]):
-        logging.info(
+        logger.info(
             f"[MESSAGE_PROCESSING] 📨 Processing message {record_index + 1}/{len(event['Records'])}: {record.get('messageId', 'unknown')}"
         )
         ds_key = None
         try:
             s3_event = json.loads(record["body"])
-            logging.info(f"[MESSAGE_BODY] Message body parsed successfully")
+            logger.info(f"[MESSAGE_BODY] Message body parsed successfully")
             s3_record = s3_event["Records"][0]
             s3_info = s3_record["s3"]
 
             bucket_name = s3_info["bucket"]["name"]
             url_encoded_key = s3_info["object"]["key"]
-            print("s3 Info", s3_info)
+            logger.debug("s3 Info: %s", s3_info)
             object_key = urllib.parse.unquote(url_encoded_key)
             
             # Extract these early so we can mark parent as failed if needed
             childChunk = extract_child_chunk_number_from_src(object_key)
             trimmed_src = trim_src(object_key)
+            
+            logger.debug(f"[DIAGNOSTIC] 🔍 Processing chunk {childChunk} of document {trimmed_src}")
+            logger.debug(f"[DIAGNOSTIC] Lambda ID: {context.aws_request_id if context else 'unknown'}")
+            logger.debug(f"[DIAGNOSTIC] Message ID: {record.get('messageId', 'unknown')}")
             
             # Get object_key and force_reprocess flag from S3 object metadata
             is_force_reprocess = False
@@ -564,31 +774,31 @@ def lambda_handler(event, context):
                 ds_key = s3_metadata.get('object_key')
                 ds_key = urllib.parse.unquote(ds_key)
                 is_force_reprocess = s3_metadata.get('force_reprocess', '').lower() == 'true'
-                print(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}")
+                logger.debug(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}")
             except Exception as e:
                 ds_key = trimmed_src # most likely coming from embeddings manual process
-                print(f"Could not get S3 metadata: {e}")
+                logger.warning(f"Could not get S3 metadata: {e}")
 
             if account_data is None:
                 if not ds_key:
                     error_msg = f"No ds_key found for {object_key}"
-                    logging.error(f"[RAG_SECRETS_ERROR] {error_msg}")
+                    logger.error(f"[RAG_SECRETS_ERROR] {error_msg}")
                     # Mark parent as failed before raising exception
                     update_parent_chunk_status(trimmed_src, "failed", error_msg)
                     raise Exception("No ds_key found")
                 rag_secrets = get_rag_secrets_for_document(ds_key)
                 if not rag_secrets.get('success'):
                     error_msg = f"Failed to retrieve RAG secrets for {ds_key}"
-                    logging.error(f"[RAG_SECRETS_ERROR] {error_msg}")
+                    logger.error(f"[RAG_SECRETS_ERROR] {error_msg}")
                     # Mark parent as failed before raising exception
                     update_parent_chunk_status(trimmed_src, "failed", error_msg)
                     raise Exception("Failed to retrieve RAG secrets")
                 account_data = rag_secrets.get('data')
 
-            logging.info(
+            logger.info(
                 f"[MESSAGE_DETAILS] Bucket: {bucket_name}, Object: {object_key}"
             )
-            logging.info(
+            logger.info(
                 f"[MESSAGE_DETAILS] Child chunk: {childChunk}, Trimmed src: {trimmed_src}"
             )
 
@@ -598,14 +808,14 @@ def lambda_handler(event, context):
 
             should_continue = check_parent_terminal_status(trimmed_src, record)
             if should_continue:
-                logging.info(
+                logger.info(
                     f"[MESSAGE_SKIP] ⏭️ Skipping processing due to terminal state"
                 )
                 continue
 
             # Check if this specific chunk is already completed (for selective reprocessing)
             if is_force_reprocess and check_chunk_already_completed(trimmed_src, childChunk, record):
-                logging.info(
+                logger.info(
                     f"[SELECTIVE_SKIP] ⏭️ Skipping chunk {childChunk} - already completed"
                 )
                 continue
@@ -621,7 +831,7 @@ def lambda_handler(event, context):
                 src = data.get("src", "")
                 trimmed_src = trim_src(src)
 
-                logging.info(
+                logger.info(
                     f"[S3_FETCH] ✅ Successfully retrieved and parsed S3 object"
                 )
 
@@ -629,12 +839,14 @@ def lambda_handler(event, context):
                 update_parent_chunk_status(trimmed_src, "processing")
 
                 # Get database connection
+                logger.debug(f"[DIAGNOSTIC] 🔌 Establishing database connection for chunk {childChunk}")
                 db_connection = get_db_connection()
+                logger.debug(f"[DIAGNOSTIC] ✅ Database connection established for chunk {childChunk}")
 
                 success, src, error_msg = embed_chunks(data, childChunk, embedding_progress_table, db_connection, account_data)
 
                 if success:
-                    logging.info(
+                    logger.info(
                         f"[EMBEDDING_SUCCESS] 🎉 Embedding process completed successfully for {src}"
                     )
                     receipt_handle = record["receiptHandle"]
@@ -644,7 +856,7 @@ def lambda_handler(event, context):
                         QueueUrl=embedding_chunks_index_queue,
                         ReceiptHandle=receipt_handle,
                     )
-                    logging.info(
+                    logger.info(
                         f"[QUEUE_DELETE] 🗑️ Deleted message {record['messageId']} from queue after successful processing"
                     )
 
@@ -653,7 +865,7 @@ def lambda_handler(event, context):
                         trimmed_src
                     )  # Will auto-determine status
                 else:
-                    logging.error(
+                    logger.error(
                         f"[EMBEDDING_FAILED] ❌ Embedding process failed for {src}: {error_msg}"
                     )
                     # Parent status should already be set to failed by embed_chunks
@@ -664,24 +876,46 @@ def lambda_handler(event, context):
                         QueueUrl=embedding_chunks_index_queue,
                         ReceiptHandle=receipt_handle,
                     )
-                    logging.info(
+                    logger.info(
                         f"[QUEUE_DELETE] 🗑️ Deleted failed message {record['messageId']} from queue to prevent retries"
                     )
 
             except Exception as e:
-                logging.exception(
-                    f"[PROCESSING_ERROR] ❌ Error processing S3 object for message {record['messageId']}: {str(e)}"
-                )
-                # Mark parent as failed in case of unhandled exceptions
-                if "trimmed_src" in locals():
-                    update_parent_chunk_status(trimmed_src, "failed", str(e))
+                error_type = type(e).__name__
+                error_message = str(e)
+                
+                logger.error(f"[PROCESSING_ERROR] ❌ CRITICAL ERROR processing message {record['messageId']}")
+                logger.error(f"[PROCESSING_ERROR] Error type: {error_type}")
+                logger.error(f"[PROCESSING_ERROR] Error message: {error_message}")
+                logger.exception(f"[PROCESSING_ERROR] Full stack trace:")
+                
+                # Enhanced error categorization for better debugging
+                if "DuplicateColumn" in error_message:
+                    logger.error("[PROCESSING_ERROR] 🔥 DATABASE RACE CONDITION detected - DuplicateColumn error")
+                elif "psycopg2" in error_message or "database" in error_message.lower():
+                    logger.error("[PROCESSING_ERROR] 🔥 DATABASE CONNECTION/QUERY error")
+                elif "RAG secrets" in error_message:
+                    logger.error("[PROCESSING_ERROR] 🔥 RAG SECRETS error")
+                elif "S3" in error_message or "bucket" in error_message.lower():
+                    logger.error("[PROCESSING_ERROR] 🔥 S3 ACCESS error")
+                else:
+                    logger.error("[PROCESSING_ERROR] 🔥 UNKNOWN ERROR TYPE")
+                
+                # Mark parent and child chunk as failed in case of unhandled exceptions
+                if "trimmed_src" in locals() and "childChunk" in locals():
+                    logger.info(f"[ERROR_CLEANUP] Marking chunk {childChunk} and parent as failed")
+                    update_child_chunk_status(trimmed_src, childChunk, "failed", f"{error_type}: {error_message}")
+                    update_parent_chunk_status(trimmed_src, "failed", f"{error_type}: {error_message}")
+                elif "trimmed_src" in locals():
+                    logger.info(f"[ERROR_CLEANUP] Marking parent as failed (no chunk extracted)")
+                    update_parent_chunk_status(trimmed_src, "failed", f"{error_type}: {error_message}")
 
                 # Delete message to prevent infinite retries
                 receipt_handle = record["receiptHandle"]
                 sqs.delete_message(
                     QueueUrl=embedding_chunks_index_queue, ReceiptHandle=receipt_handle
                 )
-                logging.info(
+                logger.info(
                     f"[QUEUE_DELETE] 🗑️ Deleted error message {record['messageId']} from queue"
                 )
 
@@ -689,10 +923,32 @@ def lambda_handler(event, context):
                 # Ensure the database connection is closed
                 if db_connection is not None and not db_connection.closed:
                     db_connection.close()
-                    logging.info(f"[DB_CONNECTION] 🔌 Database connection closed")
+                    logger.info(f"[DB_CONNECTION] 🔌 Database connection closed")
 
         except Exception as e:
-            logging.exception(
+            # Check if this is a critical RAG secrets error that should terminate the Lambda
+            error_message = str(e)
+            if ("RAG secrets" in error_message or 
+                "store_secret_parameter" in error_message or 
+                "get_secret_parameter" in error_message or
+                "delete_secret_parameter" in error_message or
+                "Critical error storing RAG secrets" in error_message or
+                "Critical error retrieving RAG secrets" in error_message or
+                "Critical error deleting RAG secrets" in error_message):
+                logger.error(
+                    f"[CRITICAL_RAG_ERROR] 🔥 RAG secrets error detected - TERMINATING LAMBDA IMMEDIATELY: {error_message}"
+                )
+                # Multiple termination strategies to ensure Lambda stops
+                logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to RAG secrets failure")
+                
+                # Strategy 1: Re-raise the exception
+                raise Exception(f"LAMBDA_TERMINATION_REQUIRED: {error_message}")
+                
+                # Strategy 2: If somehow re-raise fails, force exit (this line should never execute)
+                import sys
+                sys.exit(1)
+            
+            logger.exception(
                 f"[MESSAGE_ERROR] ❌ Critical error processing message {record.get('messageId', 'unknown')}: {str(e)}"
             )
             # Still try to delete the message to prevent infinite loops
@@ -701,15 +957,15 @@ def lambda_handler(event, context):
                 sqs.delete_message(
                     QueueUrl=embedding_chunks_index_queue, ReceiptHandle=receipt_handle
                 )
-                logging.info(
+                logger.info(
                     f"[QUEUE_DELETE] 🗑️ Deleted critical error message from queue"
                 )
             except Exception as delete_error:
-                logging.error(
+                logger.error(
                     f"[QUEUE_DELETE_ERROR] Failed to delete message after critical error: {delete_error}"
                 )
 
-    logging.info(
+    logger.info(
         f"[LAMBDA_COMPLETE] ✅ Lambda function completed processing all messages"
     )
    
@@ -732,95 +988,276 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
         trimmed_src = trim_src(src)
         childChunk = str(childChunk)
 
-        logging.info(
+        logger.info(
             f"[EMBED_CHUNKS_START] 🚀 Starting embedding process for child chunk {childChunk} of document: {trimmed_src}"
         )
-        logging.info(
+        logger.info(
             f"[EMBED_CHUNKS_INFO] Processing {len(local_chunks)} local chunks within child chunk {childChunk}"
         )
+        logger.debug(f"[DIAGNOSTIC] 🧪 Embed chunks function entry - chunk {childChunk}, connection ID: {id(db_connection)}")
+        logger.debug(f"[DIAGNOSTIC] Account data present: {account_data is not None}")
+        logger.debug(f"[DIAGNOSTIC] Embedding model: {embedding_model_name}, QA model: {qa_model_name}")
 
         # Mark this child chunk as processing
         update_child_chunk_status(trimmed_src, childChunk, "processing")
 
         if not embedding_model_name or not qa_model_name:
             error_msg = f"No Models Provided: embedding: {embedding_model_name}, qa: {qa_model_name}"
-            logging.error(f"[EMBED_CHUNKS_MODEL_ERROR] {error_msg}")
+            logger.error(f"[EMBED_CHUNKS_MODEL_ERROR] {error_msg}")
             update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
             # Immediately mark parent as failed
             update_parent_chunk_status(trimmed_src, "failed", error_msg)
             return False, src, error_msg
 
+        # Initialize total_chunks to avoid UnboundLocalError
+        total_chunks = None
+        
         try:
             response = table.get_item(Key={"object_id": trimmed_src})
             item = response.get("Item")
             if item and "data" in item:
                 total_chunks = item["data"].get("totalChunks")
-                logging.info(
+                logger.info(
                     f"[EMBED_CHUNKS_PROGRESS] Processing child chunk: {childChunk} of total parent chunks: {total_chunks}"
                 )
                 local_chunks_to_process = len(local_chunks)
-                logging.info(
+                logger.info(
                     f"[EMBED_CHUNKS_LOCAL] There are {local_chunks_to_process} (max 10) local chunks within child chunk: {childChunk}"
                 )
 
                 if not item["data"].get("terminated", True):
-                    logging.warning(
+                    logger.warning(
                         f"[EMBED_CHUNKS_TERMINATED] ⛔ The file embedding process has been terminated for {trimmed_src}"
                     )
                     return False, src, "Process terminated"
             else:
-                logging.warning(
+                logger.warning(
                     f"[EMBED_CHUNKS_NO_ITEM] No item found in DynamoDB table for {trimmed_src}"
                 )
         except ClientError as e:
-            logging.error(
+            logger.error(
                 f"[EMBED_CHUNKS_DYNAMO_ERROR] Failed to fetch item from DynamoDB table: {e}"
             )
 
-        logging.info(
-            f"[EMBED_CHUNKS_PROCESSING] Processing child chunk {childChunk} of {total_chunks} (fetched from DynamoDB)"
+        logger.info(
+            f"[EMBED_CHUNKS_PROCESSING] Processing child chunk {childChunk} of {total_chunks or 'unknown'} (fetched from DynamoDB)"
         )
         current_local_chunk_index = 0
 
+        logger.debug(f"[DIAGNOSTIC] 🔄 Starting local chunk processing loop for child chunk {childChunk}")
         with db_connection.cursor() as cursor:
             db_connection.commit()
+            logger.debug(f"[DIAGNOSTIC] 📊 Processing {len(local_chunks)} local chunks in child chunk {childChunk}")
             for local_chunk_index, chunk in enumerate(
                 local_chunks[current_local_chunk_index:],
                 start=current_local_chunk_index + 1,
             ):
                 try:
+                    logger.debug(f"[DIAGNOSTIC] 🔍 Processing local chunk {local_chunk_index} of child chunk {childChunk}")
                     content = chunk["content"]
                     locations = chunk["locations"]
                     orig_indexes = chunk["indexes"]
                     char_index = chunk["char_index"]
 
+                    logger.debug(f"[DIAGNOSTIC] 📝 Preprocessing text for local chunk {local_chunk_index}")
                     response_clean_text = preprocess_text(content)
                     if not response_clean_text["success"]:
+                        logger.error(f"[DIAGNOSTIC] ❌ Text preprocessing failed for local chunk {local_chunk_index}: {response_clean_text['error']}")
                         raise Exception(
                             f"Text preprocessing failed: {response_clean_text['error']}"
                         )
                     clean_text = response_clean_text["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ Text preprocessing successful for local chunk {local_chunk_index}")
 
-                    response_vector_embedding = generate_embeddings(clean_text)
-                    if not response_vector_embedding["success"]:
-                        raise Exception(
-                            f"Vector embedding generation failed: {response_vector_embedding['error']}"
+                    # SAFETY NET: Truncate chunk content to prevent token limit errors (defense in depth)
+                    # Use conservative 6000 token limit to leave room for overhead/formatting
+                    original_length = len(clean_text)
+                    clean_text = truncate_content_for_model(clean_text, embedding_model_name, 6000)
+                    if len(clean_text) < original_length:
+                        logger.warning(f"[TOKEN_SAFETY] Chunk content truncated from {original_length} to {len(clean_text)} chars for chunk {local_chunk_index} (model: {embedding_model_name})")
+
+                    # AGGRESSIVE FALLBACK: If still too large (>21,000 chars ~= 6,000 tokens), hard truncate
+                    # This handles cases where truncate_content_for_model fails or uses char estimation
+                    if len(clean_text) > 21000:
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Content still too large ({len(clean_text)} chars), applying hard character limit")
+                        clean_text = clean_text[:21000]
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated to 21000 characters for chunk {local_chunk_index}")
+
+                    # VALIDATION: Skip chunks that are empty after preprocessing and truncation
+                    # This is normal - chunks with only symbols/punctuation/whitespace have no content to embed
+                    if not clean_text or len(clean_text.strip()) == 0:
+                        logger.info(f"[SKIP_EMPTY_CHUNK] Chunk {local_chunk_index} is empty after preprocessing - marking as completed (nothing to embed)")
+                        # Mark as completed since there's nothing wrong - just no content to embed
+                        update_child_chunk_status(
+                            src,
+                            childChunk,
+                            "completed",
+                            error_message=None
                         )
+                        continue  # Skip to next chunk
+
+                    logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
+                    response_vector_embedding = generate_embeddings(clean_text, account_data, src)
+
+                    # Check if embedding failed due to NaN - if so, try sanitized retry immediately
+                    if not response_vector_embedding["success"]:
+                        error_msg = response_vector_embedding.get('error', '')
+
+                        # Special handling for NaN errors - try sanitized text retry
+                        if 'NaN' in error_msg:
+                            logger.warning(f"[NaN_DETECTED] NaN error from API for chunk {local_chunk_index}, attempting retry with sanitized text")
+
+                            # RETRY: Clean text more aggressively and retry once
+                            sanitized_text = ''.join(char for char in clean_text if ord(char) < 128 and (char.isprintable() or char.isspace()))
+                            sanitized_text = ' '.join(sanitized_text.split())  # Normalize whitespace
+
+                            if sanitized_text and len(sanitized_text.strip()) > 0:
+                                logger.info(f"[NaN_RETRY] Retrying with ASCII-only text (original: {len(clean_text)} chars, sanitized: {len(sanitized_text)} chars)")
+                                response_retry = generate_embeddings(sanitized_text, account_data, src)
+
+                                if response_retry["success"]:
+                                    logger.info(f"[NaN_RETRY] ✅ Retry succeeded with sanitized text")
+                                    response_vector_embedding = response_retry
+                                    clean_text = sanitized_text  # Use sanitized text going forward
+                                else:
+                                    logger.error(f"[NaN_RETRY] Retry failed: {response_retry.get('error')}, failing chunk")
+                                    # Fall through to regular error handling below
+                            else:
+                                logger.error(f"[NaN_RETRY] Sanitized text is empty, failing chunk")
+
+                        # If still failed (or not a NaN error), handle as critical error
+                        if not response_vector_embedding["success"]:
+                            logger.error(f"[DIAGNOSTIC] ❌ Vector embedding failed for local chunk {local_chunk_index}: {response_vector_embedding['error']}")
+
+                            # CRITICAL: Embedding generation failure = documents unsearchable
+                            log_critical_error(
+                                function_name="embed_chunks",
+                                error_type="EmbeddingGenerationFailure",
+                                error_message=f"Failed to generate vector embedding: {response_vector_embedding['error']}",
+                                current_user=account_data.get('user') if account_data else 'system',
+                                severity=SEVERITY_HIGH,
+                                stack_trace=traceback.format_exc(),
+                                context={
+                                    "document": src,
+                                    "child_chunk": childChunk,
+                                    "local_chunk": local_chunk_index,
+                                    "error_details": response_vector_embedding.get('error')
+                                }
+                            )
+
+                            raise Exception(
+                                f"Vector embedding generation failed: {response_vector_embedding['error']}"
+                            )
+
                     vector_embedding = response_vector_embedding["data"]
 
+                    logger.debug(f"[DIAGNOSTIC] ✅ Vector embedding successful for local chunk {local_chunk_index}")
+
+                    logger.debug(f"[DIAGNOSTIC] ❓ Generating QA summary for local chunk {local_chunk_index}")
                     response_qa_summary = generate_questions(clean_text, account_data)
-                    if not response_qa_summary["success"]:
+
+                    # DEFENSIVE: Handle unexpected response format (should always be dict, but protect against edge cases)
+                    if not isinstance(response_qa_summary, dict):
+                        error_msg = f"Unexpected response type from generate_questions: {type(response_qa_summary).__name__}"
+                        logger.error(f"[DIAGNOSTIC] ❌ {error_msg}")
+                        response_qa_summary = {"success": False, "error": error_msg}
+
+                    if not response_qa_summary.get("success", False):
+                        logger.error(f"[DIAGNOSTIC] ❌ QA summary failed for local chunk {local_chunk_index}: {response_qa_summary['error']}")
+                        
+                        # CRITICAL: QA summary failure = degraded search quality
+                        log_critical_error(
+                            function_name="embed_chunks",
+                            error_type="QASummaryGenerationFailure",
+                            error_message=f"Failed to generate QA summary: {response_qa_summary['error']}",
+                            current_user=account_data.get('user') if account_data else 'system',
+                            severity=SEVERITY_HIGH,
+                            stack_trace=traceback.format_exc(),
+                            context={
+                                "document": src,
+                                "child_chunk": childChunk,
+                                "local_chunk": local_chunk_index,
+                                "error_details": response_qa_summary.get('error')
+                            }
+                        )
+                        
                         raise Exception(
                             f"QA summary generation failed: {response_qa_summary['error']}"
                         )
                     qa_summary = response_qa_summary["data"]
+                    logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
-                    response_qa_embedding = generate_embeddings(content=qa_summary)
+                    # SAFETY NET: Truncate QA summary to prevent token limit errors (defense in depth)
+                    # Use conservative 6000 token limit to leave room for overhead/formatting
+                    original_qa_length = len(qa_summary)
+                    qa_summary = truncate_content_for_model(qa_summary, embedding_model_name, 6000)
+                    if len(qa_summary) < original_qa_length:
+                        logger.warning(f"[TOKEN_SAFETY] QA summary truncated from {original_qa_length} to {len(qa_summary)} chars for chunk {local_chunk_index} (model: {embedding_model_name})")
+
+                    # AGGRESSIVE FALLBACK: If still too large (>21,000 chars ~= 6,000 tokens), hard truncate
+                    # This handles cases where truncate_content_for_model fails or uses char estimation
+                    if len(qa_summary) > 21000:
+                        logger.warning(f"[TOKEN_SAFETY_HARD] QA summary still too large ({len(qa_summary)} chars), applying hard character limit")
+                        qa_summary = qa_summary[:21000]
+                        logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated QA summary to 21000 characters for chunk {local_chunk_index}")
+
+                    logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
+                    # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
+                    response_qa_embedding = generate_embeddings(qa_summary, None, src)
+
+                    # Check if QA embedding failed due to NaN - if so, try sanitized retry immediately
                     if not response_qa_embedding["success"]:
-                        raise Exception(
-                            f"QA embedding generation failed: {response_qa_embedding['error']}"
-                        )
+                        error_msg = response_qa_embedding.get('error', '')
+
+                        # Special handling for NaN errors - try sanitized text retry
+                        if 'NaN' in error_msg:
+                            logger.warning(f"[NaN_DETECTED] NaN error from API for QA chunk {local_chunk_index}, attempting retry with sanitized text")
+
+                            # RETRY: Clean QA summary more aggressively and retry once
+                            sanitized_qa = ''.join(char for char in qa_summary if ord(char) < 128 and (char.isprintable() or char.isspace()))
+                            sanitized_qa = ' '.join(sanitized_qa.split())  # Normalize whitespace
+
+                            if sanitized_qa and len(sanitized_qa.strip()) > 0:
+                                logger.info(f"[NaN_RETRY] Retrying QA with ASCII-only text (original: {len(qa_summary)} chars, sanitized: {len(sanitized_qa)} chars)")
+                                response_retry_qa = generate_embeddings(sanitized_qa, None, src)
+
+                                if response_retry_qa["success"]:
+                                    logger.info(f"[NaN_RETRY] ✅ QA retry succeeded with sanitized text")
+                                    response_qa_embedding = response_retry_qa
+                                    qa_summary = sanitized_qa  # Use sanitized text going forward
+                                else:
+                                    logger.error(f"[NaN_RETRY] QA retry failed: {response_retry_qa.get('error')}, failing chunk")
+                                    # Fall through to regular error handling below
+                            else:
+                                logger.error(f"[NaN_RETRY] Sanitized QA summary is empty, failing chunk")
+
+                        # If still failed (or not a NaN error), handle as critical error
+                        if not response_qa_embedding["success"]:
+                            logger.error(f"[DIAGNOSTIC] ❌ QA embedding failed for local chunk {local_chunk_index}: {response_qa_embedding['error']}")
+
+                            # CRITICAL: QA embedding failure = dual embedding system broken
+                            log_critical_error(
+                                function_name="embed_chunks",
+                                error_type="QAEmbeddingGenerationFailure",
+                                error_message=f"Failed to generate QA embedding: {response_qa_embedding['error']}",
+                                current_user=account_data.get('user') if account_data else 'system',
+                                severity=SEVERITY_HIGH,
+                                stack_trace=traceback.format_exc(),
+                                context={
+                                    "document": src,
+                                    "child_chunk": childChunk,
+                                    "local_chunk": local_chunk_index,
+                                    "error_details": response_qa_embedding.get('error')
+                                }
+                            )
+
+                            raise Exception(
+                                f"QA embedding generation failed: {response_qa_embedding['error']}"
+                            )
+
                     qa_vector_embedding = response_qa_embedding["data"]
+
+                    logger.debug(f"[DIAGNOSTIC] ✅ QA embedding successful for local chunk {local_chunk_index}")
 
                     vector_token_count = response_vector_embedding["token_count"]
                     qa_vector_token_count = response_qa_embedding["token_count"]
@@ -828,7 +1265,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         vector_token_count + qa_vector_token_count
                     )
 
-                    logging.info(
+                    logger.info(
                         f"Embedding local chunk index: {current_local_chunk_index}"
                     )
                     insert_chunk_data_to_db(
@@ -845,18 +1282,36 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         cursor,
                     )
 
-                    logging.info(f"Getting Account information for {trimmed_src}")
+                    logger.info(f"Getting Account information for {trimmed_src}")
 
                     current_local_chunk_index += 1
                     db_connection.commit()
 
-                    logging.info(
+                    logger.info(
                         f"[LOCAL_CHUNK_COMPLETE] ✅ Local chunk {local_chunk_index} completed successfully"
                     )
 
                 except Exception as e:
                     error_msg = f"Error processing local chunk {local_chunk_index} of child chunk {childChunk} in {src}: {str(e)}"
-                    logging.error(f"[LOCAL_CHUNK_ERROR] ❌ {error_msg}")
+                    logger.error(f"[LOCAL_CHUNK_ERROR] ❌ {error_msg}")
+                    
+                    # CRITICAL: Local chunk processing failure = data loss
+                    log_critical_error(
+                        function_name="embed_chunks_local_processing",
+                        error_type="LocalChunkProcessingFailure",
+                        error_message=f"Failed to process local chunk: {str(e)}",
+                        current_user=account_data.get('user') if account_data else 'system',
+                        severity=SEVERITY_HIGH,
+                        stack_trace=traceback.format_exc(),
+                        context={
+                            "document": src,
+                            "child_chunk": childChunk,
+                            "local_chunk_index": local_chunk_index,
+                            "total_local_chunks": len(local_chunks),
+                            "error_details": str(e)
+                        }
+                    )
+                    
                     # Mark this child as failed
                     update_child_chunk_status(
                         trimmed_src, childChunk, "failed", error_msg
@@ -867,11 +1322,11 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         db_connection.rollback()
                     return False, src, error_msg
 
-        logging.info(
+        logger.info(
             f"[EMBED_CHUNKS_SUCCESS] 🎉 All local chunks processed successfully for child chunk {childChunk}"
         )
         update_child_chunk_status(trimmed_src, childChunk, "completed")
-        logging.info(
+        logger.info(
             f"[EMBED_CHUNKS_COMPLETE] ✅ Child chunk {childChunk} marked as completed"
         )
         
@@ -882,7 +1337,24 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
 
     except Exception as e:
         error_msg = f"Critical error in embed_chunks for child chunk {childChunk} of {src}: {str(e)}"
-        logging.exception(f"[EMBED_CHUNKS_CRITICAL_ERROR] ❌ {error_msg}")
+        logger.exception(f"[EMBED_CHUNKS_CRITICAL_ERROR] ❌ {error_msg}")
+        
+        # CRITICAL: Entire chunk processing failure
+        log_critical_error(
+            function_name="embed_chunks",
+            error_type="EmbedChunksCriticalFailure",
+            error_message=f"Critical error processing entire child chunk: {str(e)}",
+            current_user=account_data.get('user') if account_data else 'system',
+            severity=SEVERITY_CRITICAL,
+            stack_trace=traceback.format_exc(),
+            context={
+                "document": src,
+                "child_chunk": childChunk,
+                "total_chunks": total_chunks,
+                "error_details": str(e)
+            }
+        )
+        
         if trimmed_src:
             update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
             # Immediately mark parent as failed
@@ -896,7 +1368,7 @@ def check_parent_terminal_status(trimmed_src, record):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(embedding_progress_table)
     try:
-        logging.info(
+        logger.info(
             f"[TERMINAL_CHECK] Checking parent terminal status for: {trimmed_src}"
         )
 
@@ -907,47 +1379,47 @@ def check_parent_terminal_status(trimmed_src, record):
             parent_status = item.get("parentChunkStatus")
             terminated = item.get("terminated", False)
 
-            logging.info(
+            logger.info(
                 f"[TERMINAL_CHECK] Current parent status: '{parent_status}', terminated: {terminated}"
             )
 
             if parent_status in ["failed", "completed"]:
-                logging.warning(
+                logger.warning(
                     f"[TERMINAL_CHECK] ⛔ Parent chunk is already in terminal state: {parent_status}. Skipping processing."
                 )
                 receipt_handle = record["receiptHandle"]
                 sqs.delete_message(
                     QueueUrl=embedding_chunks_index_queue, ReceiptHandle=receipt_handle
                 )
-                logging.info(
+                logger.info(
                     f"[TERMINAL_CHECK] 🗑️ Deleted message from queue due to terminal parent status"
                 )
                 return True
 
             if terminated:
-                logging.warning(
+                logger.warning(
                     f"[TERMINAL_CHECK] ⛔ Job for {trimmed_src} has been terminated. Skipping processing."
                 )
                 receipt_handle = record["receiptHandle"]
                 sqs.delete_message(
                     QueueUrl=embedding_chunks_index_queue, ReceiptHandle=receipt_handle
                 )
-                logging.info(
+                logger.info(
                     f"[TERMINAL_CHECK] 🗑️ Deleted message from queue due to termination"
                 )
                 return True
         else:
-            logging.info(
+            logger.info(
                 f"[TERMINAL_CHECK] No existing item found for {trimmed_src} - continuing with processing"
             )
 
-        logging.info(
+        logger.info(
             f"[TERMINAL_CHECK] ✅ Parent is not in terminal state - proceeding with processing"
         )
         return False
 
     except Exception as e:
-        logging.error(
+        logger.error(
             f"[TERMINAL_CHECK_ERROR] Error checking parent status for {trimmed_src}: {e}"
         )
         return False
@@ -975,7 +1447,7 @@ def perform_selective_reprocessing_setup(trimmed_src):
             
         perform_selective_reprocessing_setup._processed_documents.add(trimmed_src)
         
-        logging.info(f"[SELECTIVE_SETUP] 🎯 Setting up selective reprocessing for {trimmed_src}")
+        logger.info(f"[SELECTIVE_SETUP] 🎯 Setting up selective reprocessing for {trimmed_src}")
         
         # First, detect document structure changes by checking chunk numbers
         table = get_progress_table()
@@ -983,8 +1455,8 @@ def perform_selective_reprocessing_setup(trimmed_src):
         item = response.get("Item")
         
         if not item or "data" not in item:
-            logging.info(f"[SELECTIVE_SETUP] No existing progress - will process all chunks")
-            logging.info(f"[TEST_CASE] 📝 FRESH_DOCUMENT - No prior progress data")
+            logger.info(f"[SELECTIVE_SETUP] No existing progress - will process all chunks")
+            logger.info(f"[TEST_CASE] 📝 FRESH_DOCUMENT - No prior progress data")
             return
             
         child_chunks = item.get("data", {}).get("childChunks", {})
@@ -1011,8 +1483,8 @@ def perform_selective_reprocessing_setup(trimmed_src):
                         except ValueError:
                             pass
             
-            logging.info(f"[SELECTIVE_SETUP] Existing chunks in DynamoDB: {sorted(existing_chunk_ids)}")
-            logging.info(f"[SELECTIVE_SETUP] Actual chunks in S3: {sorted(actual_chunk_ids)}")
+            logger.info(f"[SELECTIVE_SETUP] Existing chunks in DynamoDB: {sorted(existing_chunk_ids)}")
+            logger.info(f"[SELECTIVE_SETUP] Actual chunks in S3: {sorted(actual_chunk_ids)}")
             
             # Check for structure change
             if existing_chunk_ids != actual_chunk_ids:
@@ -1021,12 +1493,12 @@ def perform_selective_reprocessing_setup(trimmed_src):
                 removed_chunks = existing_chunk_ids - actual_chunk_ids
                 
                 if added_chunks:
-                    logging.info(f"[SELECTIVE_SETUP] 📈 Document grew: added chunks {sorted(added_chunks)}")
+                    logger.info(f"[SELECTIVE_SETUP] 📈 Document grew: added chunks {sorted(added_chunks)}")
                 if removed_chunks:
-                    logging.info(f"[SELECTIVE_SETUP] 📉 Document shrank: removed chunks {sorted(removed_chunks)}")
+                    logger.info(f"[SELECTIVE_SETUP] 📉 Document shrank: removed chunks {sorted(removed_chunks)}")
                     
-                logging.info(f"[SELECTIVE_SETUP] 🔄 Document structure changed ({len(existing_chunk_ids)} → {len(actual_chunk_ids)} chunks) - resetting progress")
-                logging.info(f"[TEST_CASE] 📝 STRUCTURE_CHANGE - Chunk count mismatch ({len(existing_chunk_ids)} → {len(actual_chunk_ids)})")
+                logger.info(f"[SELECTIVE_SETUP] 🔄 Document structure changed ({len(existing_chunk_ids)} → {len(actual_chunk_ids)} chunks) - resetting progress")
+                logger.info(f"[TEST_CASE] 📝 STRUCTURE_CHANGE - Chunk count mismatch ({len(existing_chunk_ids)} → {len(actual_chunk_ids)})")
                 
                 # Delete entire DynamoDB entry for fresh start
                 table.delete_item(Key={"object_id": trimmed_src})
@@ -1037,14 +1509,14 @@ def perform_selective_reprocessing_setup(trimmed_src):
                         cursor.execute("DELETE FROM embeddings WHERE src = %s", [trimmed_src])
                         rows_deleted = cursor.rowcount
                         db_connection.commit()
-                        logging.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} old embeddings for fresh start")
+                        logger.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} old embeddings for fresh start")
                 finally:
                     if not db_connection.closed:
                         db_connection.close()
                 return
                 
         except Exception as e:
-            logging.error(f"[SELECTIVE_SETUP] Error checking S3 chunks: {e}")
+            logger.error(f"[SELECTIVE_SETUP] Error checking S3 chunks: {e}")
             # Continue with existing logic if S3 check fails
         
         # No structure change - do selective cleanup
@@ -1057,53 +1529,45 @@ def perform_selective_reprocessing_setup(trimmed_src):
             else:
                 failed_chunks.append(int(chunk_id))
         
-        logging.info(f"[SELECTIVE_SETUP] Completed chunks: {sorted(completed_chunks)}, Failed chunks: {sorted(failed_chunks)}")
+        logger.info(f"[SELECTIVE_SETUP] Completed chunks: {sorted(completed_chunks)}, Failed chunks: {sorted(failed_chunks)}")
         
         if failed_chunks:
-            logging.info(f"[SELECTIVE_SETUP] Cleaning up {len(failed_chunks)} failed chunks")
-            logging.info(f"[TEST_CASE] 📝 SELECTIVE_REPROCESS - Retrying {len(failed_chunks)} of {len(child_chunks)} chunks")
+            logger.info(f"[SELECTIVE_SETUP] Cleaning up {len(failed_chunks)} failed chunks")
+            logger.info(f"[TEST_CASE] 📝 SELECTIVE_REPROCESS - Retrying {len(failed_chunks)} of {len(child_chunks)} chunks")
             
             # Delete only failed chunks from embeddings table
             db_connection = get_db_connection()
             try:
                 with db_connection.cursor() as cursor:
-                    # Check if child_chunk column exists
-                    cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name='embeddings' AND column_name='child_chunk'
-                    """)
-                    has_child_chunk = cursor.fetchone() is not None
+                    # Try selective delete first (race-condition safe)
+                    failed_chunks_str = [str(chunk) for chunk in failed_chunks]
+                    placeholders = ','.join(['%s'] * len(failed_chunks_str))
+                    delete_query = f"DELETE FROM embeddings WHERE src = %s AND child_chunk IN ({placeholders})"
                     
-                    if has_child_chunk:
-                        # Selective delete - convert integers to strings for VARCHAR column
-                        failed_chunks_str = [str(chunk) for chunk in failed_chunks]
-                        placeholders = ','.join(['%s'] * len(failed_chunks_str))
-                        delete_query = f"DELETE FROM embeddings WHERE src = %s AND child_chunk IN ({placeholders})"
+                    try:
                         cursor.execute(delete_query, [trimmed_src] + failed_chunks_str)
                         rows_deleted = cursor.rowcount
                         db_connection.commit()
-                        logging.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} failed embeddings")
-                    else:
-                        # Without child_chunk column, we can't do selective cleanup
-                        # Delete all and reprocess all
-                        logging.info(f"[SELECTIVE_SETUP] No child_chunk column - deleting all embeddings")
-                        logging.info(f"[TEST_CASE] 📝 FULL_REPROCESS_FALLBACK - No child_chunk column for selective delete")
+                        logger.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} failed embeddings (selective)")
+                    except errors.UndefinedColumn:
+                        # child_chunk column doesn't exist - fall back to full delete
+                        logger.info(f"[SELECTIVE_SETUP] No child_chunk column - deleting all embeddings")
+                        logger.info(f"[TEST_CASE] 📝 FULL_REPROCESS_FALLBACK - No child_chunk column for selective delete")
                         cursor.execute("DELETE FROM embeddings WHERE src = %s", [trimmed_src])
                         rows_deleted = cursor.rowcount
                         db_connection.commit()
                         # Also reset DynamoDB to force all chunks to reprocess
                         table.delete_item(Key={"object_id": trimmed_src})
-                        logging.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} embeddings and reset progress")
+                        logger.info(f"[SELECTIVE_SETUP] ✅ Deleted {rows_deleted} embeddings and reset progress")
             finally:
                 if not db_connection.closed:
                     db_connection.close()
         else:
-            logging.info(f"[SELECTIVE_SETUP] All chunks completed - no cleanup needed")
-            logging.info(f"[TEST_CASE] 📝 ALL_CHUNKS_COMPLETE - Skipping all chunks")
+            logger.info(f"[SELECTIVE_SETUP] All chunks completed - no cleanup needed")
+            logger.info(f"[TEST_CASE] 📝 ALL_CHUNKS_COMPLETE - Skipping all chunks")
             
     except Exception as e:
-        logging.error(f"[SELECTIVE_SETUP] Error during setup: {e}")
+        logger.error(f"[SELECTIVE_SETUP] Error during setup: {e}")
         # Continue processing even if setup fails
 
 
@@ -1121,7 +1585,7 @@ def check_chunk_already_completed(trimmed_src, child_chunk, record):
             chunk_status = chunk_info.get("status", "starting")
             
             if chunk_status == "completed":
-                logging.info(f"[SELECTIVE_CHECK] ✅ Chunk {child_chunk} already completed, skipping")
+                logger.info(f"[SELECTIVE_CHECK] ✅ Chunk {child_chunk} already completed, skipping")
                 # Delete the message since we don't need to process it
                 receipt_handle = record["receiptHandle"]
                 sqs.delete_message(
@@ -1131,46 +1595,46 @@ def check_chunk_already_completed(trimmed_src, child_chunk, record):
                 update_parent_chunk_status(trimmed_src)
                 return True
             else:
-                logging.info(f"[SELECTIVE_CHECK] Chunk {child_chunk} needs processing (status: {chunk_status})")
+                logger.info(f"[SELECTIVE_CHECK] Chunk {child_chunk} needs processing (status: {chunk_status})")
                 return False
         else:
             # No progress data - process the chunk
             return False
             
     except Exception as e:
-        logging.error(f"[SELECTIVE_CHECK] Error checking chunk completion status: {e}")
+        logger.error(f"[SELECTIVE_CHECK] Error checking chunk completion status: {e}")
         # On error, process the chunk to be safe
         return False
 
 
 def cleanup_embeddings_for_reprocess(trimmed_src, expected_chunk_count=None):
     """Clean up embeddings for reprocessing based on selective vs full strategy."""
-    logging.info(f"[CLEANUP] 🎯 Analyzing reprocessing strategy for: {trimmed_src}")
+    logger.info(f"[CLEANUP] 🎯 Analyzing reprocessing strategy for: {trimmed_src}")
     
     try:
         # Check if selective reprocessing is possible
         selective_result = check_selective_reprocessing_capability(trimmed_src, expected_chunk_count)
         
         if not selective_result["possible"]:
-            logging.info(f"[CLEANUP] 🔄 Full cleanup required - {selective_result['reason']}")
+            logger.info(f"[CLEANUP] 🔄 Full cleanup required - {selective_result['reason']}")
             return perform_full_cleanup(trimmed_src)
         
         # Perform selective cleanup if needed
         failed_chunks = selective_result["failed_chunks"]
         if not failed_chunks:
-            logging.info(f"[CLEANUP] ✅ No cleanup needed - all chunks completed")
+            logger.info(f"[CLEANUP] ✅ No cleanup needed - all chunks completed")
             return {"cleanup_type": "none", "failed_chunks": []}
         
         return perform_selective_cleanup(trimmed_src, failed_chunks)
         
     except Exception as e:
-        logging.error(f"[CLEANUP] ❌ Error during cleanup analysis: {e}")
+        logger.error(f"[CLEANUP] ❌ Error during cleanup analysis: {e}")
         return perform_full_cleanup(trimmed_src)
 
 
 def perform_selective_cleanup(trimmed_src, failed_chunks):
     """Perform selective cleanup of specific failed chunks."""
-    logging.info(f"[SELECTIVE_CLEANUP] 🎯 Cleaning {len(failed_chunks)} chunks: {failed_chunks}")
+    logger.info(f"[SELECTIVE_CLEANUP] 🎯 Cleaning {len(failed_chunks)} chunks: {failed_chunks}")
     
     try:
         db_connection = get_db_connection()
@@ -1183,11 +1647,11 @@ def perform_selective_cleanup(trimmed_src, failed_chunks):
             rows_deleted = cursor.rowcount
             db_connection.commit()
             
-        logging.info(f"[SELECTIVE_CLEANUP] ✅ Deleted {rows_deleted} embeddings for {trimmed_src}")
+        logger.info(f"[SELECTIVE_CLEANUP] ✅ Deleted {rows_deleted} embeddings for {trimmed_src}")
         return {"cleanup_type": "selective", "failed_chunks": failed_chunks}
         
     except Exception as e:
-        logging.error(f"[SELECTIVE_CLEANUP] ❌ Error: {e}")
+        logger.error(f"[SELECTIVE_CLEANUP] ❌ Error: {e}")
         return perform_full_cleanup(trimmed_src)
     finally:
         if 'db_connection' in locals() and not db_connection.closed:
@@ -1236,7 +1700,7 @@ def check_selective_reprocessing_capability(trimmed_src, expected_chunk_count=No
             if expected_chunk_count is not None:
                 existing_chunk_count = len(child_chunks)
                 if existing_chunk_count != expected_chunk_count:
-                    logging.info(f"[SELECTIVE_CHECK] Document structure changed: {existing_chunk_count} existing chunks → {expected_chunk_count} expected chunks")
+                    logger.info(f"[SELECTIVE_CHECK] Document structure changed: {existing_chunk_count} existing chunks → {expected_chunk_count} expected chunks")
                     return {
                         "possible": False,
                         "reason": f"Document structure changed: {existing_chunk_count} existing chunks vs {expected_chunk_count} expected chunks",
@@ -1265,7 +1729,7 @@ def check_selective_reprocessing_capability(trimmed_src, expected_chunk_count=No
             total_embeddings = result[0] if result else 0
             embeddings_with_chunks = result[1] if result else 0
             
-            logging.info(f"[SELECTIVE_CHECK] Embeddings for {trimmed_src}: {total_embeddings} total, {embeddings_with_chunks} with chunk data")
+            logger.info(f"[SELECTIVE_CHECK] Embeddings for {trimmed_src}: {total_embeddings} total, {embeddings_with_chunks} with chunk data")
             
             if total_embeddings == 0:
                 # No existing embeddings - fresh start (can be selective)
@@ -1304,7 +1768,7 @@ def check_selective_reprocessing_capability(trimmed_src, expected_chunk_count=No
             }
             
     except Exception as e:
-        logging.error(f"[SELECTIVE_CHECK] Error checking selective capability: {e}")
+        logger.error(f"[SELECTIVE_CHECK] Error checking selective capability: {e}")
         return {
             "possible": False,
             "reason": f"Error during capability check: {str(e)}",
@@ -1325,23 +1789,25 @@ def perform_full_cleanup(trimmed_src):
             rows_deleted = cursor.rowcount
             db_connection.commit()
             
-        logging.info(f"[FULL_CLEANUP] 🔄 Deleted {rows_deleted} PostgreSQL embeddings for {trimmed_src}")
+        logger.info(f"[FULL_CLEANUP] 🔄 Deleted {rows_deleted} PostgreSQL embeddings for {trimmed_src}")
         
         # Reset DynamoDB progress structure for fresh start  
         table = get_progress_table()
         table.delete_item(Key={"object_id": trimmed_src})
-        logging.info(f"[FULL_CLEANUP] 🗑️ Reset DynamoDB progress structure for {trimmed_src}")
+        logger.info(f"[FULL_CLEANUP] 🗑️ Reset DynamoDB progress structure for {trimmed_src}")
         
         return {"cleanup_type": "full", "failed_chunks": []}
         
     except Exception as e:
-        logging.error(f"[FULL_CLEANUP] ❌ Error during full cleanup: {e}")
+        logger.error(f"[FULL_CLEANUP] ❌ Error during full cleanup: {e}")
         return {"cleanup_type": "failed", "failed_chunks": []}
     finally:
         if 'db_connection' in locals() and not db_connection.closed:
             db_connection.close()
 
-
+@required_env_vars({
+    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="terminate")
 def terminate_embedding(event, context, current_user, name, data):
     object_id = data["data"].get("object_key")
@@ -1359,15 +1825,15 @@ def terminate_embedding(event, context, current_user, name, data):
         )
 
         if response.get("Attributes", {}).get("terminated") is True:
-            print(f"Successfully terminated object with ID: {object_id}")
+            logger.info(f"Successfully terminated object with ID: {object_id}")
             return True
         else:
-            print(
+            logger.error(
                 f"Failed to update termination status for object with ID: {object_id}"
             )
             return False
     except Exception as e:
-        print(f"Error terminating embedding for object_id {object_id}: {e}")
+        logger.error(f"Error terminating embedding for object_id {object_id}: {e}")
         return False
 
 
@@ -1375,7 +1841,7 @@ async def _check_image_status_async(ds_key, image_bucket, executor):
     """Async helper to check individual image status"""
     try:
         if not image_bucket:
-            logging.error(f"[GET_STATUS] S3_IMAGE_INPUT_BUCKET_NAME not configured for image: {ds_key}")
+            logger.error(f"[GET_STATUS] S3_IMAGE_INPUT_BUCKET_NAME not configured for image: {ds_key}")
             return ds_key, None
         
         # Run S3 head_object in thread pool
@@ -1404,13 +1870,13 @@ async def _check_image_status_async(ds_key, image_bucket, executor):
                         return ds_key, "processing"
                     else:
                         # Been too long, likely failed
-                        logging.warning(f"[GET_STATUS] Image {ds_key} uploaded {time_diff:.0f}s ago, likely failed processing")
+                        logger.warning(f"[GET_STATUS] Image {ds_key} uploaded {time_diff:.0f}s ago, likely failed processing")
                         return ds_key, "failed"
                 else:
                     return ds_key, "failed"
             else:
                 # Unknown content type
-                logging.warning(f"[GET_STATUS] Image {ds_key} has unexpected ContentType: {content_type}")
+                logger.warning(f"[GET_STATUS] Image {ds_key} has unexpected ContentType: {content_type}")
                 return ds_key, "failed"
                 
         except ClientError as e:
@@ -1420,16 +1886,16 @@ async def _check_image_status_async(ds_key, image_bucket, executor):
                 return ds_key, "not_found"
             else:
                 # Other S3 error
-                logging.error(f"[GET_STATUS] S3 error checking image {ds_key}: {e}")
+                logger.error(f"[GET_STATUS] S3 error checking image {ds_key}: {e}")
                 return ds_key, None
                 
     except Exception as e:
-        logging.error(f"[GET_STATUS] Error checking image status for {ds_key}: {e}")
+        logger.error(f"[GET_STATUS] Error checking image status for {ds_key}: {e}")
         return ds_key, None
 
 
 async def _check_text_status_async(original_key, global_id, progress_table, executor):
-    """Async helper to check individual text status"""
+    """Async helper to check individual text status and metadata"""
     try:
         loop = asyncio.get_event_loop()
         dynamodb = boto3.resource("dynamodb")
@@ -1442,28 +1908,51 @@ async def _check_text_status_async(original_key, global_id, progress_table, exec
         item = response.get("Item")
         
         if not item:
-            return original_key, "not_found"
+            return original_key, "not_found", None
+        
+        # Build metadata object
+        metadata = {}
+        
+        # Add lastUpdated if available
+        if "lastUpdated" in item:
+            metadata["lastUpdated"] = item["lastUpdated"]
+        
+        # Add total chunks from parent level if available
+        if item.get("data", {}).get("totalChunks"):
+            metadata["totalChunks"] = item["data"]["totalChunks"]
+        
+        # Analyze child chunks for failed chunk count
+        child_chunks = item.get("data", {}).get("childChunks", {})
+        if child_chunks:
+            failed_chunks = sum(1 for chunk in child_chunks.values() 
+                              if chunk.get("status") == "failed")
+            if failed_chunks > 0:
+                metadata["failedChunks"] = failed_chunks
+            
+            # Override totalChunks with actual child chunk count if we have child chunks
+            metadata["totalChunks"] = len(child_chunks)
         
         # Check if terminated first
         if item.get("terminated", False):
-            return original_key, "terminated"
+            return original_key, "terminated", metadata if metadata else None
         
         # Get parent chunk status
         parent_status = item.get("parentChunkStatus")
         if parent_status:
-            return original_key, parent_status
+            return original_key, parent_status, metadata if metadata else None
         else:
             # If no parent status set, default to starting
-            return original_key, "starting"
+            return original_key, "starting", metadata if metadata else None
             
     except Exception as e:
-        logging.error(f"[GET_STATUS] Error getting status for global_id {global_id} (original: {original_key}): {e}")
-        return original_key, None
+        logger.error(f"[GET_STATUS] Error getting status for global_id {global_id} (original: {original_key}): {e}")
+        return original_key, None, None
 
 
 async def _get_embedding_status_async(data_sources_input):
     """Async helper function to process status lookups in parallel"""
     status_map = {}
+    metadata_map = {}
     
     # Initialize all with None
     for ds in data_sources_input:
@@ -1480,7 +1969,7 @@ async def _get_embedding_status_async(data_sources_input):
         ds_type = ds.get("type", "")
         
         if not ds_key:
-            logging.warning(f"[GET_STATUS] Skipping data source with missing key: {ds}")
+            logger.warning(f"[GET_STATUS] Skipping data source with missing key: {ds}")
             continue
             
         if ds_type in IMAGE_FILE_TYPES:
@@ -1488,7 +1977,7 @@ async def _get_embedding_status_async(data_sources_input):
         else:
             text_data_sources.append(ds)
     
-    logging.info(f"[GET_STATUS] Processing {len(image_data_sources)} images, {len(text_data_sources)} text files")
+    logger.info(f"[GET_STATUS] Processing {len(image_data_sources)} images, {len(text_data_sources)} text files")
     
     # Create a thread pool executor
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -1518,7 +2007,7 @@ async def _get_embedding_status_async(data_sources_input):
                     if global_id:
                         original_to_global[original_key] = global_id
                     else:
-                        logging.warning(f"[GET_STATUS] No global ID found for {original_key}")
+                        logger.warning(f"[GET_STATUS] No global ID found for {original_key}")
             
             # Now lookup embedding status for the global IDs in parallel
             progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
@@ -1533,9 +2022,17 @@ async def _get_embedding_status_async(data_sources_input):
             # Process results
             for result in results:
                 if isinstance(result, Exception):
-                    logging.error(f"[GET_STATUS] Task failed with exception: {result}")
+                    logger.error(f"[GET_STATUS] Task failed with exception: {result}")
                     continue
-                if result and len(result) == 2:
+                # Handle 3-tuple (key, status, metadata) from _check_text_status_async
+                if result and len(result) == 3:
+                    key, status, metadata = result
+                    if key and key in status_map:
+                        status_map[key] = status
+                        if metadata:
+                            metadata_map[key] = metadata
+                # Handle 2-tuple (key, status) from _check_image_status_async
+                elif result and len(result) == 2:
                     key, status = result
                     if key and key in status_map:
                         status_map[key] = status
@@ -1545,20 +2042,24 @@ async def _get_embedding_status_async(data_sources_input):
     for status in status_map.values():
         status_counts[status] = status_counts.get(status, 0) + 1
     
-    logging.info(f"[GET_STATUS] Status summary: {status_counts}")
+    logger.info(f"[GET_STATUS] Status summary: {status_counts}")
     
     # Log details for items needing attention
     not_found_items = [key for key, status in status_map.items() if status == "not_found"]
     if not_found_items:
-        logging.warning(f"[GET_STATUS] NOT FOUND ({len(not_found_items)}): {not_found_items}")
+        logger.warning(f"[GET_STATUS] NOT FOUND ({len(not_found_items)}): {not_found_items}")
     
     failed_items = [key for key, status in status_map.items() if status == "failed"]
     if failed_items:
-        logging.warning(f"[GET_STATUS] FAILED ({len(failed_items)}): {failed_items}")
+        logger.warning(f"[GET_STATUS] FAILED ({len(failed_items)}): {failed_items}")
     
-    return status_map
+    return status_map, metadata_map
 
 
+@required_env_vars({
+    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.HEAD_OBJECT],
+})
 @validated(op="get_status")
 def get_embedding_status(event, context, current_user, name, data):
     """
@@ -1579,20 +2080,26 @@ def get_embedding_status(event, context, current_user, name, data):
     """
     data_sources_input = data["data"].get("dataSources", [])
     if not data_sources_input:
-        logging.error("[GET_STATUS] No dataSources provided")
+        logger.error("[GET_STATUS] No dataSources provided")
         return {"success": False, "error": "No dataSources provided"}
     
-    logging.info(f"[GET_STATUS] Looking up status for {len(data_sources_input)} data sources")
+    logger.info(f"[GET_STATUS] Looking up status for {len(data_sources_input)} data sources")
     
     try:
         # Run the async function
-        status_map = asyncio.run(_get_embedding_status_async(data_sources_input))
+        status_map, metadata_map = asyncio.run(_get_embedding_status_async(data_sources_input))
         
-        logging.info(f"[GET_STATUS] ✅ Completed lookup for {len(status_map)} data sources")
-        return {"success": True, "data": status_map}
+        logger.info(f"[GET_STATUS] ✅ Completed lookup for {len(status_map)} data sources")
+        
+        # Build response with metadata if any exists
+        response = {"success": True, "data": status_map}
+        if metadata_map:
+            response["metadata"] = metadata_map
+        
+        return response
         
     except Exception as e:
-        logging.error(f"[GET_STATUS] ❌ Error processing data sources: {e}")
+        logger.error(f"[GET_STATUS] ❌ Error processing data sources: {e}")
         # Return all as None on critical failure
         status_map = {ds.get("key"): None for ds in data_sources_input if ds.get("key")}
         return {"success": True, "data": status_map}

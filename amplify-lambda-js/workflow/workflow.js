@@ -123,7 +123,7 @@ function buildChatBody(step, body) {
 const doPrompt = async ({
                             step,
                             body,
-                            chatFn,
+                            model,
                             responseStream,
                             dataSources,
                             params
@@ -137,7 +137,7 @@ const doPrompt = async ({
 
     return chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
-        chatFn,
+        model,
         updatedBody,
         dataSources,
         responseStream);
@@ -148,7 +148,7 @@ const doMap = async ({
                          step,
                          dataSources,
                          body,
-                         chatFn,
+                         model,
                          responseStream,
                          params
                      }) => {
@@ -161,7 +161,7 @@ const doMap = async ({
 
     return chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
-        chatFn,
+        model,
         updatedBody,
         dataSources,
         responseStream);
@@ -171,7 +171,7 @@ const doReduce = async ({
                             step,
                             dataSources,
                             body,
-                            chatFn,
+                            model,
                             responseStream,
                             params
                         }) => {
@@ -197,7 +197,7 @@ const doReduce = async ({
 
     const response = await chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
-        chatFn,
+        model,
         updatedBody,
         dataSources,
         resultStream);
@@ -222,7 +222,7 @@ const doReduce = async ({
                 step:updatedStep,
                 dataSources:updatedDataSources,
                 body,
-                chatFn,
+                model,
                 responseStream,
                 params
             });
@@ -286,7 +286,7 @@ export const executeWorkflow = async (
     {
         workflow,
         body,
-        chatFn,
+        model,
         dataSources,
         responseStream,
         params,
@@ -343,7 +343,7 @@ export const executeWorkflow = async (
             statusUpdater,
             step,
             params,
-            chatFn,
+            model,
             body,
             dataSources: resolvedDataSources,
             responseStream: resultStream

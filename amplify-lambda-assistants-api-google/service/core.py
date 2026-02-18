@@ -1,3 +1,8 @@
+from pycommon.logger import getLogger
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import traceback
+logger = getLogger("google")
+
 from integrations.google.forms import (
     create_form,
     get_form_details,
@@ -117,8 +122,14 @@ from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SecretsManagerOperation
+)
 from pycommon.authz import validated
 
+from pycommon.logger import getLogger
+logger = getLogger("google")
 
 def camel_to_snake(name):
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
@@ -203,7 +214,12 @@ def fix_data_types(data, func_schema):
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
-        print("Input Data: ", data["data"])
+        # Initialize usage tracker for agent operations
+        from pycommon.metrics import get_usage_tracker
+        tracker = get_usage_tracker()
+        op_tracking_context = {}
+
+        logger.debug("Input Data: %s", data["data"])
         try:
             params = {
                 camel_to_snake(param): data["data"][param] for param in required_params
@@ -213,25 +229,117 @@ def common_handler(operation, *required_params, **optional_params):
                 if param in data["data"]:
                     params[snake_param] = data["data"][param]
             params["access_token"] = data["access_token"]
+
+            # Start tracking Google integration operation
+            # Note: We don't have context here, but we can track the operation
+            op_tracking_context = tracker.start_tracking(
+                user=current_user,
+                operation=operation.__name__ if hasattr(operation, '__name__') else 'unknown_operation',
+                endpoint='google_integration',
+                api_accessed=data.get("api_accessed", False),
+                context=None,  # No Lambda context available in nested handler
+            )
+
             response = operation(current_user, **params)
-            print("Integration Response: ", response)
+            logger.debug("Integration Response: %s", response)
+
+            # Check if operation returned failure
+            success = True
+            if isinstance(response, dict) and not response.get("success", True):
+                success = False
+                # CRITICAL: Integration operation reported failure
+                log_critical_error(
+                    function_name="common_handler",
+                    error_type="GoogleIntegrationOperationFailure",
+                    error_message=f"Google operation returned failure: {response.get('error', 'Unknown error')}",
+                    current_user=current_user,
+                    severity=SEVERITY_HIGH,
+                    stack_trace=traceback.format_exc(),
+                    context={
+                        "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                        "response": str(response)[:500]
+                    }
+                )
+
+            # End tracking and record metrics
+            result_dict = {"statusCode": 200 if success else 500}
+            metrics = tracker.end_tracking(
+                tracking_context=op_tracking_context,
+                result=result_dict,
+                claims={
+                    "account": data.get("account", "unknown"),
+                    "username": current_user,
+                    "api_key_id": data.get("api_key_id"),
+                },
+                error_type=None if success else "GoogleIntegrationOperationFailure",
+            )
+            tracker.record_metrics(metrics)
+
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
-            print("Missing Credentials Error: ", str(me))
+            logger.warning("Missing Credentials Error: %s", str(me))
+
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 401}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type="MissingCredentialsError",
+                )
+                tracker.record_metrics(metrics)
+
             return {"success": False, "error": str(me)}
         except Exception as e:
-            print("Error: ", str(e))
+            logger.error("Error: %s", str(e))
+
+            # Track failed operation
+            if op_tracking_context:
+                result_dict = {"statusCode": 500}
+                metrics = tracker.end_tracking(
+                    tracking_context=op_tracking_context,
+                    result=result_dict,
+                    claims={
+                        "account": data.get("account", "unknown") if 'data' in locals() else "unknown",
+                        "username": current_user if 'current_user' in locals() else "unknown",
+                    },
+                    error_type=type(e).__name__,
+                )
+                tracker.record_metrics(metrics)
+
+            # CRITICAL: Google integration operation failure = user can't access Google services
+            log_critical_error(
+                function_name="common_handler",
+                error_type="GoogleIntegrationFailure",
+                error_message=f"Failed to execute Google integration operation: {str(e)}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "operation": operation.__name__ if hasattr(operation, '__name__') else 'unknown',
+                    "data_keys": list(data.get('data', {}).keys())
+                }
+            )
+
             return {"success": False, "error": str(e)}
 
     return handler
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "OAUTH_ENCRYPTION_PARAMETER": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated("route", False)
 def route_request(event, context, current_user, name, data):
     try:
         # First try to use path-based routing if available
         target_path_string = event.get("path", event.get("rawPath", ""))
-        print(f"Route path: {target_path_string}")
+        logger.debug("Route path: %s", target_path_string)
 
         # Check if we have a direct path match in our route_data
         route_info = route_data.get(target_path_string, None)
@@ -247,21 +355,21 @@ def route_request(event, context, current_user, name, data):
             "required": ["data"],
         }
 
-        print("Validating request")
+        logger.debug("Validating request")
         try:
             validate(data, wrapper_schema)
-            print("Request data validated")
+            logger.info("Request data validated")
         except ValidationError as e:
-            print("Validation error: ", str(e))
-            print("Attempting to fix data types...")
+            logger.error("Validation error: %s", str(e))
+            logger.debug("Attempting to fix data types...")
             
             try:
                 fixed_data = fix_data_types(data, func_schema)
                 validate(fixed_data, wrapper_schema)
-                print("Data types fixed and validation successful")
+                logger.info("Data types fixed and validation successful")
                 data = fixed_data
             except (ValidationError, ValueError, TypeError) as fix_error:
-                print(f"Type fixing failed: {str(fix_error)}")
+                logger.error("Type fixing failed: %s", str(fix_error))
                 raise ValueError(f"Invalid request: {str(e)}")
 
         service = "/google/integrations/"
@@ -272,7 +380,7 @@ def route_request(event, context, current_user, name, data):
         else:
             return {"success": False, "message": "Invalid path"}
 
-        print("Operation to execute: ", op)
+        logger.debug("Operation to execute: %s", op)
 
         # Dynamically look up the handler function based on the operation name
         handler_name = f"{op}_handler"
@@ -284,7 +392,7 @@ def route_request(event, context, current_user, name, data):
                 "message": f"Invalid operation: {op}. No handler function found for {handler_name}",
             }
 
-        print("Executing handler function...")
+        logger.debug("Executing handler function...")
         return handler_func(current_user, data)
 
     except Exception as e:
