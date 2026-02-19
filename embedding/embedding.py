@@ -795,6 +795,14 @@ def lambda_handler(event, context):
                     raise Exception("Failed to retrieve RAG secrets")
                 account_data = rag_secrets.get('data')
 
+                # DEFENSIVE: Validate account_data is a dict (should always be, but protect against malformed secrets)
+                if not isinstance(account_data, dict):
+                    error_msg = f"Invalid account_data type for {ds_key}: expected dict, got {type(account_data).__name__}"
+                    logger.error(f"[RAG_SECRETS_ERROR] {error_msg}")
+                    logger.error(f"[RAG_SECRETS_ERROR] account_data value: {account_data}")
+                    update_parent_chunk_status(trimmed_src, "failed", error_msg)
+                    raise Exception(error_msg)
+
             logger.info(
                 f"[MESSAGE_DETAILS] Bucket: {bucket_name}, Object: {object_key}"
             )
@@ -1166,23 +1174,33 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         logger.error(f"[DIAGNOSTIC] ❌ QA summary failed for local chunk {local_chunk_index}: {response_qa_summary['error']}")
                         
                         # CRITICAL: QA summary failure = degraded search quality
+                        # DEFENSIVE: Safely extract error message and user info
+                        qa_error = response_qa_summary.get('error', 'Unknown error') if isinstance(response_qa_summary, dict) else str(response_qa_summary)
+                        current_user = 'system'
+                        try:
+                            if account_data and isinstance(account_data, dict):
+                                current_user = account_data.get('user', 'system')
+                        except Exception as user_extract_error:
+                            logger.warning(f"[DEFENSIVE] Failed to extract user from account_data: {user_extract_error}")
+
                         log_critical_error(
                             function_name="embed_chunks",
                             error_type="QASummaryGenerationFailure",
-                            error_message=f"Failed to generate QA summary: {response_qa_summary['error']}",
-                            current_user=account_data.get('user') if account_data else 'system',
+                            error_message=f"Failed to generate QA summary: {qa_error}",
+                            current_user=current_user,
                             severity=SEVERITY_HIGH,
                             stack_trace=traceback.format_exc(),
                             context={
                                 "document": src,
                                 "child_chunk": childChunk,
                                 "local_chunk": local_chunk_index,
-                                "error_details": response_qa_summary.get('error')
+                                "error_details": qa_error,
+                                "account_data_type": type(account_data).__name__ if account_data else 'None'
                             }
                         )
-                        
+
                         raise Exception(
-                            f"QA summary generation failed: {response_qa_summary['error']}"
+                            f"QA summary generation failed: {qa_error}"
                         )
                     qa_summary = response_qa_summary["data"]
                     logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
