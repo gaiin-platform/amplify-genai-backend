@@ -497,11 +497,19 @@ export async function promptUnifiedLLMForData(
     }
 
     // Always include JSON instructions in messages (works with all models/endpoints)
+    // Use strong, explicit language to prevent conversational responses
     const jsonPrompt = `
-Please respond with a JSON object that matches this schema:
+CRITICAL INSTRUCTION: Ignore all previous conversational context. You MUST respond with ONLY a JSON object.
+
+Required JSON schema:
 ${JSON.stringify(outputFormat, null, 2)}
 
-Respond ONLY with valid JSON, no explanation or markdown.`;
+RULES:
+- Your response must be ONLY valid JSON matching this exact schema
+- Do NOT provide explanations, commentary, or conversational text
+- Do NOT respond to previous messages in the conversation
+- Do NOT use markdown code blocks
+- Output ONLY the raw JSON object`;
 
     const finalMessages = [
         ...messages,
@@ -534,8 +542,44 @@ Respond ONLY with valid JSON, no explanation or markdown.`;
         };
     }
 
-    const result = await callUnifiedLLM(params, finalMessages, null, structuredOutputOptions);
+    let result;
+    let usedStructuredOutput = false;
+    let retried = false;
 
+    // Try with structured output first (if supported by provider)
+    if (Object.keys(structuredOutputOptions).length > 0) {
+        try {
+            usedStructuredOutput = true;
+            result = await callUnifiedLLM(params, finalMessages, null, structuredOutputOptions);
+
+            // Check if response is actually JSON (some models ignore structured output config)
+            const content = result.content || '';
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            const testContent = jsonMatch ? jsonMatch[0] : content;
+
+            try {
+                JSON.parse(testContent);
+                // Valid JSON, continue
+            } catch (jsonTestError) {
+                // Structured output returned non-JSON, retry without flag
+                logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
+                usedStructuredOutput = false;
+                retried = true;
+                result = await callUnifiedLLM(params, finalMessages, null, {});
+            }
+        } catch (structuredError) {
+            logger.warn(`Structured output call failed for ${provider}, retrying without structured output flag:`, structuredError.message);
+            usedStructuredOutput = false;
+            retried = true;
+            // Fallback: retry without structured output
+            result = await callUnifiedLLM(params, finalMessages, null, {});
+        }
+    } else {
+        // No structured output support, call directly
+        result = await callUnifiedLLM(params, finalMessages, null, {});
+    }
+
+    // Parse JSON response
     try {
         const content = result.content || '';
         const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -543,8 +587,11 @@ Respond ONLY with valid JSON, no explanation or markdown.`;
             return JSON.parse(jsonMatch[0]);
         }
         return JSON.parse(content);
-    } catch (e) {
-        logger.error('Failed to parse JSON response:', e);
+    } catch (parseError) {
+        logger.error('Failed to parse JSON response:', parseError);
+        logger.error('Raw response content:', result.content);
+        logger.error('Used structured output:', usedStructuredOutput);
+        logger.error('Retried without structured output:', retried);
         throw new Error('Failed to extract structured data from response');
     }
 
