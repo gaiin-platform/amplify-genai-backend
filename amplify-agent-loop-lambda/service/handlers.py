@@ -9,7 +9,7 @@ import boto3
 import agent.tools.file_handling
 import agent.tools.common_tools
 import agent.tools.writing_tools
-import agent.tools.code_exec
+# import agent.tools.code_exec # Disabled due to critical security vulnerability
 import agent.tools.http_requests
 import agent.tools.prompt_tools
 import agent.tools.shell
