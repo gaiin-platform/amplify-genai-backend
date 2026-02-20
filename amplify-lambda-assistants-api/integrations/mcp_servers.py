@@ -478,7 +478,7 @@ def _test_mcp_connection_by_url(server_url):
             json=init_request,
             headers={
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json, text/event-stream"
             },
             timeout=MCP_CONNECTION_TIMEOUT
         )
@@ -509,7 +509,7 @@ def _test_mcp_connection_by_url(server_url):
             },
             headers={
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json, text/event-stream"
             },
             timeout=MCP_NOTIFICATION_TIMEOUT
         )
@@ -527,7 +527,7 @@ def _test_mcp_connection_by_url(server_url):
             json=tools_request,
             headers={
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json, text/event-stream"
             },
             timeout=MCP_CONNECTION_TIMEOUT
         )
