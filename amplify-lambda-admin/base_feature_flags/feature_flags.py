@@ -39,4 +39,5 @@ FEATURE_FLAGS = {
     "scheduledTasks": False,
     "criticalErrorTracking": False,
     "webSearch": True,
+    "userDocumentation": False,  # Controls the documentation button in settings sidebar
 }
