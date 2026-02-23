@@ -650,7 +650,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         prompt: instructions,
                         skipDocumentCache: true, // 🚨 CRITICAL: No document caching for assistants
                         skipRag: false,          // 🚨 CRITICAL: ALWAYS use RAG for user-defined assistants
-                        ragOnly: true,           // 🚨 CRITICAL: ONLY RAG, no attached documents ever
+                        ragOnly: false,          
                         groupType: groupType, // Preserve groupType for conversation analysis
                         // 🔧 PRESERVE WEB SEARCH & MCP in options too (checked by shouldEnableWebSearch)
                         enableWebSearch: body.options?.enableWebSearch,
