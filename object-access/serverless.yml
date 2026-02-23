@@ -356,6 +356,19 @@ functions:
 
 resources:
   Resources:
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: update_group_assistants
+            path: /groups/update/assistants
+            method: POST
+
     ObjectAccessLambdaPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
