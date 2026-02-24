@@ -21,9 +21,9 @@ config({ path: join(__dirname, '../../.env.local') });
 
 
 // Read environment variables
-const userPoolId = process.env.COGNITO_USER_POOL_ID;
-const clientId = process.env.COGNITO_CLIENT_ID;
-const idpPrefix = (process.env.IDP_PREFIX || '').toLowerCase();
+const userPoolId = "us-east-1_n0ESPoUk4";
+const clientId = "5jo6joe2r4harugqlo3k5ek57v";
+const idpPrefix = ("dev-amplifygenai" || '').toLowerCase();
 
 // Ensure the environment variables are defined
 if (!userPoolId || !clientId) {

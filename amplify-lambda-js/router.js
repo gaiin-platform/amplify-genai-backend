@@ -11,18 +11,18 @@ import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
-import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
-import {logCriticalError} from "./common/criticalLogger.js";
-import {CacheManager} from "./common/cache.js";
+import { requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation } from "./common/envVarsTracking.js";
+import { logCriticalError } from "./common/criticalLogger.js";
+import { CacheManager } from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
-import {chooseAssistantForRequest} from "./assistants/assistants.js";
-import {processSmartMessages} from "./common/conversations.js";
-import {newStatus} from "./common/status.js";
+import { chooseAssistantForRequest } from "./assistants/assistants.js";
+import { processSmartMessages } from "./common/conversations.js";
+import { newStatus } from "./common/status.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
 
 // 🛡️ DEFENSIVE ROUTING
-import { 
-    validateModelConfiguration, 
+import {
+    validateModelConfiguration,
     validateRequestBody,
     withCostMonitoring
 } from "./common/defensiveRouting.js";
@@ -46,8 +46,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
     try {
 
         logger.debug("Extracting params from event");
-        
-        
+
+
         if (params && params.statusCode) {
             returnResponse(responseStream, params);
         } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest)) {
@@ -55,22 +55,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             returnResponse(responseStream, {
                 statusCode: 400,
-                body: {error: "Invalid request body"}
+                body: { error: "Invalid request body" }
             });
         } else if (params && !params.user) {
             logger.info("No user found, returning 401");
             returnResponse(responseStream, {
                 statusCode: 401,
-                body: {error: "Unauthorized"}
+                body: { error: "Unauthorized" }
             });
-        } else if(params.body.killSwitch) {
+        } else if (params.body.killSwitch) {
             try {
-                const {requestId, value} = params.body.killSwitch;
+                const { requestId, value } = params.body.killSwitch;
 
                 if (!requestId) {
                     return returnResponse(responseStream, {
                         statusCode: 400,
-                        body: {error: "No requestId provided for killswitch request"}
+                        body: { error: "No requestId provided for killswitch request" }
                     });
                 }
 
@@ -78,15 +78,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 if (value) localKill(params.user, requestId);
                 returnResponse(responseStream, {
                     statusCode: 200,
-                    body: {status: "OK"}
+                    body: { status: "OK" }
                 });
             } catch (e) {
                 return returnResponse(responseStream, {
                     statusCode: 400,
-                    body: {error: "Invalid killswitch request"}
+                    body: { error: "Invalid killswitch request" }
                 });
             }
-        } else if(params.body.datasourceRequest) {
+        } else if (params.body.datasourceRequest) {
             // Handle datasource request
             logger.info("Processing datasource request");
             const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
@@ -102,11 +102,11 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     body: { error: error.message }
                 });
             }
-            
+
             // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION - All router operations in parallel!
             logger.info("🚀 Starting comprehensive parallel router setup...");
             const parallelStartTime = Date.now();
-            
+
             const [
                 rateLimitResult,
                 userModelData,
@@ -116,7 +116,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             ] = await Promise.all([
                 // 1. Rate limiting check
                 isRateLimited(params),
-                
+
                 // 2. Get user available models (with caching)
                 (async () => {
                     let cached = await CacheManager.getCachedUserModels(params.user, params.accessToken);
@@ -129,14 +129,14 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                     return cached;
                 })(),
-                
+
                 // 3. Resolve data sources (with caching and translate hashes)
                 (async () => {
                     const dataSources = [...(params.body.dataSources || [])];
-                    
-                    
+
+
                     if (dataSources.length === 0) return [];
-                    
+
                     const dataSourceIds = dataSources.map(ds => ds.id || ds);
                     let cached = await CacheManager.getCachedDataSources(params.user, dataSourceIds, params.body.options);
                     if (!cached) {
@@ -150,15 +150,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                     return cached;
                 })(),
-                
+
                 // 4. Generate request ID
                 Promise.resolve(getRequestId(params)),
-                
+
                 // 5. 🚀 PERFORMANCE: Pre-resolve data sources for smart routing
                 (async () => {
                     try {
                         // Only resolve if we have potential data sources or conversation context
-                        if ((params.body.dataSources && params.body.dataSources.length > 0) || 
+                        if ((params.body.dataSources && params.body.dataSources.length > 0) ||
                             params.body.options?.conversationId) {
                             logger.debug("🔍 ROUTER: Pre-resolving data sources for smart routing");
                             // First resolve data sources (including image extraction)
@@ -174,19 +174,19 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                             logger.error("🚨 ROUTER: Permission/access error - terminating request:", error.message);
                             throw error; // Re-throw permission errors to kill the request
                         }
-                        
+
                         logger.warn("⚠️ ROUTER: Data source pre-resolution failed, will fallback:", error.message);
                         return null;
                     }
                 })(),
-                
+
             ]);
-            
+
             logger.info(`⚡ Parallel setup completed in ${Date.now() - parallelStartTime}ms`);
-            
+
             // 🚀 NATIVE JS PROVIDERS: Direct execution without Python subprocess
             logger.info(`✅ Using native JS providers for optimal performance`);
-            
+
             // Check rate limit result first (early exit if rate limited)
             if (rateLimitResult) {
                 const rateLimitInfo = params.body.options.rateLimit;
@@ -200,31 +200,31 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 return returnResponse(responseStream, {
                     statusCode: 429,
                     statusText: "Request limit reached. Please try again in a few minutes.",
-                    body: {error: errorMessage}
+                    body: { error: errorMessage }
                 });
             }
-            
+
             const user_model_data = userModelData;
             let dataSources = resolvedDataSources;
-            
-            
+
+
             const models = user_model_data.models;
             if (!models) {
-                    return returnResponse(responseStream, {
+                return returnResponse(responseStream, {
                     statusCode: 400,
-                    body: {error: "No user models."}
+                    body: { error: "No user models." }
                 });
             }
 
             logger.debug("Processing request");
-                                                                        
-            let options = params.body.options ? {...params.body.options} : {};
+
+            let options = params.body.options ? { ...params.body.options } : {};
 
             // Calculate numberPrompts and set it in both places
             const calculatedPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
             params.body.options.numberPrompts = calculatedPrompts;
             options.numberPrompts = calculatedPrompts; // Set it in the new options object too
-            
+
             const modelId = (options.model && options.model.id);
 
             // 🛡️ STRICT VALIDATION: Bad data = immediate rejection, no fallbacks
@@ -236,18 +236,18 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     error.code = "MISSING_MODEL_ID";
                     throw error;
                 }
-                
+
                 // Use defensive validation instead of direct access
                 model = validateModelConfiguration(models, modelId, options.model, params.user);
                 logger.info(`✅ Model validation passed: ${modelId}`);
-                
+
             } catch (error) {
                 logger.error(`❌ Model validation failed for ${modelId} - REJECTING REQUEST:`, error.message);
-                
+
                 // 🚫 NO FALLBACKS: Bad data gets kicked out immediately
                 return returnResponse(responseStream, {
                     statusCode: error.statusCode || 400,
-                    body: { 
+                    body: {
                         error: `Invalid model: ${error.message}`,
                         code: error.code || "INVALID_MODEL",
                         requestedModel: modelId,
@@ -255,6 +255,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                 });
             }
+
+            logger.info(`✅ Model validation passed: ${modelId}`);
 
             // override model in params/options so its from our backend end 
             params.model = model;
@@ -270,19 +272,19 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             options.documentCachingModel = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
 
             // ensure the model id in the body and options is consitent with the changes 
-            let body = {...params.body, options: options, model: model.id}; 
+            let body = { ...params.body, options: options, model: model.id };
             logger.debug("Checking access on data sources");
             logger.info("Request options.", options);
             logger.info("Request data sources", dataSources);
 
             delete body.dataSources;
 
-            
+
             // ⚡ Create request state 
             await createRequestState(params.user, requestId);
-            
-            
-            for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
+
+
+            for (const ds of [...dataSources, ...(body.imageSources ?? []), ...(body.videoSources ?? [])]) {
                 logger.debug("Resolved data source: ", ds.id, "\n", ds);
             }
 
@@ -385,7 +387,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         forceFlush(responseStream);
                     } else {
                         logger.debug(`⏭️ Smart messages complete: ${smartMessagesResult.filteredMessages?.length || body.messages.length} messages (unfiltered)`,
-                                   smartMessagesResult._internal || {});
+                            smartMessagesResult._internal || {});
                     }
                 }
 
@@ -402,8 +404,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 // All assistants now use the same handler signature
 
                 await selectedAssistant.handler(assistantParams, body, dataSources, responseStream);
-                
-                
+
+
                 // Removed X-Ray tracing for performance
 
             } catch (error) {
@@ -435,7 +437,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 } else if (error.criticalErrorLogged) {
                     logger.info('Skipping router critical error logging - provider already logged it');
                 }
-                
+
                 // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
                 // Return error response instead of throwing
                 return returnResponse(responseStream, {
@@ -445,22 +447,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             } finally {
                 // Simple request completion logging
                 const processingTime = Date.now() - requestStartTime;
-                
+
                 logger.info("Request completed", {
                     userId: params.user,
                     requestId,
                     processingTime,
                     error: processingError,
                 });
-                
+
                 // 🛡️ DEFENSIVE CLEANUP: Ensure stream is closed in all cases
                 ensureStreamClosed(responseStream, "finally-block");
             }
-            
+
 
             if (doTrace) {
                 try {
-                    trace(requestId, ["response"], {stream: responseStream.trace})
+                    trace(requestId, ["response"], { stream: responseStream.trace })
                     await saveTrace(params.user, requestId);
                 } catch (traceError) {
                     logger.error("Error in tracing:", traceError);
@@ -479,20 +481,20 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             logger.debug(`Recorded error violation for ${params.user}: ${errorViolation.count} errors`);
         }
         // Check if this is a critical secrets/endpoints error that should terminate the Lambda
-        const isLambdaTermination = e.isLambdaTermination || 
-                                  (e.message && (
-                                      e.message.includes("LAMBDA_TERMINATION_REQUIRED") ||
-                                      e.message.includes("Critical error") ));
-        
+        const isLambdaTermination = e.isLambdaTermination ||
+            (e.message && (
+                e.message.includes("LAMBDA_TERMINATION_REQUIRED") ||
+                e.message.includes("Critical error")));
+
         if (isLambdaTermination) {
             logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to critical failure");
-            
+
             // Strategy 1: Force stream closure using returnResponse (handles both local and AWS)
             returnResponse(responseStream, { statusCode: 500, body: { error: "Lambda terminated" } });
-            
+
             // Strategy 2: Defensive cleanup as backup
             ensureStreamClosed(responseStream, "lambda-termination");
-            
+
             // Strategy 3: Re-throw the critical error to propagate up
             throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
         }
@@ -521,15 +523,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
         returnResponse(responseStream, {
             statusCode: 400,
-            body: {error: e.message}
+            body: { error: e.message }
         });
-        
+
         // 🛡️ DEFENSIVE CLEANUP: Backup stream closure for error cases
         ensureStreamClosed(responseStream, "error-handling");
-        
+
         // ✅ EXPLICIT RETURN to ensure Lambda completion after error handling
         return;
-    } 
+    }
 }
 
 // Environment variables tracking wrapper for router
@@ -572,7 +574,7 @@ function ensureStreamClosed(responseStream, context = "cleanup") {
     try {
         // Check if this is local development environment
         const isLocal = process.env.LOCAL_DEVELOPMENT === 'true';
-        
+
         if (isLocal) {
             // Local SSEWrapper - check if already ended
             if (responseStream && typeof responseStream.end === 'function') {

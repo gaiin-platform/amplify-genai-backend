@@ -132,10 +132,29 @@ def process_images_for_chat(event, context):
             )
             image_data = response["Body"].read()
         else:
-            # This is an unsupported file type
-            raise Exception(
-                f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES}"
-            )
+            # Check if this is a video file that should be skipped
+            VIDEO_FILE_TYPES = [
+                "video/mp4",
+                "video/mpeg", 
+                "video/quicktime",
+                "video/x-msvideo",  # .avi
+                "video/x-ms-wmv",   # .wmv
+                "video/webm",
+                "video/ogg"
+            ]
+            
+            if content_type in VIDEO_FILE_TYPES:
+                # Video files go to the same bucket as images but don't need image processing
+                logger.info("Skipping video file processing for: %s with content type: %s", file_key, content_type)
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps("Video file uploaded successfully, no processing needed"),
+                }
+            else:
+                # This is an unsupported file type
+                raise Exception(
+                    f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES + VIDEO_FILE_TYPES}"
+                )
 
         image = resize_image(Image.open(BytesIO(image_data)))
 

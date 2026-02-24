@@ -1,15 +1,15 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {S3Client, GetObjectCommand} from '@aws-sdk/client-s3';
-import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
-import {unmarshall} from "@aws-sdk/util-dynamodb";
-import {getLogger} from "../common/logging.js";
-import {logCriticalError} from "../common/criticalLogger.js";
-import {canReadDataSources} from "../common/permissions.js";
-import {lru} from "tiny-lru";
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
+import { getLogger } from "../common/logging.js";
+import { logCriticalError } from "../common/criticalLogger.js";
+import { canReadDataSources } from "../common/permissions.js";
+import { lru } from "tiny-lru";
 import getDatasourceHandler from "./external.js";
-import { getModelByType, ModelTypes, isOpenAIModel} from "../common/params.js";
+import { getModelByType, ModelTypes, isOpenAIModel } from "../common/params.js";
 import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 
 const logger = getLogger("datasources");
@@ -37,7 +37,7 @@ export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = t
 
         return base
             .filter(m => {
-                return m.data && m.data.dataSources 
+                return m.data && m.data.dataSources
             }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds))
     }
 
@@ -55,7 +55,7 @@ export const getFileText = async (key) => {
         key :
         key.trim() + ".content.json";
     const bucket = process.env.S3_FILE_TEXT_BUCKET_NAME;
-    logger.debug("Fetching file from S3", {bucket: bucket, key: textKey});
+    logger.debug("Fetching file from S3", { bucket: bucket, key: textKey });
 
     const command = new GetObjectCommand({
         Bucket: bucket,
@@ -68,7 +68,7 @@ export const getFileText = async (key) => {
         const data = JSON.parse(str);
         return data;
     } catch (error) {
-        logger.error(error, {bucket: bucket, key: textKey});
+        logger.error(error, { bucket: bucket, key: textKey });
         return null;
     }
 }
@@ -80,18 +80,18 @@ export const doesNotSupportImagesInstructions = (modelName) => {
 export const getImageBase64Content = async (dataSource) => {
     const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
     const key = extractKey(dataSource.id);
-    
+
     // Check cache first
     const { CacheManager } = await import('../common/cache.js');
     const cacheKey = `${bucket}:${key}`;
     const cached = await CacheManager.getCachedImageContent(cacheKey);
-    
+
     if (cached) {
-        logger.debug("Using cached image content", {bucket: bucket, key: key});
+        logger.debug("Using cached image content", { bucket: bucket, key: key });
         return cached;
     }
-    
-    logger.debug("Fetching file from S3", {bucket: bucket, key: key});
+
+    logger.debug("Fetching file from S3", { bucket: bucket, key: key });
 
     const command = new GetObjectCommand({
         Bucket: bucket,
@@ -100,24 +100,24 @@ export const getImageBase64Content = async (dataSource) => {
 
     try {
         const response = await client.send(command);
-        const streamToString = (stream) => 
+        const streamToString = (stream) =>
             new Promise((resolve, reject) => {
                 const chunks = [];
                 stream.on("data", (chunk) => chunks.push(chunk));
                 stream.on("error", reject);
                 stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
             });
-        
+
         const data = await streamToString(response.Body);
         logger.debug("Base64 encoded image retrieved");
-        
+
         // Cache the image content
         CacheManager.setCachedImageContent(cacheKey, data);
-        
+
         return data;
     } catch (error) {
         logger.error("Error retrieving base64 encoded image", error);
-        
+
         // CRITICAL: Image retrieval failure - user cannot use images in conversation
         logCriticalError({
             functionName: 'getImageBase64Content',
@@ -134,10 +134,72 @@ export const getImageBase64Content = async (dataSource) => {
                 s3ErrorCode: error.Code || 'N/A'
             }
         }).catch(err => logger.error('Failed to log critical error:', err));
-        
+
         return null;
     }
 
+}
+
+export const getVideoBase64Content = async (dataSource) => {
+    const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
+    const key = extractKey(dataSource.id);
+
+    const videoKey = key;
+
+    // Check cache first
+    const { CacheManager } = await import('../common/cache.js');
+    const cacheKey = `video:${bucket}:${videoKey}`;
+    const cached = await CacheManager.getCachedImageContent(cacheKey);
+
+    if (cached) {
+        logger.debug("Using cached video content", { bucket: bucket, key: videoKey });
+        return cached;
+    }
+
+    logger.debug("Fetching video file from S3", { bucket: bucket, key: videoKey });
+    const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: videoKey,
+    });
+    try {
+        const response = await client.send(command);
+        const streamToBuffer = (stream) =>
+            new Promise((resolve, reject) => {
+                const chunks = [];
+                stream.on("data", (chunk) => chunks.push(chunk));
+                stream.on("error", reject);
+                stream.on("end", () => resolve(Buffer.concat(chunks).toString("base64")));
+            });
+
+        const data = await streamToBuffer(response.Body);
+        logger.debug("Base64 encoded video retrieved", { size: data.length });
+
+        // Cache with shorter TTL for videos (they're larger)
+        CacheManager.setCachedImageContent(cacheKey, data, 300); // 5 min TTL
+
+        return data;
+    } catch (error) {
+        logger.error("Error retrieving base64 encoded video", error);
+
+        logCriticalError({
+            functionName: 'getVideoBase64Content',
+            errorType: 'VideoRetrievalFailure',
+            errorMessage: `Failed to retrieve video from consolidation bucket: ${error.message || "Unknown error"}`,
+            currentUser: 'system',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                bucket: bucket,
+                key: videoKey,
+                originalKey: key,
+                dataSourceId: dataSource?.id || 'unknown',
+                errorCode: error.code || error.name || 'N/A',
+                s3ErrorCode: error.Code || 'N/A'
+            }
+        }).catch(err => logger.error('Failed to log critical error:', err));
+
+        return null;
+    }
 }
 
 export const isDocument = ds =>
@@ -148,6 +210,7 @@ export const isDocument = ds =>
 
 
 export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
+export const isVideo = ds => ds && ds.type && ds.type.startsWith("video/")
 
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
@@ -177,7 +240,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         noDataSources: chatRequestOrig.options?.noDataSources
     });
 
-    if ((chatRequestOrig.options?.skipRag && chatRequestOrig.options?.ragOnly) || chatRequestOrig.options?.noDataSources){
+    if ((chatRequestOrig.options?.skipRag && chatRequestOrig.options?.ragOnly) || chatRequestOrig.options?.noDataSources) {
         return {
             ragDataSources: [],
             dataSources: []
@@ -191,14 +254,14 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []
         );
 
-    const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0,-1)
-        .filter( m => {
+    const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0, -1)
+        .filter(m => {
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
     logger.debug("🔍 Conversation datasources search:", {
         total_messages: chatRequestOrig.messages.length,
-        messages_with_data: chatRequestOrig.messages.slice(0,-1).filter(m => m.data && m.data.dataSources).length,
+        messages_with_data: chatRequestOrig.messages.slice(0, -1).filter(m => m.data && m.data.dataSources).length,
         referencedDataSourcesInMessages_length: referencedDataSourcesInMessages.length,
         referencedDataSources_sample: referencedDataSourcesInMessages[0] ? {
             id: referencedDataSourcesInMessages[0].id,
@@ -224,9 +287,11 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
 
     const getNonDocumentDataSources = sources => sources.filter(ds => !isDocument(ds));
 
-    const uniqueDataSources = dss => {return [...Object.values(dss.reduce(
-        (acc, ds) => (acc[ds.id] = ds, acc), {})
-    )];}
+    const uniqueDataSources = dss => {
+        return [...Object.values(dss.reduce(
+            (acc, ds) => (acc[ds.id] = ds, acc), {})
+        )];
+    }
 
     const attachedDataSources = [
         ...dataSources.filter(ds => !ds.metadata?.ragOnly),  // ✅ Exclude ragOnly sources from attached
@@ -266,7 +331,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
 
     // Only check chatRequestOrig.options?.skipRag, not params.options?.skipRag
     // The router pre-resolves data sources and shouldn't override RAG detection
-    if(chatRequestOrig.options?.skipRag) {
+    if (chatRequestOrig.options?.skipRag) {
         ragDataSources = [];
     }
 
@@ -279,10 +344,11 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if(params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
+    if (params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
 
         const dataSourceOptions = {
-        ...(chatRequestOrig.options.dataSourceOptions || {})};
+            ...(chatRequestOrig.options.dataSourceOptions || {})
+        };
 
         logger.debug("Applying data source options", dataSourceOptions);
 
@@ -300,10 +366,10 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             if (dataSourceOptions.insertAttachedDocuments) {
                 insertList.push(...uniqueAttachedDataSources);
             }
-            if(dataSourceOptions.ragConversationDocuments) {
+            if (dataSourceOptions.ragConversationDocuments) {
                 ragList.push(...uniqueConvoDataSources);
             }
-            if(dataSourceOptions.ragAttachedDocuments) {
+            if (dataSourceOptions.ragAttachedDocuments) {
                 ragList.push(...uniqueAttachedDataSources);
             }
         }
@@ -346,7 +412,7 @@ export const getDataSourcesByTag = async (params, body, tag) => {
     const cacheKey = (params.user || params.account.user) + "__" + tagName;
 
     const cached = dataSourcesWithTagCache.get(cacheKey);
-    if(cached){
+    if (cached) {
         return cached;
     }
 
@@ -388,13 +454,13 @@ export const getDataSourcesByTag = async (params, body, tag) => {
             }
         }
         else {
-            logger.error("Unable to fetch data sources by tag", {tag: tag});
+            logger.error("Unable to fetch data sources by tag", { tag: tag });
             // Extract the error message
             const errorMessage = await response.text();
             logger.error(errorMessage);
         }
     } catch (e) {
-        logger.error("Unable to fetch data sources by tag", {tag: tag});
+        logger.error("Unable to fetch data sources by tag", { tag: tag });
         logger.error(e);
     }
 
@@ -440,28 +506,32 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
  * @returns {Promise<(Awaited<any>|Awaited<unknown>)[]>}
  */
 export const resolveDataSources = async (params, body, dataSources) => {
-    logger.info("Resolving data sources", {dataSources: dataSources});
+    logger.info("Resolving data sources", { dataSources: dataSources });
 
     // Ensure dataSources is always an array
     if (!dataSources) {
         dataSources = [];
     }
 
-    // seperate the image ds
+    // seperate the image and video ds
     if (body && body.messages && body.messages.length > 0) {
         const lastMsg = body.messages[body.messages.length - 1];
         const ds = lastMsg.data && lastMsg.data.dataSources;
         if (ds) {
             body.imageSources = ds.filter(d => isImage(d));
-        } else if (body.options?.api_accessed && dataSources.length > 0){ // support images coming from the /chat endpoint
+            body.videoSources = ds.filter(d => isVideo(d));
+        } else if (body.options?.api_accessed && dataSources.length > 0) { // support images coming from the /chat endpoint
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
+            const videoSources = dataSources.filter(d => isVideo(d));
+            if (videoSources.length > 0) body.videoSources = videoSources;
         }
         logger.debug("IMAGE: body.imageSources", body.imageSources);
+        logger.debug("VIDEO: body.videoSources", body.videoSources);
     }
 
-    dataSources = dataSources.filter(ds => !isImage(ds))
-    
+    dataSources = dataSources.filter(ds => !isImage(ds) && !isVideo(ds))
+
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
@@ -477,13 +547,16 @@ export const resolveDataSources = async (params, body, dataSources) => {
         !extractKey(ds.id).startsWith(params.user + "/")
     );
 
-    if (nonUserSources && nonUserSources.length > 0  || 
-        (body.imageSources && body.imageSources.length > 0)) {
+    if (nonUserSources && nonUserSources.length > 0 ||
+        (body.imageSources && body.imageSources.length > 0) ||
+        (body.videoSources && body.videoSources.length > 0)) {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
-        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
+        const image_ds_keys = body.imageSources ? body.imageSources.map(ds => ({ ...ds, id: extractKey(ds.id) })) : [];
+        const video_ds_keys = body.videoSources ? body.videoSources.map(ds => ({ ...ds, id: extractKey(ds.id) })) : [];
         logger.debug("IMAGE: ds_with_keys", image_ds_keys);
-        if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
+        logger.debug("VIDEO: ds_with_keys", video_ds_keys);
+        if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys, ...video_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
     }
@@ -533,11 +606,11 @@ const getChunkAggregator = (maxTokens, options) => {
     }
 
     return (dataSource,
-            {locations, currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
-            formattedSourceName,
-            formattedContent,
-            location,
-            contentTokenCount) => {
+        { locations, currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0 },
+        formattedSourceName,
+        formattedContent,
+        location,
+        contentTokenCount) => {
         if ((currentTokenCount + contentTokenCount > maxTokens) || (itemCount + 1 > maxItemsPerChunk)) {
             // If the current chunk is too big, push it to the chunks array and start a new one
             if (currentChunk.length > 0) {
@@ -561,7 +634,7 @@ const getChunkAggregator = (maxTokens, options) => {
             currentTokenCount += contentTokenCount;
             itemCount = itemCount + 1;
         }
-        return {locations, chunks, currentChunk, currentTokenCount, itemCount}
+        return { locations, chunks, currentChunk, currentTokenCount, itemCount }
     }
 
 }
@@ -588,7 +661,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
     // 2. Filtered: [...]  (direct array from getExtractedRelevantContext)
     let contentArray;
     let contentName;
-    
+
     if (Array.isArray(content)) {
         // Direct array case (filtered content)
         contentArray = content;
@@ -630,7 +703,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         const locations = [];
         let currentChunk = '';
         let currentTokenCount = 0;
-        let state = {chunks, currentChunk, currentTokenCount, locations};
+        let state = { chunks, currentChunk, currentTokenCount, locations };
 
         const aggregator = getChunkAggregator(maxTokens, options);
         const formattedSourceName = "Source:" + contentName + " Type:" + dataSource.type + "\n-------------\n";
@@ -703,20 +776,21 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
             const command = new GetItemCommand({
                 TableName: hashFilesTableName, // Replace with your table name
                 Key: {
-                    id: {S: key}
+                    id: { S: key }
                 }
             });
 
             // Send the command to DynamoDB and wait for the response
-            const {Item} = await dynamodbClient.send(command);
+            const { Item } = await dynamodbClient.send(command);
 
             if (Item) {
                 // Convert the returned item from DynamoDB's format to a regular JavaScript object
                 const item = unmarshall(Item);
                 const result = {
                     ...ds,
-                    metadata: {...ds.metadata, userDataSourceId: ds.id},
-                    id: "s3://" + item.textLocationKey};
+                    metadata: { ...ds.metadata, userDataSourceId: ds.id },
+                    id: "s3://" + item.textLocationKey
+                };
                 hashDataSourcesCache.set(cacheKey, result);
                 return result;
             } else {
@@ -749,7 +823,7 @@ export const getContent = async (chatRequest, params, dataSource) => {
         const { CacheManager } = await import('../common/cache.js');
         const cacheKey = `doc:${dataSource.id}`;
         const cached = await CacheManager.getCachedDocumentContent(cacheKey);
-        
+
         if (cached) {
             logger.debug("Using cached document content for:", dataSource.id);
             return cached;
@@ -762,7 +836,7 @@ export const getContent = async (chatRequest, params, dataSource) => {
         if (result == null) {
             throw new Error("Could not fetch data from S3");
         }
-        
+
         // Cache the raw document content for future use
         await CacheManager.setCachedDocumentContent(cacheKey, result);
 
@@ -787,10 +861,10 @@ export const getContent = async (chatRequest, params, dataSource) => {
             });
 
         const content =
-            {
-                "name": dataSource.id,
-                "content": contents
-            }
+        {
+            "name": dataSource.id,
+            "content": contents
+        }
 
         return content;
     }
@@ -823,27 +897,27 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
 
 
     const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
-    
+
     if (extractRelevantContext) {
         try {
-            const filteredContent = await getExtractedRelevantContext(resolutionEnv, {...result});
+            const filteredContent = await getExtractedRelevantContext(resolutionEnv, { ...result });
             if (!filteredContent) return null;
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
             const originalTotalTokens = dataSource?.metadata?.totalTokens;
             const filteredTotalTokens = filteredContent.totalTokens;
-            const percentageOfOriginal = originalTotalTokens ? 
-                Math.round(filteredTotalTokens/originalTotalTokens*100) + '%' : 
+            const percentageOfOriginal = originalTotalTokens ?
+                Math.round(filteredTotalTokens / originalTotalTokens * 100) + '%' :
                 'unknown (no original token count)';
             logger.debug(`Original document total tokens: ${originalTotalTokens || 'not available'} \nFiltered document tokens: ${filteredTotalTokens}\n${percentageOfOriginal} of original`);
             formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
-            
+
             // 🚨 CRITICAL: Preserve noRelevantContent flag for LLM messaging
             if (filteredContent.noRelevantContent) {
                 formattedContext.forEach(chunk => {
                     chunk.noRelevantContent = true;
                 });
             }
-  
+
             return formattedContext;
         } catch (error) {
             logger.error("Error extracting relevant context:", error);
@@ -873,12 +947,12 @@ const getExtractedRelevantContext = async (resolutionEnv, context) => {
     context.content.forEach((c, idx) => {
         contentByIndex[idx] = c;
     });
-    
+
     // Create a clean representation of the document for the LLM
-    const documentLines = context.content.map((item, idx) => 
+    const documentLines = context.content.map((item, idx) =>
         `[${idx}] ${item.content.replace(/\n/g, ' ')}`
     ).join('\n');
-    
+
     // Create a clear, structured prompt for the LLM
     const updatedBody = {
         ...chatBody,
@@ -897,7 +971,7 @@ IMPORTANT INSTRUCTIONS:
 Example outputs:
 - For relevant fragments: [3, 4, 7, 12]
 - For no relevant fragments: []`
-          },{
+        }, {
             role: 'user',
             content: `USER QUESTION:
 ${userMessage}
@@ -907,7 +981,7 @@ ${documentLines}
 
 Return ONLY the indexes of fragments that contain information directly relevant to answering the question.
 Expected format: [0, 1, 5] or [] if nothing is relevant.`
-          }],
+        }],
         imageSources: [],
         model: model.id,
         max_tokens: 300, // Lower token limit, we only need the array
@@ -944,7 +1018,7 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         },
         null // No streaming
     );
- 
+
     // Parse and validate the extraction result
     let indexes = [];
     try {
@@ -962,11 +1036,11 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         logger.debug("Dumping entire document context as a fallback...");
         return context;
     }
-    
+
     // Handle case where no relevant content was found
     if (!indexes || indexes.length === 0) {
         logger.debug("No datasource content was relevant to the query - providing full context with relevance flag");
-        
+
         // Instead of returning null, provide full context with a flag for LLM to handle gracefully
         return {
             ...context,
@@ -984,7 +1058,7 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         originalContent: context.content,
         totalTokens: filteredContent.reduce((acc, item) => acc + item.tokens, 0)
     };
-    
+
     // Pass the filtered content through the standard formatting/chunking process
     return filteredContext;
 
@@ -1008,19 +1082,19 @@ export const combineNeighboringLocations = (contentArray) => {
 
         // Word documents: section + paragraph (hierarchical)
         if (location.section_number !== undefined && location.paragraph_number !== undefined) {
-            return { 
-                primary: location.section_number, 
+            return {
+                primary: location.section_number,
                 secondary: location.paragraph_number,
                 tertiary: location.section_title || '',
                 type: 'hierarchical',
                 format: 'section-paragraph'
             };
         }
-        
+
         // Excel: sheet + row (hierarchical)
         if (location.sheet_number !== undefined && location.row_number !== undefined) {
-            return { 
-                primary: location.sheet_number, 
+            return {
+                primary: location.sheet_number,
                 secondary: location.row_number,
                 tertiary: location.sheet_name || '',
                 type: 'hierarchical',
@@ -1036,11 +1110,11 @@ export const combineNeighboringLocations = (contentArray) => {
         if (location.paragraph_number !== undefined) return { primary: location.paragraph_number, type: 'single', format: 'paragraph' };
         if (location.section_number !== undefined) return { primary: location.section_number, type: 'single', format: 'section' };
         if (location.sheet_number !== undefined) return { primary: location.sheet_number, type: 'single', format: 'sheet' };
-        
+
         // String-based location keys (no consecutive grouping possible)
         if (location.section_title !== undefined) return { primary: location.section_title, type: 'string', format: 'section_title' };
         if (location.sheet_name !== undefined) return { primary: location.sheet_name, type: 'string', format: 'sheet_name' };
-        
+
         return { primary: 0, type: 'single', format: 'fallback' };
     };
 
@@ -1048,50 +1122,50 @@ export const combineNeighboringLocations = (contentArray) => {
     const areConsecutive = (loc1, loc2) => {
         const key1 = getLocationKey(loc1);
         const key2 = getLocationKey(loc2);
-        
+
         // Must be same type and format to be consecutive
         if (key1.type !== key2.type || key1.format !== key2.format) {
             return false;
         }
-        
+
         if (key1.type === 'hierarchical') {
             // Must be in same primary location (same section/sheet)
             if (key1.primary !== key2.primary) return false;
-            
+
             // Check if secondary keys are consecutive
             return Math.abs(key1.secondary - key2.secondary) <= 1;
         }
-        
+
         if (key1.type === 'single') {
             // Only check consecutive for numeric types
             return Math.abs(key1.primary - key2.primary) <= 1;
         }
-        
+
         if (key1.type === 'string') {
             // For strings, they are only "consecutive" if they're identical
             return key1.primary === key2.primary;
         }
-        
+
         return false;
     };
 
     // Helper function to create a composite sort key
     const createSortKey = (location) => {
         const key = getLocationKey(location);
-        
+
         if (key.type === 'hierarchical') {
             // Create a composite key for hierarchical sorting
             return `${key.format}_${String(key.primary).padStart(10, '0')}_${String(key.secondary).padStart(10, '0')}`;
         }
-        
+
         if (key.type === 'single') {
             return `${key.format}_${String(key.primary).padStart(10, '0')}`;
         }
-        
+
         if (key.type === 'string') {
             return `${key.format}_${key.primary}`;
         }
-        
+
         return `${key.format}_${String(key.primary).padStart(10, '0')}`;
     };
 
@@ -1099,7 +1173,7 @@ export const combineNeighboringLocations = (contentArray) => {
     const sortedContent = [...contentArray].sort((a, b) => {
         const sortKeyA = createSortKey(a.location);
         const sortKeyB = createSortKey(b.location);
-        
+
         return sortKeyA.localeCompare(sortKeyB);
     });
 
@@ -1130,7 +1204,7 @@ export const combineNeighboringLocations = (contentArray) => {
                     locations: combinedLocations
                 });
             }
-            
+
             // Start new group with current item
             currentGroup = [current];
         }
@@ -1168,10 +1242,10 @@ export function getTokenCount(dataSource, model) {
     if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) { // 5 min TTL
         return cached.value;
     }
-    
+
     // Cache miss - calculate tokens
     let tokenCount;
-    
+
     if (dataSource.metadata && dataSource.metadata.totalTokens) {
         const totalTokens = dataSource.metadata.totalTokens;
         if (isImage(dataSource)) {
@@ -1193,13 +1267,13 @@ export function getTokenCount(dataSource, model) {
     } else {
         tokenCount = 1000; // Default fallback
     }
-    
+
     // Cache the result
     tokenCountCache.set(key, {
         value: tokenCount,
         timestamp: Date.now()
     });
-    
+
     return tokenCount;
 }
 
@@ -1222,11 +1296,11 @@ export const generateImageDescriptions = async (imageSources, model, params) => 
     }
 
     const descriptions = [];
-    
+
     for (const imageSource of imageSources) {
         try {
             logger.debug(`Generating description for image: ${imageSource.id}`);
-            
+
             // Get the base64 image content
             const imageBase64 = await getImageBase64Content(imageSource);
             if (!imageBase64) {
@@ -1284,7 +1358,7 @@ Be thorough and precise so someone could understand the image content without se
             );
 
             const description = descriptionResult.description || 'Unable to generate image description.';
-            
+
             descriptions.push({
                 imageId: imageSource.id,
                 imageType: imageSource.type,
