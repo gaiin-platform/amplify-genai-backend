@@ -10,6 +10,7 @@ import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from 
 import {getSecretApiKey} from "../common/secrets.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
 import { getBudgetTokens } from "../common/params.js";
+import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
 const logger = getLogger("gemini");
 
@@ -186,43 +187,71 @@ export const chat = async (chatBody, writable) => {
         return streamAxiosResponseToWritable(url, writable, null, data, headers);
     } catch (error) {
         console.error('Exception in chat function:', error);
-        
-        // CRITICAL: Gemini API failure - capture full axios error details before re-throwing
-        const sanitizedData = { ...data };
-        delete sanitizedData.messages;
-        delete sanitizedData.input;
-        
-        logCriticalError({
-            functionName: 'gemini_chat',
-            errorType: 'GeminiAPIFailure',
-            errorMessage: `Gemini API failed: ${error.message || "Unknown error"}`,
-            currentUser: options?.user || options?.accountId || 'unknown',
-            severity: 'HIGH',
-            stackTrace: error.stack || '',
-            context: {
-                requestId: options?.requestId || 'unknown',
-                modelId: modelId || 'unknown',
-                httpStatus: error.response?.status || 'N/A',
-                httpStatusText: error.response?.statusText || 'N/A',
-                apiError: error.response?.data?.error || 'N/A',
-                apiErrorMessage: error.response?.data?.error?.message || error.response?.data?.message || 'N/A',
-                errorCode: error.code || 'N/A',
-                axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A',
-                requestConfig: sanitizedData
-            }
-        }).catch(err => logger.error('Failed to log critical error:', err));
 
-        // Mark error as already having critical logging to prevent duplicate logging in router
-        error.criticalErrorLogged = true;
+        // Check if this is a context overflow error (recoverable)
+        const overflowInfo = detectContextOverflow(error);
+        const requestId = options?.requestId || 'unknown';
 
-        try {
-            if (writable.writable && !writable.writableEnded) {
-                sendErrorMessage(writable, "Error with Gemini request: " + (error.message || "Unknown error"));
-            }
-        } catch (sendError) {
-            console.error('Error sending error message in chat catch block:', sendError);
+        // ONLY critical log if:
+        // 1. It's NOT an overflow error, OR
+        // 2. It IS overflow but we've already tried recovery (second attempt)
+        const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
+
+        if (shouldLog) {
+            // CRITICAL: Gemini API failure - capture full axios error details
+            const sanitizedData = { ...data };
+            delete sanitizedData.messages;
+            delete sanitizedData.input;
+
+            logCriticalError({
+                functionName: 'gemini_chat',
+                errorType: overflowInfo.isOverflow ? 'ContextOverflowRecoveryFailed' : 'GeminiAPIFailure',
+                errorMessage: overflowInfo.isOverflow
+                    ? `Context overflow after recovery attempt: ${error.message || "Unknown error"}`
+                    : `Gemini API failed: ${error.message || "Unknown error"}`,
+                currentUser: options?.user || options?.accountId || 'unknown',
+                severity: 'HIGH',
+                stackTrace: error.stack || '',
+                context: {
+                    requestId,
+                    modelId: modelId || 'unknown',
+                    httpStatus: error.response?.status || 'N/A',
+                    httpStatusText: error.response?.statusText || 'N/A',
+                    apiError: error.response?.data?.error || 'N/A',
+                    apiErrorMessage: error.response?.data?.error?.message || error.response?.data?.message || 'N/A',
+                    errorCode: error.code || 'N/A',
+                    axiosConfig: error.config ? { url: error.config.url, method: error.config.method } : 'N/A',
+                    requestConfig: sanitizedData,
+                    ...(overflowInfo.isOverflow && {
+                        overflow: {
+                            requested: overflowInfo.requested,
+                            limit: overflowInfo.limit,
+                            over: overflowInfo.overflow
+                        }
+                    })
+                }
+            }).catch(err => logger.error('Failed to log critical error:', err));
+
+            // Mark error as already having critical logging
+            error.criticalErrorLogged = true;
+        } else {
+            // Overflow on first attempt - mark for recovery, don't critical log
+            logger.info(`Context overflow detected for Gemini (${overflowInfo.overflow ? `${overflowInfo.overflow} tokens over` : 'unknown amount'}), recovery will be attempted`);
+            error.isContextOverflow = true;
+            error.overflowInfo = overflowInfo;
         }
-        
+
+        // Only send error message if NOT recoverable overflow
+        if (!overflowInfo.isOverflow) {
+            try {
+                if (writable.writable && !writable.writableEnded) {
+                    sendErrorMessage(writable, "Error with Gemini request: " + (error.message || "Unknown error"));
+                }
+            } catch (sendError) {
+                console.error('Error sending error message in chat catch block:', sendError);
+            }
+        }
+
         throw error;
     }
 }
@@ -319,53 +348,57 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
         .catch((e) => {
             if (statusTimer) clearTimeout(statusTimer);
 
-            if (!writableStream.writableEnded && writableStream.writable) {
-                sendErrorMessage(writableStream);
-                // Ensure stream is properly closed on error since we use { end: false }
-                try {
-                    writableStream.end();
-                } catch (endErr) {
-                    logger.error("Error ending stream:", endErr);
-                }
-            }
-            
             let errorMessage = e.message;
-            
+
+            // Helper to finalize error - DON'T send error message here, let outer handler decide
+            const finalizeError = (errorData = null) => {
+                if (errorData) {
+                    // Parse and attach error message for overflow detection
+                    try {
+                        const parsed = typeof errorData === 'string' ? JSON.parse(errorData) : errorData;
+                        e._parsedErrorMessage = parsed.error?.message || parsed.message || errorData;
+                    } catch {
+                        e._parsedErrorMessage = errorData;
+                    }
+                }
+                reject(e); // Reject with the error object, not just the message
+            };
+
             if(e.response && e.response.data) {
                 logger.error("Error invoking Gemini API:", e.response.statusText);
-                
+
                 if(e.response.data.readable) {
                     let errorData = '';
-                    
+
                     const handleErrorChunk = (chunk) => {
                         errorData += chunk;
                     };
-                    
+
                     const handleErrorEnd = () => {
                         logger.error("Error data from Gemini API:", errorData);
                         e.response.data.removeListener('data', handleErrorChunk);
                         e.response.data.removeListener('end', handleErrorEnd);
-                        reject(errorData || errorMessage);
+                        finalizeError(errorData || null);
                     };
-                    
+
                     e.response.data.on('data', handleErrorChunk);
                     e.response.data.on('end', handleErrorEnd);
-                    
+
                     // Add timeout for error stream
                     setTimeout(() => {
                         if (errorData === '') {
                             logger.error("Error stream timed out");
                             e.response.data.removeListener('data', handleErrorChunk);
                             e.response.data.removeListener('end', handleErrorEnd);
-                            reject(errorMessage);
+                            finalizeError(null);
                         }
                     }, 5000);
                 } else {
-                    reject(e.response.data || errorMessage);
+                    finalizeError(e.response.data || null);
                 }
             } else {
                 logger.error("Error invoking Gemini API:", errorMessage);
-                reject(errorMessage);
+                finalizeError(null);
             }
         });
     });

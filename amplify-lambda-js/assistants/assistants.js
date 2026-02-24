@@ -43,14 +43,14 @@ const defaultAssistant = {
 
         logger.debug("Using model: ", model);
 
-        const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
-        // ✅ Use token counting
-        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
-        const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
+        // 🚫 DEPRECATED: Token limit calculation for mapReduce routing
+        // Now handled by 85% split logic in chatWithData.js
+        // const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
+        // const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
+        // const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
 
-        logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
-        logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
-        logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
+        logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`);
+        logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`);
 
         if (params.blockTerminator) {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
@@ -74,23 +74,14 @@ const defaultAssistant = {
 
         logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
-            aboveLimit,
             dataSources_length: dataSources.length,
             hasPreResolvedData,
             needsDataProcessing: needsDataProcessingDecision,
             enableWebSearch: body?.options?.enableWebSearch,
-            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
-                   needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
+            route: needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
-        // 🚨 CRITICAL: User-defined assistants NEVER use mapReduce - always RAG for source visibility
-        const isUserDefinedAssistant = !!body.options?.assistantId;
         
-        if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit){
-            logger.info("→ Using mapReduceAssistant (token limit exceeded)");
-            
-            return mapReduceAssistant.handler(params, body, dataSources, responseStream);
-        } else {
             if (needsDataProcessingDecision) {
                 // Use chatWithDataStateless for RAG, document processing, conversation discovery  
                 logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
@@ -169,7 +160,7 @@ const defaultAssistant = {
                         imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
                     }
                 );
-            }
+            
         }
     }
 };
