@@ -7,10 +7,11 @@ from agent.core import ActionContext
 import ast
 import importlib
 from pycommon.logger import getLogger
+
 logger = getLogger("tool_code_exec")
 
 
-@register_tool(tags=["code_exec"])
+# @register_tool(tags=["code_exec"])
 def get_installed_python_modules():
     """
     Returns a list of installed Python packages with versions.
@@ -121,11 +122,10 @@ def prepare_exec_globals(code_string, context_dict):
     return exec_globals
 
 
-# SECURITY VULNERABILITY - TOOL DISABLED
 # @register_tool(tags=["code_exec"])
 def exec_code(action_context: ActionContext, code: str):
     """
-    DEPRECATED AND DISABLED: This function has been permanently disabled due to critical security vulnerability.
+    DEPRECATED AND DISABLED: This function has been permanently disabled.
 
     This tool previously executed arbitrary Python code and returned the value of the 'result' variable.
     IMPORTANT!!! Make sure the code arg is a valid JSON attribute with all line breaks, quotes, etc. escaped like this:
@@ -161,16 +161,16 @@ def exec_code(action_context: ActionContext, code: str):
         extra={
             "user": action_context.properties.get("current_user"),
             "session_id": action_context.properties.get("session_id"),
-            "request_id": action_context.properties.get("request_id")
-        }
+            "request_id": action_context.properties.get("request_id"),
+        },
     )
 
     return {
-        "error": "Tool Disabled - Security Vulnerability",
-        "message": "The exec_code tool has been permanently disabled due to a critical security vulnerability that allows extraction of AWS credentials.",
-        "details": "This tool allowed arbitrary Python code execution in the Lambda environment with full access to environment variables containing AWS credentials, secrets, and database connection information.",
-        "action_required": "If you need code execution capabilities, please contact your administrator or security team.",
-        "reference": "See /security/code-execution-vulnerability/vulnerability-analysis.md for details"
+        "error": "Tool Disabled",
+        "message": "The exec_code tool has been permanently disabled.",
+        "details": "Diabled.",
+        "action_required": "Contact your administrator or security team.",
+        "reference": "Disabled.",
     }
 
     # Original code below is preserved but never reached

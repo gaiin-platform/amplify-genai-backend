@@ -106,7 +106,7 @@ def parse_multiline_edit_operations(
         return []
 
 
-@register_tool(tags=["structured_editing"])
+# @register_tool(tags=["structured_editing"])
 def edit_content(action_context, instructions: str, content: str) -> str:
     line_edits, reasoning = propose_multiline_edits(
         action_context, instructions, content

@@ -7,7 +7,7 @@ from agent.tools.prompt_tools import prompt2
 from pycommon.logger import getLogger
 logger = getLogger("tool_ideation")
 
-@register_tool(tags=["ideation"])
+# @register_tool(tags=["ideation"])
 def critique_and_improve_content(action_context: ActionContext, content: str):
     generate_response = action_context.get("llm")
     generator_instructions = f"Critique this content and think of concrete steps to dramatically improve it:\n\n{content}"
@@ -27,7 +27,7 @@ def critique_and_improve_content(action_context: ActionContext, content: str):
     return updated_content
 
 
-@register_tool(tags=["ideation"])
+# @register_tool(tags=["ideation"])
 def ideate(
     action_context: ActionContext,
     generator_instructions: str,
@@ -96,7 +96,7 @@ def ideate(
     return best_of_breed
 
 
-@register_tool(tags=["ideation"])
+# @register_tool(tags=["ideation"])
 @prompt2(
     """
 Create a taxonomy for the provide information as an ASCII tree:

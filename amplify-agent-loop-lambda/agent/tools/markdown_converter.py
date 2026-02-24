@@ -9,7 +9,7 @@ import shutil
 from agent.components.tool import register_tool
 
 
-@register_tool(tags=["file_handling", "markdown"])
+# @register_tool(tags=["file_handling", "markdown"])
 def convert_to_markdown(
     file_path: str,
     output_path: Optional[str] = None,
@@ -202,7 +202,7 @@ def convert_to_markdown(
         return {"success": False, "error": f"Error during conversion: {str(e)}"}
 
 
-@register_tool(tags=["file_handling", "markdown"])
+# @register_tool(tags=["file_handling", "markdown"])
 def batch_convert_to_markdown(
     file_paths: List[str],
     output_dir: str,
@@ -358,7 +358,7 @@ def _is_image_file(filename):
     return ext in image_extensions
 
 
-@register_tool(tags=["file_handling", "markdown"])
+# @register_tool(tags=["file_handling", "markdown"])
 def convert_url_to_markdown(
     url: str,
     output_path: Optional[str] = None,

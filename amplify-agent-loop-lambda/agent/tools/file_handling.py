@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Union, Any
 from agent.components.tool import register_tool
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def get_current_directory(action_context):
     """
     Returns the current working directory for the agent.
@@ -32,7 +32,7 @@ def get_current_directory(action_context):
     return wd
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def get_writeable_directory(action_context):
     """
     Returns a directory where the agent has write permissions.
@@ -56,7 +56,7 @@ def get_writeable_directory(action_context):
     return wd
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def list_files_in_directory(directory: str):
     """
     Lists all files and directories in the specified directory.
@@ -83,7 +83,7 @@ def list_files_in_directory(directory: str):
 # --- New file handling utilities ---
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def write_file_from_string(file_path: str, content: str, mode: str = "w"):
     """
     Writes string content to a file.
@@ -110,7 +110,7 @@ def write_file_from_string(file_path: str, content: str, mode: str = "w"):
     return f"Content written to {file_path}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def read_file(file_path: str):
     """
     Reads the entire content of a file as a string.
@@ -135,7 +135,7 @@ def read_file(file_path: str):
         return f.read()
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def read_file_partial(file_path: str, length: int, start: int = 0):
     """
     Reads a portion of a file from a starting position.
@@ -163,7 +163,7 @@ def read_file_partial(file_path: str, length: int, start: int = 0):
         return f.read(length)
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def search_files_recursive(search_root: str, pattern: str, use_regex: bool = False):
     """
     Searches for a string or regex pattern in all files under a directory recursively.
@@ -202,7 +202,7 @@ def search_files_recursive(search_root: str, pattern: str, use_regex: bool = Fal
     return matches
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def get_directory_structure(path: str):
     """
     Builds a hierarchical representation of the directory structure.
@@ -266,7 +266,7 @@ def get_directory_structure(path: str):
 # --- Additional File Handling Tools ---
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def copy_file(source_path: str, destination_path: str, overwrite: bool = False):
     """
     Copies a file from source to destination with smart path handling.
@@ -319,7 +319,7 @@ def copy_file(source_path: str, destination_path: str, overwrite: bool = False):
         return f"Error copying file: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def move_file(source_path: str, destination_path: str, overwrite: bool = False):
     """
     Moves (relocates) a file from source to destination.
@@ -373,7 +373,7 @@ def move_file(source_path: str, destination_path: str, overwrite: bool = False):
         return f"Error moving file: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def rename_file(file_path: str, new_name: str, overwrite: bool = False):
     """
     Renames a file, keeping it in the same directory.
@@ -424,7 +424,7 @@ def rename_file(file_path: str, new_name: str, overwrite: bool = False):
         return f"Error renaming file: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def delete_file(file_path: str, force: bool = False):
     """
     Deletes a file from the filesystem.
@@ -472,7 +472,7 @@ def delete_file(file_path: str, force: bool = False):
         return f"Error deleting file: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def zip_files(
     output_zip_path: str, file_mapping: Dict[str, str] = None, directory: str = None
 ):
@@ -558,7 +558,7 @@ def zip_files(
         return f"Error creating zip file: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def unzip_files(
     zip_path: str, extract_dir: str = None, extract_pattern: Optional[List[str]] = None
 ):
@@ -652,7 +652,7 @@ def unzip_files(
         return f"Error extracting files: {str(e)}"
 
 
-@register_tool(tags=["file_handling"])
+# @register_tool(tags=["file_handling"])
 def search_files(
     directory: str,
     name_pattern: Optional[str] = None,
