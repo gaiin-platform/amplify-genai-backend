@@ -8,6 +8,7 @@ jsonschema>=4.24.0
 boto3==1.38.32
 python-jose>=3.5.0
 Pillow==11.3.0
+python-pptx==1.0.2
 python-dotenv>=1.1.0
 pyyaml
 croniter==6.0.0

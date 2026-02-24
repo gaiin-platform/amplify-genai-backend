@@ -16,6 +16,7 @@ import agent.tools.shell
 import agent.tools.structured_editing
 import agent.tools.markdown_converter
 import agent.tools.database_tool
+import agent.tools.powerpoint_tools
 
 from agent.agents import actions_agent, workflow_agent
 from agent.capabilities.workflow_model import Workflow
