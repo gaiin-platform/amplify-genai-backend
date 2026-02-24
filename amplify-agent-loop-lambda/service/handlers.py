@@ -6,16 +6,16 @@ import copy
 import boto3
 
 # Need to stay for the action registry to discover tools
-import agent.tools.file_handling
+# import agent.tools.file_handling
 import agent.tools.common_tools
-import agent.tools.writing_tools
-# import agent.tools.code_exec # Disabled due to critical security vulnerability
-import agent.tools.http_requests
-import agent.tools.prompt_tools
-import agent.tools.shell
-import agent.tools.structured_editing
-import agent.tools.markdown_converter
-import agent.tools.database_tool
+# import agent.tools.writing_tools
+# import agent.tools.code_exec
+# import agent.tools.http_requests
+# import agent.tools.prompt_tools
+# import agent.tools.shell
+# import agent.tools.structured_editing
+# import agent.tools.markdown_converter
+# import agent.tools.database_tool
 
 from agent.agents import actions_agent, workflow_agent
 from agent.capabilities.workflow_model import Workflow
