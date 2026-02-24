@@ -368,6 +368,18 @@ resources:
           - name: update_group_assistants
             path: /groups/update/assistants
             method: POST
+          - name: simulate_access
+            path: /utilities/simulate_access_to_objects
+            method: POST
+          - name: update_object_perms
+            path: /utilities/update_object_permissions
+            method: POST
+          - name: can_access_objects
+            path: /utilities/can_access_objects
+            method: POST
+          - name: cognito_users_get_emails
+            path: /utilities/emails
+            method: GET
 
     ObjectAccessLambdaPolicy:
       Type: AWS::IAM::ManagedPolicy
