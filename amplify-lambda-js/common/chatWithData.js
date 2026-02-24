@@ -1,9 +1,9 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {extractProtocol, getContexts, isDocument} from "../datasource/datasources.js";
-import {getSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
-import {addContextMessage} from "./chat/controllers/common.js";
+import { extractProtocol, getContexts, isDocument } from "../datasource/datasources.js";
+import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
+import { addContextMessage } from "./chat/controllers/common.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import {defaultSource} from "./sources.js";
 import {getLogger} from "./logging.js";
@@ -26,19 +26,19 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
     const messagesToKeep = [];
 
     // Process messages in reverse order (keeping most recent)
-    for(let i = messages.length - 1; i >= 0; i--){
+    for (let i = messages.length - 1; i >= 0; i--) {
         const currCount = countChatTokens([messages[i]]);
         const remaining = tokenLimit - tokenCount;
 
-        if(currCount <= remaining){
+        if (currCount <= remaining) {
             messagesToKeep.push(messages[i]);
             tokenCount += currCount;
-        } else if(i === messages.length - 1 && remaining > 100){
+        } else if (i === messages.length - 1 && remaining > 100) {
             // Keep at least part of the most recent message
             const ratio = Math.min(0.9, remaining / currCount);
             const splitIndex = Math.floor(messages[i].content.length * ratio);
             messagesToKeep.push({
-                ...messages[i], 
+                ...messages[i],
                 content: messages[i].content.slice(-splitIndex)
             });
             break;
@@ -58,34 +58,34 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
  * - Direct native provider integration (no Python subprocess)
  */
 export const chatWithDataStateless = async (params, model, chatRequestOrig, dataSources, responseStream) => {
-    if(!chatRequestOrig.messages){
+    if (!chatRequestOrig.messages) {
         throw new Error("Chat request must have messages.");
     }
 
     const account = params.account;
     const options = params.options || {};
     const srcPrefix = options.source || defaultSource;
-    
-    
+
+
     // 🚀 PERFORMANCE BREAKTHROUGH: Use pre-resolved data sources directly - NO duplicate calls!
     const tokenCounter = createTokenCounter();
-    
+
     // If we're routed here, router should ALWAYS provide pre-resolved sources
     if (!params.preResolvedDataSourcesByUse) {
         logger.error("❌ CRITICAL: chatWithDataStateless called without pre-resolved data sources - this should never happen!");
         throw new Error("Pre-resolved data sources required but not provided");
     }
-    
+
     logger.debug("✅ Using pre-resolved data sources from router (ZERO duplicate calls)");
     const dataSourcesByUse = params.preResolvedDataSourcesByUse;
 
     logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
-    
+
 
     // Extract categorized data sources
     const categorizedDataSources = dataSourcesByUse.dataSources || [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
-    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
+    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ?
         (dataSourcesByUse.conversationDataSources || []) : [];
 
 
@@ -97,10 +97,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ✅ STEP 1: Process RAG first (sequential, not parallel)
     let ragResults = { messages: [], sources: [] };
-    
+
     if (ragDataSources.length > 0) {
         logger.info(`🔍 RAG Query: Starting with ${ragDataSources.length} data sources`);
-        
+
         // Send RAG status
         const ragStatus = newStatus({
             inProgress: true,
@@ -112,10 +112,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             sendStatusEventToStream(responseStream, ragStatus);
             forceFlush(responseStream);
         }
-        
+
         // Perform RAG query with error handling
         logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
-        
+
         try {
             ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
             logger.debug(`✅ RAG Query completed:`, {
@@ -135,14 +135,14 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }
             ragResults = { messages: [], sources: [] }; // Empty result on failure
         }
-        
+
         // ✅ IMMEDIATELY send RAG sources following original pattern
         if (responseStream && !responseStream.destroyed) {
             ragStatus.inProgress = false;
-            ragStatus.message = ragResults.sources.length > 0 ? 
+            ragStatus.message = ragResults.sources.length > 0 ?
                 "Found relevant information" : "No relevant information found";
             sendStatusEventToStream(responseStream, ragStatus);
-            
+
             if (ragResults.sources.length > 0) {
                 sendStateEventToStream(responseStream, {
                     sources: {
@@ -172,7 +172,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
 
     // Build safe messages and insert RAG context
-    const safeMessages = fittedMessages.map(m => ({role: m.role, content: m.content}));
+    const safeMessages = fittedMessages.map(m => ({ role: m.role, content: m.content }));
     const chatRequest = {
         ...chatRequestOrig,
         messages: [
@@ -189,7 +189,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
     let contexts = [];
-    if(!params.options.ragOnly && (categorizedDataSources.length > 0 || conversationDataSources.length > 0)) {
+    if (!params.options.ragOnly && (categorizedDataSources.length > 0 || conversationDataSources.length > 0)) {
         const contextResolverEnv = {
             tokenCounter: tokenCounter.countTokens,
             params,
@@ -204,7 +204,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             message: `Processing: ${ds.name}...`,
             icon: "aperture",
         }));
-        
+
         if (responseStream && !responseStream.destroyed) {
             statuses.forEach(status => {
                 sendStatusEventToStream(responseStream, status);
@@ -220,32 +220,32 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, options);
                 if (cached && Array.isArray(cached) && cached.length > 0) {
                     logger.debug(`Using cached contexts for datasource ${ds.id}`);
-                    return cached.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
+                    return cached.map(r => ({ ...r, type: "documentContext", dataSourceId: ds.id }));
                 }
-                
+
                 // Not cached, fetch and cache
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options);
                 // Only cache successful results, not null/empty
                 if (results && Array.isArray(results) && results.length > 0) {
                     CacheManager.setCachedContexts(account.user, ds, maxTokens, options, results);
                 }
-                return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
+                return (results || []).map(r => ({ ...r, type: "documentContext", dataSourceId: ds.id }));
             }),
             ...conversationDataSources.map(async ds => {
                 // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
                 // depends on the user's current message! Each query needs fresh extraction.
                 // Only the raw document content should be cached (inside getContent).
-                
+
                 // Always fetch fresh - extraction depends on current user message
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
-                return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
+                return (results || []).map(r => ({ ...r, type: "documentCacheContext", dataSourceId: ds.id }));
             })
         ]);
 
         contexts = contextResults
             .flat()
             .filter(context => context !== null)
-            .map(context => ({...context, id: srcPrefix + "#" + context.id}));
+            .map(context => ({ ...context, id: srcPrefix + "#" + context.id }));
 
         // Clear all statuses
         if (responseStream && !responseStream.destroyed) {
@@ -277,7 +277,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                             contentKey: dataSource.metadata?.userDataSourceId
                         }];
                     }
-                    
+
                     // Handle cases where content is missing (fallback)
                     if (!ctx.content) {
                         return [{
@@ -289,7 +289,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                             contentKey: dataSource.metadata?.userDataSourceId
                         }];
                     }
-                    
+
                     if (ctx.type === "documentCacheContext") {
                         // Check if this context has extracted content groups (from combineNeighboringLocations)
                         if (ctx.content && Array.isArray(ctx.content)) {
@@ -298,7 +298,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                                 logger.warn("🛡️ SAFEGUARD: Limiting to top 10 content groups to prevent UI overload");
                                 ctx.content = ctx.content.slice(0, 10);
                             }
-                            
+
                             // Return list of sources from the combined neighboring locations (original pattern)
                             return ctx.content.map(i => {
                                 return {
@@ -328,8 +328,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                     const sourceType = (extractProtocol(dataSource.id) || "data://").split("://")[0];
                     return [{
                         type: sourceType,
-                        key: dataSource.id, 
-                        name: dataSource.name || dataSource.id, 
+                        key: dataSource.id,
+                        name: dataSource.name || dataSource.id,
                         locations: ctx.locations || []
                     }];
                 } else {
@@ -345,13 +345,13 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
                 sources.forEach(source => {
                     const categoryKey = source.type === "documentCacheContext" ? "documentCacheContext" : "documentContext";
-                    
+
                     if (source.type === "documentCacheContext") {
                         hasDocumentCache = true;
                     } else {
                         hasAttachedDocuments = true;
                     }
-                    
+
                     if (!contextSources[categoryKey]) {
                         contextSources[categoryKey] = { sources: [] };
                     }
@@ -370,7 +370,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ✅ Final message construction with all contexts
     const contextMessages = contexts.map(ctx => addContextMessage(ctx, tokenCounter.countTokens));
-    
+
     // 🔍 DEBUG: Log context being passed to LLM
     if (contextMessages.length > 0) {
         logger.debug("🔍 CONTEXT PASSED TO LLM:", {
@@ -379,13 +379,13 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             contextPreview: contextMessages.map(msg => ({
                 role: msg.role,
                 contentLength: typeof msg.content === 'string' ? msg.content.length : 'not-string',
-                contentPreview: typeof msg.content === 'string' ? 
-                    msg.content.substring(0, 100) + "..." : 
+                contentPreview: typeof msg.content === 'string' ?
+                    msg.content.substring(0, 100) + "..." :
                     `[${typeof msg.content}] ${JSON.stringify(msg.content).substring(0, 100)}...`
             }))
         });
     }
-    
+
     const rawMessages = [
         ...chatRequest.messages.slice(0, -1),  // Includes original messages + RAG context
         ...contextMessages,                    // Add document contexts
@@ -397,7 +397,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         .filter(msg => msg && msg.role && msg.content !== undefined) // Remove undefined messages
         .map(msg => ({
             role: msg.role,
-            content: typeof msg.content === 'string' ? 
+            content: typeof msg.content === 'string' ?
                 msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() : // Remove Location: {...}
                 msg.content
         }))

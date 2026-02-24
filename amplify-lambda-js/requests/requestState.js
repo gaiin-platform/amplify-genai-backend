@@ -72,6 +72,9 @@ export const shouldKill = async (user, requestId) => {
 }
 
 export const createRequestState = async (user, requestId) => {
+    if(process.env.LOCAL_DEVELOPMENT) {
+        return true; // In local development, we don't want to create a request state entry in the database.
+    }
     return await updateKillswitch(user, requestId, false);
 }
 

@@ -54,9 +54,11 @@ logger = getLogger("models")
                     "outputTokenLimit": 4096, 
                     "supportsImages": true,
                     "supportsReasoning": false,
+                    "supportsImageGeneration": 
                     "provider": "OpenAI",
                     "supportsSystemPrompts": true,
                     "systemPrompt": "Additional Prompt",
+                    "supportsVideo": false,
                 },
             ],
             "default": <Model dict>,
@@ -108,6 +110,7 @@ logger = getLogger("models")
                                 "supportsReasoning": {
                                     "type": "boolean",
                                     "description": "Whether the model supports reasoning capabilities",
+                                    
                                 },
                                 "provider": {
                                     "type": "string",
@@ -194,7 +197,7 @@ def get_user_available_models(event, context, current_user, name, data):
         )
     ]
     
-    # logger.debug("Available user models:", available_models)
+    logger.debug("Available user models:", available_models)
 
     default_results = get_admin_default_models()
     # setting as None if not found
@@ -336,6 +339,11 @@ def extract_and_update_default_models():
 
 
 def extract_data(model_id, model_data):
+    # Manual override for Gemini 3 Pro video support
+    supports_video = model_data.get("supportsVideo", False)
+    if model_id == "gemini-3-pro-preview":
+        supports_video = True
+    
     return {
         "id": model_id,
         "name": model_data["name"],
@@ -343,6 +351,7 @@ def extract_data(model_id, model_data):
         "inputContextWindow": model_data.get("inputContextWindow", -1),
         "outputTokenLimit": model_data.get("outputTokenLimit", -1),
         "supportsImages": model_data.get("supportsImages", False),
+        "supportsVideo": supports_video,
         "supportsReasoning": model_data.get("supportsReasoning", False),
         "provider": model_data.get("provider", ""),
         "supportsSystemPrompts": model_data.get("supportsSystemPrompts", False),

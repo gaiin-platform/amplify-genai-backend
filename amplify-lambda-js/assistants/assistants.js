@@ -1,15 +1,15 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {newStatus} from "../common/status.js";
-import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
-import {csvAssistant} from "./csv.js";
-import {getLogger} from "../common/logging.js";
+import { newStatus } from "../common/status.js";
+import { sendStateEventToStream, sendStatusEventToStream, forceFlush } from "../common/streams.js";
+import { csvAssistant } from "./csv.js";
+import { getLogger } from "../common/logging.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import { getTokenCount } from "../datasource/datasources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
-import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import { fillInAssistant, getUserDefinedAssistant } from "./userDefinedAssistants.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
@@ -38,14 +38,14 @@ const defaultAssistant = {
             dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50))
         });
 
-                        // already ensures model has been mapped to our backend version in router
+        // already ensures model has been mapped to our backend version in router
         const model = (body.options && body.options.model) ? body.options.model : params.model;
 
         logger.debug("Using model: ", model);
 
         const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
         // ✅ Use token counting
-        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
+        const requiredTokens = [...dataSources, ...(body.imageSources || []), ...(body.videoSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
         const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
@@ -53,7 +53,7 @@ const defaultAssistant = {
         logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
 
         if (params.blockTerminator) {
-            body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
+            body = { ...body, options: { ...body.options, blockTerminator: params.blockTerminator } };
         }
 
         // 🚀 SMART ROUTING: Use pre-resolved data sources from router to make routing decision
@@ -64,13 +64,15 @@ const defaultAssistant = {
             (preResolvedSources.conversationDataSources && preResolvedSources.conversationDataSources.length > 0) ||
             (preResolvedSources.attachedDataSources && preResolvedSources.attachedDataSources.length > 0)
         );
-        
+
         // 🚨 CRITICAL: ALWAYS use RAG pipeline if ANY data sources exist (pre-resolved OR raw)
         // This fixes user-defined assistants that don't provide preResolvedSources
-        const needsDataProcessingDecision = hasPreResolvedData || 
+        const needsDataProcessingDecision = hasPreResolvedData ||
             (dataSources && dataSources.length > 0) ||
             (body.imageSources && body.imageSources.length > 0) ||
-            (params.body?.imageSources && params.body.imageSources.length > 0);
+            (params.body?.imageSources && params.body.imageSources.length > 0) ||
+            (body.videoSources && body.videoSources.length > 0) ||
+            (params.body?.videoSources && params.body.videoSources.length > 0);
 
         logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
@@ -82,11 +84,11 @@ const defaultAssistant = {
             route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
-        
+
         // 🚨 CRITICAL: User-defined assistants NEVER use mapReduce - always RAG for source visibility
         const isUserDefinedAssistant = !!body.options?.assistantId;
-        
-        if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit){
+
+        if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit) {
             logger.info("→ Using mapReduceAssistant (token limit exceeded)");
             
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
@@ -115,11 +117,16 @@ const defaultAssistant = {
                 // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
                 const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
                 return chatWithDataStateless(enhancedParams, model, bodyWithImages, dataSources, responseStream);
+                } : params;
+
+                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
+                const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
+                return chatWithDataStateless(enhancedParams, model, bodyWithMedia, dataSources, responseStream);
             } else {
                 // Direct LLM call for simple conversations
                 logger.info("→ Using direct native provider (no data sources needed)");
-                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
-                const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
+                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
+                const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
 
                 // Check if web search or MCP is enabled
                 let webSearchEnabled = shouldEnableWebSearch(body);
@@ -157,16 +164,17 @@ const defaultAssistant = {
                     {
                         account: params.account,
                         options: {
-                            ...bodyWithImages.options,  // Include all options from body (including trackConversations)
+                            ...bodyWithMedia.options,  // Include all options from body (including trackConversations)
                             model,
                             requestId: params.options?.requestId
                         }
                     },
-                    bodyWithImages.messages,
+                    bodyWithMedia.messages,
                     responseStream,
                     {
-                        max_tokens: bodyWithImages.max_tokens || 2000,
-                        imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
+                        max_tokens: bodyWithMedia.max_tokens || 2000,
+                        imageSources: bodyWithMedia.imageSources,  // ✅ FIX: Pass imageSources through options
+                        videoSources: bodyWithMedia.videoSources   // ✅ FIX: Pass videoSources through options
                     }
                 );
             }
@@ -235,11 +243,12 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         // For group assistants
         const user = account.user;
         const token = account.accessToken;
-        
+
         selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, clientSelectedAssistant, token);
         if (!selectedAssistant) {
             sendStatusEventToStream(responseStream, newStatus(
-                {   inProgress: false,
+                {
+                    inProgress: false,
                     message: "Selected Assistant Not Found",
                     icon: "assistant",
                     sticky: true
@@ -253,7 +262,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     } else if (getTools(body.messages).length > 0) {
         logger.info("Using tools");
         // Note: tools are added in fillInAssistant in order to support tool use for client selected Assistants
-    
+
         selectedAssistant = fillInAssistant(
             {
                 name: "Amplify Automation",
@@ -274,7 +283,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         logger.info("ARTIFACT MODE DETERMINED")
     }
 
-    
+
     if (selectedAssistant === null) {
         selectedAssistant = defaultAssistant;
     }
@@ -286,7 +295,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         currentAssistant: selectedAssistant.name,
         currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
     }
-    if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
+    if (selectedAssistant.disclaimer) stateInfo = { ...stateInfo, currentAssistantDisclaimer: selectedAssistant.disclaimer };
     sendStateEventToStream(responseStream, stateInfo);
 
     // Note: "Assistant is responding" status message moved to router (after smart messages)
