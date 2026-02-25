@@ -104,6 +104,17 @@ export function detectContextOverflow(error) {
         };
     }
 
+    // Pattern 2b: ValidationException without token counts (e.g., "Input is too long for requested model")
+    if (/ValidationException.*Input is too long/i.test(message)) {
+        return {
+            isOverflow: true,
+            provider: 'bedrock',
+            requested: null,
+            limit: null,
+            overflow: null
+        };
+    }
+
     // Pattern 3: "input length and 'max_tokens' exceed context limit: X + Y > Z"
     const bedrockMaxTokensMatch = message.match(/input length and.*max_tokens.*exceed.*context limit:\s*(\d+)\s*\+\s*(\d+)\s*>\s*(\d+)/i);
     if (bedrockMaxTokensMatch) {
