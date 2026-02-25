@@ -230,6 +230,7 @@ class ParameterStorePopulator:
                 shared_vars['LLM_ENDPOINTS_SECRETS_NAME'] = f"{stage}-openai-endpoints"
                 shared_vars['SECRETS_ARN_NAME'] = f"{stage}-amplify-app-secrets"
                 shared_vars['APP_ARN_NAME'] = f"{stage}-amplify-app-vars"
+                shared_vars['OAUTH_ENCRYPTION_PARAMETER'] = f"/amplify-{self.dep_name}-assistants-api/{stage}/oauth/integrations/encryption"
                 
                 # Add DEP_NAME from terminal argument
                 shared_vars['DEP_NAME'] = self.dep_name
