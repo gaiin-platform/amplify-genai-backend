@@ -195,7 +195,21 @@ export function detectContextOverflow(error) {
         };
     }
 
-    // Pattern 4: content_too_long error code
+    // Pattern 4: "Input tokens exceed the configured limit of X tokens. Your messages resulted in Y tokens"
+    const configuredLimitMatch = message.match(/configured limit of (\d+) tokens.*resulted in (\d+) tokens/i);
+    if (configuredLimitMatch) {
+        const limit = parseInt(configuredLimitMatch[1]);
+        const requested = parseInt(configuredLimitMatch[2]);
+        return {
+            isOverflow: true,
+            provider: 'openai',
+            requested,
+            limit,
+            overflow: requested - limit
+        };
+    }
+
+    // Pattern 5: content_too_long or context_length_exceeded error code (generic fallback)
     if (/content_too_long|context_length_exceeded/i.test(message)) {
         const numbersMatch = message.match(/(\d{4,})/g);
         let requested = null, limit = null;
