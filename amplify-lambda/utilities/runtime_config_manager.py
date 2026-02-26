@@ -121,20 +121,19 @@ def extend_api_gateway_timeout(
                 'function_name': function_name
             }
 
-        # TESTING: Comment out the skip logic to force updates every time
         # Check if already at target timeout
-        # if current_timeout >= target_timeout_ms:
-        #     logger.info(
-        #         f"Timeout already at {current_timeout}ms for {function_name} "
-        #         f"({method} {resource_path}), target is {target_timeout_ms}ms"
-        #     )
-        #     _api_gateway_cache[cache_key] = True
-        #     return {
-        #         'status': 'ok',
-        #         'message': f'Already at {current_timeout}ms (target: {target_timeout_ms}ms)',
-        #         'function_name': function_name,
-        #         'current_timeout_ms': current_timeout
-        #     }
+        if current_timeout >= target_timeout_ms:
+            logger.info(
+                f"Timeout already at {current_timeout}ms for {function_name} "
+                f"({method} {resource_path}), target is {target_timeout_ms}ms"
+            )
+            _api_gateway_cache[cache_key] = True
+            return {
+                'status': 'ok',
+                'message': f'Already at {current_timeout}ms (target: {target_timeout_ms}ms)',
+                'function_name': function_name,
+                'current_timeout_ms': current_timeout
+            }
 
         # Extend timeout to target (TESTING: Always update, even if already set)
         apigateway.update_integration(
@@ -275,7 +274,7 @@ def handle_cloudformation_request(event: Dict, context) -> Dict:
     failed = [r for r in results if r['status'] == 'error']
 
     if failed:
-        logger.error(f"Failed to configure {len(failed)} functions")
+        logger.error(f"Failed to configure {len(failed)} functions: {failed}")
         return send_cfn_response(event, context, 'FAILED', {
             'Error': f'Failed to configure {len(failed)} functions',
             'Results': results

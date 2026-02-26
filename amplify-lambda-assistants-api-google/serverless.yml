@@ -50,7 +50,7 @@ provider:
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     INTEGRATION_STAGE: ${self:provider.stage}
     OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
-    OAUTH_ENCRYPTION_PARAMETER: /amplify-${self:custom.depName}-assistants-api/${sls:stage}/oauth/integrations/encryption #must start with /
+    OAUTH_ENCRYPTION_PARAMETER: ${ssm:/amplify/${sls:stage}/OAUTH_ENCRYPTION_PARAMETER}
     OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}

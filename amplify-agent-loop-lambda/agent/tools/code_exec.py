@@ -7,10 +7,11 @@ from agent.core import ActionContext
 import ast
 import importlib
 from pycommon.logger import getLogger
+
 logger = getLogger("tool_code_exec")
 
 
-@register_tool(tags=["code_exec"])
+# @register_tool(tags=["code_exec"])
 def get_installed_python_modules():
     """
     Returns a list of installed Python packages with versions.
@@ -125,7 +126,9 @@ def prepare_exec_globals(code_string, context_dict):
 # @register_tool(tags=["code_exec"])
 def exec_code(action_context: ActionContext, code: str):
     """
-    Executes the provided Python code and returns the value of the 'result' variable if defined.
+    DEPRECATED AND DISABLED: This function has been permanently disabled.
+
+    This tool previously executed arbitrary Python code and returned the value of the 'result' variable.
     IMPORTANT!!! Make sure the code arg is a valid JSON attribute with all line breaks, quotes, etc. escaped like this:
 
     "args": {
@@ -153,6 +156,25 @@ def exec_code(action_context: ActionContext, code: str):
     Returns:
         dict: A dictionary containing the status ('result' or 'error') and the 'result' or 'error_message'.
     """
+    # SECURITY: This function is disabled and should never execute
+    logger.error(
+        "SECURITY ALERT: Attempted use of disabled exec_code tool",
+        extra={
+            "user": action_context.properties.get("current_user"),
+            "session_id": action_context.properties.get("session_id"),
+            "request_id": action_context.properties.get("request_id"),
+        },
+    )
+
+    return {
+        "error": "Tool Disabled",
+        "message": "The exec_code tool has been permanently disabled.",
+        "details": "Diabled.",
+        "action_required": "Contact your administrator or security team.",
+        "reference": "Disabled.",
+    }
+
+    # Original code below is preserved but never reached
     context_dict = action_context.properties.get("code_exec_context", {})
 
     result_mode = "result_only"

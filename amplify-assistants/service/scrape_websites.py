@@ -10,6 +10,7 @@ import requests
 import xmltodict
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pycommon.const import APIAccessType
 from pycommon.api.files import upload_file, delete_file
 from pycommon.encoders import SmartDecimalEncoder
@@ -191,6 +192,37 @@ def sanitize_and_validate_url(url):
     except Exception as e:
         return False, None, f"URL parsing error: {str(e)}"
 
+def _process_single_url(url_to_scrape, access_token, is_sitemap_url=None):
+    """Helper function to fetch, parse, and save a single URL. Returns data source or None if failed."""
+    try:
+        logger.debug("Fetching and parsing URL: %s", url_to_scrape)
+        content = fetch_and_parse_url(url_to_scrape)
+        if content:
+            logger.debug("Successfully parsed content from %s", url_to_scrape)
+
+            current_data = {
+                "url": url_to_scrape,
+                "url_name": extract_name_from_url(url_to_scrape),
+                "scrapedAt": datetime.now().isoformat(),
+                "content": content,
+                "fromSitemap": is_sitemap_url
+            }
+
+            # Save each URL as its own data source
+            try:
+                data_source_data = save_scraped_content(current_data, access_token)
+                logger.info("Saved data source for %s with ID: %s", url_to_scrape, data_source_data.get('id'))
+                return data_source_data
+            except Exception as save_error:
+                logger.error("Error saving scraped content for %s: %s", url_to_scrape, save_error)
+                return None
+        else:
+            logger.warning("Failed to parse content from %s", url_to_scrape)
+            return None
+    except Exception as e:
+        logger.error("Error processing URL %s: %s", url_to_scrape, e)
+        return None
+
 def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, exclusions=None):
     """Helper function to scrape a website and return the data source key"""
     try:
@@ -198,7 +230,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
         if max_pages is not None:
             max_pages = int(max_pages)
         logger.info("Attempting to scrape %s: %s", 'sitemap' if is_sitemap else 'website', url)
-        
+
         # Validate and sanitize the URL first
         is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
         if not is_valid:
@@ -207,7 +239,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
                 "message": f"Invalid URL: {error_msg}",
                 "error": error_msg,
             }
-        
+
         # Use the sanitized URL for scraping
         url = sanitized_url
         logger.debug("Using sanitized URL: %s", url)
@@ -227,34 +259,27 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
             urls_to_scrape = [url]
             logger.debug("Set up to scrape single URL: %s", url)
 
-        # Scrape content from URLs - each URL gets its own data source
+        # PARALLEL: Scrape content from URLs concurrently - each URL gets its own data source
         scraped_ds = []
-        for url_to_scrape in urls_to_scrape:
-            # Note: URLs from sitemaps are already validated during extraction
-            logger.debug("Fetching and parsing URL: %s", url_to_scrape)
-            content = fetch_and_parse_url(url_to_scrape)
-            if content:
-                logger.debug("Successfully parsed content from %s", url_to_scrape)
-                
-                current_data = {
-                    "url": url_to_scrape, 
-                    "url_name": extract_name_from_url(url_to_scrape),
-                    "scrapedAt": datetime.now().isoformat(),
-                    "content": content,
-                    "fromSitemap": url if is_sitemap else None
-                }
+        max_workers = min(15, len(urls_to_scrape))  # Limit to 15 concurrent workers
+        logger.info("Processing %s URLs with %s concurrent workers", len(urls_to_scrape), max_workers)
 
-                # Save each URL as its own data source
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all URL processing tasks
+            future_to_url = {
+                executor.submit(_process_single_url, url_to_scrape, access_token, url if is_sitemap else None): url_to_scrape
+                for url_to_scrape in urls_to_scrape
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_url):
+                url_to_scrape = future_to_url[future]
                 try:
-                    data_source_data = save_scraped_content(current_data, access_token)
-                    scraped_ds.append(data_source_data)
-                    logger.info("Saved data source for %s with ID: %s", url_to_scrape, data_source_data.get('id'))
-                except Exception as save_error:
-                    logger.error("Error saving scraped content for %s: %s", url_to_scrape, save_error)
-                    # Continue with other URLs even if one fails
-                    continue
-            else:
-                logger.warning("Failed to parse content from %s", url_to_scrape)
+                    data_source_data = future.result()
+                    if data_source_data:
+                        scraped_ds.append(data_source_data)
+                except Exception as exc:
+                    logger.error("URL %s generated an exception: %s", url_to_scrape, exc)
 
         # Check if any URLs were successfully scraped
         if not scraped_ds:
@@ -747,40 +772,39 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 exclusions = website_url_entry.get("exclusions")
                 urls = extract_urls_from_sitemap(url, max_pages, exclusions)
                 logger.debug("  Extracted %s URLs from sitemap", len(urls))
-                for sub_url in urls:
-                    # Note: URLs from sitemaps are already validated during extraction
-                    content = fetch_and_parse_url(sub_url)
-                    if content:
-                        # Create separate data object for each sub-URL
-                        current_data = {
-                            "url": sub_url, 
-                            "url_name": extract_name_from_url(sub_url),
-                            "scrapedAt": datetime.now().isoformat(),
-                            "content": content,
-                            "fromSitemap": url
-                        }
-                        
-                        # Save each sub-URL as its own data source
+
+                # PARALLEL: Process sitemap URLs concurrently
+                max_sitemap_workers = min(25, len(urls))
+                logger.info("  Processing %s sitemap URLs with %s concurrent workers", len(urls), max_sitemap_workers)
+
+                with ThreadPoolExecutor(max_workers=max_sitemap_workers) as executor:
+                    # Submit all sitemap URL processing tasks
+                    future_to_sub_url = {
+                        executor.submit(_process_single_url, sub_url, access_token, url): sub_url
+                        for sub_url in urls
+                    }
+
+                    # Collect results as they complete
+                    for future in as_completed(future_to_sub_url):
+                        sub_url = future_to_sub_url[future]
                         try:
-                            data_source_data = save_scraped_content(current_data, access_token)
-                            # Add metadata updates like core.py does
-                            scan_frequency = website_url_entry.get("scanFrequency")
-                            url_max_pages = website_url_entry.get("maxPages")
-                            metadata_updates = {
-                                "scanFrequency": scan_frequency, 
-                                "contentKey": data_source_data['id']
-                            }
-                            if url_max_pages is not None:
-                                metadata_updates["maxPages"] = url_max_pages
-                            data_source_data.get("metadata", {}).update(metadata_updates)
-                            scraped_ds.append(data_source_data)
-                            url_scraped_ds.append(data_source_data)
-                            logger.debug("  Saved data source for: %s", sub_url)
-                        except Exception as save_error:
-                            logger.error("Error saving scraped content for %s: %s", sub_url, save_error)
-                            continue
-                    else:
-                        logger.warning("  Failed to fetch content from: %s", sub_url)
+                            data_source_data = future.result()
+                            if data_source_data:
+                                # Add metadata updates like core.py does
+                                scan_frequency = website_url_entry.get("scanFrequency")
+                                url_max_pages = website_url_entry.get("maxPages")
+                                metadata_updates = {
+                                    "scanFrequency": scan_frequency,
+                                    "contentKey": data_source_data['id']
+                                }
+                                if url_max_pages is not None:
+                                    metadata_updates["maxPages"] = url_max_pages
+                                data_source_data.get("metadata", {}).update(metadata_updates)
+                                scraped_ds.append(data_source_data)
+                                url_scraped_ds.append(data_source_data)
+                                logger.debug("  Saved data source for: %s", sub_url)
+                        except Exception as exc:
+                            logger.error("Sitemap URL %s generated an exception: %s", sub_url, exc)
             else:
                 # For single URLs, create one data source
                 content = fetch_and_parse_url(url)

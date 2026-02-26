@@ -10,7 +10,7 @@ import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
 import { getModelByType, ModelTypes, isOpenAIModel} from "../common/params.js";
-import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
+import { promptUnifiedLLMForData, callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 
 const logger = getLogger("datasources");
 
@@ -927,7 +927,8 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
             account: resolutionEnv.params.account,
             options: {
                 model,
-                requestId: resolutionEnv.params.requestId
+                requestId: resolutionEnv.params.requestId,
+                skipHistoricalContext: true  // RAG extraction doesn't need conversation history
             }
         },
         updatedBody.messages,
@@ -1306,5 +1307,182 @@ Be thorough and precise so someone could understand the image content without se
     }
 
     return descriptions;
+}
+
+
+
+
+
+
+/**
+ * Group context messages into buckets that fit within model's context window.
+ * Each bucket can contain parts of multiple documents - we pack efficiently.
+ *
+ * @param {Array} contextMessages - All context messages to group
+ * @param {Object} model - Model with inputContextWindow
+ * @param {number} reservedTokens - Tokens to reserve for system prompt + question + response
+ * @returns {Array<Array>} Array of context message groups (buckets)
+ */
+export function groupContextsIntoBuckets(contextMessages, model, reservedTokens = 6000) {
+    // Use cheapest model's context window, or fall back to 80% of user's model
+    const contextWindow = model.inputContextWindow || 100000;
+    const maxBucketTokens = Math.floor(contextWindow * 0.80) - reservedTokens;
+
+    logger.debug(`Bucket config: max ${maxBucketTokens} tokens per bucket`);
+
+    const buckets = [];
+    let currentBucket = [];
+    let currentBucketTokens = 0;
+
+    for (const msg of contextMessages) {
+        const msgTokens = Math.ceil((msg.content?.length || 0) / 4); // Rough estimate: 4 chars per token
+
+        // If this single message exceeds bucket size, it gets its own bucket
+        if (msgTokens > maxBucketTokens) {
+            // Finish current bucket if it has content
+            if (currentBucket.length > 0) {
+                buckets.push(currentBucket);
+                currentBucket = [];
+                currentBucketTokens = 0;
+            }
+            // This large message gets its own bucket (may still overflow, but we'll handle that)
+            buckets.push([msg]);
+            logger.warn(`Single context (${msgTokens} tokens) exceeds bucket limit`);
+            continue;
+        }
+
+        // If adding this message would exceed bucket, start new bucket
+        if (currentBucketTokens + msgTokens > maxBucketTokens) {
+            buckets.push(currentBucket);
+            currentBucket = [msg];
+            currentBucketTokens = msgTokens;
+        } else {
+            // Add to current bucket
+            currentBucket.push(msg);
+            currentBucketTokens += msgTokens;
+        }
+    }
+
+    // Don't forget the last bucket
+    if (currentBucket.length > 0) {
+        buckets.push(currentBucket);
+    }
+
+    return buckets;
+}
+
+/**
+ * Process contexts separately when they're too large to merge safely.
+ * Groups contexts into buckets that fit within context window, then processes
+ * each bucket IN PARALLEL using the CHEAPEST model.
+ *
+ * @param {Object} params - Request params (account, options, model)
+ * @param {Array} contextMessages - Document context messages
+ * @param {string} userQuestion - The user's current question
+ * @param {Object} model - Model configuration (user's model)
+ * @returns {Object} Assistant message with combined context summary
+ */
+export async function processContextsSeparately(params, contextMessages, userQuestion, model) {
+    // Use CHEAPEST model for internal calls (cost optimization)
+    const cheapestModel = params.options?.cheapestModel || model;
+
+    // Calculate total tokens for logging
+    const totalTokens = contextMessages.reduce((sum, msg) =>
+        sum + Math.ceil((msg.content?.length || 0) / 4), 0);
+
+    logger.debug(`Processing ${contextMessages.length} contexts (~${totalTokens} tokens) using ${cheapestModel.id || 'default'}`);
+
+    // Group contexts into buckets that fit within the cheapest model's context window
+    const buckets = groupContextsIntoBuckets(contextMessages, cheapestModel);
+
+    logger.debug(`Organized ${contextMessages.length} contexts into ${buckets.length} bucket(s)`);
+
+    // Process all buckets IN PARALLEL using cheapest model
+    const systemPrompt = {
+        role: 'system',
+        content: `You are analyzing document context to answer a user's question.
+Provide a comprehensive response based ONLY on the information in the provided documents.
+If the documents don't contain relevant information, say so clearly.
+Be thorough but concise.`
+    };
+
+    const bucketPromises = buckets.map(async (bucket, idx) => {
+        const bucketPrompt = [
+            systemPrompt,
+            ...bucket,
+            { role: 'user', content: userQuestion }
+        ];
+
+        // Helper function to make the LLM call
+        const makeBucketCall = async () => {
+            const response = await callUnifiedLLM(
+                { ...params, options: { ...params.options, model: cheapestModel } },
+                bucketPrompt,
+                null,  // No stream - internal call
+                { max_tokens: 4000, _isInternalCall: true, disableReasoning: true }
+            );
+
+            // Extract response content
+            let responseContent = '';
+            if (typeof response === 'string') {
+                responseContent = response;
+            } else if (response?.content) {
+                responseContent = response.content;
+            } else if (response?.message?.content) {
+                responseContent = response.message.content;
+            }
+            return responseContent;
+        };
+
+        try {
+            const responseContent = await makeBucketCall();
+            return { success: true, content: responseContent, bucketIndex: idx };
+
+        } catch (error) {
+            logger.warn(`Bucket ${idx + 1} failed: ${error.message}, retrying...`);
+
+            // Retry once
+            try {
+                const responseContent = await makeBucketCall();
+                logger.info(`Bucket ${idx + 1} retry succeeded`);
+                return { success: true, content: responseContent, bucketIndex: idx };
+
+            } catch (retryError) {
+                logger.error(`Bucket ${idx + 1} retry failed: ${retryError.message}`);
+                return { success: false, error: retryError.message, bucketIndex: idx };
+            }
+        }
+    });
+
+    // Wait for all bucket calls to complete
+    const results = await Promise.all(bucketPromises);
+
+    // Combine successful results
+    const successfulResults = results.filter(r => r.success);
+    const failedResults = results.filter(r => !r.success);
+
+    if (failedResults.length > 0) {
+        logger.warn(`${failedResults.length}/${buckets.length} bucket(s) failed during context processing`);
+    }
+
+    logger.debug(`Context processing: ${successfulResults.length}/${buckets.length} buckets succeeded`);
+
+    // Combine all responses
+    let combinedContent;
+    if (successfulResults.length === 1) {
+        combinedContent = successfulResults[0].content;
+    } else if (successfulResults.length > 1) {
+        combinedContent = successfulResults
+            .sort((a, b) => a.bucketIndex - b.bucketIndex)
+            .map((r, idx) => `[From document set ${idx + 1}]:\n${r.content}`)
+            .join('\n\n---\n\n');
+    } else {
+        combinedContent = 'Unable to process document contexts. Please try again.';
+    }
+
+    return {
+        role: 'assistant',
+        content: `-------\nDocument in current context: [Attached Document]\n\n${combinedContent}\n-------`
+    };
 }
 

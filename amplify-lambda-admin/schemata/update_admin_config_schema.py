@@ -418,6 +418,21 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'userDocumentationUrl'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "userDocumentationUrl"
+                            },
+                            "data":  {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'defaultConversationStorage'
                         "type": "object",
                         "properties": {
