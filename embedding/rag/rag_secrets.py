@@ -77,6 +77,13 @@ def get_rag_secrets_for_document(ds_key):
         if secrets_json:
             # Parse the JSON string back to dictionary
             user_details = json.loads(secrets_json)
+
+            # DEFENSIVE: Validate that parsed JSON is a dict, not a string or other type
+            if not isinstance(user_details, dict):
+                error_msg = f"Invalid RAG secrets format for {ds_key}: expected object/dict, got {type(user_details).__name__}. Value: {str(user_details)[:200]}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
             logger.debug(f"Successfully retrieved RAG secrets for document: {ds_key}")
             return {"success": True, "data": user_details}
         else:
