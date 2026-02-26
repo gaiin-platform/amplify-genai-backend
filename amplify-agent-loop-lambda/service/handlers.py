@@ -6,7 +6,7 @@ import copy
 import boto3
 
 # Need to stay for the action registry to discover tools
-import agent.tools.file_handling
+# import agent.tools.file_handling
 import agent.tools.common_tools
 import agent.tools.writing_tools
 # import agent.tools.code_exec # Disabled due to critical security vulnerability

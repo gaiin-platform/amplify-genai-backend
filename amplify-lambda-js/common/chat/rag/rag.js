@@ -153,6 +153,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
             ${search}
 
             Please explain what questions you need to look for in the FAQ.
+
+            IMPORTANT: Your response will be parsed as structured data. Do not provide conversational explanations or respond to previous messages. Focus only on generating the FAQ search questions for the task above.
             `
             }
         ];
@@ -163,7 +165,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 options: {
                     model,
                     requestId: params.requestId,
-                    disableReasoning: true
+                    disableReasoning: true,
+                    skipHistoricalContext: true  // RAG question extraction doesn't need conversation history
                 }
             },
             promptMessages,

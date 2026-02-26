@@ -12,7 +12,7 @@ import time
 from agent.components.tool import register_tool
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def execute_shell_command(
     command: str, timeout: int = 30, working_directory: str = None
 ):
@@ -111,7 +111,7 @@ def execute_shell_command(
         }
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def get_environment_info():
     """
     Returns detailed information about the system environment.
@@ -315,7 +315,7 @@ def get_time_info():
     return time_info
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def get_available_commands(shell: str = "bash"):
     """
     Returns a list of available shell commands in the current environment.
@@ -433,7 +433,7 @@ def get_available_commands(shell: str = "bash"):
         return {"error": f"Failed to get available commands: {str(e)}"}
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def safe_command_exists(command: str):
     """
     Safely checks if a command exists in the environment without executing it.
@@ -516,7 +516,7 @@ def safe_command_exists(command: str):
         return {"exists": False, "path": None, "type": "error", "error": str(e)}
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def run_command_safely(
     command: str,
     args: List[str] = None,
@@ -651,7 +651,7 @@ def run_command_safely(
         }
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def create_temporary_script(
     content: str, extension: str = ".sh", make_executable: bool = True
 ):
@@ -727,7 +727,7 @@ def create_temporary_script(
         return {"error": f"Failed to create temporary script: {str(e)}"}
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
     """
     Executes a pipeline of commands, feeding output between them.
@@ -891,7 +891,7 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
     }
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def list_processes():
     """
     Lists currently running processes on the system.
@@ -1010,7 +1010,7 @@ def list_processes():
         return {"error": f"Failed to list processes: {str(e)}"}
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
     """
     Monitors a command's output and resource usage over time.
@@ -1245,7 +1245,7 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
         }
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def find_and_replace_in_files(
     directory: str,
     find_pattern: str,
@@ -1452,7 +1452,7 @@ def find_and_replace_in_files(
     }
 
 
-@register_tool(tags=["shell"])
+# @register_tool(tags=["shell"])
 def benchmark_command(command: str, iterations: int = 3, output: bool = False):
     """
     Benchmarks a command by running it multiple times and measuring performance.

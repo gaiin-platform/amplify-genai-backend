@@ -31,18 +31,24 @@ def integration_config_trigger(event, context):
         new_data = new_image.get("data", {})
         old_data = old_image.get("data", {})
 
-        def extract_keys(data_field):
-            # Assuming data_field is stored as a DynamoDB Map attribute.
+        def extract_provider_keys(data_field):
+            """
+            Extract provider keys (microsoft, google, etc.) from the integrations data field.
+            The data field structure is: {"M": {"microsoft": {"L": [...]}, "google": {"L": [...]}}}
+            """
+            if not data_field:
+                return set()
+
+            # If it's a DynamoDB Map attribute (stream format)
             if "M" in data_field:
                 return set(data_field["M"].keys())
-            # Assume it's already a native dict.
+
+            # If it's already a native dict (shouldn't happen in streams, but fallback)
             return set(data_field.keys())
 
-        old_keys = extract_keys(old_data)
-        new_keys = extract_keys(new_data)
-        logger.debug("Old keys: %s", old_keys)
-        logger.debug("New keys: %s", new_keys)
-
+        old_keys = extract_provider_keys(old_data)
+        new_keys = extract_provider_keys(new_data)
+        logger.info(f"Provider keys - Old: {old_keys}, New: {new_keys}")
         # If the provider key was absent before and is now present, register ops.
         if PROVIDER not in old_keys and PROVIDER in new_keys:
             logger.info("Registering %s ops (provider key added)", PROVIDER)

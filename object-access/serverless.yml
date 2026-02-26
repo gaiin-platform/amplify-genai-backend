@@ -356,6 +356,31 @@ functions:
 
 resources:
   Resources:
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: update_group_assistants
+            path: /groups/update/assistants
+            method: POST
+          - name: simulate_access
+            path: /utilities/simulate_access_to_objects
+            method: POST
+          - name: update_object_perms
+            path: /utilities/update_object_permissions
+            method: POST
+          - name: can_access_objects
+            path: /utilities/can_access_objects
+            method: POST
+          - name: cognito_users_get_emails
+            path: /utilities/emails
+            method: GET
+
     ObjectAccessLambdaPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -371,19 +396,18 @@ resources:
                 - dynamodb:Query
                 - dynamodb:DeleteItem
               Resource:
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-cognito-users"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-accounts"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-lambda-${sls:stage}-accounts"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-object-access"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-api-keys"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-api-keys/index*"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-lambda-${sls:stage}-cost-calculations"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-groups"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-group-logs"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-lambda-${sls:stage}-hash-files"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-lambda-${sls:stage}-user-files"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.depName}-lambda-${sls:stage}-user-files/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers
