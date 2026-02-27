@@ -1205,6 +1205,12 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     qa_summary = response_qa_summary["data"]
                     logger.debug(f"[DIAGNOSTIC] ✅ QA summary successful for local chunk {local_chunk_index}")
 
+                    # DEFENSIVE: Check if QA summary is empty or whitespace-only
+                    if not qa_summary or not isinstance(qa_summary, str) or not qa_summary.strip():
+                        logger.warning(f"[QA_EMPTY] QA summary is empty or whitespace for chunk {local_chunk_index}, using fallback")
+                        # Use a fallback summary based on the original text
+                        qa_summary = f"Content from document chunk {local_chunk_index}: {clean_text[:500]}"
+
                     # SAFETY NET: Truncate QA summary to prevent token limit errors (defense in depth)
                     # Use conservative 6000 token limit to leave room for overhead/formatting
                     original_qa_length = len(qa_summary)
@@ -1218,6 +1224,11 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         logger.warning(f"[TOKEN_SAFETY_HARD] QA summary still too large ({len(qa_summary)} chars), applying hard character limit")
                         qa_summary = qa_summary[:21000]
                         logger.warning(f"[TOKEN_SAFETY_HARD] Hard truncated QA summary to 21000 characters for chunk {local_chunk_index}")
+
+                    # DEFENSIVE: Final check after all truncations - ensure QA summary is not empty
+                    if not qa_summary or not qa_summary.strip():
+                        logger.warning(f"[QA_EMPTY_POST_TRUNCATE] QA summary became empty after truncation for chunk {local_chunk_index}, using fallback")
+                        qa_summary = f"Content from document chunk {local_chunk_index}: {clean_text[:500]}"
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
                     # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
@@ -1312,24 +1323,35 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                 except Exception as e:
                     error_msg = f"Error processing local chunk {local_chunk_index} of child chunk {childChunk} in {src}: {str(e)}"
                     logger.error(f"[LOCAL_CHUNK_ERROR] ❌ {error_msg}")
-                    
-                    # CRITICAL: Local chunk processing failure = data loss
-                    log_critical_error(
-                        function_name="embed_chunks_local_processing",
-                        error_type="LocalChunkProcessingFailure",
-                        error_message=f"Failed to process local chunk: {str(e)}",
-                        current_user=account_data.get('user') if account_data else 'system',
-                        severity=SEVERITY_HIGH,
-                        stack_trace=traceback.format_exc(),
-                        context={
-                            "document": src,
-                            "child_chunk": childChunk,
-                            "local_chunk_index": local_chunk_index,
-                            "total_local_chunks": len(local_chunks),
-                            "error_details": str(e)
-                        }
-                    )
-                    
+
+                    # NOTE: Don't log LocalChunkProcessingFailure here if it's already been logged
+                    # as a more specific error (EmbeddingGenerationFailure, QASummaryGenerationFailure, etc.)
+                    # Only log if it's an unexpected error type
+                    error_str = str(e)
+                    is_already_logged = any(keyword in error_str for keyword in [
+                        "embedding generation failed",
+                        "QA summary generation failed",
+                        "QA embedding generation failed"
+                    ])
+
+                    if not is_already_logged:
+                        # CRITICAL: Unexpected local chunk processing failure
+                        log_critical_error(
+                            function_name="embed_chunks_local_processing",
+                            error_type="LocalChunkProcessingFailure",
+                            error_message=f"Failed to process local chunk: {str(e)}",
+                            current_user=account_data.get('user') if account_data else 'system',
+                            severity=SEVERITY_HIGH,
+                            stack_trace=traceback.format_exc(),
+                            context={
+                                "document": src,
+                                "child_chunk": childChunk,
+                                "local_chunk_index": local_chunk_index,
+                                "total_local_chunks": len(local_chunks),
+                                "error_details": str(e)
+                            }
+                        )
+
                     # Mark this child as failed
                     update_child_chunk_status(
                         trimmed_src, childChunk, "failed", error_msg
