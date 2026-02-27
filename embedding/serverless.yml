@@ -286,6 +286,17 @@ functions:
           method: post
           cors: true
 
+  bedrock_kb_download:
+    handler: bedrock-kb-download.bedrock_kb_download
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /bedrock-kb/download
+          method: post
+          cors: true
+
   tools_op:
     handler: tools_ops.api_tools_handler
     timeout: 30
@@ -419,6 +430,26 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - bedrock:Retrieve
+                - bedrock:RetrieveAndGenerate
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
+
+            - Effect: Allow
+              Action:
+                - bedrock:ListDataSources
+                - bedrock:GetDataSource
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
+
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::*/*"
 
             - Effect: Allow
               Action:

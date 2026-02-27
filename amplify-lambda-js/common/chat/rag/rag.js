@@ -115,7 +115,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
         const ragAstDataSourcesKeys = {};
         const ragDataSourceKeys = [];
         dataSources.forEach(async ds => {
-            const key = extractKey(ds.id);
+            const isBedrockKb = ds.id && ds.id.startsWith("bedrock-kb://");
+            const key = isBedrockKb ? ds.id : extractKey(ds.id);
             if (ds.groupId) {
                 // If the dataSource has a groupId, add it to the groupDataSources object
                 if (!ragGroupDataSourcesKeys[ds.groupId]) {
@@ -132,7 +133,9 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 // call the check-completion endpoint to ensure the embeddings are complete if not itll start
                 // doing it here buys us time for any missing embeddings to complete
                 // note: group data sources are always embedded and prechecked elsewhere
-                checkEmbeddingCompletion(token, [key], params.requestId);
+                if (!isBedrockKb) {
+                    checkEmbeddingCompletion(token, [key], params.requestId);
+                }
             }
             keyLookup[key] = ds;
         });
