@@ -1050,17 +1050,19 @@ def search_messages(
     current_user: str,
     search_query: str,
     top: int = 10,
+    folder_id: str = None,
     access_token: str = None,
 ) -> List[Dict]:
     """
     Searches messages for a given query string using the Microsoft Graph API's $search parameter.
-    
+
     Note: Microsoft Graph API does not support pagination (skip) with search queries.
 
     Args:
         current_user: User identifier
         search_query: A string search query (e.g., "meeting")
         top: Maximum number of messages to return (1-100)
+        folder_id: Optional folder ID to search within a specific folder
         access_token: Optional access token
 
     Returns:
@@ -1071,7 +1073,10 @@ def search_messages(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/messages"
+        if folder_id:
+            url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
+        else:
+            url = f"{GRAPH_ENDPOINT}/me/messages"
         params = {
             "$top": top, 
             "$search": f'"{search_query}"',
