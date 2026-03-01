@@ -677,3 +677,180 @@ def get_admin_default_models():
     except Exception as e:
         logger.error(f"Error retrieving default models: {str(e)}")
     return None
+
+
+# ==============================================================================
+# MODEL ALIAS MANAGEMENT ENDPOINTS
+# ==============================================================================
+
+@api_tool(
+    path="/model_aliases",
+    name="getModelAliases",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve all model alias mappings.
+
+    Model aliases provide user-friendly names (e.g., 'opus-latest', 'sonnet-latest')
+    that automatically resolve to the latest model versions.
+
+    Example response:
+    {
+        "success": true,
+        "data": {
+            "version": "1.0.0",
+            "lastUpdated": "2026-02-18",
+            "aliases": {
+                "opus-latest": {
+                    "resolves_to": "us.anthropic.claude-opus-4-6-v1:0",
+                    "description": "Latest Opus (simplified naming)",
+                    "category": "claude",
+                    "tier": "premium"
+                },
+                ...
+            }
+        }
+    }
+    """,
+)
+@validated(op="read")
+def get_model_aliases(event, context, current_user, name, data):
+    """
+    Get all model alias mappings from the model_aliases.json file.
+
+    Returns:
+        dict: Success response with alias mappings or error message
+    """
+    try:
+        import json
+        from pathlib import Path
+
+        # Path to model_aliases.json
+        current_dir = Path(__file__).parent
+        alias_file = current_dir.parent / "model_rates" / "model_aliases.json"
+
+        if not alias_file.exists():
+            logger.warning(f"Model aliases file not found at: {alias_file}")
+            return {
+                "success": False,
+                "message": "Model aliases configuration not found",
+                "data": {"aliases": {}}
+            }
+
+        # Load and return the alias mappings
+        with open(alias_file, 'r') as f:
+            alias_data = json.load(f)
+
+        logger.info(f"Retrieved {len(alias_data.get('aliases', {}))} model aliases")
+
+        return {
+            "success": True,
+            "data": alias_data
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving model aliases: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "message": f"Error retrieving model aliases: {str(e)}",
+            "data": {"aliases": {}}
+        }
+
+
+@api_tool(
+    path="/models_with_aliases",
+    name="getModelsWithAliases",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve available models enhanced with alias information.
+
+    This endpoint returns the same model list as /available_models, but each model
+    is enhanced with an 'aliases' array showing which user-friendly aliases point to it.
+
+    Example response:
+    {
+        "success": true,
+        "data": {
+            "models": [
+                {
+                    "id": "us.anthropic.claude-opus-4-6-v1:0",
+                    "name": "Claude Opus 4.6",
+                    "aliases": [
+                        {
+                            "alias": "opus-latest",
+                            "description": "Latest Opus (simplified naming)",
+                            "category": "claude",
+                            "tier": "premium"
+                        }
+                    ],
+                    ...
+                },
+                ...
+            ]
+        }
+    }
+    """,
+)
+@validated(op="read")
+def get_models_with_aliases(event, context, current_user, name, data):
+    """
+    Get available models enhanced with alias information.
+
+    Returns:
+        dict: Success response with models and their aliases
+    """
+    try:
+        import json
+        from pathlib import Path
+
+        # First, get the standard available models
+        models_result = get_user_available_models(event, context, current_user, name, data)
+
+        if not models_result.get("success"):
+            return models_result
+
+        models = models_result.get("data", {}).get("models", [])
+
+        # Load alias mappings
+        current_dir = Path(__file__).parent
+        alias_file = current_dir.parent / "model_rates" / "model_aliases.json"
+
+        # Create reverse mapping: model_id -> [aliases]
+        reverse_mapping = {}
+
+        if alias_file.exists():
+            with open(alias_file, 'r') as f:
+                alias_data = json.load(f)
+
+            for alias_name, alias_config in alias_data.get("aliases", {}).items():
+                model_id = alias_config.get("resolves_to")
+                if model_id:
+                    if model_id not in reverse_mapping:
+                        reverse_mapping[model_id] = []
+
+                    reverse_mapping[model_id].append({
+                        "alias": alias_name,
+                        "description": alias_config.get("description", ""),
+                        "category": alias_config.get("category", ""),
+                        "tier": alias_config.get("tier", "")
+                    })
+
+        # Enhance each model with its aliases
+        for model in models:
+            model_id = model.get("id")
+            model["aliases"] = reverse_mapping.get(model_id, [])
+
+        logger.info(f"Enhanced {len(models)} models with alias information")
+
+        return {
+            "success": True,
+            "data": {"models": models}
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving models with aliases: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "message": f"Error retrieving models with aliases: {str(e)}"
+        }

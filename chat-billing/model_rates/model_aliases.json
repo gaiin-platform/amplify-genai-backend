@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-02-18",
+  "description": "Model alias mappings for user-friendly model names that auto-resolve to latest versions",
+  "aliases": {
+    "claude-opus-latest": {
+      "resolves_to": "us.anthropic.claude-opus-4-6-v1:0",
+      "description": "Latest Claude Opus model (best reasoning)",
+      "category": "claude",
+      "tier": "premium"
+    },
+    "opus-latest": {
+      "resolves_to": "us.anthropic.claude-opus-4-6-v1:0",
+      "description": "Latest Opus (simplified naming)",
+      "category": "claude",
+      "tier": "premium"
+    },
+    "claude-sonnet-latest": {
+      "resolves_to": "us.anthropic.claude-sonnet-4-6-v1:0",
+      "description": "Latest Claude Sonnet model (balanced performance)",
+      "category": "claude",
+      "tier": "balanced"
+    },
+    "sonnet-latest": {
+      "resolves_to": "us.anthropic.claude-sonnet-4-6-v1:0",
+      "description": "Latest Sonnet (simplified naming)",
+      "category": "claude",
+      "tier": "balanced"
+    },
+    "claude-haiku-latest": {
+      "resolves_to": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "description": "Latest Claude Haiku model (fast and efficient)",
+      "category": "claude",
+      "tier": "fast"
+    },
+    "haiku-latest": {
+      "resolves_to": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "description": "Latest Haiku (simplified naming)",
+      "category": "claude",
+      "tier": "fast"
+    }
+  }
+}
