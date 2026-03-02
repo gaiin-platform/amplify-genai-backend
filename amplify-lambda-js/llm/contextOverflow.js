@@ -76,7 +76,9 @@ export function detectContextOverflow(error) {
     // BEDROCK PATTERNS (Claude via Bedrock)
     // =========================================================================
     // Pattern 1: "prompt is too long: 202437 tokens > 200000 maximum"
-    const bedrockMatch = message.match(/prompt is too long:\s*(\d+)\s*tokens?\s*>\s*(\d+)/i);
+    // Also handles: "prompt is too long: 202437 tokens > 200000" (with or without "maximum")
+    // Also handles wrapped format: {"message":"The model returned the following errors: prompt is too long: 208718 tokens > 200000 maximum"}
+    const bedrockMatch = message.match(/prompt is too long:\s*(\d+)\s*tokens?\s*>\s*(\d+)(?:\s*maximum)?/i);
     if (bedrockMatch) {
         const requested = parseInt(bedrockMatch[1]);
         const limit = parseInt(bedrockMatch[2]);
