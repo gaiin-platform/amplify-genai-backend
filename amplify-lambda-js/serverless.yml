@@ -546,6 +546,10 @@ resources:
           # Required: Must be STREAM when using /response-streaming-invocations endpoint
           ResponseTransferMode: STREAM
 
+          # Timeout for streaming responses: up to 15 minutes (900000ms) supported
+          # Default is 29000ms which was causing streams to die at ~27 seconds
+          TimeoutInMillis: 900000
+
         MethodResponses:
           - StatusCode: 200
             ResponseParameters:
