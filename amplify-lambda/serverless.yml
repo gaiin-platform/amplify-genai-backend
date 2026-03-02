@@ -361,6 +361,7 @@ functions:
 
   user_share_load:
     handler: state/share.load_data_from_s3
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
