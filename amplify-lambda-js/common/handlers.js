@@ -1,8 +1,8 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand} from "@aws-sdk/client-dynamodb";
-import {unmarshall} from "@aws-sdk/util-dynamodb";
+import { DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -21,9 +21,9 @@ config({ path: join(__dirname, '../../.env.local') });
 
 
 // Read environment variables
-const userPoolId = "us-east-1_n0ESPoUk4";
-const clientId = "5jo6joe2r4harugqlo3k5ek57v";
-const idpPrefix = ("dev-amplifygenai" || '').toLowerCase();
+const userPoolId = "us-east-1_IOLpCcE6Q";
+const clientId = "2k3udc2cve37l8fksrtd0uqibb";
+const idpPrefix = ("vupingidp" || '').toLowerCase();
 
 // Ensure the environment variables are defined
 if (!userPoolId || !clientId) {
@@ -50,7 +50,7 @@ const checkUserInCognitoTable = async (userId) => {
             TableName: cognitoTable,
             Key: { 'user_id': { S: userId } }
         });
-        
+
         const response = await dynamodbClient.send(command);
         return !!response.Item;
     } catch (error) {
@@ -61,89 +61,89 @@ const checkUserInCognitoTable = async (userId) => {
 
 export const extractParams = async (event) => {
 
-        // Extract the Authorization header
-        const authorizationHeader = event.headers.Authorization || event.headers.authorization;
-        
-        if (!authorizationHeader) {
-            return {
-                statusCode: 401,
-                body: JSON.stringify({message: "Unauthorized"}),
-            };
+    // Extract the Authorization header
+    const authorizationHeader = event.headers.Authorization || event.headers.authorization;
+
+    if (!authorizationHeader) {
+        return {
+            statusCode: 401,
+            body: JSON.stringify({ message: "Unauthorized" }),
+        };
+    }
+
+
+
+    // Extract the token part from the Authorization header
+    const match = authorizationHeader.match(/^Bearer (.+)$/i);
+
+    if (!match) {
+        return {
+            statusCode: 401,
+            body: JSON.stringify({ message: "Unauthorized: Bearer token not found" }),
+        };
+    }
+
+    const token = match[1];
+
+
+    ////// api path  if token prefix amp- ////// 
+    if (token.startsWith("amp-")) return api_authenticator(token, event);
+
+    let payload = null;
+    try {
+        payload = await verifier.verify(
+            token // the JWT as string
+        );
+
+    } catch (e) {
+        logger.error(e);
+
+        return {
+            statusCode: 401,
+            body: JSON.stringify({ message: "Unauthorized. Invalid token." }),
+        };
+    }
+
+    const user = payload.username;
+    const extractCleanUsername = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+
+    let current_user = null;
+
+    // First try sub - check if it exists in cognito table
+    if (payload.immutable_id) {
+        current_user = payload.immutable_id;
+        logger.info(`Using immutable_id for user: ${current_user}`);
+    } else if (payload.sub) {
+        const subExists = await checkUserInCognitoTable(payload.sub);
+        if (subExists) {
+            current_user = payload.sub;
+            logger.info(`Using sub for user: ${current_user}`);
         }
+    }
 
-       
+    // If sub not found, fallback to old IDP prefix username logic
+    if (!current_user) {
+        logger.debug(`Extracting username from: ${user}`);
+        current_user = extractCleanUsername();
+    }
 
-        // Extract the token part from the Authorization header
-        const match = authorizationHeader.match(/^Bearer (.+)$/i);
+    logger.debug("Current user: " + current_user);
 
-        if (!match) {
-            return {
-                statusCode: 401,
-                body: JSON.stringify({message: "Unauthorized: Bearer token not found"}),
-            };
-        }
+    // Extract clean username (without IDP prefix) for services that need it
+    const cleanUsername = extractCleanUsername();
 
-        const token = match[1];
+    let requestBody;
+    try {
+        requestBody = JSON.parse(event.body);
 
-
-        ////// api path  if token prefix amp- ////// 
-        if (token.startsWith("amp-")) return api_authenticator(token, event);
-
-        let payload = null;
-        try {
-            payload = await verifier.verify(
-                token // the JWT as string
-            );
-
-        } catch (e) {
-            logger.error(e);
-
-            return {
-                statusCode: 401,
-                body: JSON.stringify({message: "Unauthorized. Invalid token."}),
-            };
-        }
-
-        const user = payload.username;
-        const extractCleanUsername = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
-
-        let current_user = null;
-     
-        // First try sub - check if it exists in cognito table
-        if (payload.immutable_id ) {
-            current_user = payload.immutable_id;
-            logger.info(`Using immutable_id for user: ${current_user}`);
-        } else if (payload.sub) {
-            const subExists = await checkUserInCognitoTable(payload.sub);
-            if (subExists) {
-                current_user = payload.sub;
-                logger.info(`Using sub for user: ${current_user}`);
-            }
-        }
-        
-        // If sub not found, fallback to old IDP prefix username logic
-        if (!current_user) {
-            logger.debug(`Extracting username from: ${user}`);
-            current_user = extractCleanUsername();
-        }
-       
-        logger.debug("Current user: " + current_user);
-
-        // Extract clean username (without IDP prefix) for services that need it
-        const cleanUsername = extractCleanUsername();
-
-        let requestBody;
-        try {
-            requestBody = JSON.parse(event.body);
-
-            return {user: current_user, username: cleanUsername, body: requestBody, accessToken: token};
-        } catch (e) {
-            // If error occurs during parsing, return an appropriate response
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ message: "Invalid JSON in request body" }),
-            };
-        }
+        return { user: current_user, username: cleanUsername, body: requestBody, accessToken: token };
+    } catch (e) {
+        // If error occurs during parsing, return an appropriate response
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ message: "Invalid JSON in request body" }),
+        };
+    }
 }
 
 const api_authenticator = async (apiKey, event) => {
@@ -172,7 +172,7 @@ const api_authenticator = async (apiKey, event) => {
                 ':apiKeyVal': { S: lookupValue }
             }
         });
-        
+
 
         logger.debug("Checking API key validity.");
         const response = await dynamodbClient.send(command);
@@ -216,12 +216,12 @@ const api_authenticator = async (apiKey, event) => {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key does not have access to chat functionality" })
             };
-        }        
+        }
 
         // update last accessed.
         const updateItemCommand = new UpdateItemCommand({
             TableName: apiTable,
-            Key: { 'api_owner_id': { S: apiData.api_owner_id} },
+            Key: { 'api_owner_id': { S: apiData.api_owner_id } },
             UpdateExpression: "SET lastAccessed = :now",
             ExpressionAttributeValues: {
                 ':now': { S: new Date().toISOString() }
@@ -231,15 +231,15 @@ const api_authenticator = async (apiKey, event) => {
 
         await dynamodbClient.send(updateItemCommand);
 
-       const currentUser = determine_api_user(apiData);
-       if (currentUser.statusCode) return currentUser; // means error
+        const currentUser = determine_api_user(apiData);
+        if (currentUser.statusCode) return currentUser; // means error
 
         // we add the accountId 
         let requestBody;
         try {
             if (!apiData.account) {
                 const error = new Error("Account ID is missing from apiData");
-                error.code = 1001; 
+                error.code = 1001;
                 throw error;
             }
 
@@ -259,7 +259,7 @@ const api_authenticator = async (apiKey, event) => {
         requestBody.options.rateLimit = apiData.rateLimit;
         logger.debug("Current User: ", currentUser);
         // Return the validated user and additional data
-        return {user: currentUser, body: requestBody, accessToken: apiKey, apiKeyId: apiData.api_owner_id}; 
+        return { user: currentUser, body: requestBody, accessToken: apiKey, apiKeyId: apiData.api_owner_id };
 
     } catch (error) {
         logger.error("Error during DynamoDB operation:", error);
