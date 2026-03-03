@@ -159,6 +159,15 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
         try:
             download_url = result["downloadLink"]
 
+            # Check if download_url is None (blocked sensitive file)
+            if download_url is None:
+                file_name = result.get("name", "file")
+                logger.warning(f"Download blocked for sensitive file: {file_name}")
+                return {
+                    "success": False,
+                    "error": "This file contains sensitive data and cannot be downloaded. Access is restricted for security compliance."
+                }
+
             download_file_id = result.get("id")
             requires_cleanup = file_id != download_file_id
 
@@ -278,6 +287,11 @@ def get_file_contents(integration_provider, credentials, file_id, download_url):
                     status, done = downloader.next_chunk()
                 return file.getvalue()
             case IntegrationType.MICROSOFT:
+                # Safety check for None download_url (sensitive files)
+                if not download_url:
+                    logger.error("Cannot download file - download URL is None (likely a sensitive file)")
+                    return None
+
                 integration_token = credentials["token"]
                 headers = {"Authorization": f"Bearer {integration_token}"}
                 response = requests.get(download_url, headers=headers, timeout=30)

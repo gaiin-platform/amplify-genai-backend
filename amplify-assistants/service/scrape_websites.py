@@ -37,12 +37,13 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
 
 from service.core import get_most_recent_assistant_version
 
-# Disallowed file extensions  
+# Disallowed file extensions
 DISALLOWED_EXTENSIONS = [
     "mp3", "wav", "mp4", "mov", "avi", "mkv",
-    "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", 
+    "rar", "7z", "tar", "gz", "tgz", "bz2", "xz",
     "tif", "tiff", "bmp", "eps", "ps", "ai",
-    "psd", "heic", "heif", "ico", "zip", "epub"
+    "psd", "heic", "heif", "ico", "zip", "epub",
+    "rdata", "rds", "stan"
 ]
 
 def get_file_extension_from_content_type(content_type):
