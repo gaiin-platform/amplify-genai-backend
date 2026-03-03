@@ -1,6 +1,6 @@
 import {
     AssistantState,
-    DoneState, invokeAction, 
+    DoneState, invokeAction,
     PromptAction, StateBasedAssistant
 } from "./statemachine/states.js";
 import {sendStateEventToStream} from "../common/streams.js";
@@ -223,9 +223,25 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
             content: additional_instructions
         }];
         if (retryCount > 0) {
+            // Calculate max chars based on model's context window
+            // Formula: (contextWindow - outputLimit) * 4 chars/token, with 20% safety margin
+            const model = llm.model || originalLLM.params.options.model;
+            const contextWindow = model?.inputContextWindow || 128000;
+            const outputLimit = model?.outputTokenLimit || 16000;
+            const availableTokens = contextWindow - outputLimit;
+            const safetyMargin = 0.8; // 20% buffer for system prompt, instructions, etc.
+            const maxAccumulatedChars = Math.floor(availableTokens * 4 * safetyMargin);
+
+            // Safeguard: Truncate accumulated response to prevent context overflow
+            // Keep the END of the response (most recent content) since that's what needs continuation
+            let truncatedAccumulated = accumulatedResponse;
+            if (accumulatedResponse.length > maxAccumulatedChars) {
+                truncatedAccumulated = accumulatedResponse.slice(-maxAccumulatedChars);
+                logger.warn(`⚠️ Truncating accumulated response from ${accumulatedResponse.length} to ${maxAccumulatedChars} chars (model: ${contextWindow - outputLimit} available tokens) to prevent overflow`);
+            }
             messages.push({
                 role: "user",
-                content: `${truncated_output_instructions}\n\nThis is whats been generated so far: \n\n${accumulatedResponse}`
+                content: `${truncated_output_instructions}\n\nThis is whats been generated so far: \n\n${truncatedAccumulated}`
             });
         }
         const prompt = new PromptAction(

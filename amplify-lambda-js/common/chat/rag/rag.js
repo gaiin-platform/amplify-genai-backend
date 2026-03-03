@@ -165,7 +165,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 options: {
                     model,
                     requestId: params.requestId,
-                    disableReasoning: true
+                    disableReasoning: true,
+                    skipHistoricalContext: true  // RAG question extraction doesn't need conversation history
                 }
             },
             promptMessages,

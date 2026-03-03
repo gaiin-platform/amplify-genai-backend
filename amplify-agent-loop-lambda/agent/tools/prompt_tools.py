@@ -10,7 +10,7 @@ from pycommon.logger import getLogger
 logger = getLogger("tool_prompt")
 
 
-@register_tool(tags=["prompts"])
+# @register_tool(tags=["prompts"])
 def prompt_llm_with_messages(action_context: ActionContext, prompt: dict):
     """
     Generate a response to a prompt using the LLM model.
@@ -198,7 +198,7 @@ def prompt(template):
     return decorator
 
 
-@register_tool()
+# @register_tool()
 def qa_check(
     action_context: ActionContext, qa_criteria: str, thing_to_check: Any
 ) -> bool:
@@ -262,7 +262,7 @@ def qa_check(
         return False
 
 
-@register_tool(tags=["prompts"])
+# @register_tool(tags=["prompts"])
 def prompt_llm(action_context: ActionContext, prompt: str):
     """
     Generate a response to a prompt using the LLM model.
@@ -275,7 +275,7 @@ def prompt_llm(action_context: ActionContext, prompt: str):
     return response
 
 
-@register_tool(tags=["prompts"])
+# @register_tool(tags=["prompts"])
 def prompt_llm_with_info(
     action_context: ActionContext, prompt: str, result_references: List[str] = None
 ):
@@ -302,7 +302,7 @@ def prompt_llm_with_info(
     return response
 
 
-@register_tool(tags=["prompts"])
+# @register_tool(tags=["prompts"])
 def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str):
     """
     Have the LLM generate JSON in response to a prompt. Always use this tool when you need structured data out of the LLM.
@@ -341,7 +341,7 @@ def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str
             logger.info("Retrying...")
 
 
-@register_tool(tags=["prompts"])
+# @register_tool(tags=["prompts"])
 def prompt_expert(
     action_context: ActionContext, description_of_expert: str, prompt: str
 ):

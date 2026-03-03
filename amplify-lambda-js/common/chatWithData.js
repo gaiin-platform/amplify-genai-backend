@@ -4,15 +4,18 @@
 import { extractProtocol, getContexts, isDocument } from "../datasource/datasources.js";
 import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
 import { addContextMessage } from "./chat/controllers/common.js";
+import { extractProtocol, getContexts, isDocument, processContextsSeparately } from "../datasource/datasources.js";
+import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
+import { addContextMessage } from "./chat/controllers/common.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
-import {defaultSource} from "./sources.js";
-import {getLogger} from "./logging.js";
-import {createTokenCounter} from "../azure/tokens.js";
-import {countChatTokens} from "../azure/tokens.js";
-import {getContextMessages} from "./chat/rag/rag.js";
-import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
-import {newStatus} from "./status.js";
-import {isKilled} from "../requests/requestState.js";
+import { defaultSource } from "./sources.js";
+import { getLogger } from "./logging.js";
+import { createTokenCounter } from "../azure/tokens.js";
+import { countChatTokens } from "../azure/tokens.js";
+import { getContextMessages } from "./chat/rag/rag.js";
+import { forceFlush, sendStateEventToStream, sendStatusEventToStream } from "./streams.js";
+import { newStatus } from "./status.js";
+import { isKilled } from "../requests/requestState.js";
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 
 const logger = getLogger("chatWithData");
@@ -49,6 +52,8 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
 
     return messagesToKeep.reverse();
 }
+// If contexts use >= 85% of available budget, split them from conversation to avoid overflow
+const CONTEXT_FULLNESS_THRESHOLD = 0.85;
 
 /**
  * ⚡ ULTRA-OPTIMIZED chatWithDataStateless
@@ -151,6 +156,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                         }
                     }
                 });
+            } else {
+                logger.warn("⚠️ RAG Query completed but no rag sources returned");
             }
             forceFlush(responseStream);
         }
@@ -171,8 +178,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     // Trim messages to fit
     const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
 
-    // Build safe messages and insert RAG context
-    const safeMessages = fittedMessages.map(m => ({ role: m.role, content: m.content }));
+    // Build safe messages and insert RAG context (no pre-truncation)
+    const safeMessages = chatRequestOrig.messages.map(m => ({ role: m.role, content: m.content }));
     const chatRequest = {
         ...chatRequestOrig,
         messages: [
@@ -182,10 +189,18 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         ]
     };
 
-    // Calculate max tokens for contexts
+    // Calculate available tokens for contexts
+    // IMPORTANT: Account for response tokens (max_tokens) - the model needs room to respond!
     const chatRequestTokens = tokenCounter.countMessageTokens(chatRequest.messages);
-    const maxTokens = model.inputContextWindow - chatRequestTokens;
-    logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id}`);
+    let responseTokens = chatRequestOrig.max_tokens || 2000;
+
+    const contextWindow = model.inputContextWindow;
+    const safetyBuffer = Math.floor(contextWindow * 0.02); // 2% safety margin
+    const maxTokens = Math.max(
+        1000, // Minimum for any context
+        contextWindow - chatRequestTokens - responseTokens - safetyBuffer
+    );
+    logger.debug(`Context budget: ${maxTokens} tokens (window: ${contextWindow}, messages: ${chatRequestTokens}, response: ${responseTokens})`);
 
     // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
     let contexts = [];
@@ -257,7 +272,11 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
 
         // Process and send sources
+        // 🔧 FIX: Deduplicate sources by dataSource.id to avoid showing same doc multiple times
+        // when it gets chunked into multiple contexts
         if (contexts.length > 0) {
+            const seenDocuments = new Set();  // Track which documents we've already added
+
             const sources = contexts.flatMap(ctx => {
                 const dataSource = ctx.dataSource || dataSourceDetailsLookup[ctx.dataSourceId];
                 if (!dataSource) return [];
@@ -266,8 +285,14 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 if (dataSource && isDocument(dataSource)) {
                     const name = dataSourceDetailsLookup[dataSource.id]?.name || `Attached Document (${dataSource.type})`;
 
-                    // ✅ ATTACHED DOCUMENTS: Flat structure for frontend
+                    // ✅ ATTACHED DOCUMENTS: Deduplicate - only show each document once
                     if (ctx.type === "documentContext") {
+                        // Skip if we've already added this document
+                        if (seenDocuments.has(dataSource.id)) {
+                            return [];
+                        }
+                        seenDocuments.add(dataSource.id);
+
                         return [{
                             type: ctx.type,
                             key: dataSource.id,
@@ -280,6 +305,12 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
                     // Handle cases where content is missing (fallback)
                     if (!ctx.content) {
+                        // Skip if we've already added this document
+                        if (seenDocuments.has(dataSource.id)) {
+                            return [];
+                        }
+                        seenDocuments.add(dataSource.id);
+
                         return [{
                             type: ctx.type,
                             key: dataSource.id,
@@ -324,7 +355,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                     }
                     return [];
                 } else if (dataSource) {
-                    // Non-document sources (from original code)  
+                    // Non-document sources (from original code)
                     const sourceType = (extractProtocol(dataSource.id) || "data://").split("://")[0];
                     return [{
                         type: sourceType,
@@ -368,8 +399,28 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
     }
 
-    // ✅ Final message construction with all contexts
+    // ✅ Convert contexts to messages
     const contextMessages = contexts.map(ctx => addContextMessage(ctx, tokenCounter.countTokens));
+
+
+    // 🔍 DEBUG: Log context organization for multi-document scenarios
+    // Note: Use contextMessages (after conversion) to get accurate content lengths
+    if (contextMessages.length > 0) {
+        // Group by dataSourceId from original contexts, but get lengths from converted messages
+        const contextsByDoc = {};
+        contexts.forEach((ctx, idx) => {
+            const docId = ctx.dataSourceId || 'unknown';
+            if (!contextsByDoc[docId]) {
+                contextsByDoc[docId] = { chunks: 0, totalLength: 0 };
+            }
+            contextsByDoc[docId].chunks++;
+            // Get actual content length from the converted message
+            const msgContent = contextMessages[idx]?.content;
+            contextsByDoc[docId].totalLength += typeof msgContent === 'string' ? msgContent.length : 0;
+        });
+
+        logger.debug(`Context organization: ${Object.keys(contextsByDoc).length} docs, ${contexts.length} chunks`);
+    }
 
     // 🔍 DEBUG: Log context being passed to LLM
     if (contextMessages.length > 0) {
@@ -393,37 +444,45 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     ];
 
     // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call
-    const cleanedMessages = rawMessages
-        .filter(msg => msg && msg.role && msg.content !== undefined) // Remove undefined messages
+    const cleanedMessages = finalMessages
+        .filter(msg => msg && msg.role && msg.content !== undefined)
         .map(msg => ({
             role: msg.role,
             content: typeof msg.content === 'string' ?
                 msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() : // Remove Location: {...}
                 msg.content
         }))
-        .filter(msg => msg.content && msg.content.length > 0); // Remove empty content
+        .filter(msg => msg.content && msg.content.length > 0);
 
     const requestWithContext = {
         ...chatRequest,
         messages: cleanedMessages
     };
 
-    // Process the final request based on context types
+    // Log final request info
     const hasRAGSources = ragResults.sources.length > 0;
     const hasContexts = contexts.length > 0;
 
-    if (hasRAGSources || hasContexts) logger.info(`🎯 Final request with contexts: RAG sources: ${ragResults.sources.length}, Context documents: ${contexts.length}`);
-    if(!params.options.ragOnly) logger.info("🎯 No relevant contexts found, making direct LLM call");
+    if (hasRAGSources || hasContexts) {
+        logger.debug(`Final request: RAG sources: ${ragResults.sources.length}, contexts: ${contexts.length}, split: ${shouldSplitContexts}`);
+    }
+    if (!params.options.ragOnly && !hasRAGSources && !hasContexts) {
+        logger.debug("No relevant contexts found, making direct LLM call");
+    }
 
     // Check killswitch before LLM call
     if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
 
-    // Check if web search or MCP is enabled (same pattern as assistants.js)
+    // Get conversationId and smartMessagesFiltered for overflow handler
+    const smartMessagesFiltered = params.smartMessagesResult?._internal?.removedCount > 0;
+    const conversationId = chatRequestOrig.options?.conversationId || params.options?.conversationId;
+
+    // Check if web search or MCP is enabled
     let webSearchEnabled = shouldEnableWebSearch(chatRequestOrig);
     const mcpEnabled = chatRequestOrig?.mcpEnabled === true || chatRequestOrig?.options?.mcpEnabled === true;
 
     if (webSearchEnabled || mcpEnabled) {
-        logger.info(`🔧 Tool loop enabled with data sources (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
+        logger.debug(`Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
         await executeToolLoop(
             {
                 account,
@@ -439,23 +498,29 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             {
                 max_tokens: requestWithContext.max_tokens || 2000,
                 imageSources: chatRequestOrig.imageSources,
-                // MCP tools sent from frontend need client-side execution
                 mcpClientSide: mcpEnabled,
-                // Pass through any tools from the frontend
                 tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
                 webSearchEnabled: webSearchEnabled,
             }
         );
+        return;  // Tool loop handles the response
     }
 
-    // ✅ Direct native provider call (no tools needed)
+    // ✅ Direct native provider call
+    // If we already split contexts, no need to pass _contexts for overflow recovery
     await callUnifiedLLM(
-        { account, options: { ...options, model } },  // Pass all options including trackConversations
+        { account, options: { ...options, model } },
         requestWithContext.messages,
         responseStream,
         {
             max_tokens: requestWithContext.max_tokens || 2000,
-            imageSources: chatRequestOrig.imageSources 
+            imageSources: chatRequestOrig.imageSources,
+            // Only pass contexts if we DIDN'T split them (for fail-first recovery on edge cases)
+            _contexts: (!shouldSplitContexts && contexts.length > 0) ? contexts : null,
+            // Pass smart messages filter flag for safe caching
+            smartMessagesFiltered: smartMessagesFiltered,
+            // Pass conversationId for cache management in overflow handler
+            conversationId: conversationId
         }
     );
 };

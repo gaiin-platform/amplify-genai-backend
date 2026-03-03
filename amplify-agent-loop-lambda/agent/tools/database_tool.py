@@ -143,12 +143,12 @@ def load_config(current_user: str = None):
     return load_config_from_dynamodb(current_user)
 
 
-@register_tool(
-    tags=["default", "database", "data", "query", "sql"],
-    status="querying_database",
-    resultStatus="database_query_complete",
-    errorStatus="database_query_error",
-)
+# @register_tool(
+#     tags=["default", "database", "data", "query", "sql"],
+#     status="querying_database",
+#     resultStatus="database_query_complete",
+#     errorStatus="database_query_error",
+# )
 def query_database(
     question: str,
     connection_id: str,

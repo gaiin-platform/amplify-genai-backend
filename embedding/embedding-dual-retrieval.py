@@ -1,8 +1,6 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-# set up retriever function that accepts a a query, user, and/or list of keys for where claus
-
 import json
 import os
 import time
@@ -951,12 +949,35 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     # SAFETY NET: Truncate user input to prevent token limit errors (defense in depth)
     # This catches edge cases where user input might exceed embedding model token limit
+    # Use 8000 tokens (not 8192) to leave buffer room for special tokens
     original_length = len(content)
-    content = truncate_content_for_model(content, embedding_model_name, 8192)
+    content = truncate_content_for_model(content, embedding_model_name, 8000)
     if len(content) < original_length:
         logger.warning(f"[TOKEN_SAFETY] User input truncated from {original_length} to {len(content)} chars to fit embedding token limit")
 
     response_embeddings = generate_embeddings(content)
+
+    # NaN RETRY: If embedding generation fails due to NaN, try with sanitized text
+    if not response_embeddings["success"]:
+        error_msg = response_embeddings.get('error', '')
+        if 'NaN' in error_msg or 'nan' in error_msg.lower():
+            logger.warning(f"[NaN_DETECTED] NaN error from API for user input (length: {len(content)}), attempting retry with sanitized text")
+
+            # RETRY: Clean text more aggressively and retry once
+            sanitized_content = ''.join(char for char in content if ord(char) < 128 and (char.isprintable() or char.isspace()))
+            sanitized_content = ' '.join(sanitized_content.split())  # Normalize whitespace
+
+            if sanitized_content and len(sanitized_content.strip()) > 0:
+                logger.info(f"[NaN_RETRY] Retrying with ASCII-only text (original: {len(content)} chars, sanitized: {len(sanitized_content)} chars)")
+                response_embeddings = generate_embeddings(sanitized_content)
+
+                if response_embeddings["success"]:
+                    logger.info(f"[NaN_RETRY] ✅ Retry succeeded with sanitized text")
+                    content = sanitized_content  # Use sanitized content going forward
+                else:
+                    logger.error(f"[NaN_RETRY] Retry failed: {response_embeddings.get('error')}")
+            else:
+                logger.error(f"[NaN_RETRY] Sanitized content is empty, cannot retry")
 
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
@@ -1048,27 +1069,42 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     logger.info(f"Retrieved {len(related_docs)} related documents/QAs")
 
-    # CRITICAL: Check if we got no results despite having sources
+    # Check if we got no results despite having sources - investigate why
     if len(related_docs) == 0 and len(src_ids) > 0:
-        logger.error(f"[NO_RESULTS_WITH_SOURCES] PostgreSQL returned 0 results despite having {len(src_ids)} accessible sources")
-        logger.error(f"Source IDs queried: {src_ids}")
+        logger.warning(f"[NO_RESULTS_WITH_SOURCES] PostgreSQL returned 0 results despite having {len(src_ids)} accessible sources")
+        logger.warning(f"Source IDs queried: {src_ids}")
 
-        log_critical_error(
-            function_name="_async_process_input_with_dual_retrieval_no_results",
-            error_type="PostgreSQLNoResultsWithSources",
-            error_message=f"PostgreSQL returned 0 results despite having accessible sources",
-            current_user=current_user,
-            severity=SEVERITY_HIGH,
-            stack_trace="",
-            context={
-                "src_ids_count": len(src_ids),
-                "src_ids": src_ids,
-                "limit": limit,
-                "query_length": len(content),
-                "pg_host": pg_host,
-                "pg_database": pg_database
-            }
-        )
+        # Check embedding status to distinguish between "no embeddings" vs "no matches"
+        embedding_status_check = await check_embedding_completion(src_ids, account_data, None, 0)
+        documents_missing_embeddings = embedding_status_check.get("requires_embedding", [])
+        documents_failed_embeddings = embedding_status_check.get("failed_documents", [])
+
+        # CRITICAL: If documents have no embeddings or failed, this is a real problem
+        if documents_missing_embeddings or documents_failed_embeddings:
+            logger.error(f"[EMBEDDING_ISSUE] Documents are missing embeddings or failed:")
+            logger.error(f"  - Missing embeddings: {len(documents_missing_embeddings)} documents")
+            logger.error(f"  - Failed embeddings: {len(documents_failed_embeddings)} documents")
+
+            log_critical_error(
+                function_name="_async_process_input_with_dual_retrieval_no_embeddings",
+                error_type="MissingOrFailedEmbeddings",
+                error_message=f"Documents lack embeddings: {len(documents_missing_embeddings)} missing, {len(documents_failed_embeddings)} failed",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace="",
+                context={
+                    "src_ids_count": len(src_ids),
+                    "missing_embeddings": documents_missing_embeddings[:5],  # First 5 for brevity
+                    "failed_embeddings": documents_failed_embeddings[:5],
+                    "total_missing": len(documents_missing_embeddings),
+                    "total_failed": len(documents_failed_embeddings),
+                    "limit": limit,
+                    "query_length": len(content)
+                }
+            )
+        else:
+            # Documents have embeddings but no matches - this is normal (just no relevant content)
+            logger.info(f"[NO_MATCHES] Documents have embeddings but no content matched the query - this is normal")
 
     # Build response
     response = {

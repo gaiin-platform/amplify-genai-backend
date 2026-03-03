@@ -7,9 +7,9 @@ import {getLogger} from "../common/logging.js";
 import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
-import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
+import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
-import {newStatus, getThinkingMessage} from "../common/status.js";
+import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
 const logger = getLogger("openai");
 
@@ -394,69 +394,106 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         return;
                     }
 
-                    // Ensure stream is properly closed on error since we use { end: false }
-                    if (!writableStream.writableEnded && writableStream.writable) {
-                        try {
-                            writableStream.end();
-                        } catch (endErr) {
-                            logger.error("Error ending stream:", endErr);
-                        }
-                    }
+                    const requestId = options?.requestId || 'unknown';
 
-                    // Helper function to log critical error with full details
-                    const logApiError = async (errorDetails = null) => {
-                        const sanitizedRequestData = { ...requestData };
-                        delete sanitizedRequestData.messages;
-                        delete sanitizedRequestData.input;
-
-                        // Parse error details if it's a string
-                        let apiError = errorDetails;
-                        let apiErrorMessage = 'N/A';
-
+                    // Helper function to process error after we have the full error data
+                    const processError = async (errorDetails = null) => {
+                        // Parse error details to get the actual error message for overflow detection
+                        let apiErrorMessage = '';
                         if (typeof errorDetails === 'string') {
                             try {
                                 const parsed = JSON.parse(errorDetails);
-                                apiError = parsed.error || parsed;
                                 apiErrorMessage = parsed.error?.message || parsed.message || errorDetails;
                             } catch {
                                 apiErrorMessage = errorDetails;
                             }
                         } else if (errorDetails) {
-                            apiErrorMessage = errorDetails.error?.message || errorDetails.message || 'N/A';
+                            apiErrorMessage = errorDetails.error?.message || errorDetails.message || '';
                         }
 
-                        await logCriticalError({
-                            functionName: 'openai_streamAxiosResponseToWritable',
-                            errorType: 'OpenAIAPIFailure',
-                            errorMessage: `OpenAI/Azure API failed: ${apiErrorMessage}`,
-                            currentUser: options?.user || 'unknown',
-                            severity: 'HIGH',
-                            stackTrace: e.stack || '',
-                            context: {
-                                httpStatus: e.response?.status || 'N/A',
-                                httpStatusText: e.response?.statusText || 'N/A',
-                                apiError: apiError || e.response?.data?.error || 'N/A',
-                                apiErrorMessage: apiErrorMessage,
-                                errorCode: e.code || 'N/A',
-                                url: url || 'unknown',
-                                modelId: data?.model || 'unknown',
-                                hasTools: !!(data?.tools && data.tools.length > 0),
-                                isRetry: !!retryWithoutTools,
-                                requestConfig: sanitizedRequestData
-                            }
-                        }).catch(err => logger.error('Failed to log critical error:', err));
+                        // Attach the parsed message to error for overflow detection
+                        if (apiErrorMessage) {
+                            e._parsedErrorMessage = apiErrorMessage;
+                        }
 
-                        // Mark error as already having critical logging to prevent duplicate logging in router
-                        e.criticalErrorLogged = true;
+                        // NOW check for overflow (after we have the actual error message)
+                        const overflowInfo = detectContextOverflow(e);
+
+                        // ONLY critical log if:
+                        // 1. It's NOT an overflow error, OR
+                        // 2. It IS overflow but we've already tried recovery (second attempt)
+                        const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
+
+                        if (!shouldLog) {
+                            // Overflow on first attempt - mark for recovery, don't critical log
+                            logger.info(`Context overflow detected (${overflowInfo.overflow || 'unknown'} tokens over), allowing recovery attempt`);
+                            e.isContextOverflow = true;
+                            e.overflowInfo = overflowInfo;
+                        } else {
+                            // Log critical error
+                            const sanitizedRequestData = { ...requestData };
+                            delete sanitizedRequestData.messages;
+                            delete sanitizedRequestData.input;
+
+                            let apiError = errorDetails;
+                            if (typeof errorDetails === 'string') {
+                                try {
+                                    const parsed = JSON.parse(errorDetails);
+                                    apiError = parsed.error || parsed;
+                                } catch { /* use raw string */ }
+                            }
+
+                            await logCriticalError({
+                                functionName: 'openai_streamAxiosResponseToWritable',
+                                errorType: overflowInfo.isOverflow ? 'ContextOverflowRecoveryFailed' : 'OpenAIAPIFailure',
+                                errorMessage: `OpenAI/Azure API failed: ${apiErrorMessage || 'N/A'}`,
+                                currentUser: options?.user || 'unknown',
+                                severity: 'HIGH',
+                                stackTrace: e.stack || '',
+                                context: {
+                                    httpStatus: e.response?.status || 'N/A',
+                                    httpStatusText: e.response?.statusText || 'N/A',
+                                    apiError: apiError || e.response?.data?.error || 'N/A',
+                                    apiErrorMessage: apiErrorMessage || 'N/A',
+                                    errorCode: e.code || 'N/A',
+                                    url: url || 'unknown',
+                                    modelId: data?.model || 'unknown',
+                                    hasTools: !!(data?.tools && data.tools.length > 0),
+                                    isRetry: !!retryWithoutTools,
+                                    requestConfig: sanitizedRequestData,
+                                    ...(overflowInfo.isOverflow && {
+                                        overflowDetails: {
+                                            requested: overflowInfo.requested,
+                                            limit: overflowInfo.limit,
+                                            overflow: overflowInfo.overflow
+                                        }
+                                    })
+                                }
+                            }).catch(err => logger.error('Failed to log critical error:', err));
+
+                            e.criticalErrorLogged = true;
+                        }
+
+                        // Only send error message and end stream if NOT recoverable overflow
+                        if (!overflowInfo.isOverflow) {
+                            if (!writableStream.writableEnded && writableStream.writable) {
+                                sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
+                                try {
+                                    writableStream.end();
+                                } catch (endErr) {
+                                    logger.error("Error ending stream:", endErr);
+                                }
+                            }
+                        }
+
+                        reject(e);
                     };
 
-                    sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
-
+                    // Read error data first, THEN process
                     if (e.response && e.response.data) {
                         logger.error("Error invoking OpenAI API:", e.response.statusText);
 
                         if (e.response.data.readable) {
-                            // Stream the data to a variable or process it as it comes
                             let errorData = '';
                             let streamEnded = false;
 
@@ -465,44 +502,33 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             });
 
                             e.response.data.on('end', async () => {
-                                if (streamEnded) return; // Prevent double processing
+                                if (streamEnded) return;
                                 streamEnded = true;
-
                                 logger.error("Error data from OpenAI API:", errorData);
-                                // Log critical error with the full error data
-                                await logApiError(errorData || null);
-                                reject(e);
+                                await processError(errorData || null);
                             });
 
                             e.response.data.on('error', async (streamErr) => {
-                                if (streamEnded) return; // Prevent double processing
+                                if (streamEnded) return;
                                 streamEnded = true;
-
                                 logger.error("Error reading error stream:", streamErr);
-                                // Log with whatever we have, even if incomplete
-                                await logApiError(errorData || null);
-                                reject(e);
+                                await processError(errorData || null);
                             });
 
-                            return; // Don't continue, wait for stream to finish or error
+                            return; // Wait for stream
                         } else if (typeof e.response.data === 'object') {
-                            // Data is already an object
-                            await logApiError(e.response.data);
+                            await processError(e.response.data);
                         } else if (typeof e.response.data === 'string') {
-                            // Data is a string
-                            await logApiError(e.response.data);
+                            await processError(e.response.data);
                         } else {
-                            // Unknown data type
                             logger.warn("Unknown error data type:", typeof e.response.data);
-                            await logApiError();
+                            await processError();
                         }
                     } else {
-                        // No response data at all
-                        await logApiError();
+                        await processError();
                     }
 
                     logger.error("Error invoking OpenAI API:", e.message);
-                    reject(e);
                 });
         });
     }

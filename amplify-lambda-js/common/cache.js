@@ -462,9 +462,102 @@ export class CacheManager {
     }
     
     // ============================================
+    // HISTORICAL CONTEXT CACHING (for overflow recovery)
+    // Key: conversationId
+    // Value: { historicalEndIndex, extractedContext, messageCount }
+    // ============================================
+
+    static async getCachedHistoricalContext(userId, conversationId, modelId = null) {
+        try {
+            const cached = userModelCache.get(userId, 'historicalContext', conversationId);
+
+            if (cached) {
+                // Validate model matches - different models have different context windows
+                // so extraction budget would be different
+                if (modelId && cached.modelId && cached.modelId !== modelId) {
+                    logger.debug(`Cache INVALIDATED: Model changed from ${cached.modelId} to ${modelId} for conversation ${conversationId}`);
+                    userModelCache.set(userId, 'historicalContext', conversationId, null, 0); // Clear it
+                    return null;
+                }
+                logger.debug(`Cache HIT: Historical context for conversation ${conversationId} (model: ${cached.modelId || 'unknown'})`);
+                return cached;
+            }
+
+            logger.debug(`Cache MISS: Historical context for conversation ${conversationId}`);
+            return null;
+        } catch (error) {
+            logger.error(`Error getting cached historical context for ${userId}:`, error);
+            return null;
+        }
+    }
+
+    static async setCachedHistoricalContext(userId, conversationId, cacheData) {
+        try {
+            // Cache with 30 minute TTL - conversation is still active
+            // cacheData = { historicalEndIndex, extractedContext, messageCount, modelId }
+            userModelCache.set(userId, 'historicalContext', conversationId, cacheData, 30 * 60 * 1000);
+            logger.debug(`Cached historical context for conversation ${conversationId} (endIndex: ${cacheData.historicalEndIndex}, ${cacheData.extractedContext.length} chars, model: ${cacheData.modelId || 'unknown'})`);
+        } catch (error) {
+            logger.error(`Error caching historical context for ${userId}:`, error);
+        }
+    }
+
+    // Legacy method for backward compatibility (will be removed)
+    static async getCachedHistoricalExtraction(userId, cacheKey) {
+        try {
+            const cached = userModelCache.get(userId, 'historicalExtraction', cacheKey);
+            if (cached) {
+                logger.debug(`Cache HIT: Historical extraction for ${userId}`);
+                return cached;
+            }
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    static async setCachedHistoricalExtraction(userId, cacheKey, extractedContext) {
+        try {
+            userModelCache.set(userId, 'historicalExtraction', cacheKey, extractedContext, 30 * 60 * 1000);
+        } catch (error) {
+            logger.error(`Error caching historical extraction for ${userId}:`, error);
+        }
+    }
+
+    // ============================================
+    // OVERSIZED MESSAGE EXTRACTION CACHE
+    // For caching extractions from giant messages by content hash
+    // ============================================
+
+    static async getCachedOversizedExtraction(userId, cacheKey) {
+        try {
+            const cached = userModelCache.get(userId, 'oversizedExtraction', cacheKey);
+            if (cached) {
+                logger.debug(`Cache HIT: Oversized extraction for ${cacheKey}`);
+                return cached;
+            }
+            logger.debug(`Cache MISS: Oversized extraction for ${cacheKey}`);
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    static async setCachedOversizedExtraction(userId, cacheKey, cacheData) {
+        try {
+            // Cache with 1 hour TTL - oversized message content is stable
+            // cacheData = { extractedContext, contentHash }
+            userModelCache.set(userId, 'oversizedExtraction', cacheKey, cacheData, 60 * 60 * 1000);
+            logger.debug(`Cached oversized extraction for ${cacheKey}`);
+        } catch (error) {
+            logger.error(`Error caching oversized extraction for ${userId}:`, error);
+        }
+    }
+
+    // ============================================
     // CACHE MANAGEMENT
     // ============================================
-    
+
     static clearUserCache(userId) {
         userModelCache.clear(userId);
         dataSourceCache.clear(userId);

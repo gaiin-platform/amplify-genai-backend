@@ -6,6 +6,7 @@ import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageB
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
+import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
 
 const logger = getLogger("bedrock");
@@ -205,51 +206,77 @@ export const chatBedrock = async (chatBody, writable) => {
         if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
 
-        // Capture raw response body for HTML error pages (502 Bad Gateway, etc.)
-        let rawResponsePreview = 'N/A';
-        if (error.$response?.body) {
-            try {
-                // Try to read the body as text if it's an HTML error page
-                const bodyText = typeof error.$response.body === 'string'
-                    ? error.$response.body
-                    : JSON.stringify(error.$response.body);
-                rawResponsePreview = bodyText.substring(0, 500); // First 500 chars
-            } catch (e) {
-                rawResponsePreview = 'Unable to read response body';
+        // Check if this is a context overflow error (recoverable - don't critical log yet)
+        const overflowInfo = detectContextOverflow(error);
+        const requestId = options?.requestId || 'unknown';
+
+        // ONLY critical log if:
+        // 1. It's NOT an overflow error, OR
+        // 2. It IS overflow but we've already tried recovery (second attempt)
+        const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
+
+        if (shouldLog) {
+            // Capture raw response body for HTML error pages (502 Bad Gateway, etc.)
+            let rawResponsePreview = 'N/A';
+            if (error.$response?.body) {
+                try {
+                    // Try to read the body as text if it's an HTML error page
+                    const bodyText = typeof error.$response.body === 'string'
+                        ? error.$response.body
+                        : JSON.stringify(error.$response.body);
+                    rawResponsePreview = bodyText.substring(0, 500); // First 500 chars
+                } catch (e) {
+                    rawResponsePreview = 'Unable to read response body';
+                }
             }
+
+            // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
+            const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
+            if (sanitizedInput.messages) delete sanitizedInput.messages;
+            if (sanitizedInput.system) delete sanitizedInput.system;
+
+            logCriticalError({
+                functionName: 'chatBedrock',
+                errorType: overflowInfo.isOverflow ? 'ContextOverflowRecoveryFailed' : 'BedrockAPIFailure',
+                errorMessage: `Bedrock API failed: ${error.message || error.$response?.message || "Unknown error"}`,
+                currentUser: options?.user || options?.accountId || 'unknown',
+                severity: 'HIGH',
+                stackTrace: error.stack || '',
+                context: {
+                    requestId: requestId,
+                    modelId: currentModel?.id || 'unknown',
+                    httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
+                    awsReason: error.$response?.reason || 'N/A',
+                    awsMessage: error.$response?.message || 'N/A',
+                    rawResponsePreview: rawResponsePreview,
+                    fullError: error,
+                    errorCode: error.code || error.name || 'N/A',
+                    hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
+                    bedrockConfig: sanitizedInput,
+                    hasToolContent: hasToolRelatedContent || false,
+                    // Add overflow details if applicable
+                    ...(overflowInfo.isOverflow && {
+                        overflowDetails: {
+                            requested: overflowInfo.requested,
+                            limit: overflowInfo.limit,
+                            overflow: overflowInfo.overflow
+                        }
+                    })
+                }
+            }).catch(err => logger.error('Failed to log critical error:', err));
+
+            // Mark error as already having critical logging to prevent duplicate logging in router
+            error.criticalErrorLogged = true;
+        } else {
+            // Overflow on first attempt - mark for recovery, don't critical log
+            logger.info(`Context overflow detected (${overflowInfo.overflow} tokens over), allowing recovery attempt`);
+            error.isContextOverflow = true;
+            error.overflowInfo = overflowInfo;
         }
 
-        // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
-        const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
-        if (sanitizedInput.messages) delete sanitizedInput.messages;
-        if (sanitizedInput.system) delete sanitizedInput.system;
+        // Only send error message if NOT recoverable overflow
+        if (!overflowInfo.isOverflow)  sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
 
-        logCriticalError({
-            functionName: 'chatBedrock',
-            errorType: 'BedrockAPIFailure',
-            errorMessage: `Bedrock API failed: ${error.message || error.$response?.message || "Unknown error"}`,
-            currentUser: options?.user || options?.accountId || 'unknown',
-            severity: 'HIGH',
-            stackTrace: error.stack || '',
-            context: {
-                requestId: options?.requestId || 'unknown',
-                modelId: currentModel?.id || 'unknown',
-                httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
-                awsReason: error.$response?.reason || 'N/A',
-                awsMessage: error.$response?.message || 'N/A',
-                rawResponsePreview: rawResponsePreview,
-                fullError: error,
-                errorCode: error.code || error.name || 'N/A',
-                hasGuardrail: !!(process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION),
-                bedrockConfig: sanitizedInput,
-                hasToolContent: hasToolRelatedContent || false,
-            }
-        }).catch(err => logger.error('Failed to log critical error:', err));
-
-        // Mark error as already having critical logging to prevent duplicate logging in router
-        error.criticalErrorLogged = true;
-
-        sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
         throw error;
     }
 }

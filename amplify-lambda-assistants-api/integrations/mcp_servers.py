@@ -452,6 +452,38 @@ def _test_mcp_connection_by_url(server_url):
     if not server_url:
         return {"success": False, "error": "Server URL is required"}
 
+    def _parse_mcp_response(response):
+        """Parse MCP response supporting JSON and text/event-stream payloads."""
+        content_type = (response.headers.get("Content-Type") or "").lower()
+
+        try:
+            return response.json()
+        except (requests.exceptions.JSONDecodeError, json.JSONDecodeError, ValueError):
+            body = (response.text or "").strip()
+
+            if not body:
+                raise ValueError("Empty response body from MCP server")
+
+            if "text/event-stream" in content_type or "data:" in body:
+                for line in body.splitlines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+
+                    payload = line[5:].strip()
+                    if not payload or payload == "[DONE]":
+                        continue
+
+                    try:
+                        return json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+
+            preview = body[:200]
+            raise ValueError(
+                f"Non-JSON MCP response (content-type: {content_type or 'unknown'}): {preview}"
+            )
+
     # Perform MCP initialize handshake
     try:
         # Send initialize request (JSON-RPC 2.0)
@@ -489,7 +521,7 @@ def _test_mcp_connection_by_url(server_url):
                 "error": f"HTTP {response.status_code}: {response.text[:200]}"
             }
 
-        init_result = response.json()
+        init_result = _parse_mcp_response(response)
 
         if "error" in init_result:
             return {
@@ -534,7 +566,7 @@ def _test_mcp_connection_by_url(server_url):
 
         tools = []
         if tools_response.status_code == 200:
-            tools_result = tools_response.json()
+            tools_result = _parse_mcp_response(tools_response)
             if "result" in tools_result and "tools" in tools_result["result"]:
                 tools = [
                     {
@@ -557,11 +589,18 @@ def _test_mcp_connection_by_url(server_url):
         return {"success": False, "error": "Connection timed out"}
     except requests.exceptions.ConnectionError as e:
         return {"success": False, "error": f"Connection failed: Could not connect to server"}
+    except (requests.exceptions.JSONDecodeError, json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Invalid MCP response: {str(e)}")
+        return {
+            "success": False,
+            "error": (
+                "Server did not return a valid MCP JSON-RPC response. "
+                f"Details: {str(e)}"
+            )
+        }
     except requests.exceptions.RequestException as e:
         logger.error(f"MCP request failed: {str(e)}")
         return {"success": False, "error": "Request failed"}
-    except json.JSONDecodeError:
-        return {"success": False, "error": "Invalid JSON response from server"}
     except Exception as e:
         logger.error(f"Error testing MCP connection: {str(e)}")
         return {"success": False, "error": "Test failed"}
