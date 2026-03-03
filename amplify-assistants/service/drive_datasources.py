@@ -112,7 +112,32 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         response = requests.post(
             upload_endpoint, headers=headers, data=json.dumps(data)
         )
-        response_content = response.json()
+
+        # Check if response has content and is JSON
+        if not response.text:
+            logger.error("Empty response from upload endpoint. Status code: %s", response.status_code)
+            return {
+                "success": False,
+                "error": f"Empty response from server (status: {response.status_code})",
+                "message": "Failed to upload integration drive files - empty response"
+            }
+
+        # Try to parse JSON, but handle non-JSON responses gracefully
+        try:
+            response_content = response.json()
+        except requests.exceptions.JSONDecodeError as json_err:
+            logger.error(
+                "Invalid JSON response from upload endpoint. Status: %s, Content-Type: %s, Body preview: %s",
+                response.status_code,
+                response.headers.get('Content-Type', 'unknown'),
+                response.text[:500]  # Log first 500 chars for debugging
+            )
+            return {
+                "success": False,
+                "error": f"Invalid JSON response from server (status: {response.status_code})",
+                "message": "Failed to upload integration drive files - invalid response format"
+            }
+
         logger.debug("Response: %s", response_content)
 
         if response.status_code == 200 and response_content.get("success", False):
@@ -122,7 +147,8 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
                 "data": response_content.get("data"),
                 "message": "Integration Drive files uploaded successfully"
             }
-        logger.warning("Failed to upload integration drive files")
+        logger.warning("Failed to upload integration drive files. Status: %s, Response: %s",
+                      response.status_code, response_content)
         return {
             "success": False,
             "error": response_content.get("error", "Unknown error occurred"),
