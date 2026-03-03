@@ -43,14 +43,14 @@ const defaultAssistant = {
 
         logger.debug("Using model: ", model);
 
-        const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
-        // ✅ Use token counting
-        const requiredTokens = [...dataSources, ...(body.imageSources || []), ...(body.videoSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
-        const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
+        // 🚫 DEPRECATED: Token limit calculation for mapReduce routing
+        // Now handled by 85% split logic in chatWithData.js
+        // const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
+        // const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
+        // const aboveLimit = requiredTokens != 0 && requiredTokens >= limit;
 
-        logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
-        logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
-        logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
+        logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`);
+        logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`);
 
         if (params.blockTerminator) {
             body = { ...body, options: { ...body.options, blockTerminator: params.blockTerminator } };
@@ -76,103 +76,94 @@ const defaultAssistant = {
 
         logger.info("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
-            aboveLimit,
             dataSources_length: dataSources.length,
             hasPreResolvedData,
             needsDataProcessing: needsDataProcessingDecision,
             enableWebSearch: body?.options?.enableWebSearch,
-            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" :
-                needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
+            route: needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
 
-        // 🚨 CRITICAL: User-defined assistants NEVER use mapReduce - always RAG for source visibility
-        const isUserDefinedAssistant = !!body.options?.assistantId;
 
-        if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit) {
-            logger.info("→ Using mapReduceAssistant (token limit exceeded)");
-
-            return mapReduceAssistant.handler(params, body, dataSources, responseStream);
-        } else {
-            if (needsDataProcessingDecision) {
-                // Use chatWithDataStateless for RAG, document processing, conversation discovery  
-                logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
+        if (needsDataProcessingDecision) {
+            // Use chatWithDataStateless for RAG, document processing, conversation discovery  
+            logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
 
 
-                // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
-                const enhancedParams = params.preResolvedDataSourcesByUse ? {
-                    ...params,
-                    options: {
-                        ...params.options,
-                        ...body.options  // Merge body.options to include trackConversations and other flags
-                    },
-                    preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
-                } : {
-                    ...params,
-                    options: {
-                        ...params.options,
-                        ...body.options  // Merge body.options to include trackConversations and other flags
-                    }
-                };
-
-                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
-                const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
-                return chatWithDataStateless(enhancedParams, model, bodyWithMedia, dataSources, responseStream);
-            } else {
-                // Direct LLM call for simple conversations
-                logger.info("→ Using direct native provider (no data sources needed)");
-                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
-                const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
-
-                // Check if web search or MCP is enabled
-                let webSearchEnabled = shouldEnableWebSearch(body);
-                // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
-                const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
-
-                if (webSearchEnabled || mcpEnabled) {
-                    logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
-                    return await executeToolLoop(
-                        {
-                            account: params.account,
-                            options: {
-                                ...bodyWithMedia.options,
-                                model,
-                                requestId: params.options?.requestId
-                            }
-                        },
-                        bodyWithMedia.messages,
-                        model,
-                        responseStream,
-                        {
-                            max_tokens: bodyWithMedia.max_tokens || 2000,
-                            imageSources: bodyWithMedia.imageSources,
-                            // MCP tools sent from frontend need client-side execution
-                            // since they run on the user's local machine
-                            mcpClientSide: mcpEnabled,
-                            // Pass through any tools from the frontend (can be at top level or in options)
-                            tools: bodyWithMedia.tools || bodyWithMedia.options?.tools,
-                            webSearchEnabled: webSearchEnabled,
-                        },
-                    );
+            // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
+            const enhancedParams = params.preResolvedDataSourcesByUse ? {
+                ...params,
+                options: {
+                    ...params.options,
+                    ...body.options  // Merge body.options to include trackConversations and other flags
+                },
+                preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
+            } : {
+                ...params,
+                options: {
+                    ...params.options,
+                    ...body.options  // Merge body.options to include trackConversations and other flags
                 }
+            };
 
-                return await callUnifiedLLM(
+            // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
+            const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
+            return chatWithDataStateless(enhancedParams, model, bodyWithMedia, dataSources, responseStream);
+        } else {
+            // Direct LLM call for simple conversations
+            logger.info("→ Using direct native provider (no data sources needed)");
+            // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
+            const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
+
+            // Check if web search or MCP is enabled
+            let webSearchEnabled = shouldEnableWebSearch(body);
+            // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
+            const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
+
+            if (webSearchEnabled || mcpEnabled) {
+                logger.info(`→ Tool loop enabled (webSearch: ${webSearchEnabled}, mcp: ${mcpEnabled})`);
+                return await executeToolLoop(
                     {
                         account: params.account,
                         options: {
-                            ...bodyWithMedia.options,  // Include all options from body (including trackConversations)
+                            ...bodyWithMedia.options,
                             model,
                             requestId: params.options?.requestId
                         }
                     },
                     bodyWithMedia.messages,
+                    model,
                     responseStream,
                     {
                         max_tokens: bodyWithMedia.max_tokens || 2000,
-                        imageSources: bodyWithMedia.imageSources,  // ✅ FIX: Pass imageSources through options
-                        videoSources: bodyWithMedia.videoSources   // ✅ FIX: Pass videoSources through options
-                    }
+                        imageSources: bodyWithMedia.imageSources,
+                        // MCP tools sent from frontend need client-side execution
+                        // since they run on the user's local machine
+                        mcpClientSide: mcpEnabled,
+                        // Pass through any tools from the frontend (can be at top level or in options)
+                        tools: bodyWithMedia.tools || bodyWithMedia.options?.tools,
+                        webSearchEnabled: webSearchEnabled,
+                    },
                 );
             }
+
+            return await callUnifiedLLM(
+                {
+                    account: params.account,
+                    options: {
+                        ...bodyWithMedia.options,  // Include all options from body (including trackConversations)
+                        model,
+                        requestId: params.options?.requestId
+                    }
+                },
+                bodyWithMedia.messages,
+                responseStream,
+                {
+                    max_tokens: bodyWithMedia.max_tokens || 2000,
+                    imageSources: bodyWithMedia.imageSources,  // ✅ FIX: Pass imageSources through options
+                    videoSources: bodyWithMedia.videoSources   // ✅ FIX: Pass videoSources through options
+                }
+            );
+
         }
     }
 };

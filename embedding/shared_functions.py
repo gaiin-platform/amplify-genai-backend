@@ -343,6 +343,14 @@ def truncate_content_for_model(content, model_name, max_tokens):
 def generate_questions(content, account_data = None):
     chat_endpoint = get_chat_endpoint(EndpointType.CHAT_ENDPOINT)
 
+    # DEFENSIVE: Validate account_data is a dict before accessing
+    if not isinstance(account_data, dict):
+        error_msg = f"Invalid account_data type: expected dict, got {type(account_data).__name__}"
+        logger.error(f"[QA_GENERATION_ERROR] {error_msg}")
+        if account_data:
+            logger.error(f"[QA_GENERATION_ERROR] account_data value: {str(account_data)[:200]}")
+        raise Exception(error_msg)
+
     if not chat_endpoint or not account_data or not account_data.get('access_token'):
         logger.error("CHAT_ENDPOINT environment variable or account_data not set")
         raise Exception("CHAT_ENDPOINT environment variable or account_data not set")
