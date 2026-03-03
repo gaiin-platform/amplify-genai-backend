@@ -17,7 +17,7 @@ from nltk.tokenize import sent_tokenize
 import asyncio
 
 from pycommon.logger import getLogger
-from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH, SEVERITY_LOW
 from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 logger = getLogger("rag")
@@ -1455,6 +1455,22 @@ def chunk_document_for_rag(event, context):
             
             if chunks_created == 0:
                 logger.warning("No chunks were created for %s", key)
+                log_critical_error(
+                    function_name="chunk_document_for_rag",
+                    error_type="ZeroChunksProduced",
+                    error_message="Document text extraction succeeded but chunking produced 0 chunks - file may be empty, unsupported format, or contain only binary data",
+                    current_user=original_creator,
+                    severity=SEVERITY_LOW,
+                    stack_trace='',
+                    context={
+                        "document_key": key,
+                        "bucket": bucket,
+                        "object_key": object_key if object_key else 'N/A',
+                        "original_creator": original_creator,
+                        "force_reprocess": force_reprocess,
+                        "diagnostic": "Common causes: empty file, unsupported file type, or extraction produced no readable text"
+                    }
+                )
                 continue
 
             # Use chunk FILES count, not individual chunks
