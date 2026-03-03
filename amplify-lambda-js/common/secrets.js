@@ -17,7 +17,7 @@ const __dirname = dirname(__filename);
 config({ path: join(__dirname, '../../.env.local') });
 
 
-const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' }); 
+const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' });
 
 export const getSecret = async (secretName) => {
 
@@ -25,7 +25,7 @@ export const getSecret = async (secretName) => {
 
     try {
         // Send the command to Secrets Manager service
-        const data = await secretsManagerClient.send(command); 
+        const data = await secretsManagerClient.send(command);
 
         let secret;
         if ('SecretString' in data) {
@@ -34,7 +34,7 @@ export const getSecret = async (secretName) => {
             // For binary secrets, data.SecretBinary is set instead of data.SecretString
             const buff = Buffer.from(data.SecretBinary, 'base64');
             secret = buff.toString('ascii');
-            
+
         }
         return secret;
     } catch (error) {
@@ -49,9 +49,9 @@ export const getSecret = async (secretName) => {
 const getEndpointData = (parsed_data, model_name) => {
     // Find the model in the list of models
     logger.debug("Get endpoint data model_name: ", model_name);
-    if(model_name === "gpt-4-1106-Preview" || model_name === "gpt-4-1106-preview"){
+    if (model_name === "gpt-4-1106-Preview" || model_name === "gpt-4-1106-preview") {
         model_name = "gpt-4-turbo";
-    } else if(model_name === "gpt-35-1106") {
+    } else if (model_name === "gpt-35-1106") {
         model_name = "gpt-35-turbo";
     }
 
@@ -77,28 +77,35 @@ let parsed_secret;
 const isLocalDevelopment = process.env.LOCAL_DEVELOPMENT === 'true';
 
 if (isLocalDevelopment) {
-    // For local development, use mock LLM endpoint configuration
-    logger.info(`[SECRETS_INIT] LOCAL_DEVELOPMENT mode - using mock LLM endpoints configuration`);
-    parsed_secret = {
-        models: [
-            {
-                "gpt-35-turbo": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
+    // For local development, try to load real secrets first, fall back to mock
+    logger.info(`[SECRETS_INIT] LOCAL_DEVELOPMENT mode - attempting to load real LLM endpoints from: ${secret_name}`);
+    try {
+        secret_data = await getSecret(secret_name);
+        parsed_secret = JSON.parse(secret_data);
+        logger.info(`[SECRETS_INIT] Successfully loaded real LLM endpoints configuration for local dev`);
+    } catch (error) {
+        logger.warn(`[SECRETS_INIT] Could not load real secrets (${error.message}), falling back to mock LLM endpoints`);
+        parsed_secret = {
+            models: [
+                {
+                    "gpt-35-turbo": {
+                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
+                    }
+                },
+                {
+                    "gpt-4o": {
+                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
+                    }
+                },
+                {
+                    "gpt-4o-mini": {
+                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
+                    }
                 }
-            },
-            {
-                "gpt-4o": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                }
-            },
-            {
-                "gpt-4o-mini": {
-                    endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                }
-            }
-        ]
-    };
-    logger.info(`[SECRETS_INIT] Mock LLM endpoints configuration loaded successfully`);
+            ]
+        };
+        logger.info(`[SECRETS_INIT] Mock LLM endpoints configuration loaded as fallback`);
+    }
 } else {
     try {
         logger.info(`[SECRETS_INIT] Loading LLM endpoints configuration from: ${secret_name}`);
@@ -118,7 +125,7 @@ export const getLLMConfig = async (model_name, model_provider) => {
     if (model_provider === "OpenAI") {
         const url = "https://api.openai.com/v1/responses";
         const key = await getSecretApiKey("OPENAI_API_KEY");
-        return {url, key};
+        return { url, key };
     }
     return getEndpointData(parsed_secret, model_name);
 };

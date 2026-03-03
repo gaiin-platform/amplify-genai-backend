@@ -701,6 +701,31 @@ def get_presigned_url(event, context, current_user, name, data):
     if file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES:
         logger.debug("Generating presigned urls for media file (image/video)")
         metadata_key = key + ".metadata.json"
+
+        # For video files, create the metadata immediately so that
+        # local dev (serverless offline) works without S3 event triggers.
+        # In production, the S3 trigger (process_images_for_chat) will
+        # overwrite this with updated metadata (e.g. content length).
+        if file_type in VIDEO_FILE_TYPES:
+            logger.info("Creating immediate video metadata for local compatibility")
+            video_metadata = {
+                "name": name,
+                "contentKey": key,
+                "createdAt": datetime.now().isoformat(),
+                "totalTokens": 0,
+                "tags": tags,
+                "isImage": False,
+                "isVideo": True,
+                "contentType": file_type,
+                "contentLength": 0,
+            }
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=metadata_key,
+                Body=json.dumps(video_metadata)
+            )
+            logger.info("Uploaded video metadata to %s/%s", bucket_name, metadata_key)
+
         presigned_metadata_url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket_name, "Key": metadata_key},

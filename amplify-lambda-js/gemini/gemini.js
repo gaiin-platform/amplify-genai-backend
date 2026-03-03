@@ -33,15 +33,15 @@ export const chat = async (chatBody, writable) => {
 
         // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
         let tools = body.tools || options.tools;
-        if(!tools && options.functions){
-            tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
+        if (!tools && options.functions) {
+            tools = options.functions.map((fn) => { return { type: 'function', function: fn } });
             // Removed debug logging for performance
         }
 
         // Check for tool_choice in both body (from UnifiedLLMClient) and options (legacy)
         let tool_choice = body.tool_choice || options.tool_choice;
-        if(!tool_choice && options.function_call){
-            if(options.function_call === 'auto' || options.function_call === 'none'){
+        if (!tool_choice && options.function_call) {
+            if (options.function_call === 'auto' || options.function_call === 'none') {
                 tool_choice = options.function_call;
             }
             else {
@@ -91,16 +91,16 @@ export const chat = async (chatBody, writable) => {
             data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
             data.messages = await includeVideoSources(body.videoSources, data.messages, model, writable);
         }
-        
+
         // Gemini OpenAI compatibility endpoint accepts OpenAI format tools directly
         // No transformation needed - just pass tools as-is
-        if(tools && tools.length > 0){
+        if (tools && tools.length > 0) {
             data.tools = tools;
             // Default to auto if no tool_choice specified - this encourages the model to use tools
             data.tool_choice = tool_choice || "auto";
             logger.debug(`Passing ${tools.length} tools to Gemini OpenAI compatibility API with tool_choice: ${data.tool_choice}`);
             logger.debug(`Tool definition: ${JSON.stringify(tools[0])}`);
-        } else if(tool_choice){
+        } else if (tool_choice) {
             // OpenAI compatibility endpoint accepts tool_choice directly
             data.tool_choice = tool_choice;
         }
@@ -132,9 +132,6 @@ export const chat = async (chatBody, writable) => {
                 // Make sure all text parts have proper structure
                 const formattedContent = msg.content.map(item => {
                     if (item.type === "text") {
-                        return {
-                            type: "text",
-                            text: item.text || "..."
                         return {
                             type: "text",
                             text: item.text || "..."
@@ -260,27 +257,27 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
             url: url,
             responseType: 'stream'
         })
-        .then(response => {
-            let responseEnded = false;
-            
-            const streamError = (err) => {
-                if (responseEnded) return;
-                responseEnded = true;
+            .then(response => {
+                let responseEnded = false;
 
-                if (statusTimer) clearTimeout(statusTimer);
+                const streamError = (err) => {
+                    if (responseEnded) return;
+                    responseEnded = true;
 
-                if (!writableStream.writableEnded && writableStream.writable) {
-                    sendErrorMessage(writableStream);
-                    // Ensure stream is properly closed on error since we use { end: false }
-                    try {
-                        writableStream.end();
-                    } catch (endErr) {
-                        logger.error("Error ending stream:", endErr);
+                    if (statusTimer) clearTimeout(statusTimer);
+
+                    if (!writableStream.writableEnded && writableStream.writable) {
+                        sendErrorMessage(writableStream);
+                        // Ensure stream is properly closed on error since we use { end: false }
+                        try {
+                            writableStream.end();
+                        } catch (endErr) {
+                            logger.error("Error ending stream:", endErr);
+                        }
                     }
-                }
 
-                reject(err);
-            };
+                    reject(err);
+                };
 
                 // Check if stream is already closed before starting
                 if (writableStream.writableEnded) {
@@ -306,7 +303,7 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
 
                 // Set up the pipe with proper error handling
                 // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
-            response.data.pipe(writableStream, { end: false });
+                response.data.pipe(writableStream, { end: false });
 
                 // Handle the stream completion
                 response.data.on('end', () => {
@@ -333,65 +330,65 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
                         resolve();
                     });
 
-                // Handle errors
-                writableStream.on('error', streamError);
-            }
-            
-            // Always listen for errors on the response data
-            response.data.on('error', streamError);
-        })
-        .catch((e) => {
-            if (statusTimer) clearTimeout(statusTimer);
-
-            if (!writableStream.writableEnded && writableStream.writable) {
-                sendErrorMessage(writableStream);
-                // Ensure stream is properly closed on error since we use { end: false }
-                try {
-                    writableStream.end();
-                } catch (endErr) {
-                    logger.error("Error ending stream:", endErr);
+                    // Handle errors
+                    writableStream.on('error', streamError);
                 }
-            }
-            
-            let errorMessage = e.message;
-            
-            if(e.response && e.response.data) {
-                logger.error("Error invoking Gemini API:", e.response.statusText);
-                
-                if(e.response.data.readable) {
-                    let errorData = '';
-                    
-                    const handleErrorChunk = (chunk) => {
-                        errorData += chunk;
-                    };
-                    
-                    const handleErrorEnd = () => {
-                        logger.error("Error data from Gemini API:", errorData);
-                        e.response.data.removeListener('data', handleErrorChunk);
-                        e.response.data.removeListener('end', handleErrorEnd);
-                        reject(errorData || errorMessage);
-                    };
-                    
-                    e.response.data.on('data', handleErrorChunk);
-                    e.response.data.on('end', handleErrorEnd);
-                    
-                    // Add timeout for error stream
-                    setTimeout(() => {
-                        if (errorData === '') {
-                            logger.error("Error stream timed out");
+
+                // Always listen for errors on the response data
+                response.data.on('error', streamError);
+            })
+            .catch((e) => {
+                if (statusTimer) clearTimeout(statusTimer);
+
+                if (!writableStream.writableEnded && writableStream.writable) {
+                    sendErrorMessage(writableStream);
+                    // Ensure stream is properly closed on error since we use { end: false }
+                    try {
+                        writableStream.end();
+                    } catch (endErr) {
+                        logger.error("Error ending stream:", endErr);
+                    }
+                }
+
+                let errorMessage = e.message;
+
+                if (e.response && e.response.data) {
+                    logger.error("Error invoking Gemini API:", e.response.statusText);
+
+                    if (e.response.data.readable) {
+                        let errorData = '';
+
+                        const handleErrorChunk = (chunk) => {
+                            errorData += chunk;
+                        };
+
+                        const handleErrorEnd = () => {
+                            logger.error("Error data from Gemini API:", errorData);
                             e.response.data.removeListener('data', handleErrorChunk);
                             e.response.data.removeListener('end', handleErrorEnd);
-                            reject(errorMessage);
-                        }
-                    }, 5000);
+                            reject(errorData || errorMessage);
+                        };
+
+                        e.response.data.on('data', handleErrorChunk);
+                        e.response.data.on('end', handleErrorEnd);
+
+                        // Add timeout for error stream
+                        setTimeout(() => {
+                            if (errorData === '') {
+                                logger.error("Error stream timed out");
+                                e.response.data.removeListener('data', handleErrorChunk);
+                                e.response.data.removeListener('end', handleErrorEnd);
+                                reject(errorMessage);
+                            }
+                        }, 5000);
+                    } else {
+                        reject(e.response.data || errorMessage);
+                    }
                 } else {
-                    reject(e.response.data || errorMessage);
+                    logger.error("Error invoking Gemini API:", errorMessage);
+                    reject(errorMessage);
                 }
-            } else {
-                logger.error("Error invoking Gemini API:", errorMessage);
-                reject(errorMessage);
-            }
-        });
+            });
     });
 }
 
