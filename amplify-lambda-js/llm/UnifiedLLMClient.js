@@ -490,6 +490,16 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 capturedContent
             );
 
+            // Keep-alive: Send ping every 15s to prevent API Gateway timeout during thinking pauses
+            const keepAliveInterval = setInterval(() => {
+                if (!requestState.cancelled && responseStream && !responseStream.writableEnded) {
+                    responseStream.write(': keep-alive\n\n');
+                }
+            }, 15000);
+
+            // Store interval for cleanup
+            requestState.keepAliveInterval = keepAliveInterval;
+
             // Call provider with appropriate arguments
             if (providerConfig.needsEndpointProvider) {
                 // OpenAI needs getLLMConfig as first argument
@@ -497,6 +507,12 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             } else {
                 // Bedrock and Gemini just need chatBody and stream
                 result = await providerConfig.chatFn(chatBody, interceptor);
+            }
+
+            // Clear keep-alive interval
+            if (requestState.keepAliveInterval) {
+                clearInterval(requestState.keepAliveInterval);
+                requestState.keepAliveInterval = null;
             }
 
             // Ensure stream is properly ended (unless keepStreamOpen is set for tool loops)
@@ -665,6 +681,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         // Cleanup
         if (requestState.statusTimer) {
             clearTimeout(requestState.statusTimer);
+        }
+        if (requestState.keepAliveInterval) {
+            clearInterval(requestState.keepAliveInterval);
         }
         activeRequests.delete(requestId);
     }
