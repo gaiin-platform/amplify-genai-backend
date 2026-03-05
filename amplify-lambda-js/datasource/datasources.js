@@ -251,13 +251,13 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         await translateUserDataSourcesToHashDataSources(
             params,
             chatRequestOrig,
-            chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []
+            (chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []).filter(ds => !isImage(ds) && !isVideo(ds))
         );
 
     const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0, -1)
         .filter(m => {
             return m.data && m.data.dataSources
-        }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
+        }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds) && !isVideo(ds));
 
     logger.debug("🔍 Conversation datasources search:", {
         total_messages: chatRequestOrig.messages.length,
@@ -520,14 +520,14 @@ export const resolveDataSources = async (params, body, dataSources) => {
         if (ds) {
             body.imageSources = ds.filter(d => isImage(d));
             body.videoSources = ds.filter(d => isVideo(d));
-        } else if (body.options?.api_accessed && dataSources.length > 0) { // support images coming from the /chat endpoint
+        } else if (dataSources.length > 0) { // ✅ FIX: Extract images/videos from dataSources even without api_accessed
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
             const videoSources = dataSources.filter(d => isVideo(d));
             if (videoSources.length > 0) body.videoSources = videoSources;
         }
-        logger.debug("IMAGE: body.imageSources", body.imageSources);
-        logger.debug("VIDEO: body.videoSources", body.videoSources);
+        logger.debug("IMAGE: body.imageSources", body.imageSources?.length || 0);
+        logger.debug("VIDEO: body.videoSources", body.videoSources?.length || 0);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds) && !isVideo(ds))

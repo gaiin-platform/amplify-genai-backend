@@ -489,7 +489,10 @@ async function includeVideoSources(videoSources, messages, model, responseStream
         return messages;
     }
 
-    if (!model.supportsVideo) {
+    // Gemini models natively support video - default supportsVideo if not explicitly set
+    const modelSupportsVideo = model.supportsVideo ?? (model.provider === 'Gemini') ?? false;
+
+    if (!modelSupportsVideo) {
         sendStateEventToStream(responseStream,
             `\n\n The model ${model.name || model.id} does not support video inputs. Please try a model with video support.`);
         return messages;

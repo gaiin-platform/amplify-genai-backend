@@ -1,9 +1,6 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { extractProtocol, getContexts, isDocument } from "../datasource/datasources.js";
-import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
-import { addContextMessage } from "./chat/controllers/common.js";
 import { extractProtocol, getContexts, isDocument, processContextsSeparately } from "../datasource/datasources.js";
 import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
 import { addContextMessage } from "./chat/controllers/common.js";
@@ -444,7 +441,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     ];
 
     // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call
-    const cleanedMessages = finalMessages
+    const cleanedMessages = rawMessages
         .filter(msg => msg && msg.role && msg.content !== undefined)
         .map(msg => ({
             role: msg.role,
@@ -464,7 +461,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const hasContexts = contexts.length > 0;
 
     if (hasRAGSources || hasContexts) {
-        logger.debug(`Final request: RAG sources: ${ragResults.sources.length}, contexts: ${contexts.length}, split: ${shouldSplitContexts}`);
+        logger.debug(`Final request: RAG sources: ${ragResults.sources.length}, contexts: ${contexts.length}`);
     }
     if (!params.options.ragOnly && !hasRAGSources && !hasContexts) {
         logger.debug("No relevant contexts found, making direct LLM call");
@@ -498,6 +495,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             {
                 max_tokens: requestWithContext.max_tokens || 2000,
                 imageSources: chatRequestOrig.imageSources,
+                videoSources: chatRequestOrig.videoSources,
                 mcpClientSide: mcpEnabled,
                 tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
                 webSearchEnabled: webSearchEnabled,
@@ -515,8 +513,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         {
             max_tokens: requestWithContext.max_tokens || 2000,
             imageSources: chatRequestOrig.imageSources,
+            videoSources: chatRequestOrig.videoSources,
             // Only pass contexts if we DIDN'T split them (for fail-first recovery on edge cases)
-            _contexts: (!shouldSplitContexts && contexts.length > 0) ? contexts : null,
+            _contexts: (contexts.length > 0) ? contexts : null,
             // Pass smart messages filter flag for safe caching
             smartMessagesFiltered: smartMessagesFiltered,
             // Pass conversationId for cache management in overflow handler
