@@ -1,15 +1,15 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {getLogger} from "./common/logging.js";
-import {ModelTypes, getModelByType} from "./common/params.js"
-import {createRequestState, deleteRequestState, updateKillswitch, localKill} from "./requests/requestState.js";
-import {sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush} from "./common/streams.js";
-import {resolveDataSources, getDataSourcesByUse} from "./datasource/datasources.js";
-import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
-import {saveTrace, trace} from "./common/trace.js";
-import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
-import {getUserAvailableModels} from "./models/models.js";
+import { getLogger } from "./common/logging.js";
+import { ModelTypes, getModelByType } from "./common/params.js"
+import { createRequestState, deleteRequestState, updateKillswitch, localKill } from "./requests/requestState.js";
+import { sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush } from "./common/streams.js";
+import { resolveDataSources, getDataSourcesByUse } from "./datasource/datasources.js";
+import { handleDatasourceRequest } from "./datasource/datasourceEndpoint.js";
+import { saveTrace, trace } from "./common/trace.js";
+import { isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation } from "./rateLimit/rateLimiter.js";
+import { getUserAvailableModels } from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import { requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation } from "./common/envVarsTracking.js";
 import { logCriticalError } from "./common/criticalLogger.js";
@@ -207,6 +207,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const user_model_data = userModelData;
             let dataSources = resolvedDataSources;
 
+            // ✅ FIX: Extract image/video sources from last message's data
+            // resolveDataSources() normally does this, but it's skipped when body.dataSources is empty.
+            // Videos/images attached per-message would be lost without this extraction.
+            if (!params.body.imageSources && !params.body.videoSources && params.body.messages?.length > 0) {
+                const lastMsg = params.body.messages[params.body.messages.length - 1];
+                const msgDataSources = lastMsg?.data?.dataSources;
+                if (msgDataSources) {
+                    const imgSources = msgDataSources.filter(d => d?.type?.startsWith("image/"));
+                    const vidSources = msgDataSources.filter(d => d?.type?.startsWith("video/"));
+                    if (imgSources.length > 0) params.body.imageSources = imgSources;
+                    if (vidSources.length > 0) params.body.videoSources = vidSources;
+                    if (imgSources.length > 0 || vidSources.length > 0) {
+                        logger.info(`📎 [Media] Extracted from message data: ${imgSources.length} images, ${vidSources.length} videos`);
+                    }
+                }
+            }
 
             const models = user_model_data.models;
             if (!models) {

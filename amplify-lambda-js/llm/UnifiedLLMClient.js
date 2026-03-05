@@ -23,7 +23,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
-import {ARTIFACTS_PROMPT} from "../common/conversations.js";
+import { ARTIFACTS_PROMPT } from "../common/conversations.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
