@@ -2,13 +2,13 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import axios from 'axios';
-import {getLogger} from "../common/logging.js";
-import {logCriticalError} from "../common/criticalLogger.js";
-import {trace} from "../common/trace.js";
-import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
-import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
-import {getSecretApiKey} from "../common/secrets.js";
-import {newStatus, getThinkingMessage} from "../common/status.js";
+import { getLogger } from "../common/logging.js";
+import { logCriticalError } from "../common/criticalLogger.js";
+import { trace } from "../common/trace.js";
+import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content, getVideoBase64Content, isVideo } from "../datasource/datasources.js";
+import { sendErrorMessage, sendStateEventToStream, sendStatusEventToStream } from "../common/streams.js";
+import { getSecretApiKey } from "../common/secrets.js";
+import { newStatus, getThinkingMessage } from "../common/status.js";
 import { getBudgetTokens } from "../common/params.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
@@ -16,7 +16,7 @@ const logger = getLogger("gemini");
 
 // Always fetch API key fresh for security - no caching of secrets
 const getGeminiApiKey = async () => {
-    return await getSecretApiKey("GEMINI_API_KEY");
+    return process.env.LOCAL_DEVELOPMENT ? process.env.GEMINI_API_KEY : await getSecretApiKey("GEMINI_API_KEY");
 };
 
 const constructGeminiUrl = () => {
@@ -25,8 +25,8 @@ const constructGeminiUrl = () => {
 
 export const chat = async (chatBody, writable) => {
     try {
-        let body = {...chatBody};
-        const options = {...body.options};
+        let body = { ...chatBody };
+        const options = { ...body.options };
         delete body.options;
         const model = options.model;
         const modelId = (model && model.id) || "gemini-1.5-pro";
@@ -34,19 +34,19 @@ export const chat = async (chatBody, writable) => {
 
         // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
         let tools = body.tools || options.tools;
-        if(!tools && options.functions){
-            tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
+        if (!tools && options.functions) {
+            tools = options.functions.map((fn) => { return { type: 'function', function: fn } });
             // Removed debug logging for performance
         }
 
         // Check for tool_choice in both body (from UnifiedLLMClient) and options (legacy)
         let tool_choice = body.tool_choice || options.tool_choice;
-        if(!tool_choice && options.function_call){
-            if(options.function_call === 'auto' || options.function_call === 'none'){
+        if (!tool_choice && options.function_call) {
+            if (options.function_call === 'auto' || options.function_call === 'none') {
                 tool_choice = options.function_call;
             }
             else {
-                tool_choice = {type: 'function', function: {name: options.function_call}};
+                tool_choice = { type: 'function', function: { name: options.function_call } };
             }
             // Removed debug logging for performance
         }
@@ -57,18 +57,19 @@ export const chat = async (chatBody, writable) => {
             ...body,
             "model": modelId,
             "stream": true,
-            "stream_options": {"include_usage": true}
+            "stream_options": { "include_usage": true }
         };
 
         if (model.supportsReasoning) {
-            const budget_tokens = getBudgetTokens({options}, maxTokens); 
-            data.extra_body = { "google": {
-                                "thinking_config": {
-                                    "thinking_budget": budget_tokens,
-                                    "include_thoughts": true
-                                }
-                              }
-      }
+            const budget_tokens = getBudgetTokens({ options }, maxTokens);
+            data.extra_body = {
+                "google": {
+                    "thinking_config": {
+                        "thinking_budget": budget_tokens,
+                        "include_thoughts": true
+                    }
+                }
+            }
 
         }
 
@@ -82,28 +83,32 @@ export const chat = async (chatBody, writable) => {
         }
 
         if (!model.supportsSystemPrompts) {
-            data.messages = data.messages.map(m => { 
-                return (m.role === 'system') ? {...m, role: 'user'} : m}
+            data.messages = data.messages.map(m => {
+                return (m.role === 'system') ? { ...m, role: 'user' } : m
+            }
             );
         }
         if (!options.dataSourceOptions?.disableDataSources) {
             data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
+            data.messages = await includeVideoSources(body.videoSources, data.messages, model, writable);
         }
-        
+
         // Gemini OpenAI compatibility endpoint accepts OpenAI format tools directly
         // No transformation needed - just pass tools as-is
-        if(tools && tools.length > 0){
+        if (tools && tools.length > 0) {
             data.tools = tools;
             // Default to auto if no tool_choice specified - this encourages the model to use tools
             data.tool_choice = tool_choice || "auto";
             logger.debug(`Passing ${tools.length} tools to Gemini OpenAI compatibility API with tool_choice: ${data.tool_choice}`);
             logger.debug(`Tool definition: ${JSON.stringify(tools[0])}`);
-        } else if(tool_choice){
+        } else if (tool_choice) {
             // OpenAI compatibility endpoint accepts tool_choice directly
             data.tool_choice = tool_choice;
         }
 
         if (data.imageSources) delete data.imageSources;
+        if (data.videoSources) delete data.videoSources;
+
 
         // OpenAI compatibility endpoint uses OpenAI format - keep string content for text messages
         // Only use array format for multimodal content (images)
@@ -111,6 +116,18 @@ export const chat = async (chatBody, writable) => {
             // Convert system role to user if not supported (Gemini OpenAI compat handles this too)
             const role = msg.role === 'system' && !model.supportsSystemPrompts ? 'user' : msg.role;
 
+            // If content is a string, convert to proper format for Gemini
+            if (typeof msg.content === 'string') {
+                return {
+                    role: msg.role === 'system' ? 'user' : msg.role,
+                    content: [
+                        {
+                            type: "text",
+                            text: msg.content
+                        }
+                    ]
+                };
+            }
             // If content is already array (multimodal), ensure structure is correct
             if (Array.isArray(msg.content)) {
                 // Make sure all text parts have proper structure
@@ -123,6 +140,7 @@ export const chat = async (chatBody, writable) => {
                     }
                     return item;
                 });
+
 
                 return {
                     role,
@@ -145,6 +163,7 @@ export const chat = async (chatBody, writable) => {
                     return { ...message, content: "..." };
                 }
 
+
                 // Handle structured content (multimodal format)
                 if (Array.isArray(message.content)) {
                     const updatedContent = message.content.map(item => {
@@ -154,11 +173,13 @@ export const chat = async (chatBody, writable) => {
                         return item;
                     });
 
+
                     // Ensure at least one text item exists in the content array
                     const hasTextItem = updatedContent.some(item => item.type === "text" && item.text);
                     if (!hasTextItem) {
                         updatedContent.push({ type: "text", text: "..." });
                     }
+
 
                     return { ...message, content: updatedContent };
                 }
@@ -181,8 +202,8 @@ export const chat = async (chatBody, writable) => {
         const url = constructGeminiUrl();
 
         // Removed debug logging for performance
-        trace(options.requestId, ["chat","gemini"], {modelId, url, data});
-        
+        trace(options.requestId, ["chat", "gemini"], { modelId, url, data });
+
         // No status timer - let the actual response be the indication
         return streamAxiosResponseToWritable(url, writable, null, data, headers);
     } catch (error) {
@@ -265,142 +286,142 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
             url: url,
             responseType: 'stream'
         })
-        .then(response => {
-            let responseEnded = false;
-            
-            const streamError = (err) => {
-                if (responseEnded) return;
-                responseEnded = true;
+            .then(response => {
+                let responseEnded = false;
 
-                if (statusTimer) clearTimeout(statusTimer);
+                const streamError = (err) => {
+                    if (responseEnded) return;
+                    responseEnded = true;
 
-                if (!writableStream.writableEnded && writableStream.writable) {
-                    sendErrorMessage(writableStream);
-                    // Ensure stream is properly closed on error since we use { end: false }
-                    try {
-                        writableStream.end();
-                    } catch (endErr) {
-                        logger.error("Error ending stream:", endErr);
+                    if (statusTimer) clearTimeout(statusTimer);
+
+                    if (!writableStream.writableEnded && writableStream.writable) {
+                        sendErrorMessage(writableStream);
+                        // Ensure stream is properly closed on error since we use { end: false }
+                        try {
+                            writableStream.end();
+                        } catch (endErr) {
+                            logger.error("Error ending stream:", endErr);
+                        }
                     }
+
+                    reject(err);
+                };
+
+                // Check if stream is already closed before starting
+                if (writableStream.writableEnded) {
+                    if (statusTimer) clearTimeout(statusTimer);
+                    resolve();
+                    return;
                 }
 
-                reject(err);
-            };
+                // Simplified SSE formatting check
+                response.data.on('data', (chunk) => {
+                    const data = chunk.toString();
+                    if (data && data.trim() && !data.startsWith('data:') && !writableStream.writableEnded) {
+                        try {
+                            // Validate it's JSON then format as SSE
+                            JSON.parse(data);
+                            writableStream.write(`data: ${data}\n\n`);
+                            return; // Skip the pipe for this chunk since we handled it
+                        } catch (e) {
+                            // Not valid JSON, continue with normal pipe
+                        }
+                    }
+                });
 
-            // Check if stream is already closed before starting
-            if (writableStream.writableEnded) {
-                if (statusTimer) clearTimeout(statusTimer);
-                resolve();
-                return;
-            }
-            
-            // Simplified SSE formatting check
-            response.data.on('data', (chunk) => {
-                const data = chunk.toString();
-                if (data && data.trim() && !data.startsWith('data:') && !writableStream.writableEnded) {
-                    try {
-                        // Validate it's JSON then format as SSE
-                        JSON.parse(data);
-                        writableStream.write(`data: ${data}\n\n`);
-                        return; // Skip the pipe for this chunk since we handled it
-                    } catch (e) {
-                        // Not valid JSON, continue with normal pipe
+                // Set up the pipe with proper error handling
+                // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
+                response.data.pipe(writableStream, { end: false });
+
+                // Handle the stream completion
+                response.data.on('end', () => {
+                    // Sometimes Gemini doesn't properly send a [DONE] marker
+                    if (!responseEnded && !writableStream.writableEnded) {
+                        try {
+                            writableStream.write("data: [DONE]\n\n");
+                        } catch (err) {
+                            logger.error("Error sending DONE marker:", err);
+                        }
                     }
-                }
-            });
-            
-            // Set up the pipe with proper error handling
-            // Use { end: false } to prevent auto-closing the stream (tool loops need it open)
-            response.data.pipe(writableStream, { end: false });
-            
-            // Handle the stream completion
-            response.data.on('end', () => {
-                // Sometimes Gemini doesn't properly send a [DONE] marker
-                if (!responseEnded && !writableStream.writableEnded) {
-                    try {
-                        writableStream.write("data: [DONE]\n\n");
-                    } catch (err) {
-                        logger.error("Error sending DONE marker:", err);
-                    }
-                }
-                
-                responseEnded = true;
-                if (statusTimer) clearTimeout(statusTimer);
-                resolve();
-            });
-            
-            // Handle the 'finish' event to resolve the promise if the stream supports events
-            if (typeof writableStream.on === 'function') {
-                // Handle the 'finish' event to resolve the promise
-                writableStream.on('finish', () => {
+
                     responseEnded = true;
                     if (statusTimer) clearTimeout(statusTimer);
                     resolve();
                 });
 
-                // Handle errors
-                writableStream.on('error', streamError);
-            }
-            
-            // Always listen for errors on the response data
-            response.data.on('error', streamError);
-        })
-        .catch((e) => {
-            if (statusTimer) clearTimeout(statusTimer);
+                // Handle the 'finish' event to resolve the promise if the stream supports events
+                if (typeof writableStream.on === 'function') {
+                    // Handle the 'finish' event to resolve the promise
+                    writableStream.on('finish', () => {
+                        responseEnded = true;
+                        if (statusTimer) clearTimeout(statusTimer);
+                        resolve();
+                    });
 
-            let errorMessage = e.message;
-
-            // Helper to finalize error - DON'T send error message here, let outer handler decide
-            const finalizeError = (errorData = null) => {
-                if (errorData) {
-                    // Parse and attach error message for overflow detection
-                    try {
-                        const parsed = typeof errorData === 'string' ? JSON.parse(errorData) : errorData;
-                        e._parsedErrorMessage = parsed.error?.message || parsed.message || errorData;
-                    } catch {
-                        e._parsedErrorMessage = errorData;
-                    }
+                    // Handle errors
+                    writableStream.on('error', streamError);
                 }
-                reject(e); // Reject with the error object, not just the message
-            };
 
-            if(e.response && e.response.data) {
-                logger.error("Error invoking Gemini API:", e.response.statusText);
+                // Always listen for errors on the response data
+                response.data.on('error', streamError);
+            })
+            .catch((e) => {
+                if (statusTimer) clearTimeout(statusTimer);
 
-                if(e.response.data.readable) {
-                    let errorData = '';
+                let errorMessage = e.message;
 
-                    const handleErrorChunk = (chunk) => {
-                        errorData += chunk;
-                    };
+                // Helper to finalize error - DON'T send error message here, let outer handler decide
+                const finalizeError = (errorData = null) => {
+                    if (errorData) {
+                        // Parse and attach error message for overflow detection
+                        try {
+                            const parsed = typeof errorData === 'string' ? JSON.parse(errorData) : errorData;
+                            e._parsedErrorMessage = parsed.error?.message || parsed.message || errorData;
+                        } catch {
+                            e._parsedErrorMessage = errorData;
+                        }
+                    }
+                    reject(e); // Reject with the error object, not just the message
+                };
 
-                    const handleErrorEnd = () => {
-                        logger.error("Error data from Gemini API:", errorData);
-                        e.response.data.removeListener('data', handleErrorChunk);
-                        e.response.data.removeListener('end', handleErrorEnd);
-                        finalizeError(errorData || null);
-                    };
+                if (e.response && e.response.data) {
+                    logger.error("Error invoking Gemini API:", e.response.statusText);
 
-                    e.response.data.on('data', handleErrorChunk);
-                    e.response.data.on('end', handleErrorEnd);
+                    if (e.response.data.readable) {
+                        let errorData = '';
 
-                    // Add timeout for error stream
-                    setTimeout(() => {
-                        if (errorData === '') {
-                            logger.error("Error stream timed out");
+                        const handleErrorChunk = (chunk) => {
+                            errorData += chunk;
+                        };
+
+                        const handleErrorEnd = () => {
+                            logger.error("Error data from Gemini API:", errorData);
                             e.response.data.removeListener('data', handleErrorChunk);
                             e.response.data.removeListener('end', handleErrorEnd);
-                            finalizeError(null);
-                        }
-                    }, 5000);
+                            finalizeError(errorData || null);
+                        };
+
+                        e.response.data.on('data', handleErrorChunk);
+                        e.response.data.on('end', handleErrorEnd);
+
+                        // Add timeout for error stream
+                        setTimeout(() => {
+                            if (errorData === '') {
+                                logger.error("Error stream timed out");
+                                e.response.data.removeListener('data', handleErrorChunk);
+                                e.response.data.removeListener('end', handleErrorEnd);
+                                finalizeError(null);
+                            }
+                        }, 5000);
+                    } else {
+                        finalizeError(e.response.data || null);
+                    }
                 } else {
-                    finalizeError(e.response.data || null);
+                    logger.error("Error invoking Gemini API:", errorMessage);
+                    finalizeError(null);
                 }
-            } else {
-                logger.error("Error invoking Gemini API:", errorMessage);
-                finalizeError(null);
-            }
-        });
+            });
     });
 }
 
@@ -427,15 +448,15 @@ async function includeImageSources(imageSources, messages, model, responseStream
                 }
             };
         });
-        
+
         const imageContents = await Promise.all(imagePromises);
-        
+
         // Find the first user message to add images to
         const firstUserMsgIndex = messages.findIndex(m => m.role === 'user');
-        
+
         if (firstUserMsgIndex !== -1) {
             const userMsg = messages[firstUserMsgIndex];
-            
+
             // Convert to the OpenAI format for multimodal content
             if (typeof userMsg.content === 'string') {
                 // Convert string content to array format
@@ -454,11 +475,69 @@ async function includeImageSources(imageSources, messages, model, responseStream
                 };
             }
         }
-        
+
         sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
         console.error("Error processing images:", error);
+        return messages;
+    }
+}
+
+async function includeVideoSources(videoSources, messages, model, responseStream) {
+    if (!videoSources || videoSources.length === 0) {
+        return messages;
+    }
+
+    // Gemini models natively support video - default supportsVideo if not explicitly set
+    const modelSupportsVideo = model.supportsVideo ?? (model.provider === 'Gemini') ?? false;
+
+    if (!modelSupportsVideo) {
+        sendStateEventToStream(responseStream,
+            `\n\n The model ${model.name || model.id} does not support video inputs. Please try a model with video support.`);
+        return messages;
+    }
+
+    try {
+        const videoPromises = videoSources.map(async (source) => {
+            const base64Content = await getVideoBase64Content(source);
+            if (!base64Content) return null;
+            return {
+                type: "image_url",
+                image_url: {
+                    url: `data:${source.type || source.mimeType};base64,${base64Content}`
+                }
+            };
+        });
+
+        const videoContents = (await Promise.all(videoPromises)).filter(v => v !== null);
+
+        if (videoContents.length === 0) return messages;
+
+        // Add to last user message
+        const lastUserMsgIndex = messages.map(m => m.role).lastIndexOf('user');
+        if (lastUserMsgIndex !== -1) {
+            const userMsg = messages[lastUserMsgIndex];
+            if (typeof userMsg.content === 'string') {
+                messages[lastUserMsgIndex] = {
+                    ...userMsg,
+                    content: [
+                        { type: "text", text: userMsg.content },
+                        ...videoContents
+                    ]
+                };
+            } else if (Array.isArray(userMsg.content)) {
+                messages[lastUserMsgIndex] = {
+                    ...userMsg,
+                    content: [...userMsg.content, ...videoContents]
+                };
+            }
+        }
+
+        sendStateEventToStream(responseStream, additionalImageInstruction);
+        return messages;
+    } catch (error) {
+        console.error("Error processing videos:", error);
         return messages;
     }
 } 

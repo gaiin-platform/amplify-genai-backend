@@ -132,10 +132,59 @@ def process_images_for_chat(event, context):
             )
             image_data = response["Body"].read()
         else:
-            # This is an unsupported file type
-            raise Exception(
-                f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES}"
-            )
+            # Check if this is a video file that should be skipped
+            VIDEO_FILE_TYPES = [
+                "video/mp4",
+                "video/mpeg", 
+                "video/quicktime",
+                "video/x-msvideo",  # .avi
+                "video/x-ms-wmv",   # .wmv
+                "video/webm",
+                "video/ogg"
+            ]
+            
+            if content_type in VIDEO_FILE_TYPES:
+                # Video files go to the same bucket as images but don't need image processing
+                # However, we must create a .metadata.json so the frontend stops polling
+                logger.info("Processing video file metadata for: %s with content type: %s", file_key, content_type)
+                
+                # Look up file info from DynamoDB
+                dynamodb = boto3.resource("dynamodb")
+                files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
+                db_response = files_table.get_item(Key={"id": file_key})
+                item = db_response.get("Item", {})
+                
+                name = item.get("name", "Unknown")
+                tags = item.get("tags", [])
+                createdAt = item.get("createdAt", datetime.now().isoformat())
+                
+                # Get video file size from the head response
+                content_length = head_response.get("ContentLength", 0)
+
+                # Create video metadata and write to S3
+                put_video_file_metadata(bucket_name, file_key, name, tags, content_type, content_length, createdAt)
+
+                # Update permissions for the video file
+                user = file_key.split("/")[0]
+                permissions_update = {
+                    "dataSources": [file_key],
+                    "emailList": [user],
+                    "permissionLevel": "write",
+                    "policy": "",
+                    "principalType": "user",
+                    "objectType": "datasource",
+                }
+                update_object_permissions(user, permissions_update)
+
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps("Video file metadata created successfully"),
+                }
+            else:
+                # This is an unsupported file type
+                raise Exception(
+                    f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES + VIDEO_FILE_TYPES}"
+                )
 
         image = resize_image(Image.open(BytesIO(image_data)))
 
@@ -241,3 +290,24 @@ def put_image_file_metadata(bucket_name, key, name, tags, image_size, createdAt)
     logger.info("Uploaded metadata to %s/%s", bucket_name, metadata_key)
 
     return image_metadata
+
+
+def put_video_file_metadata(bucket_name, key, name, tags, content_type, content_length, createdAt):
+    metadata_key = key + ".metadata.json"
+    video_metadata = {
+        "name": name,
+        "contentKey": key,
+        "createdAt": createdAt,
+        "totalTokens": 0,
+        "tags": tags,
+        "isImage": False,
+        "isVideo": True,
+        "contentType": content_type,
+        "contentLength": content_length,
+    }
+    logger.debug("Video metadata: %s", video_metadata)
+
+    s3.put_object(Bucket=bucket_name, Key=metadata_key, Body=json.dumps(video_metadata))
+    logger.info("Uploaded video metadata to %s/%s", bucket_name, metadata_key)
+
+    return video_metadata

@@ -1,19 +1,26 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {extractKey} from "../datasource/datasources.js";
-import {getLogger} from "./logging.js";
+import { extractKey } from "../datasource/datasources.js";
+import { getLogger } from "./logging.js";
 
 const logger = getLogger("permissions");
 
 const permissionsEndpoint = process.env.API_BASE_URL + "/utilities/can_access_objects";
 
 export const canReadDatasource = (userId, datasourceId) => {
-    return extractKey(datasourceId).startsWith(userId+"/");
+    return extractKey(datasourceId).startsWith(userId + "/");
 }
 
 
 export const canReadDataSources = async (accessToken, dataSources) => {
+    // Bypass permissions check in local development since S3 event triggers
+    // (which call update_object_permissions) don't fire with serverless offline
+    if (process.env.LOCAL_DEVELOPMENT) {
+        logger.debug("Local dev detected, bypassing permissions check");
+        return true;
+    }
+
     const accessLevels = {}
     dataSources.forEach(ds => {
         accessLevels[ds.id] = 'read'
@@ -43,7 +50,7 @@ export const canReadDataSources = async (accessToken, dataSources) => {
             logger.warn("User does not have access to datasources: " + response.status);
             return false;
         }
-        else if(response.status === 200 && statusCode === 200) {
+        else if (response.status === 200 && statusCode === 200) {
             return true;
         }
     }
