@@ -135,22 +135,62 @@ def extend_api_gateway_timeout(
                 'current_timeout_ms': current_timeout
             }
 
-        # Extend timeout to target (TESTING: Always update, even if already set)
-        apigateway.update_integration(
-            restApiId=api_id,
-            resourceId=resource_id,
-            httpMethod=method.upper(),
-            patchOperations=[
-                {
-                    'op': 'replace',
-                    'path': '/timeoutInMillis',
-                    'value': str(target_timeout_ms)
-                }
-            ]
-        )
+        # Extend timeout to target with fail-safe retry
+        try:
+            apigateway.update_integration(
+                restApiId=api_id,
+                resourceId=resource_id,
+                httpMethod=method.upper(),
+                patchOperations=[
+                    {
+                        'op': 'replace',
+                        'path': '/timeoutInMillis',
+                        'value': str(target_timeout_ms)
+                    }
+                ]
+            )
+
+            actual_timeout_set = target_timeout_ms
+
+        except apigateway.exceptions.BadRequestException as e:
+            error_str = str(e)
+            # Check if error is about timeout limits
+            if 'Timeout should be between' in error_str:
+                # Parse the actual max from error message like:
+                # "Timeout should be between 50 ms and 180000 ms"
+                import re
+                match = re.search(r'between\s+(\d+)\s+ms\s+and\s+(\d+)\s+ms', error_str)
+                if match:
+                    actual_min = int(match.group(1))
+                    actual_max = int(match.group(2))
+                    logger.warning(
+                        f"Timeout {target_timeout_ms}ms exceeds AWS limit for this endpoint. "
+                        f"AWS allows {actual_min}-{actual_max}ms. Retrying with {actual_max}ms..."
+                    )
+
+                    # RETRY with the actual AWS maximum
+                    apigateway.update_integration(
+                        restApiId=api_id,
+                        resourceId=resource_id,
+                        httpMethod=method.upper(),
+                        patchOperations=[
+                            {
+                                'op': 'replace',
+                                'path': '/timeoutInMillis',
+                                'value': str(actual_max)
+                            }
+                        ]
+                    )
+                    actual_timeout_set = actual_max
+                else:
+                    # Couldn't parse, re-raise
+                    raise
+            else:
+                # Different error, re-raise
+                raise
 
         logger.info(
-            f"✓ Extended timeout to {target_timeout_ms}ms for {function_name} "
+            f"✓ Extended timeout to {actual_timeout_set}ms for {function_name} "
             f"({method} {resource_path}, was {current_timeout}ms)"
         )
 
@@ -158,10 +198,10 @@ def extend_api_gateway_timeout(
 
         return {
             'status': 'extended',
-            'message': f'Timeout extended to {target_timeout_ms}ms',
+            'message': f'Timeout extended to {actual_timeout_set}ms',
             'function_name': function_name,
             'previous_timeout_ms': current_timeout,
-            'new_timeout_ms': target_timeout_ms,
+            'new_timeout_ms': actual_timeout_set,
             'resource_id': resource_id
         }
 
@@ -219,16 +259,17 @@ def handle_cloudformation_request(event: Dict, context) -> Dict:
     try:
         max_timeout_override = int(max_timeout_env)
 
-        # Validate timeout meets AWS API Gateway minimum
-        # Minimum: 50ms (AWS hard limit)
-        # Maximum: No cap here - depends on what AWS approved for your account
-        if max_timeout_override < 50:
-            logger.warning(f"API_GATEWAY_MAX_TIMEOUT_MS too low ({max_timeout_override}ms), minimum is 50ms - skipping")
+        # Validate minimum (AWS hard limit is 50ms)
+        API_GATEWAY_MIN_TIMEOUT = 50
+
+        if max_timeout_override < API_GATEWAY_MIN_TIMEOUT:
+            logger.warning(f"API_GATEWAY_MAX_TIMEOUT_MS too low ({max_timeout_override}ms), minimum is {API_GATEWAY_MIN_TIMEOUT}ms - skipping")
             return send_cfn_response(event, context, 'SUCCESS', {
-                'Message': f'API Gateway timeout extension disabled (value too low: {max_timeout_override}ms, min: 50ms)'
+                'Message': f'API Gateway timeout extension disabled (value too low: {max_timeout_override}ms, min: {API_GATEWAY_MIN_TIMEOUT}ms)'
             })
 
-        logger.info(f"API Gateway timeout extension enabled with max override: {max_timeout_override}ms")
+        # No preemptive capping - let AWS tell us the actual max through error handling
+        logger.info(f"API Gateway timeout extension enabled, will attempt: {max_timeout_override}ms (AWS will reject if too high)")
 
     except ValueError:
         logger.warning(f"Invalid API_GATEWAY_MAX_TIMEOUT_MS value: '{max_timeout_env}' (must be integer) - skipping")

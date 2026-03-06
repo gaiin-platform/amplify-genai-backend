@@ -638,7 +638,7 @@ def get_assistant(assistant_id):
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
 })
-@validated(op="create")
+@validated(op="create", support_polling=True)
 def create_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
     access_token = data["access_token"]
