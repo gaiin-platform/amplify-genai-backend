@@ -136,7 +136,6 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
         - !Ref LambdaIAMPolicyAPIGateway
-        - !Ref LambdaIAMPolicyCloudFormation
 
 functions:
 
@@ -583,7 +582,6 @@ resources:
         - LambdaIAMPolicySecrets
         - LambdaIAMPolicyRDS
         - LambdaIAMPolicyAPIGateway
-        - LambdaIAMPolicyCloudFormation
 
   Resources:
     # Custom resource to auto-populate Parameter Store with locally defined variables
@@ -806,26 +804,6 @@ resources:
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources/*
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/integrations/*
-
-    LambdaIAMPolicyCloudFormation:
-      Type: AWS::IAM::ManagedPolicy
-      Properties:
-        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-cloudformation
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - cloudformation:DescribeStackResources
-                - cloudformation:DescribeStacks
-              Resource:
-                - arn:aws:cloudformation:${self:provider.region}:${aws:accountId}:stack/${self:service}-${sls:stage}/*
-            - Effect: Allow
-              Action:
-                - lambda:GetFunctionConfiguration
-                - lambda:GetFunction
-              Resource:
-                - arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${sls:stage}-*
 
     # ---- Lambda invoke permissions for S3 → Lambda ----
     ConvertInvokePermissionFromS3:
