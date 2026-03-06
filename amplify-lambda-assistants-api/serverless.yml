@@ -74,6 +74,7 @@ provider:
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     OAUTH_STATE_TABLE: ${self:service}-${sls:stage}-oauth-state
     OAUTH_USER_TABLE: ${self:service}-${sls:stage}-user-oauth-integrations
+    FRONTEND_URL: "https://${self:custom.stageVars.CUSTOM_DOMAIN, ssm:/amplify/${sls:stage}/CUSTOM_DOMAIN}"
     OP_LOG_DYNAMO_TABLE: ${self:service}-${sls:stage}-op-log
     
     # Imported Variables from Parameter Store
@@ -318,6 +319,49 @@ functions:
       - http:
           path: integrations/mcp/server/refresh
           method: post
+
+  startMCPOAuth:
+    handler: integrations/mcp_servers.start_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/start
+          method: post
+          cors: true
+
+  mcpOAuthCallback:
+    handler: integrations/mcp_servers.mcp_oauth_callback
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/callback
+          method: get
+
+  mcpOAuthExchange:
+    handler: integrations/mcp_servers.mcp_oauth_exchange
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/exchange
+          method: post
+          cors: true
+
+  disconnectMCPOAuth:
+    handler: integrations/mcp_servers.disconnect_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/disconnect
+          method: post
+          cors: true
 
 
 resources:

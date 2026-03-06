@@ -37,6 +37,9 @@ rules = {
         "/integrations/mcp/server/delete": {"delete_mcp_server": {}},
         "/integrations/mcp/server/tools": {"get_mcp_server_tools": {}},
         "/integrations/mcp/server/refresh": {"refresh_mcp_server_tools": {}},
+        "/integrations/mcp/server/oauth/start": {"start_mcp_oauth": {}},
+        "/integrations/mcp/server/oauth/exchange": {"mcp_oauth_exchange": {}},
+        "/integrations/mcp/server/oauth/disconnect": {"disconnect_mcp_oauth": {}},
     },
     "api_validators": {
         "/assistant-api/execute-custom-auto": {
@@ -62,5 +65,8 @@ rules = {
         "/integrations/mcp/server/delete": {"delete_mcp_server": {}},
         "/integrations/mcp/server/tools": {"get_mcp_server_tools": {}},
         "/integrations/mcp/server/refresh": {"refresh_mcp_server_tools": {}},
+        "/integrations/mcp/server/oauth/start": {"start_mcp_oauth": {}},
+        "/integrations/mcp/server/oauth/exchange": {"mcp_oauth_exchange": {}},
+        "/integrations/mcp/server/oauth/disconnect": {"disconnect_mcp_oauth": {}},
     }
 }
