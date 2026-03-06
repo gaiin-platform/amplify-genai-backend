@@ -1578,3 +1578,10 @@ resources:
       Export:
         Name:
           Fn::Sub: "${sls:stage}-EmbeddingChunksIndexDlqArn"
+   
+    ParameterStorePopulatorArn:
+      Description: "ARN of the parameter store populator Lambda function"
+      Value: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-ParameterStorePopulatorArn"

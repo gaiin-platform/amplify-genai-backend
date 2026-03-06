@@ -329,7 +329,7 @@ resources:
       Properties:
         # ServiceToken references the populator Lambda in amplify-lambda service
         ServiceToken:
-          Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:amplify-${self:custom.depName}-lambda-${sls:stage}-parameter_store_populator"
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
         ServiceName: ${self:service}
         Stage: ${sls:stage}
         TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
