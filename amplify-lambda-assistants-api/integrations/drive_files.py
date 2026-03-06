@@ -584,7 +584,7 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
         # Process files first (same order as before)
         if "files" in provider_data:
             files_data = provider_data["files"]
-            updated_files, cache_updates = process_files_with_cache(
+            updated_files, cache_updates = await process_files_with_cache(
                 files_data, provider_type, token, current_user, integration_provider, processed_files_cache
             )
             updated_provider_data["files"] = updated_files
@@ -593,7 +593,7 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
         # Process folders (with awareness of already processed files)
         if "folders" in provider_data:
             folders_data = provider_data["folders"]
-            updated_folders = process_folders_with_cache(
+            updated_folders = await process_folders_with_cache(
                 folders_data, provider_type, token, current_user, integration_provider, processed_files_cache
             )
             # Filter out empty folders to prevent schema validation errors
@@ -625,140 +625,150 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
         raise e  # Re-raise to be caught by gather()
 
 
-def process_files_with_cache(files_data, provider_type, token, current_user, integration_provider, processed_files_cache):
-    """Process individual files for syncing with global cache awareness."""
+async def process_files_with_cache(files_data, provider_type, token, current_user, integration_provider, processed_files_cache):
+    """Process individual files for syncing with global cache awareness (async with 15 concurrent workers)."""
     updated_files = {}
     cache_updates = {}
     total_files = len(files_data)
-    processed_count = 0
     updated_count = 0
     skipped_count = 0
     error_count = 0
     cached_count = 0
-    
-    logger.info("[FILES START] Processing %s files for %s", total_files, integration_provider)
-    
-    for file_id in files_data.keys():
-        file_metadata = files_data[file_id]
-        processed_count += 1
-        
-        try:
-            # Check if file was already processed
-            if file_id in processed_files_cache:
-                cached_result = processed_files_cache[file_id]
-                cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
-                logger.debug("[FILE CACHED] %s - Already %s, reusing result (saved download + upload)", file_id, cache_source)
-                updated_files[file_id] = cached_result
-                cache_updates[file_id] = cached_result  # Include cached files in updates
-                cached_count += 1
-                continue
-            
-            logger.debug("[FILE CHECK] %s - %s", file_id, file_metadata.get('lastCaptured', 'Never captured'))
-            
-            # Check if file needs to be processed
-            needs_update = should_update_file(file_metadata, file_id, provider_type, token, integration_provider)
-            
-            if needs_update:
-                logger.info("[FILE %s/%s] Updating %s", processed_count, total_files, file_id)
-                
-                # Use prepare_download_link to handle file conversion and get presigned URL
-                download_result = prepare_download_link(
-                    integration_provider, provider_type, file_id, current_user, token, direct_download=False
-                )
-                
-                if download_result and download_result.get("success") and download_result.get("data"):
-                    presigned_url = download_result["data"]
-                    logger.debug("[FILE DOWNLOAD] Got presigned URL for %s", file_id)
-                    
-                    # Download file contents from presigned URL
-                    response = requests.get(presigned_url, timeout=30)
-                    if response.ok:
-                        file_contents = response.content
-                        logger.debug("[FILE DOWNLOAD] Downloaded %s (%s bytes)", file_id, len(file_contents))
-                    else:
-                        logger.error("[FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
-                        file_contents = None
-                else:
-                    logger.error("[FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
-                    file_contents = None
-                
-                if file_contents:
-                    # Get file metadata for proper naming and typing
-                    file_info = get_file_metadata_from_provider(file_id, provider_type, token, integration_provider)
-                    
-                    if file_info:
-                        # Upload to our datasource
-                        upload_result = upload_file_to_datasource(
-                            token, file_info, file_contents, file_metadata["type"], current_user
-                        )
-                        
-                        if upload_result:
-                            # Delete old datasource if it exists
-                            if file_metadata.get("datasource") and file_metadata["datasource"].get("id"):
-                                logger.info("[FILE CLEANUP] Deleting old datasource for %s", file_id)
-                                delete_old_datasource(token, file_metadata["datasource"]["id"])
-                            
-                            # Update metadata
-                            result_metadata = {
-                                "type": file_metadata["type"],
-                                "lastCaptured": get_current_iso_timestamp(),
-                                "datasource": upload_result
-                            }
-                            updated_files[file_id] = result_metadata
-                            cache_updates[file_id] = result_metadata  # Add to cache
-                            logger.info("[FILE SUCCESS] Successfully updated %s", file_id)
-                            updated_count += 1
+
+    logger.info("[FILES START] Processing %s files for %s with 15 concurrent workers", total_files, integration_provider)
+
+    # Create semaphore to limit concurrent file processing
+    semaphore = asyncio.Semaphore(15)
+
+    async def process_single_file(file_id, file_metadata, file_index):
+        """Process a single file with semaphore control."""
+        nonlocal updated_count, skipped_count, error_count, cached_count
+
+        async with semaphore:
+            try:
+                # Check if file was already processed
+                if file_id in processed_files_cache:
+                    cached_result = processed_files_cache[file_id]
+                    cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
+                    logger.debug("[FILE CACHED] %s - Already %s, reusing result (saved download + upload)", file_id, cache_source)
+                    updated_files[file_id] = cached_result
+                    cache_updates[file_id] = cached_result
+                    cached_count += 1
+                    return
+
+                logger.debug("[FILE CHECK] %s - %s", file_id, file_metadata.get('lastCaptured', 'Never captured'))
+
+                # Check if file needs to be processed
+                needs_update = should_update_file(file_metadata, file_id, provider_type, token, integration_provider)
+
+                if needs_update:
+                    logger.info("[FILE %s/%s] Updating %s", file_index + 1, total_files, file_id)
+
+                    # Use prepare_download_link to handle file conversion and get presigned URL
+                    download_result = prepare_download_link(
+                        integration_provider, provider_type, file_id, current_user, token, direct_download=False
+                    )
+
+                    if download_result and download_result.get("success") and download_result.get("data"):
+                        presigned_url = download_result["data"]
+                        logger.debug("[FILE DOWNLOAD] Got presigned URL for %s", file_id)
+
+                        # Download file contents from presigned URL
+                        response = requests.get(presigned_url, timeout=30)
+                        if response.ok:
+                            file_contents = response.content
+                            logger.debug("[FILE DOWNLOAD] Downloaded %s (%s bytes)", file_id, len(file_contents))
                         else:
-                            logger.error("[FILE ERROR] Upload failed for %s", file_id)
+                            logger.error("[FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
+                            file_contents = None
+                    else:
+                        logger.error("[FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
+                        file_contents = None
+
+                    if file_contents:
+                        # Get file metadata for proper naming and typing
+                        file_info = get_file_metadata_from_provider(file_id, provider_type, token, integration_provider)
+
+                        if file_info:
+                            # Upload to our datasource
+                            upload_result = upload_file_to_datasource(
+                                token, file_info, file_contents, file_metadata["type"], current_user
+                            )
+
+                            if upload_result:
+                                # Delete old datasource if it exists
+                                if file_metadata.get("datasource") and file_metadata["datasource"].get("id"):
+                                    logger.info("[FILE CLEANUP] Deleting old datasource for %s", file_id)
+                                    delete_old_datasource(token, file_metadata["datasource"]["id"])
+
+                                # Update metadata
+                                result_metadata = {
+                                    "type": file_metadata["type"],
+                                    "lastCaptured": get_current_iso_timestamp(),
+                                    "datasource": upload_result
+                                }
+                                updated_files[file_id] = result_metadata
+                                cache_updates[file_id] = result_metadata
+                                logger.info("[FILE SUCCESS] Successfully updated %s", file_id)
+                                updated_count += 1
+                            else:
+                                logger.error("[FILE ERROR] Upload failed for %s", file_id)
+                                updated_files[file_id] = file_metadata
+                                error_count += 1
+                        else:
+                            logger.error("[FILE ERROR] Could not get metadata for %s", file_id)
                             updated_files[file_id] = file_metadata
                             error_count += 1
                     else:
-                        logger.error("[FILE ERROR] Could not get metadata for %s", file_id)
+                        logger.error("[FILE ERROR] Could not get contents for %s", file_id)
                         updated_files[file_id] = file_metadata
                         error_count += 1
                 else:
-                    logger.error("[FILE ERROR] Could not get contents for %s", file_id)
+                    # No update needed, keep original
+                    logger.debug("[FILE SKIP] %s - No update needed", file_id)
                     updated_files[file_id] = file_metadata
-                    error_count += 1
-            else:
-                # No update needed, keep original
-                logger.debug("[FILE SKIP] %s - No update needed", file_id)
+                    cache_updates[file_id] = file_metadata
+                    skipped_count += 1
+
+            except Exception as e:
+                logger.error("[FILE ERROR] Exception processing file %s: %s", file_id, e)
                 updated_files[file_id] = file_metadata
-                cache_updates[file_id] = file_metadata  # Add to cache even if skipped
-                skipped_count += 1
-                
-        except Exception as e:
-            logger.error("[FILE ERROR] Exception processing file %s: %s", file_id, e)
-            updated_files[file_id] = file_metadata
-            error_count += 1
-    
-    logger.info("[FILES SUMMARY] Processed: %s | Updated: %s | Skipped: %s | Cached: %s | Errors: %s", processed_count, updated_count, skipped_count, cached_count, error_count)
+                error_count += 1
+
+    # Create tasks for all files
+    tasks = []
+    for index, (file_id, file_metadata) in enumerate(files_data.items()):
+        task = process_single_file(file_id, file_metadata, index)
+        tasks.append(task)
+
+    # Execute all tasks concurrently
+    await asyncio.gather(*tasks)
+
+    logger.info("[FILES SUMMARY] Processed: %s | Updated: %s | Skipped: %s | Cached: %s | Errors: %s",
+                total_files, updated_count, skipped_count, cached_count, error_count)
     return updated_files, cache_updates
 
 
-def process_folders_with_cache(folders_data, provider_type, token, current_user, integration_provider, processed_files_cache):
-    """Process folders and their contained files for syncing (with nested folder support)."""
+
+async def process_folders_with_cache(folders_data, provider_type, token, current_user, integration_provider, processed_files_cache):
+    """Process folders and their contained files for syncing (async with 15 concurrent workers per folder)."""
     updated_folders = {}
     total_folders = len(folders_data)
-    processed_count = 0
-    
-    logger.info("[FOLDERS START] Processing %s folders", total_folders)
-    
-    for folder_id in folders_data.keys():
-        folder_files = folders_data[folder_id]
-        processed_count += 1
-        
+
+    logger.info("[FOLDERS START] Processing %s folders with async file processing", total_folders)
+
+    for folder_index, (folder_id, folder_files) in enumerate(folders_data.items()):
         try:
-            logger.info("[FOLDER %s/%s] Processing: %s", processed_count, total_folders, folder_id)
-            
+            logger.info("[FOLDER %s/%s] Processing: %s", folder_index + 1, total_folders, folder_id)
+
             # Get ALL files from folder and subfolders (flattened)
             current_folder_files = get_all_files_recursively(folder_id, provider_type, token, None, integration_provider)
-            
+
             if current_folder_files is None:
                 logger.error("[FOLDER ERROR] Could not list files in folder %s", folder_id)
                 updated_folders[folder_id] = folder_files
                 continue
-            
+
             # Track which files we've processed
             visited_files = set()
             updated_folder_files = {}
@@ -766,64 +776,85 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
             current_files = len(current_folder_files)
             updated_files_count = 0
             new_files_count = 0
-            deleted_files_count = 0
-            
+
             logger.debug("[FOLDER] %s - Existing: %s, Current: %s", folder_id, existing_files, current_files)
-            
-            # DEBUG: Log the current folder contents
             logger.debug("[FOLDER DEBUG] %s - Found %s files in folder tree", folder_id, len(current_folder_files))
-            
-            # Process each file currently in the folder (and subfolders)
-            for provider_file in current_folder_files:
-                file_id = get_file_id(provider_file)
-                if not file_id:
-                    continue
-                    
-                visited_files.add(file_id)
-                
-                # Check global cache first
-                if file_id in processed_files_cache:
-                    cached_result = processed_files_cache[file_id]
-                    cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
-                    logger.debug("[FOLDER CACHED] %s - Already %s globally, reusing result (saved download + upload)", file_id, cache_source)
-                    updated_folder_files[file_id] = cached_result
-                    continue
-                
-                if file_id in folder_files:
-                    # Existing file - check if needs update
-                    existing_metadata = folder_files[file_id]
-                    needs_update = should_update_file(existing_metadata, file_id, provider_type, token, integration_provider)
-                    
-                    if needs_update:
+
+            # Create semaphore for concurrent file processing within this folder
+            semaphore = asyncio.Semaphore(15)
+
+            async def process_folder_file(provider_file, file_index):
+                """Process a single file within a folder with semaphore control."""
+                nonlocal updated_files_count, new_files_count
+
+                async with semaphore:
+                    file_id = get_file_id(provider_file)
+                    if not file_id:
+                        return None, None
+
+                    visited_files.add(file_id)
+
+                    # Check global cache first
+                    if file_id in processed_files_cache:
+                        cached_result = processed_files_cache[file_id]
+                        cache_source = "uploaded" if cached_result.get("datasource") else "skipped"
+                        logger.debug("[FOLDER CACHED] %s - Already %s globally, reusing result", file_id, cache_source)
+                        return file_id, cached_result
+
+                    if file_id in folder_files:
+                        # Existing file - check if needs update
+                        existing_metadata = folder_files[file_id]
+                        needs_update = should_update_file(existing_metadata, file_id, provider_type, token, integration_provider)
+
+                        if needs_update:
+                            logger.info("[FOLDER FILE %s/%s] Updating: %s", file_index + 1, len(current_folder_files), file_id)
+                            updated_file = process_single_file_with_cache(
+                                file_id, existing_metadata, provider_file,
+                                provider_type, token, current_user, integration_provider, processed_files_cache
+                            )
+                            updated_files_count += 1
+                            return file_id, updated_file
+                        else:
+                            processed_files_cache[file_id] = existing_metadata
+                            return file_id, existing_metadata
+                    else:
+                        # New file (could be from nested folder) - upload it
+                        new_files_count += 1
+                        logger.info("[FOLDER FILE %s/%s] New file: %s", file_index + 1, len(current_folder_files), file_id)
+                        new_file_metadata = {
+                            "type": determine_file_type(provider_file),
+                            "lastCaptured": None,
+                            "datasource": None
+                        }
                         updated_file = process_single_file_with_cache(
-                            file_id, existing_metadata, provider_file,
+                            file_id, new_file_metadata, provider_file,
                             provider_type, token, current_user, integration_provider, processed_files_cache
                         )
-                        updated_files_count += 1
-                        updated_folder_files[file_id] = updated_file
-                    else:
-                        updated_folder_files[file_id] = existing_metadata
-                        processed_files_cache[file_id] = existing_metadata  # Cache for consistency
-                else:
-                    # New file (could be from nested folder) - upload it
-                    new_files_count += 1
-                    logger.info("[FOLDER] New file found: %s", file_id)
-                    new_file_metadata = {
-                        "type": determine_file_type(provider_file),
-                        "lastCaptured": None,
-                        "datasource": None
-                    }
-                    updated_file = process_single_file_with_cache(
-                        file_id, new_file_metadata, provider_file,
-                        provider_type, token, current_user, integration_provider, processed_files_cache
-                    )
-                    # Only add file if it has required fields
-                    if updated_file and updated_file.get("type"):
-                        updated_folder_files[file_id] = updated_file
-                    else:
-                        logger.error("[FOLDER ERROR] Invalid file result for %s, skipping", file_id)
-            
+                        # Only add file if it has required fields
+                        if updated_file and updated_file.get("type"):
+                            return file_id, updated_file
+                        else:
+                            logger.error("[FOLDER ERROR] Invalid file result for %s, skipping", file_id)
+                            return None, None
+
+            # Create tasks for all files in folder
+            tasks = []
+            for index, provider_file in enumerate(current_folder_files):
+                task = process_folder_file(provider_file, index)
+                tasks.append(task)
+
+            # Execute all file tasks concurrently
+            if tasks:
+                logger.info("[FOLDER %s] Processing %s files concurrently (max 15 at once)", folder_id, len(tasks))
+                results = await asyncio.gather(*tasks)
+
+                # Collect results
+                for file_id, file_result in results:
+                    if file_id and file_result:
+                        updated_folder_files[file_id] = file_result
+
             # Handle files that are in our data but no longer in folder tree (deleted)
+            deleted_files_count = 0
             for file_id in folder_files.keys():
                 if file_id not in visited_files:
                     deleted_files_count += 1
@@ -831,23 +862,27 @@ def process_folders_with_cache(folders_data, provider_type, token, current_user,
                     if folder_files[file_id].get("datasource") and folder_files[file_id]["datasource"].get("id"):
                         delete_old_datasource(token, folder_files[file_id]["datasource"]["id"])
                     # Don't add to updated_folder_files (effectively removes it)
-            
+
             # Only add folder if it contains files (to prevent schema validation errors)
             if updated_folder_files:
                 updated_folders[folder_id] = updated_folder_files
-                logger.info("[FOLDER COMPLETE] %s - Updated: %s, New: %s, Deleted: %s", folder_id, updated_files_count, new_files_count, deleted_files_count)
+                logger.info("[FOLDER COMPLETE] %s - Updated: %s, New: %s, Deleted: %s",
+                           folder_id, updated_files_count, new_files_count, deleted_files_count)
             else:
                 logger.warning("[FOLDER EMPTY] %s - No files, skipping to prevent schema errors", folder_id)
-                logger.debug("[FOLDER DEBUG] %s - Original had %s files, found %s files in tree", folder_id, len(folder_files), len(current_folder_files))
-            
+                logger.debug("[FOLDER DEBUG] %s - Original had %s files, found %s files in tree",
+                           folder_id, len(folder_files), len(current_folder_files))
+
         except Exception as e:
             logger.error("[FOLDER ERROR] Failed processing folder %s: %s", folder_id, e)
             # Don't add empty folders that would fail schema validation
             if folder_files:  # Only keep non-empty folders
                 updated_folders[folder_id] = folders_data[folder_id]
-    
-    logger.info("[FOLDERS SUMMARY] Processed %s/%s folders", processed_count, total_folders)
+
+    logger.info("[FOLDERS SUMMARY] Processed %s/%s folders", len(updated_folders), total_folders)
     return updated_folders
+
+
 
 
 def process_single_file_with_cache(file_id, file_metadata, provider_file, provider_type, token, current_user, integration_provider, processed_files_cache):
