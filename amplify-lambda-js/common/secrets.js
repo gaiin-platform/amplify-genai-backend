@@ -21,6 +21,25 @@ const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' });
 
 export const getSecret = async (secretName) => {
 
+    // In local development, check for an environment variable override before hitting AWS.
+    // For ARNs (arn:aws:...:secret:name-SUFFIX), extract the name and strip the random suffix.
+    // e.g. "dev-openai-endpoints"                         -> LOCAL_SECRET_DEV_OPENAI_ENDPOINTS
+    //      "arn:...:secret:dev-amplify-app-secrets-BMNOEY" -> LOCAL_SECRET_DEV_AMPLIFY_APP_SECRETS
+    if (process.env.LOCAL_DEVELOPMENT === 'true') {
+        let lookupName = secretName;
+        if (secretName && secretName.startsWith('arn:')) {
+            const arnParts = secretName.split(':');
+            // Strip the random 6-character suffix appended by Secrets Manager (e.g. "-BMNOEY")
+            lookupName = arnParts[arnParts.length - 1].replace(/-[A-Za-z0-9]{6}$/, '');
+        }
+        const envVarName = 'LOCAL_SECRET_' + (lookupName || '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+        if (process.env[envVarName]) {
+            logger.info(`[LOCAL_DEV] Using env var override '${envVarName}' for secret '${secretName}'`);
+            return process.env[envVarName];
+        }
+        logger.debug(`[LOCAL_DEV] No local override found for secret '${secretName}' (checked env var: ${envVarName})`);
+    }
+
     const command = new GetSecretValueCommand({ SecretId: secretName });
 
     try {
@@ -80,10 +99,18 @@ try {
     parsed_secret = JSON.parse(secret_data);
     logger.info(`[SECRETS_INIT] Successfully loaded LLM endpoints configuration`);
 } catch (error) {
-    logger.error(`[CRITICAL_SECRETS_ERROR] Failed to load LLM endpoints configuration during module initialization:`, error);
-    const criticalError = new Error(`LAMBDA_TERMINATION_REQUIRED: Critical error loading LLM endpoints configuration: ${error.message}`);
-    criticalError.isLambdaTermination = true;
-    throw criticalError;
+    if (process.env.LOCAL_DEVELOPMENT === 'true') {
+        const localEnvVar = 'LOCAL_SECRET_' + (secret_name || '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+        logger.warn(`[LOCAL_DEV] Could not load LLM endpoints from AWS Secrets Manager: ${error.message}`);
+        logger.warn(`[LOCAL_DEV] To provide a local override, set ${localEnvVar} in .env.local with the JSON endpoints payload.`);
+        logger.warn(`[LOCAL_DEV] Server will start, but LLM calls using Azure/non-OpenAI providers will fail until this is configured.`);
+        parsed_secret = null;
+    } else {
+        logger.error(`[CRITICAL_SECRETS_ERROR] Failed to load LLM endpoints configuration during module initialization:`, error);
+        const criticalError = new Error(`LAMBDA_TERMINATION_REQUIRED: Critical error loading LLM endpoints configuration: ${error.message}`);
+        criticalError.isLambdaTermination = true;
+        throw criticalError;
+    }
 }
 
 // The get_llm_config function converted to JavaScript
