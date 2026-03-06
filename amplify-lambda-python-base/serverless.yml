@@ -87,6 +87,19 @@ functions:
           cors: true
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # The Lambda dynamically fetches environment variables from the stack - no need to list them!
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:amplify-${self:custom.depName}-lambda-${sls:stage}-parameter_store_populator"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
     LambdaPythonBaseIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
