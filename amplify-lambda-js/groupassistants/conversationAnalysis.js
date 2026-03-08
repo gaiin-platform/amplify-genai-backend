@@ -20,6 +20,42 @@ function calculateMD5(content) {
     return createHash('md5').update(content).digest('base64');
 }
 
+/**
+ * Check if an S3 error is a NoSuchKey error (file doesn't exist)
+ * AWS SDK v3 can represent this in multiple ways depending on the error path
+ * @param {Error} error - The error object from S3 operation
+ * @param {string} bucketContext - Context string for logging (e.g., "consolidation bucket", "legacy bucket")
+ * @returns {boolean} True if this is a NoSuchKey error (expected), false if it's a different error
+ */
+function isS3NoSuchKeyError(error, bucketContext = 'S3') {
+    // Check all possible ways NoSuchKey can appear:
+    // - error.name: Error class name
+    // - error.message: Error message string
+    // - error.Code: AWS SDK error code
+    // - error.$metadata.httpStatusCode: HTTP 404
+    // - String(error): String representation of error
+    // - error itself if it's already a string
+    const isNoSuchKey = error.name === 'NoSuchKey' ||
+                       error.message === 'NoSuchKey' ||
+                       error.Code === 'NoSuchKey' ||
+                       error.$metadata?.httpStatusCode === 404 ||
+                       String(error) === 'NoSuchKey' ||
+                       String(error).includes('NoSuchKey') ||
+                       error === 'NoSuchKey';
+
+    if (!isNoSuchKey) {
+        logger.error(`Unexpected S3 error checking ${bucketContext}`, {
+            errorName: error.name,
+            errorCode: error.Code,
+            statusCode: error.$metadata?.httpStatusCode,
+            message: error.message,
+            stringified: String(error)
+        });
+    }
+
+    return isNoSuchKey;
+}
+
 async function uploadToS3(assistantId, conversationId, content) {
     const consolidationBucketName = process.env.S3_CONSOLIDATION_BUCKET_NAME;
     const legacyBucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME; // Marked for deletion
@@ -40,9 +76,11 @@ async function uploadToS3(assistantId, conversationId, content) {
             existingContent = await existingObject.Body.transformToString();
             foundInConsolidation = true;
         } catch (error) {
-            if (error.name !== 'NoSuchKey') {
+            // For first message in a conversation, the key won't exist yet - this is expected
+            if (!isS3NoSuchKeyError(error, 'consolidation bucket')) {
                 throw error;
             }
+            logger.debug('No existing conversation found in consolidation bucket (expected for first message)');
         }
 
         // If not found in consolidation bucket, check legacy bucket
@@ -54,9 +92,10 @@ async function uploadToS3(assistantId, conversationId, content) {
                 }));
                 existingContent = await existingObject.Body.transformToString();
             } catch (error) {
-                if (error.name !== 'NoSuchKey') {
+                if (!isS3NoSuchKeyError(error, 'legacy bucket')) {
                     throw error;
                 }
+                logger.debug('No existing conversation found in legacy bucket');
             }
         }
 
@@ -79,7 +118,12 @@ async function uploadToS3(assistantId, conversationId, content) {
         // Return just the key path (without s3:// prefix) to indicate migrated record
         return consolidationKey;
     } catch (error) {
-        logger.error(`Error uploading to S3: ${error}`);
+        logger.error(`Error uploading to S3: ${error}`, {
+            errorName: error.name,
+            errorMessage: error.message,
+            conversationId,
+            assistantId
+        });
         throw error;
     }
 }
