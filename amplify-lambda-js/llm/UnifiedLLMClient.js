@@ -92,26 +92,42 @@ const getProviderConfig = (model) => {
 /**
  * Queue conversation analysis with fallback
  */
-async function queueConversationAnalysisWithFallback(params, messages, result) {
+async function queueConversationAnalysisWithFallback(params, messages, result, options = {}) {
     try {
         const { queueConversationAnalysisWithFallback: queueConversationAnalysisImpl } = await import('../groupassistants/conversationAnalysis.js');
-        
+
         if (params.options?.trackConversations) {
+            // Extract conversationId from either options parameter or params.options
+            // (chatWithData passes it in options param, line 530 of chatWithData.js)
+            const conversationId = options.conversationId || params.options?.conversationId;
+
             // Construct proper chatRequest object
+            // Merge params.options with conversationId
             const chatRequest = {
                 messages: messages,
-                options: params.options
+                options: {
+                    ...params.options,
+                    // Ensure conversationId is included
+                    conversationId: conversationId
+                }
             };
-            
+
+            // Log for debugging
+            logger.debug('Queueing conversation analysis', {
+                conversationId: chatRequest.options.conversationId,
+                assistantId: chatRequest.options.assistantId,
+                hasConversationId: !!chatRequest.options.conversationId
+            });
+
             // Construct llmResponse object
             const llmResponse = result?.content || "";
-            
+
             // Use account from params
             const account = params.account;
-            
+
             // Always perform analysis for system rating, categories are handled separately in analysis function
             const performCategoryAnalysis = true; // Always analyze for rating, categories determined by analysisCategories presence
-            
+
             await queueConversationAnalysisImpl(
                 chatRequest,
                 llmResponse,
@@ -609,8 +625,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             );
         }
 
-        // Queue conversation analysis
-        await queueConversationAnalysisWithFallback(params, messages, result);
+        // Queue conversation analysis - pass options to ensure conversationId is included
+        await queueConversationAnalysisWithFallback(params, messages, result, options);
 
         return result || { usage: requestState.totalUsage };
 

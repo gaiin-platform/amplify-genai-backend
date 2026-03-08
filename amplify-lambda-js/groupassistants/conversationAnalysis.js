@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { trackExecution } from "../common/usageTracking.js";
+import { v4 as uuidv4 } from 'uuid';
 
 const logger = getLogger("conversationAnalysis");
 
@@ -668,8 +669,53 @@ export const sqsProcessorHandler = trackExecution("conversation_analysis", "syst
                 user: account?.user,
                 performCategoryAnalysis,
                 queuedAt,
-                queueDelay: queuedAt ? Date.now() - new Date(queuedAt).getTime() : 'unknown'
+                queueDelay: queuedAt ? Date.now() - new Date(queuedAt).getTime() : 'unknown',
+                // Debug: log the full chatRequest.options structure
+                chatRequestOptions: chatRequest?.options ? Object.keys(chatRequest.options) : 'no options'
             });
+
+            // Validate required fields are present
+            if (!chatRequest?.options?.conversationId) {
+                const generatedConversationId = uuidv4();
+
+                logger.warn('⚠️ Missing conversationId - generating fallback ID', {
+                    messageId: record.messageId,
+                    generatedConversationId,
+                    assistantId: chatRequest?.options?.assistantId,
+                    assistantName: chatRequest?.options?.assistantName,
+                    user: account?.user,
+                    hasOptions: !!chatRequest?.options,
+                    optionsKeys: chatRequest?.options ? Object.keys(chatRequest.options) : []
+                });
+
+                // Log as critical error for monitoring - this indicates API clients not passing conversationId
+                await logCriticalError({
+                    functionName: 'conversationAnalysis_sqsHandler',
+                    errorType: 'MissingConversationId',
+                    errorMessage: `API call to group assistant without conversationId - generated fallback: ${generatedConversationId}`,
+                    currentUser: account?.user || 'unknown',
+                    severity: 'LOW',
+                    stackTrace: '',
+                    context: {
+                        messageId: record.messageId,
+                        assistantId: chatRequest?.options?.assistantId,
+                        assistantName: chatRequest?.options?.assistantName,
+                        generatedConversationId,
+                        optionsKeys: chatRequest?.options ? Object.keys(chatRequest.options) : []
+                    }
+                });
+
+                // Assign generated conversationId to prevent downstream failures
+                chatRequest.options.conversationId = generatedConversationId;
+            }
+
+            if (!chatRequest?.options?.assistantId) {
+                logger.error('❌ Missing required field: assistantId', {
+                    messageId: record.messageId,
+                    conversationId: chatRequest?.options?.conversationId
+                });
+                throw new Error('Missing required field: assistantId in chatRequest.options');
+            }
             
             // Check for empty responses
             if (!llmResponse || (typeof llmResponse === 'string' && llmResponse.trim().length === 0)) {
