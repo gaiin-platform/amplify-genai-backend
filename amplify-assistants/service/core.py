@@ -21,6 +21,7 @@ from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
+bedrock_agent_client = boto3.client("bedrock-agent")
 
 from pycommon.logger import getLogger
 logger = getLogger("assistants")
@@ -88,6 +89,46 @@ def check_user_can_delete_assistant(assistant, user_id):
 
 def check_user_can_update_assistant(assistant, user_id):
     return check_can_do(assistant, user_id)
+
+
+def validate_bedrock_knowledge_base(knowledge_base_id):
+    """Validate that a Bedrock Knowledge Base exists by ID.
+
+    Args:
+        knowledge_base_id (str): The Bedrock Knowledge Base ID.
+
+    Returns:
+        dict: {"valid": True/False, "message": str}
+    """
+    try:
+        response = bedrock_agent_client.get_knowledge_base(
+            knowledgeBaseId=knowledge_base_id
+        )
+        kb_name = response.get("knowledgeBase", {}).get("name", "")
+        logger.info("Validated Bedrock Knowledge Base '%s' (ID: %s)", kb_name, knowledge_base_id)
+        return {"valid": True, "message": f"Knowledge Base '{kb_name}' found"}
+    except bedrock_agent_client.exceptions.ResourceNotFoundException:
+        logger.warning("Bedrock Knowledge Base not found: %s", knowledge_base_id)
+        return {"valid": False, "message": f"Bedrock Knowledge Base not found: {knowledge_base_id}"}
+    except Exception as e:
+        logger.error("Error validating Bedrock Knowledge Base %s: %s", knowledge_base_id, str(e))
+        return {"valid": False, "message": f"Error validating Knowledge Base: {str(e)}"}
+
+
+def is_bedrock_kb_datasource(source):
+    """Check if a datasource is a Bedrock Knowledge Base type."""
+    return (
+        source.get("type") == "bedrock/knowledge-base"
+        or source.get("id", "").startswith("bedrock-kb://")
+    )
+
+
+def extract_bedrock_kb_id(source):
+    """Extract the Knowledge Base ID from a Bedrock KB datasource."""
+    kb_id = source.get("metadata", {}).get("knowledgeBaseId")
+    if not kb_id and source.get("id", "").startswith("bedrock-kb://"):
+        kb_id = source["id"].split("bedrock-kb://")[1]
+    return kb_id
 
 
 @api_tool(
@@ -675,6 +716,7 @@ def create_assistant(event, context, current_user, name, data):
     # Identify and store website URLs
     website_data_sources = []
     standard_data_sources = []
+    bedrock_kb_data_sources = []
 
     all_website_urls = assistant_data.get('websiteUrls', [])
     logger.debug("Starting with %s existing website URLs", len(all_website_urls))
@@ -682,6 +724,11 @@ def create_assistant(event, context, current_user, name, data):
 
     try:
         for source in data_sources:
+            # Check if this is a Bedrock Knowledge Base data source
+            if is_bedrock_kb_datasource(source):
+                bedrock_kb_data_sources.append(source)
+                continue
+
             # Check if this is a website-related data source
             is_website_type = source.get("type") in ["website/url", "website/sitemap"]
             is_from_sitemap = source.get("metadata", {}).get("fromSitemap") is not None
@@ -767,6 +814,28 @@ def create_assistant(event, context, current_user, name, data):
         # update assistant_data with integration drive data
         assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
 
+        # Validate Bedrock Knowledge Base datasources
+        validated_bedrock_kb_ds = []
+        for kb_source in bedrock_kb_data_sources:
+            kb_id = extract_bedrock_kb_id(kb_source)
+            if not kb_id:
+                logger.warning("Bedrock KB datasource missing knowledgeBaseId: %s", kb_source)
+                continue
+            validation = validate_bedrock_knowledge_base(kb_id)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "message": validation["message"],
+                }
+            # Ensure consistent datasource format
+            kb_source["id"] = f"bedrock-kb://{kb_id}"
+            kb_source["type"] = "bedrock/knowledge-base"
+            if "metadata" not in kb_source:
+                kb_source["metadata"] = {}
+            kb_source["metadata"]["knowledgeBaseId"] = kb_id
+            kb_source["metadata"]["type"] = "bedrock/knowledge-base"
+            validated_bedrock_kb_ds.append(kb_source)
+
         # Permissions handling for non-group users
         if not is_group_user:
             # Process standard data sources (excluding website URLs which don't need permission checks)
@@ -813,6 +882,9 @@ def create_assistant(event, context, current_user, name, data):
         # merge additional ds
         final_data_sources += scraped_data_sources 
         # + drive_data_sources
+
+        # merge validated Bedrock Knowledge Base datasources
+        final_data_sources += validated_bedrock_kb_ds
 
         logger.debug("final_data_sources: %s", final_data_sources)
 
@@ -1498,6 +1570,7 @@ def create_or_update_assistant(
             all_data_source_keys = [
                 source["id"] for source in data_sources 
                 if not source["id"].startswith("s3://") and 
+                   not source["id"].startswith("bedrock-kb://") and
                    source.get("metadata", {}).get("type") != "assistant-web-content"
             ]
             
@@ -1608,7 +1681,10 @@ def create_or_update_assistant(
             )
 
             # Set permissions for all data sources, including scraped content
-            all_data_source_keys = [source["id"] for source in data_sources]
+            all_data_source_keys = [
+                source["id"] for source in data_sources
+                if not source["id"].startswith("bedrock-kb://")
+            ]
 
             if not update_object_permissions(
                 access_token,
