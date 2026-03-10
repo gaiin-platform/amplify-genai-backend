@@ -1,13 +1,14 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import os
 import time
 import boto3
 import json
 import uuid
+import concurrent.futures
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from decimal import Decimal
@@ -20,6 +21,7 @@ from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
+bedrock_agent_client = boto3.client("bedrock-agent")
 
 from pycommon.logger import getLogger
 logger = getLogger("assistants")
@@ -87,6 +89,46 @@ def check_user_can_delete_assistant(assistant, user_id):
 
 def check_user_can_update_assistant(assistant, user_id):
     return check_can_do(assistant, user_id)
+
+
+def validate_bedrock_knowledge_base(knowledge_base_id):
+    """Validate that a Bedrock Knowledge Base exists by ID.
+
+    Args:
+        knowledge_base_id (str): The Bedrock Knowledge Base ID.
+
+    Returns:
+        dict: {"valid": True/False, "message": str}
+    """
+    try:
+        response = bedrock_agent_client.get_knowledge_base(
+            knowledgeBaseId=knowledge_base_id
+        )
+        kb_name = response.get("knowledgeBase", {}).get("name", "")
+        logger.info("Validated Bedrock Knowledge Base '%s' (ID: %s)", kb_name, knowledge_base_id)
+        return {"valid": True, "message": f"Knowledge Base '{kb_name}' found"}
+    except bedrock_agent_client.exceptions.ResourceNotFoundException:
+        logger.warning("Bedrock Knowledge Base not found: %s", knowledge_base_id)
+        return {"valid": False, "message": f"Bedrock Knowledge Base not found: {knowledge_base_id}"}
+    except Exception as e:
+        logger.error("Error validating Bedrock Knowledge Base %s: %s", knowledge_base_id, str(e))
+        return {"valid": False, "message": f"Error validating Knowledge Base: {str(e)}"}
+
+
+def is_bedrock_kb_datasource(source):
+    """Check if a datasource is a Bedrock Knowledge Base type."""
+    return (
+        source.get("type") == "bedrock/knowledge-base"
+        or source.get("id", "").startswith("bedrock-kb://")
+    )
+
+
+def extract_bedrock_kb_id(source):
+    """Extract the Knowledge Base ID from a Bedrock KB datasource."""
+    kb_id = source.get("metadata", {}).get("knowledgeBaseId")
+    if not kb_id and source.get("id", "").startswith("bedrock-kb://"):
+        kb_id = source["id"].split("bedrock-kb://")[1]
+    return kb_id
 
 
 @api_tool(
@@ -395,6 +437,7 @@ def list_assistants(event, context, current_user, name, data):
 def list_user_assistants(user_id):
     """
     Retrieves all assistants associated with the given user ID and returns them as a list of dictionaries.
+    ULTRA-OPTIMIZED: Only fetches unique assistantIds first, then queries for the latest version of each.
 
     Args:
         user_id (str): The ID of the user.
@@ -405,33 +448,73 @@ def list_user_assistants(user_id):
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
-    assistants = []
+    # Step 1: Get unique assistantIds for this user (only fetch assistantId field)
+    unique_assistant_ids = set()
     last_evaluated_key = None
 
     while True:
-        # Build the query parameters
         query_params = {
             "IndexName": "UserNameIndex",
             "KeyConditionExpression": Key("user").eq(user_id),
+            "ProjectionExpression": "assistantId",  # Only fetch assistantId
         }
 
-        # If there is a last evaluated key, include it in the query
         if last_evaluated_key:
             query_params["ExclusiveStartKey"] = last_evaluated_key
+
         response = assistants_table.query(**query_params)
 
-        assistants.extend(response.get("Items", []))
+        # Collect unique assistantIds
+        for item in response.get("Items", []):
+            assistant_id = item.get("assistantId")
+            if assistant_id:
+                unique_assistant_ids.add(assistant_id)
 
-        # Check if there's more data to retrieve
         last_evaluated_key = response.get("LastEvaluatedKey")
-
         if not last_evaluated_key:
-            logger.debug("No more data to retrieve")
-            # No more data to retrieve
             break
 
-    # filter out old versions
-    return get_latest_assistants(assistants)
+    if not unique_assistant_ids:
+        logger.debug("No assistants found for user %s", user_id)
+        return []
+
+    logger.debug("Found %s unique assistants for user %s", len(unique_assistant_ids), user_id)
+
+    # Step 2: For each unique assistantId, query AssistantIdIndex to get the latest version
+    # Using ScanIndexForward=False and Limit=1 to get only the highest version
+    # PARALLEL OPTIMIZATION: Query all assistants concurrently
+    def fetch_latest_version(assistant_id):
+        """Helper function to fetch the latest version of a single assistant"""
+        try:
+            response = assistants_table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ScanIndexForward=False,  # Sort descending by version (range key)
+                Limit=1  # Get only the latest version
+            )
+            items = response.get("Items", [])
+            return items[0] if items else None
+        except Exception as e:
+            logger.error("Error fetching latest version for assistant %s: %s", assistant_id, e)
+            return None
+
+    # Execute queries in parallel with ThreadPoolExecutor
+    latest_assistants = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all queries at once
+        future_to_assistant = {
+            executor.submit(fetch_latest_version, assistant_id): assistant_id
+            for assistant_id in unique_assistant_ids
+        }
+
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_assistant):
+            result = future.result()
+            if result:
+                latest_assistants.append(result)
+
+    logger.debug("Fetched %s latest assistant versions", len(latest_assistants))
+    return latest_assistants
 
 
 def get_latest_assistants(assistants):
@@ -596,7 +679,7 @@ def get_assistant(assistant_id):
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
 })
-@validated(op="create")
+@validated(op="create", support_polling=True)
 def create_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
     access_token = data["access_token"]
@@ -633,6 +716,7 @@ def create_assistant(event, context, current_user, name, data):
     # Identify and store website URLs
     website_data_sources = []
     standard_data_sources = []
+    bedrock_kb_data_sources = []
 
     all_website_urls = assistant_data.get('websiteUrls', [])
     logger.debug("Starting with %s existing website URLs", len(all_website_urls))
@@ -640,6 +724,11 @@ def create_assistant(event, context, current_user, name, data):
 
     try:
         for source in data_sources:
+            # Check if this is a Bedrock Knowledge Base data source
+            if is_bedrock_kb_datasource(source):
+                bedrock_kb_data_sources.append(source)
+                continue
+
             # Check if this is a website-related data source
             is_website_type = source.get("type") in ["website/url", "website/sitemap"]
             is_from_sitemap = source.get("metadata", {}).get("fromSitemap") is not None
@@ -725,6 +814,28 @@ def create_assistant(event, context, current_user, name, data):
         # update assistant_data with integration drive data
         assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
 
+        # Validate Bedrock Knowledge Base datasources
+        validated_bedrock_kb_ds = []
+        for kb_source in bedrock_kb_data_sources:
+            kb_id = extract_bedrock_kb_id(kb_source)
+            if not kb_id:
+                logger.warning("Bedrock KB datasource missing knowledgeBaseId: %s", kb_source)
+                continue
+            validation = validate_bedrock_knowledge_base(kb_id)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "message": validation["message"],
+                }
+            # Ensure consistent datasource format
+            kb_source["id"] = f"bedrock-kb://{kb_id}"
+            kb_source["type"] = "bedrock/knowledge-base"
+            if "metadata" not in kb_source:
+                kb_source["metadata"] = {}
+            kb_source["metadata"]["knowledgeBaseId"] = kb_id
+            kb_source["metadata"]["type"] = "bedrock/knowledge-base"
+            validated_bedrock_kb_ds.append(kb_source)
+
         # Permissions handling for non-group users
         if not is_group_user:
             # Process standard data sources (excluding website URLs which don't need permission checks)
@@ -771,6 +882,9 @@ def create_assistant(event, context, current_user, name, data):
         # merge additional ds
         final_data_sources += scraped_data_sources 
         # + drive_data_sources
+
+        # merge validated Bedrock Knowledge Base datasources
+        final_data_sources += validated_bedrock_kb_ds
 
         logger.debug("final_data_sources: %s", final_data_sources)
 
@@ -1127,27 +1241,27 @@ def decimal_to_float(obj):
 def get_most_recent_assistant_version(assistants_table, assistant_public_id):
     """
     Retrieves the most recent version of an assistant from the DynamoDB table.
+    Uses AssistantIdIndex with ScanIndexForward=False to get the latest version directly.
 
     Args:
         assistants_table (boto3.Table): The DynamoDB table for assistants.
-        user_that_owns_the_assistant (str): The ID of the user that owns the assistant.
-        assistant_name (str): The name of the assistant.
-        assistant_public_id (str): The public ID of the assistant (optional).
+        assistant_public_id (str): The public ID of the assistant.
 
     Returns:
         dict: The most recent assistant item, or None if not found.
     """
-    if assistant_public_id:
-        response = assistants_table.query(
-            IndexName="AssistantIdIndex",
-            KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
-            Limit=1,
-            ScanIndexForward=False,
-        )
-        if response["Count"] > 0:
-            return max(response["Items"], key=lambda x: x.get("version", 1))
+    if not assistant_public_id:
+        return None
 
-    return None
+    response = assistants_table.query(
+        IndexName="AssistantIdIndex",
+        KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
+        ScanIndexForward=False,  # Sort by version DESC - highest version first
+        Limit=1  # Get only the latest version
+    )
+
+    items = response.get("Items", [])
+    return items[0] if items else None
 
 
 def save_assistant(
@@ -1456,6 +1570,7 @@ def create_or_update_assistant(
             all_data_source_keys = [
                 source["id"] for source in data_sources 
                 if not source["id"].startswith("s3://") and 
+                   not source["id"].startswith("bedrock-kb://") and
                    source.get("metadata", {}).get("type") != "assistant-web-content"
             ]
             
@@ -1566,7 +1681,10 @@ def create_or_update_assistant(
             )
 
             # Set permissions for all data sources, including scraped content
-            all_data_source_keys = [source["id"] for source in data_sources]
+            all_data_source_keys = [
+                source["id"] for source in data_sources
+                if not source["id"].startswith("bedrock-kb://")
+            ]
 
             if not update_object_permissions(
                 access_token,

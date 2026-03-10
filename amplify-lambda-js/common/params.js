@@ -53,19 +53,24 @@ export const getMaxTokens = (params) => {
 
 export const getBudgetTokens = (params, maxTokens) => {
     const reasoning_effort = params.options.reasoningLevel ?? "low";
-    let budget_tokens = 1024;
-    switch (reasoning_effort) {
-        case "medium":
-            budget_tokens = 2048;
-            break;
-        case "high":
-            budget_tokens = 4096;
-            break;
+
+    // Desired budget based on reasoning level (from original implementation)
+    const BUDGET_BY_LEVEL = { low: 1024, medium: 2048, high: 4096 };
+    const desiredBudget = BUDGET_BY_LEVEL[reasoning_effort] || 1024;
+
+    // Bedrock constraint: maxTokens MUST be strictly greater than budget_tokens
+    // Reserve a reasonable buffer for the actual response (20% of maxTokens, minimum 256)
+    const MIN_OUTPUT_RESERVE = Math.max(Math.floor(maxTokens * 0.2), 256);
+    const maxAllowedBudget = maxTokens - MIN_OUTPUT_RESERVE;
+
+    // If desired budget fits within constraints, use it
+    if (desiredBudget < maxAllowedBudget) {
+        return desiredBudget;
     }
-    if (budget_tokens > maxTokens) {
-        budget_tokens = Math.max(maxTokens / 2, 1024);
-    }
-    return budget_tokens;
+
+    // Otherwise scale down, but maintain minimum 1024 budget (original behavior)
+    // If maxTokens is too small for minimum budget, caller should disable reasoning
+    return Math.max(maxAllowedBudget, 1024);
 
 }
 

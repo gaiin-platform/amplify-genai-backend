@@ -6,7 +6,7 @@
  */
 
 import { getLogger } from '../common/logging.js';
-import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, endStream } from '../common/streams.js';
+import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, endStream, forceFlush } from '../common/streams.js';
 import { newStatus } from '../common/status.js';
 import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
 import { getUserToolApiKeys } from './userToolKeys.js';
@@ -57,32 +57,42 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // The Python mcp_servers.py uses current_user which is the Cognito sub UUID
     const mcpUserId = params.account?.user || params.account?.username;
 
-    const maxIterations = options.maxIterations || MAX_TOOL_ITERATIONS;
-
     logger.info('Starting tool execution loop');
     logger.debug(`Tool loop using userId for API key lookup: ${userId}`);
     logger.debug(`Tool loop using mcpUserId for MCP server lookup: ${mcpUserId}`);
 
     // Get user's tool API keys
     let apiKeys = await getUserToolApiKeys(userId);
+     // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
+    let adminKey = null;
 
-    // Also check for admin-configured API key
-    let hasAdminKey = false;
-    try {
-        const adminKey = await getAdminWebSearchApiKey();
-        if (adminKey && adminKey.provider && adminKey.api_key) {
-            logger.info(`Found admin-configured web search key for provider: ${adminKey.provider}`);
-            apiKeys = {
+    if (options.webSearchEnabled) {
+        try {
+            adminKey = await getAdminWebSearchApiKey();
+            if (adminKey && adminKey.provider && adminKey.api_key) {
+                logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
+                apiKeys = {
                 ...apiKeys,
-                [adminKey.provider]: adminKey.api_key
-            };
-            hasAdminKey = true;
+                    [adminKey.provider]: adminKey.api_key
+                };
+            } else {
+                logger.warn("→ Web search enabled for this request but no admin API key configured");
+                options.webSearchEnabled = false;
+            }
+        } catch (error) {
+            logger.debug('Failed to check admin web search config:', error.message);
         }
-    } catch (error) {
-        logger.warn('Failed to get admin web search key:', error.message);
-    }
+    } 
 
-    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'} (admin key: ${hasAdminKey})`);
+    logger.info("🔍 Tool loop check:", {
+        adminWebSearchAvailable: !!adminKey,
+        webSearchEnabled: options.webSearchEnabled,
+        mcpEnabled :options?.mcpEnabled,
+        toolsCount: (options?.tools)?.length || 0
+    });
+
+
+    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'}`);
 
     // Collect all available tools
     const allTools = [];
@@ -126,11 +136,13 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // If no tools available at all, just run without tools
     if (allTools.length === 0) {
         logger.warn('No tools available (no API keys and no MCP servers)');
+        // Remove tools from options to prevent confusion
+        const { tools, tool_choice, ...cleanOptions } = options;
         return await callUnifiedLLM(
-            { ...params, options: { ...params.options, model } },
+            { ...params, tools:[], options: { ...params.options, model, enableWebSearch: false, tools: [] } },
             messages,
             responseStream,
-            options
+            cleanOptions
         );
     }
 
@@ -170,21 +182,21 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     let currentMessages = [...messages];
     let iteration = 0;
     let allWebSearchSources = []; // Track sources across iterations
+    const maxIterations = options.maxIterations || MAX_TOOL_ITERATIONS;
 
     while (iteration < maxIterations) {
         iteration++;
         logger.info(`Tool loop iteration ${iteration}/${maxIterations}`);
 
-        // Call LLM
-        // First iteration: stream to user but keep stream open for status updates
-        // Subsequent iterations: don't stream (tool results go to messages)
         const result = await callUnifiedLLM(
             { ...params, options: { ...params.options, model } },
             currentMessages,
-            iteration === 1 ? responseStream : null,
-            { ...toolOptions, keepStreamOpen: iteration === 1 } // Keep stream open during first iteration for tool execution
+            responseStream,
+            { ...toolOptions, keepStreamOpen: true } // Keep stream open during first iteration for tool execution
         );
-
+        if (responseStream && !responseStream.writableEnded && result.content) {
+                sendDeltaToStream(responseStream, 'answer', `\n\n`);
+        }
         // Check for tool calls
         const toolCalls = extractToolCalls(result);
 
@@ -212,15 +224,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                 });
             }
 
-            // For iterations > 1, we need to stream the final response to the user
-            // (iteration 1 already streams, but subsequent iterations pass null responseStream)
-            if (iteration > 1 && responseStream && !responseStream.writableEnded && result.content) {
-                logger.info('Streaming final response from tool loop');
-                sendDeltaToStream(responseStream, 'answer', result.content);
-                // Send end marker so frontend knows response is complete
-                endStream(responseStream);
-            }
-
+            
             return result;
         }
 

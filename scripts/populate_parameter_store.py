@@ -214,13 +214,13 @@ class ParameterStorePopulator:
                 
                 # Define the shared variables to migrate
                 shared_var_names = [
-                    'ADMINS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
+                    'ADMINS', 'API_GATEWAY_MAX_TIMEOUT_MS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
                     'LOG_LEVEL', 'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
                     'ASSISTANTS_OPENAI_PROVIDER', 'LLM_ENDPOINTS_SECRETS_NAME_ARN',
                     'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
                     'COGNITO_CLIENT_ID', 'COGNITO_USER_POOL_ID', 'ORGANIZATION_EMAIL_DOMAIN',
                     'API_VERSION', 'MAX_ACU', 'MIN_ACU', 'PRIVATE_SUBNET_ONE',
-                    'PRIVATE_SUBNET_TWO', 'VPC_CIDR', 'VPC_ID', 'EMBEDDING_DIM'
+                    'PRIVATE_SUBNET_TWO', 'VPC_CIDR', 'VPC_ID', 'EMBEDDING_DIM', 'RAG_POSTGRES_DB_PORT'
                 ]
                 
                 shared_vars = {}
@@ -230,6 +230,7 @@ class ParameterStorePopulator:
                 shared_vars['LLM_ENDPOINTS_SECRETS_NAME'] = f"{stage}-openai-endpoints"
                 shared_vars['SECRETS_ARN_NAME'] = f"{stage}-amplify-app-secrets"
                 shared_vars['APP_ARN_NAME'] = f"{stage}-amplify-app-vars"
+                shared_vars['OAUTH_ENCRYPTION_PARAMETER'] = f"/amplify-{self.dep_name}-assistants-api/{stage}/oauth/integrations/encryption"
                 
                 # Add DEP_NAME from terminal argument
                 shared_vars['DEP_NAME'] = self.dep_name

@@ -236,6 +236,48 @@ def delete_artifact(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to delete artifact."}
 
 
+def sanitize_surrogates(text):
+    """
+    Remove or replace invalid UTF-16 surrogate characters that can't be encoded in UTF-8.
+    Surrogates (U+D800 to U+DFFF) are invalid in UTF-8 and cause encoding errors.
+    """
+    if not isinstance(text, str):
+        return text
+
+    # Remove surrogates character by character
+    # Surrogates are in range U+D800 to U+DFFF (55296 to 57343 in decimal)
+    found_surrogates = False
+    cleaned = []
+    for i, char in enumerate(text):
+        code = ord(char)
+        if 0xD800 <= code <= 0xDFFF:
+            # Skip surrogate characters entirely
+            if not found_surrogates:
+                logger.warning("Found surrogate at position %d (code: 0x%04X) in text (length: %d)", i, code, len(text))
+                found_surrogates = True
+            continue
+        cleaned.append(char)
+
+    if found_surrogates:
+        logger.info("Removed surrogates from text: original length %d -> cleaned length %d", len(text), len(cleaned))
+
+    return ''.join(cleaned)
+
+
+def sanitize_artifact_data(artifact):
+    """
+    Recursively sanitize all string values in artifact data to remove invalid surrogates.
+    """
+    if isinstance(artifact, dict):
+        return {key: sanitize_artifact_data(value) for key, value in artifact.items()}
+    elif isinstance(artifact, list):
+        return [sanitize_artifact_data(item) for item in artifact]
+    elif isinstance(artifact, str):
+        return sanitize_surrogates(artifact)
+    else:
+        return artifact
+
+
 def create_artifact_keys(current_user, artifact):
     logger.info("creating artifact key data")
     created_at_str = artifact["createdAt"]
@@ -260,7 +302,11 @@ def save_artifact(event, context, current_user, name, data):
 
 def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
     logger.info("saving artifact for user %s", current_user)
-    
+
+    # Sanitize artifact data FIRST to remove invalid UTF-16 surrogates
+    # This must happen before any operations that might try to encode the data
+    artifact = sanitize_artifact_data(artifact)
+
     # Use updated create_artifact_keys which now returns clean format
     artifact_key, artifact_id, created_at_str = create_artifact_keys(current_user, artifact)
 
@@ -274,9 +320,7 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         "tags": artifact.get("tags", []),
     }
     if sharedBy:
-        logger.debug("Adding sharedBy field: %s", sharedBy)
         artifact_table_data["sharedBy"] = sharedBy
-        logger.debug("Complete metadata will be: %s", artifact_table_data)
         
     try:
         logger.info("Adding artifact details to the table")
@@ -307,7 +351,7 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         # Store artifact content in USER_STORAGE_TABLE
         logger.info("Store artifact content in USER_STORAGE_TABLE")
         artifact["artifactId"] = artifact_id
-        
+
         if sharedBy:
             # SHARED ARTIFACT: Store in sharer's storage space using sharer's access token
             # Use recipient-specific SK to avoid overwrites when sharing with multiple users
@@ -320,7 +364,6 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
             logger.debug("This will create PK = %s#%s = %s#amplify-artifacts", sharedBy, app_id, sharedBy)
             try:
                 result = save_user_data(access_token, app_id, "artifact-content", shared_artifact_key, artifact)
-                logger.debug("save_user_data result = %s", result)
             except Exception as e:
                 logger.error("save_user_data failed: %s", e)
                 result = None

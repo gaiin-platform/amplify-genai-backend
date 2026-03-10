@@ -4,7 +4,7 @@
 import {getLogger} from "./common/logging.js";
 import {ModelTypes, getModelByType} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch, localKill} from "./requests/requestState.js";
-import {sendStateEventToStream, TraceStream, sendStatusEventToStream} from "./common/streams.js";
+import {sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush} from "./common/streams.js";
 import {resolveDataSources, getDataSourcesByUse} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
@@ -196,6 +196,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     const rateLimitStr = `${rateLimitInfo.adminSet ? "Amplify " : ""}Set Rate limit: ${formatRateLimit(rateLimitInfo)}`;
                     errorMessage = `${errorMessage} ${currentRate} ${rateLimitStr}`;
                 }
+                logger.warn(`🚫 Rate limit exceeded for user ${params.user}: ${errorMessage}`);
                 return returnResponse(responseStream, {
                     statusCode: 429,
                     statusText: "Request limit reached. Please try again in a few minutes.",
@@ -254,8 +255,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                 });
             }
-            
-            logger.info(`✅ Model validation passed: ${modelId}`);
 
             // override model in params/options so its from our backend end 
             params.model = model;
@@ -323,7 +322,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     sendStatusEventToStream(responseStream, newStatus({
                         summary: "Analyzing conversation context...",
                         inProgress: true,
-                        type: "info"
+                        type: "info",
+                        id: "smart-messages-processing"
                     }));
 
 
@@ -373,23 +373,16 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         assistantParams.body.messages = smartMessagesResult.filteredMessages;
                         logger.info(`✅ [Processing] Complete:`, smartMessagesResult._internal || {});
 
-                        // 🎨 APPEND ARTIFACT INSTRUCTIONS if backend determined they should be included
-                        if (smartMessagesResult.artifactInstructions) {
-                            const originalPromptLength = body.options.prompt?.length || 0;
-                            body.options.prompt = (body.options.prompt || '') + '\n\n' + smartMessagesResult.artifactInstructions;
-                            assistantParams.body.options.prompt = body.options.prompt;
-
-                            logger.info("✅ [Artifacts] Instructions added", {
-                                added: smartMessagesResult.artifactInstructions.length
-                            });
-                        }
+                        options.options.artifacts = smartMessagesResult.includeArtifactInstructions;
 
                         // Update status to show completion
                         sendStatusEventToStream(responseStream, newStatus({
                             summary: "Context analysis complete",
-                            inProgress: false,
-                            type: "success"
+                            inProgress: true,
+                            type: "success",
+                            id: "smart-messages-processing"
                         }));
+                        forceFlush(responseStream);
                     } else {
                         logger.debug(`⏭️ Smart messages complete: ${smartMessagesResult.filteredMessages?.length || body.messages.length} messages (unfiltered)`,
                                    smartMessagesResult._internal || {});
@@ -418,8 +411,9 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 logger.error(`Request processing failed for user ${params.user}:`, error);
 
                 // CRITICAL: Assistant handler failure = user cannot get LLM response
-                // Skip critical error logging in local development
-                if (!isLocal) {
+                // Skip critical error logging in local development OR if provider already logged it
+                // Check if error was already logged by provider (OpenAI/Bedrock/Gemini)
+                if (!isLocal && !error.criticalErrorLogged) {
                     await logCriticalError({
                         functionName: 'routeRequest_assistantHandler',
                         errorType: 'AssistantHandlerFailure',
@@ -438,6 +432,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                             api_accessed: options?.api_accessed || false
                         }
                     });
+                } else if (error.criticalErrorLogged) {
+                    logger.info('Skipping router critical error logging - provider already logged it');
                 }
                 
                 // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang

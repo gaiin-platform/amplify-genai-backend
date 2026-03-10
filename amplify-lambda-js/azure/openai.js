@@ -7,9 +7,9 @@ import {getLogger} from "../common/logging.js";
 import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
-import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
+import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
-import {newStatus, getThinkingMessage} from "../common/status.js";
+import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
 const logger = getLogger("openai");
 
@@ -27,21 +27,14 @@ export const translateModelToOpenAI = (modelId) => {
 export const translateDataToResponseBody = (data) => {
     // Clean messages for responses API format
     // The responses API doesn't support tool_calls, tool_call_id in the same way as chat completions
+    // Also, the responses API expects content to be an array of objects with type: 'input_text' or 'input_image'
     const messages = data.messages.map(msg => {
-        const cleaned = {
-            role: msg.role,
-            content: msg.content
-        };
-        // Include name if present
-        if (msg.name) cleaned.name = msg.name;
+        let content = msg.content;
 
         // Convert tool messages to a format the responses API can understand
         // Tool results need to be converted to user messages with context
         if (msg.role === 'tool' && msg.tool_call_id) {
-            return {
-                role: 'user',
-                content: `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`
-            };
+            content = `[Tool Result for ${msg.tool_call_id}]: ${msg.content}`;
         }
 
         // For assistant messages with tool_calls, include the tool call info in content
@@ -49,17 +42,55 @@ export const translateDataToResponseBody = (data) => {
             const toolCallInfo = msg.tool_calls.map(tc =>
                 `[Called tool: ${tc.function?.name || tc.name} with args: ${tc.function?.arguments || JSON.stringify(tc.arguments)}]`
             ).join('\n');
-            return {
-                role: 'assistant',
-                content: (msg.content || '') + '\n' + toolCallInfo
-            };
+            content = (msg.content || '') + '\n' + toolCallInfo;
         }
+
+        // Format content for responses API
+        // If content is already an array (with images), keep it
+        // Otherwise, wrap string content with the appropriate type based on role
+        // User/system messages use 'input_text', assistant messages use 'output_text'
+        const contentType = msg.role === 'assistant' ? 'output_text' : 'input_text';
+        const formattedContent = Array.isArray(content)
+            ? content.map(item => {
+                // Handle all content type conversions for Responses API
+                if (item.type === 'text') {
+                    // Convert 'text' to role-appropriate type
+                    return { type: contentType, text: item.text };
+                } else if (item.type === 'input_text' || item.type === 'output_text') {
+                    // Already in Responses API format, return as-is
+                    return item;
+                } else if (item.type === 'image_url') {
+                    // Handle both formats: object {url, detail} or string
+                    // Chat completions uses: { type: 'image_url', image_url: {url: '...', detail: 'high'} }
+                    // Need to convert to Responses API format: { type: 'input_image', image_url: '...' }
+                    const imageUrl = typeof item.image_url === 'string'
+                        ? item.image_url
+                        : item.image_url?.url || item.image_url;
+                    return { type: 'input_image', image_url: imageUrl };
+                } else if (item.type === 'input_image') {
+                    // Already in Responses API format, return as-is
+                    return item;
+                } else {
+                    // Unknown type - treat as text and log warning
+                    logger.warn(`Unknown content type '${item.type}' converted to ${contentType}`);
+                    return { type: contentType, text: item.text || JSON.stringify(item) };
+                }
+              })
+            : [{ type: contentType, text: content || '' }];
+
+        const cleaned = {
+            role: msg.role === 'tool' ? 'user' : msg.role, // Tool role becomes user
+            content: formattedContent
+        };
+
+        // Include name if present
+        if (msg.name) cleaned.name = msg.name;
 
         return cleaned;
     });
 
     data.input = messages;
-    data.max_output_tokens = data.max_tokens || data.max_completion_tokens || 1000;
+    data.max_output_tokens = data.max_output_tokens || data.max_tokens || data.max_completion_tokens || 4096;
     if (data.max_output_tokens < 16) data.max_output_tokens = 16;
     delete data.messages;
     delete data.max_tokens;
@@ -144,6 +175,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
+    if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
     const config = await endpointProvider(modelId, model.provider);
 
@@ -210,28 +242,35 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             messages: data.messages,
             tools: data.tools,
             tool_choice: data.tool_choice || 'auto',
-            max_completion_tokens: data.max_tokens || model.outputTokenLimit,
+            max_completion_tokens: data.max_tokens || options.maxTokens || model.outputTokenLimit,
             stream: true
         };
         // Note: stream_options and reasoning_effort are NOT included for O-models with tools
         // as they may cause 400 errors
     }
     // Only add reasoning for non-tool requests (reasoning can conflict with tool calling)
-    if (model.supportsReasoning && !hasTools) {
+    const disableReasoning = options.disableReasoning;
+    if (model.supportsReasoning && !hasTools && !disableReasoning) {
         const reasoningLvl = options.reasoningLevel ?? "low";
         if (isCompletionEndpoint) {
             data.reasoning_effort = reasoningLvl;
         } else {
             data.reasoning = {effort: reasoningLvl, summary: "auto"};
         }
+        logger.info(`Reasoning enabled with level: ${reasoningLvl}`);
+    } else if (model.supportsReasoning && disableReasoning) {
+        logger.info(`Reasoning disabled by user (disableReasoning=true)`);
     }
     
     // Only use responses API format when:
     // 1. Not a completions endpoint AND
     // 2. No custom tools are present (responses API doesn't support function calling properly)
     if (!isCompletionEndpoint && !hasTools) {
+        logger.info(`🔄 Converting to Responses API format for model: ${modelId}`);
         data = translateDataToResponseBody(data);
-        // if contains a url the
+        // For OpenAI provider only: add native web_search_preview tool when search intent detected
+        // Azure provider uses custom web_search function tool from toolLoop instead (controlled by webSearchEnabled)
+        // Note: web_search_preview works directly with Responses API - no need to convert to chat/completions
         if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
@@ -244,19 +283,26 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         logger.debug(`🔧 Full request data: ${JSON.stringify(data, null, 2)}`);
     }
 
+    // Add structured output configuration if provided
+    // NOTE: response_format only works with /chat/completions endpoint, not /responses
+    if (body.response_format && isCompletionEndpoint) {
+        data.response_format = body.response_format;
+        logger.info('\u2705 [OpenAI] Added native structured output configuration');
+    }
+
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
     function streamAxiosResponseToWritable(url, writableStream, statusTimer, retryWithoutTools = false) {
         return new Promise((resolve, reject) => {
             // Use a copy of data for this attempt
             let requestData = {...data};
-            
+
             // If retrying, remove tools
             if (retryWithoutTools && requestData.tools) {
                 delete requestData.tools;
                 // Retrying request without tools
             }
-            
+
             axios({
                 data: requestData,
                 headers: headers,
@@ -336,7 +382,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     
                     
                 })
-                .catch((e)=>{
+                .catch(async (e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
 
                     // If we have tools and haven't already retried, try again without tools
@@ -348,60 +394,141 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         return;
                     }
 
-                    // Ensure stream is properly closed on error since we use { end: false }
-                    if (!writableStream.writableEnded && writableStream.writable) {
-                        try {
-                            writableStream.end();
-                        } catch (endErr) {
-                            logger.error("Error ending stream:", endErr);
-                        }
-                    }
+                    const requestId = options?.requestId || 'unknown';
 
-                    // CRITICAL: OpenAI/Azure API failure - capture full axios error details
-                    const sanitizedRequestData = { ...requestData };
-                    delete sanitizedRequestData.messages;
-                    delete sanitizedRequestData.input;
-                    
-                    logCriticalError({
-                        functionName: 'openai_streamAxiosResponseToWritable',
-                        errorType: 'OpenAIAPIFailure',
-                        errorMessage: `OpenAI/Azure API failed: ${e.message || "Unknown error"}`,
-                        currentUser: 'unknown', // No user context in this function
-                        severity: 'HIGH',
-                        stackTrace: e.stack || '',
-                        context: {
-                            httpStatus: e.response?.status || 'N/A',
-                            httpStatusText: e.response?.statusText || 'N/A',
-                            apiError: e.response?.data?.error || 'N/A',
-                            apiErrorMessage: e.response?.data?.error?.message || 'N/A',
-                            errorCode: e.code || 'N/A',
-                            url: url || 'unknown',
-                            modelId: data?.model || 'unknown',
-                            hasTools: !!(data?.tools && data.tools.length > 0),
-                            isRetry: !!retryWithoutTools,
-                            requestConfig: sanitizedRequestData
+                    // Helper function to process error after we have the full error data
+                    const processError = async (errorDetails = null) => {
+                        // Parse error details to get the actual error message for overflow detection
+                        let apiErrorMessage = '';
+                        if (typeof errorDetails === 'string') {
+                            try {
+                                const parsed = JSON.parse(errorDetails);
+                                apiErrorMessage = parsed.error?.message || parsed.message || errorDetails;
+                            } catch {
+                                apiErrorMessage = errorDetails;
+                            }
+                        } else if (errorDetails) {
+                            apiErrorMessage = errorDetails.error?.message || errorDetails.message || '';
                         }
-                    }).catch(err => logger.error('Failed to log critical error:', err));
-                    
-                    sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
+
+                        // Attach the parsed message to error for overflow detection
+                        if (apiErrorMessage) {
+                            e._parsedErrorMessage = apiErrorMessage;
+                        }
+
+                        // NOW check for overflow (after we have the actual error message)
+                        const overflowInfo = detectContextOverflow(e);
+
+                        // ONLY critical log if:
+                        // 1. It's NOT an overflow error, OR
+                        // 2. It IS overflow but we've already tried recovery (second attempt)
+                        const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
+
+                        if (!shouldLog) {
+                            // Overflow on first attempt - mark for recovery, don't critical log
+                            logger.info(`Context overflow detected (${overflowInfo.overflow || 'unknown'} tokens over), allowing recovery attempt`);
+                            e.isContextOverflow = true;
+                            e.overflowInfo = overflowInfo;
+                        } else {
+                            // Log critical error
+                            const sanitizedRequestData = { ...requestData };
+                            delete sanitizedRequestData.messages;
+                            delete sanitizedRequestData.input;
+
+                            let apiError = errorDetails;
+                            if (typeof errorDetails === 'string') {
+                                try {
+                                    const parsed = JSON.parse(errorDetails);
+                                    apiError = parsed.error || parsed;
+                                } catch { /* use raw string */ }
+                            }
+
+                            await logCriticalError({
+                                functionName: 'openai_streamAxiosResponseToWritable',
+                                errorType: overflowInfo.isOverflow ? 'ContextOverflowRecoveryFailed' : 'OpenAIAPIFailure',
+                                errorMessage: `OpenAI/Azure API failed: ${apiErrorMessage || 'N/A'}`,
+                                currentUser: options?.user || 'unknown',
+                                severity: 'HIGH',
+                                stackTrace: e.stack || '',
+                                context: {
+                                    httpStatus: e.response?.status || 'N/A',
+                                    httpStatusText: e.response?.statusText || 'N/A',
+                                    apiError: apiError || e.response?.data?.error || 'N/A',
+                                    apiErrorMessage: apiErrorMessage || 'N/A',
+                                    errorCode: e.code || 'N/A',
+                                    url: url || 'unknown',
+                                    modelId: data?.model || 'unknown',
+                                    hasTools: !!(data?.tools && data.tools.length > 0),
+                                    isRetry: !!retryWithoutTools,
+                                    requestConfig: sanitizedRequestData,
+                                    ...(overflowInfo.isOverflow && {
+                                        overflowDetails: {
+                                            requested: overflowInfo.requested,
+                                            limit: overflowInfo.limit,
+                                            overflow: overflowInfo.overflow
+                                        }
+                                    })
+                                }
+                            }).catch(err => logger.error('Failed to log critical error:', err));
+
+                            e.criticalErrorLogged = true;
+                        }
+
+                        // Only send error message and end stream if NOT recoverable overflow
+                        if (!overflowInfo.isOverflow) {
+                            if (!writableStream.writableEnded && writableStream.writable) {
+                                sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
+                                try {
+                                    writableStream.end();
+                                } catch (endErr) {
+                                    logger.error("Error ending stream:", endErr);
+                                }
+                            }
+                        }
+
+                        reject(e);
+                    };
+
+                    // Read error data first, THEN process
                     if (e.response && e.response.data) {
                         logger.error("Error invoking OpenAI API:", e.response.statusText);
 
                         if (e.response.data.readable) {
-                            // Stream the data to a variable or process it as it comes
                             let errorData = '';
+                            let streamEnded = false;
+
                             e.response.data.on('data', (chunk) => {
                                 errorData += chunk;
                             });
-                            e.response.data.on('end', () => {
+
+                            e.response.data.on('end', async () => {
+                                if (streamEnded) return;
+                                streamEnded = true;
                                 logger.error("Error data from OpenAI API:", errorData);
-                                reject(errorData);
-                                return;
+                                await processError(errorData || null);
                             });
+
+                            e.response.data.on('error', async (streamErr) => {
+                                if (streamEnded) return;
+                                streamEnded = true;
+                                logger.error("Error reading error stream:", streamErr);
+                                await processError(errorData || null);
+                            });
+
+                            return; // Wait for stream
+                        } else if (typeof e.response.data === 'object') {
+                            await processError(e.response.data);
+                        } else if (typeof e.response.data === 'string') {
+                            await processError(e.response.data);
+                        } else {
+                            logger.warn("Unknown error data type:", typeof e.response.data);
+                            await processError();
                         }
+                    } else {
+                        await processError();
                     }
+
                     logger.error("Error invoking OpenAI API:", e.message);
-                    reject(e.message);
                 });
         });
     }
@@ -412,44 +539,76 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 const containsUrlQuery = (messages) => {
     if (!Array.isArray(messages)) return false;
 
+    // Check for actual URLs in text
     const isLikelyUrl = (text) => {
         if (typeof text !== 'string' || text.length === 0) return false;
         if (/^data:/i.test(text)) return false;
-        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:\/[^^\s<>"'()]*)?)/i;
+        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+/i;
         return urlPattern.test(text);
     };
 
+    // Keywords that suggest user wants to search the web (expanded list)
+    const searchKeywords = [
+        'search', 'lookup', 'look up', 'find out', 'research',
+        'latest', 'recent', 'current', 'today', 'yesterday', 'this week', 'this month', 'this year',
+        'news', 'update', 'updates', 'happening',
+        'what is', 'what are', 'what was', 'what were',
+        'who is', 'who are', 'who was', 'who were',
+        'when did', 'when was', 'when is', 'when are',
+        'where is', 'where are', 'where was', 'where were',
+        'how much', 'how many', 'how do', 'how does', 'how did', 'how to',
+        'tell me about', 'information about', 'learn about', 'explain',
+        'google', 'browse', 'look online', 'check online',
+        'weather', 'stock', 'price', 'score', 'results'
+    ];
+
+    const containsSearchIntent = (text) => {
+        if (typeof text !== 'string' || text.length === 0) return false;
+        const lowerText = text.toLowerCase();
+        return searchKeywords.some(keyword => lowerText.includes(keyword));
+    };
+
     let hasUrl = false;
+    let hasSearchIntent = false;
     let hasImageOnly = false;
 
     messages.forEach((message) => {
+        // Only check user messages for search intent
+        if (message.role !== 'user') return;
+
         const content = message && message.content;
         if (typeof content === 'string') {
             if (isLikelyUrl(content)) hasUrl = true;
+            if (containsSearchIntent(content)) hasSearchIntent = true;
         }
         if (Array.isArray(content)) {
             let hasTextUrl = false;
+            let hasSearchText = false;
             let hasImage = false;
-            
+
             content.forEach((part) => {
                 if (!part) return;
-                if (typeof part === 'string' && isLikelyUrl(part)) {
-                    hasTextUrl = true;
+                if (typeof part === 'string') {
+                    if (isLikelyUrl(part)) hasTextUrl = true;
+                    if (containsSearchIntent(part)) hasSearchText = true;
                 }
                 if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
                     if (isLikelyUrl(part.text)) hasTextUrl = true;
+                    if (containsSearchIntent(part.text)) hasSearchText = true;
                 }
                 if (part.type === 'image' || part.type === 'input_image' || part.type === 'image_url') {
                     hasImage = true;
                 }
             });
-            
+
             if (hasTextUrl) hasUrl = true;
-            if (hasImage && !hasTextUrl) hasImageOnly = true;
+            if (hasSearchText) hasSearchIntent = true;
+            if (hasImage && !hasTextUrl && !hasSearchText) hasImageOnly = true;
         }
     });
 
-    return hasUrl && !hasImageOnly;
+    // Return true if has URL or search intent, but not if image-only query
+    return (hasUrl || hasSearchIntent) && !hasImageOnly;
 }
 
 async function includeImageSources(dataSources, messages, model, responseStream, isNonStandardOpenAI = false) {
@@ -515,4 +674,3 @@ async function includeImageSources(dataSources, messages, model, responseStream,
 }
 
 
-// Status messages removed for better performance - let the actual response be the indication

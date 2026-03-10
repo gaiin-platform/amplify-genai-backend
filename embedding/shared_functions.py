@@ -144,18 +144,66 @@ def generate_embeddings(content, account_data=None, document_key=None):
     return {"success": False, "error": f"Invalid embedding provider: {embedding_provider}"}
 
 def generate_bedrock_embeddings(content, account_data=None, document_key=None):
+    # VALIDATION: Check content before sending to Bedrock
+    if not content or not isinstance(content, str):
+        logger.error(f"Invalid content type or empty content: {type(content)}")
+        return {"success": False, "error": "Content must be a non-empty string"}
+
+    content_stripped = content.strip()
+    if not content_stripped:
+        logger.error("Content is empty or whitespace only")
+        return {"success": False, "error": "Content is empty after stripping whitespace"}
+
     try:
         client = boto3.client("bedrock-runtime", region_name=region)
         model_id = embedding_model_name
 
-        native_request = {"inputText": content}
+        # Check if using Nova Multimodal Embeddings
+        is_nova = "nova" in model_id.lower()
+
+        if is_nova:
+            # Nova Multimodal Embeddings uses a different API structure
+            embedding_dim = int(os.environ.get("EMBEDDING_DIM", "3072"))
+            embedding_purpose = os.environ.get("EMBEDDING_PURPOSE", "GENERIC_INDEX")
+            
+            native_request = {
+                "taskType": "SINGLE_EMBEDDING",
+                "singleEmbeddingParams": {
+                    "embeddingPurpose": embedding_purpose,
+                    "embeddingDimension": embedding_dim,
+                    "text": {
+                        "truncationMode": "END",
+                        "value": content_stripped
+                    }
+                }
+            }
+        else:
+            # Standard Bedrock embeddings (Titan, Cohere, etc.)
+            native_request = {"inputText": content_stripped}
+        
         request = json.dumps(native_request)
 
         response = client.invoke_model(modelId=model_id, body=request)
         model_response = json.loads(response["body"].read())
 
-        embeddings = model_response["embedding"]
-        input_token_count = model_response["inputTextTokenCount"]
+        # Nova returns embeddings in a different structure
+        if is_nova:
+            # Nova response: {"embeddings": [{"embeddingType": "TEXT", "embedding": [...]}]}
+            embeddings_data = model_response.get("embeddings", [])
+            if not embeddings_data:
+                raise Exception("No embeddings returned from Nova model")
+            # Get the first embedding (for single text input, there's only one)
+            embeddings = embeddings_data[0]["embedding"]
+            input_token_count = model_response.get("inputTokenCount", 0)
+        else:
+            embeddings = model_response["embedding"]
+            input_token_count = model_response.get("inputTextTokenCount", 0)
+
+        # VALIDATION: Check for NaN in embedding response
+        import math
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embeddings):
+            logger.error(f"Bedrock returned NaN in embedding vector. Content length: {len(content_stripped)}, Preview: {content_stripped[:200]}")
+            return {"success": False, "error": "Bedrock API returned NaN values in embedding vector"}
 
         # Record embedding cost
         cost = record_embedding_cost(model_id, input_token_count, account_data, document_key)
@@ -172,13 +220,30 @@ def generate_azure_embeddings(content, account_data=None, document_key=None):
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
     logger.info(f"Endpoint: {endpoint}")
 
+    # VALIDATION: Check content before sending to Azure
+    if not content or not isinstance(content, str):
+        logger.error(f"Invalid content type or empty content: {type(content)}")
+        return {"success": False, "error": "Content must be a non-empty string"}
+
+    content_stripped = content.strip()
+    if not content_stripped:
+        logger.error("Content is empty or whitespace only")
+        return {"success": False, "error": "Content is empty after stripping whitespace"}
+
     client = AzureOpenAI(
         api_key=api_key, azure_endpoint=endpoint, api_version=api_version
     )
     try:
-        response = client.embeddings.create(input=content, model=embedding_model_name)
+        response = client.embeddings.create(input=content_stripped, model=embedding_model_name)
         embedding = response.data[0].embedding
-        token_count = num_tokens_from_text(content, embedding_model_name)
+
+        # VALIDATION: Check for NaN in embedding response
+        import math
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embedding):
+            logger.error(f"Azure returned NaN in embedding vector. Content length: {len(content_stripped)}, Preview: {content_stripped[:200]}")
+            return {"success": False, "error": "Azure API returned NaN values in embedding vector"}
+
+        token_count = num_tokens_from_text(content_stripped, embedding_model_name)
 
         # Record embedding cost
         cost = record_embedding_cost(embedding_model_name, token_count, account_data, document_key)
@@ -231,34 +296,60 @@ def generate_openai_embeddings(content, account_data=None, document_key=None):
 
 
 def truncate_content_for_model(content, model_name, max_tokens):
-    """Truncate content to fit within model's token limit"""
+    """
+    Truncate content to fit within model's token limit.
+
+    Uses tiktoken for OpenAI models when available, otherwise uses character-based estimation.
+    Character estimation: ~3.5 chars per token (conservative for both OpenAI and Claude)
+    """
+    # Try tiktoken for OpenAI models first
     try:
         encoding = tiktoken.encoding_for_model(model_name)
         tokens = encoding.encode(content)
-        
+
         if len(tokens) <= max_tokens:
             return content
-        
+
         # Truncate to max_tokens and decode back to text
         truncated_tokens = tokens[:max_tokens]
         truncated_content = encoding.decode(truncated_tokens)
-        
+
         logger.warning(f"[TOKEN_LIMIT] Content truncated from {len(tokens)} to {max_tokens} tokens for model {model_name}")
         return truncated_content
-        
-    except Exception as e:
-        logger.error(f"[TOKEN_LIMIT] Error truncating content: {e}")
-        # Fallback: truncate by character count (rough estimate)
-        char_limit = max_tokens * 4  # Rough estimate of 4 chars per token
-        if len(content) > char_limit:
-            truncated = content[:char_limit]
-            logger.warning(f"[TOKEN_LIMIT] Fallback truncation from {len(content)} to {char_limit} characters")
-            return truncated
-        return content
+
+    except (KeyError, Exception) as e:
+        # tiktoken doesn't support this model (e.g., Claude, Bedrock models)
+        # Fall back to character-based estimation
+        logger.debug(f"[TOKEN_LIMIT] Using character estimation for {model_name}: {e}")
+
+        # Conservative estimate: 3.5 characters per token
+        # This works well for both English text and code across OpenAI and Claude
+        chars_per_token = 3.5
+        char_limit = int(max_tokens * chars_per_token)
+
+        if len(content) <= char_limit:
+            return content
+
+        # Truncate by characters
+        truncated = content[:char_limit]
+        estimated_tokens = int(len(content) / chars_per_token)
+        logger.warning(
+            f"[TOKEN_LIMIT] Character-based truncation for {model_name}: "
+            f"{len(content)} chars (~{estimated_tokens} tokens) -> {char_limit} chars (~{max_tokens} tokens)"
+        )
+        return truncated
 
 
 def generate_questions(content, account_data = None):
     chat_endpoint = get_chat_endpoint(EndpointType.CHAT_ENDPOINT)
+
+    # DEFENSIVE: Validate account_data is a dict before accessing
+    if not isinstance(account_data, dict):
+        error_msg = f"Invalid account_data type: expected dict, got {type(account_data).__name__}"
+        logger.error(f"[QA_GENERATION_ERROR] {error_msg}")
+        if account_data:
+            logger.error(f"[QA_GENERATION_ERROR] account_data value: {str(account_data)[:200]}")
+        raise Exception(error_msg)
 
     if not chat_endpoint or not account_data or not account_data.get('access_token'):
         logger.error("CHAT_ENDPOINT environment variable or account_data not set")

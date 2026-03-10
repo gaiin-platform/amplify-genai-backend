@@ -128,6 +128,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             logger.debug(`🔑 Applying per-user circuit breaker for user ${userId.substring(0, 10)}...`);
         } else {
             logger.warn("⚠️ No user found - applying function-wide circuit breaker");
+            logger.debug("Event data: ", event); // Log first 500 chars
+            logger.debug("Extracted params: ", params); // Log first 500 chars
         }
         
         // Apply per-user circuit breaker protection to the main routing
@@ -208,37 +210,25 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
     }
 });
 
-// Wrapper for AWS_PROXY format (Function URLs)
 export const handler = awslambda.streamifyResponse(protectedHandler);
 
-// Wrapper for AWS integration format (API Gateway REST API streaming)
+// streamHandler: For API Gateway REST API streaming with AWS_PROXY + ResponseTransferMode: STREAM
 export const streamHandler = awslambda.streamifyResponse(async (event, responseStream, context) => {
-    // AWS integration + Request Template wraps body in {authHeader, bodyData}
+    logger.debug("streamHandler: API Gateway AWS_PROXY streaming mode - using HttpResponseStream.from()");
 
-    logger.info("streamHandler: RAW EVENT RECEIVED:", JSON.stringify(event, null, 2));
-
-    // Extract Authorization from authHeader and actual body from bodyData
-    const authToken = event.authHeader || '';
-    const actualBody = event.bodyData || event; // Fallback to event if no wrapper
-
-    // Normalize to AWS_PROXY format that extractParams expects
-    const normalizedEvent = {
+    // API Gateway requires metadata + delimiter - HttpResponseStream.from() handles this automatically
+    const httpResponseMetadata = {
+        statusCode: 200,
         headers: {
-            Authorization: authToken || '',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(actualBody),
-        rawPath: '/chat_stream',
-        path: '/chat_stream',
-        requestContext: {}
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Access-Control-Allow-Origin': '*'
+        }
     };
 
-    logger.info("streamHandler: NORMALIZED EVENT (headers only):", {
-        hasAuth: !!normalizedEvent.headers.Authorization,
-        authPreview: normalizedEvent.headers.Authorization ? normalizedEvent.headers.Authorization.substring(0, 30) + '...' : 'NONE'
-    });
+    // Use HttpResponseStream.from() to properly format response with metadata + 8-byte delimiter
+    responseStream = awslambda.HttpResponseStream.from(responseStream, httpResponseMetadata);
 
-    // Call the same protected handler with normalized event
-    return await protectedHandler(normalizedEvent, responseStream, context);
+    // Now call protectedHandler which will stream the actual payload
+    return await protectedHandler(event, responseStream, context);
 });
-

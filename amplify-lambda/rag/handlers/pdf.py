@@ -27,6 +27,23 @@ class PDFHandler(TextExtractionHandler):
         Extract text from PDF. Visual markers are now handled by PyMuPDF preprocessing,
         so this method focuses on clean text extraction and visual chunk processing.
         """
+        # Validate file content before processing
+        if not file_content:
+            logger.error("Empty or None file content. Returning empty chunks.")
+            return []
+
+        # Ensure we're working with bytes
+        if isinstance(file_content, str):
+            logger.error("File content is a string, expected bytes. Returning empty chunks.")
+            return []
+
+        # Validate PDF magic bytes (check first 1024 bytes for %PDF- in case of leading whitespace)
+        # PDF spec allows up to 1024 bytes of junk before %PDF- header
+        header_check = file_content[:1024] if len(file_content) >= 1024 else file_content
+        if b'%PDF-' not in header_check:
+            logger.error("File does not contain PDF magic bytes in first 1024 bytes. File may have wrong extension or be corrupted. Returning empty chunks.")
+            return []
+
         # Keep the buffer alive during the entire PDF processing
         buffer = io.BytesIO(file_content)
         pdf = pdfium.PdfDocument(buffer)
@@ -95,13 +112,33 @@ class PDFHandler(TextExtractionHandler):
         Uses PyMuPDF to create a valid PDF that MarkItDown can process while preserving visual markers.
         """
 
+        # Validate file content before processing
+        if not file_content:
+            logger.warning("Empty or None file content. Returning original content with empty visual map.")
+            return file_content, {}
+
+        # Ensure we're working with bytes
+        if isinstance(file_content, str):
+            logger.warning("File content is a string, expected bytes. Returning original content with empty visual map.")
+            return file_content.encode('utf-8') if file_content else b'', {}
+
+        # Validate PDF magic bytes (check first 1024 bytes for %PDF- in case of leading whitespace)
+        # PDF spec allows up to 1024 bytes of junk before %PDF- header
+        header_check = file_content[:1024] if len(file_content) >= 1024 else file_content
+        if b'%PDF-' not in header_check:
+            preview = file_content[:20] if len(file_content) >= 20 else file_content
+            logger.warning("File does not contain PDF magic bytes in first 1024 bytes (starts with: %s). File may have wrong extension or be corrupted.",
+                          preview)
+            # Return original content with empty visual map
+            return file_content, {}
+
         # Keep the buffer alive during the entire PDF processing
         buffer = io.BytesIO(file_content)
-        
+
         try:
             pdf = pdfium.PdfDocument(buffer)
         except Exception as e:
-            logger.error("Error opening PDF for visual preprocessing: %s", e)
+            logger.error("Error opening PDF for visual preprocessing: %s. File may be corrupted or have wrong extension.", e)
             # Return original content with empty visual map if PDF can't be opened
             return file_content, {}
 

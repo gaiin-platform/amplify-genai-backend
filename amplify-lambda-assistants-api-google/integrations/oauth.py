@@ -67,6 +67,15 @@ def get_user_credentials(
             if credentials:
                 credentials = decrypt_oauth_data(credentials)
 
+                # Check if decryption failed
+                if credentials is None:
+                    logger.error(
+                        "Failed to decrypt credentials for user %s and integration %s", current_user, integration
+                    )
+                    raise Exception(
+                        f"Failed to decrypt credentials for user {current_user} and integration {integration}"
+                    )
+
                 if check_credentials_expired(credentials.get("expires_at")):
                     logger.info("Credentials for user %s and integration %s are expired", current_user, integration)
                     result = refresh_integration_token(access_token, integration)

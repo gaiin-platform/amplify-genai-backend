@@ -89,6 +89,9 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
     """
     Upload selected drive integration files to data sources.
 
+    Invokes Lambda function directly to bypass API Gateway 30-second timeout.
+    Uses Event invocation for async processing (fire-and-forget for large file sets).
+
     Args:
         access_token: Bearer token for authentication
         drive_files_data: Dictionary containing the drive files payload structure
@@ -98,57 +101,149 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         dict: Response containing success status and updated payload data,
               or error information if unsuccessful
     """
-    logger.info("Initiate upload integration files to datasources call")
+    logger.info("Initiate upload integration files to datasources call via direct Lambda invocation")
 
-    upload_endpoint = os.environ["API_BASE_URL"] + "/integrations/user/files/upload"
+    # Get Lambda function name from environment
+    # Format: {assistants-service-name}-api-{stage}-uploadIntegrationFiles
+    # Dev example: amplify-v6-assistants-api-dev-uploadIntegrationFiles
+    # Prod example: vu-amplify-assistants-api-prod-uploadIntegrationFiles
+    service_name = os.environ.get("SERVICE_NAME")
+    stage = os.environ.get("STAGE")
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {access_token}",
+    if not service_name or not stage:
+        error_msg = f"Missing required environment variables: SERVICE_NAME={service_name}, STAGE={stage}"
+        logger.error(error_msg)
+        log_critical_error(
+            function_name="upload_integration_files_to_datasources",
+            error_type="MissingEnvironmentVariables",
+            error_message=error_msg,
+            severity=SEVERITY_HIGH,
+            context={"service_name": service_name, "stage": stage}
+        )
+        return {
+            "success": False,
+            "error": error_msg,
+            "message": "Missing required environment variables for Lambda invocation"
+        }
+
+    lambda_function_name = f"{service_name}-api-{stage}-uploadIntegrationFiles"
+    logger.info("Constructed Lambda function name: %s", lambda_function_name)
+
+    # Initialize Lambda client with extended timeout for large file processing
+    # Upload Lambda can take 5-10 minutes for large file sets
+    from botocore.config import Config
+    config = Config(
+        read_timeout=700,  # 12ish minutes - matches Lambda max execution time
+        connect_timeout=10
+    )
+    lambda_client = boto3.client('lambda', config=config)
+
+    # Construct the event payload matching API Gateway format
+    event_payload = {
+        "path": "/integrations/user/files/upload",
+        "httpMethod": "POST",
+        "body": json.dumps({"data": drive_files_data}),
+        "headers": {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        },
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "cognito:username": "system_invoke"
+                }
+            }
+        }
     }
-    data = {"data": drive_files_data}
 
     try:
-        response = requests.post(
-            upload_endpoint, headers=headers, data=json.dumps(data)
-        )
-        response_content = response.json()
-        logger.debug("Response: %s", response_content)
+        # Invoke Lambda function with RequestResponse (synchronous with 10 min timeout)
+        logger.info("Invoking Lambda function: %s", lambda_function_name)
 
-        if response.status_code == 200 and response_content.get("success", False):
-            logger.info("Integration Drive files uploaded successfully")
+        response = lambda_client.invoke(
+            FunctionName=lambda_function_name,
+            InvocationType='RequestResponse',  # Synchronous invocation (waits for response, up to 10 min)
+            Payload=json.dumps(event_payload)
+        )
+
+        # Read response payload
+        response_payload = json.loads(response['Payload'].read())
+        logger.debug("Lambda response status code: %s", response.get('StatusCode'))
+        logger.debug("Lambda response payload: %s", response_payload)
+
+        # Check for Lambda execution errors
+        if response.get('FunctionError'):
+            error_message = response_payload.get('errorMessage', 'Unknown Lambda error')
+            logger.error("Lambda function error: %s", error_message)
+
+            log_critical_error(
+                function_name="upload_integration_files_to_datasources",
+                error_type="LambdaInvocationError",
+                error_message=f"Lambda function returned error: {error_message}",
+                severity=SEVERITY_HIGH,
+                stack_trace=response_payload.get('stackTrace', ''),
+                context={
+                    "provider_count": len(drive_files_data) if drive_files_data else 0,
+                    "lambda_function": lambda_function_name,
+                    "function_error": response.get('FunctionError')
+                }
+            )
+
+            return {
+                "success": False,
+                "error": error_message,
+                "message": "Lambda function execution failed"
+            }
+
+        # Parse the response body (Lambda returns API Gateway format)
+        if isinstance(response_payload, dict) and 'body' in response_payload:
+            # Lambda returned API Gateway response format
+            body_str = response_payload.get('body', '{}')
+            if isinstance(body_str, str):
+                response_content = json.loads(body_str)
+            else:
+                response_content = body_str
+        else:
+            # Direct response format
+            response_content = response_payload
+
+        logger.debug("Parsed response content: %s", response_content)
+
+        if response_content.get("success", False):
+            logger.info("Integration Drive files uploaded successfully via Lambda")
             return {
                 "success": True,
                 "data": response_content.get("data"),
                 "message": "Integration Drive files uploaded successfully"
             }
-        logger.warning("Failed to upload integration drive files")
+
+        logger.warning("Failed to upload integration drive files. Response: %s", response_content)
         return {
             "success": False,
             "error": response_content.get("error", "Unknown error occurred"),
-            "message": "Failed to upload integration drive files"
+            "message": response_content.get("message", "Failed to upload integration drive files")
         }
 
     except Exception as e:
-        logger.error("Error uploading integration files: %s", e)
-        
+        logger.error("Error invoking Lambda for integration files upload: %s", e)
+
         # CRITICAL: Drive file upload failure = assistant can't access Google/OneDrive files
         log_critical_error(
             function_name="upload_integration_files_to_datasources",
             error_type="DriveFileUploadFailure",
-            error_message=f"Failed to upload integration drive files: {str(e)}",
+            error_message=f"Failed to invoke Lambda for drive file upload: {str(e)}",
             severity=SEVERITY_HIGH,
             stack_trace=traceback.format_exc(),
             context={
                 "provider_count": len(drive_files_data) if drive_files_data else 0,
-                "upload_endpoint": upload_endpoint
+                "lambda_function": lambda_function_name
             }
         )
-        
+
         return {
             "success": False,
             "error": str(e),
-            "message": "Exception occurred during integration drive data upload"
+            "message": "Exception occurred during Lambda invocation for drive data upload"
         }
 
 @api_tool(

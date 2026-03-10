@@ -1,4 +1,5 @@
 # amplify-lambda
+API_GATEWAY_MAX_TIMEOUT_MS: "" #Max timeout in ms for API Gateway streaming endpoints (recommended 180000 if AWS approved, leave empty to disable)
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
 BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
@@ -14,7 +15,7 @@ IDP_PREFIX: "AmplifyGenAI" #should match the value for provider_name in Cognito 
 LLM_ENDPOINTS_SECRETS_NAME_ARN: "" #openai_endpoints_secret_arn from IAC output
 LLM_ENDPOINTS_SECRETS_NAME: "" #openai_endpoints_secret_name from IAC output
 OAUTH_AUDIENCE: "" #base of application including protocol
-OAUTH_ISSUER_BASE_URL: "" #Cognito user pool url from IAC
+OAUTH_ISSUER_BASE_URL: "" #Cognito user pool url from IAC including protocol
 OPENAI_API_KEY: "" #openai_api_key_secret_name from IAC output
 ORGANIZATION_EMAIL_DOMAIN: "" #organization email domain
 PANDOC_LAMBDA_LAYER_ARN: "" #value provided by IAC output
@@ -29,7 +30,12 @@ VPC_ID: "" #vpc_id of deployment from IAC output
 #
 API_VERSION: "2024-02-15-preview"
 ASSISTANTS_OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the OpenAI service APIs
-EMBEDDING_DIM: "1024" #Vector dimension for embeddings (1024 recommended for cross-provider compatibility). Only used during initial table creation.
+EMBEDDING_DIM: "" #Vector dimension for embeddings, defaults to 1536 if not overriden here
+# Use 1024 for Amazon Nova Multimodal Embedding that supports multiple dimensions.
+# This is set at table creation and in embedding functions with Nova models.
+EMBEDDING_PURPOSE: "GENERIC_INDEX"
+# This will change which embedding purpose is used in Amazon Nova MME.
+RAG_POSTGRES_DB_PORT: "" #Optional: PostgreSQL port such as 5432 (defaults to 3306 if not specified)
 
 # These Amazon Aurora RDS can be adjusted to suit your deployment needs for scaling.
 #

@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { trackExecution } from "../common/usageTracking.js";
+import { v4 as uuidv4 } from 'uuid';
 
 const logger = getLogger("conversationAnalysis");
 
@@ -18,6 +19,42 @@ const sqsClient = new SQSClient({ region: process.env.DEP_REGION || "us-east-1" 
 
 function calculateMD5(content) {
     return createHash('md5').update(content).digest('base64');
+}
+
+/**
+ * Check if an S3 error is a NoSuchKey error (file doesn't exist)
+ * AWS SDK v3 can represent this in multiple ways depending on the error path
+ * @param {Error} error - The error object from S3 operation
+ * @param {string} bucketContext - Context string for logging (e.g., "consolidation bucket", "legacy bucket")
+ * @returns {boolean} True if this is a NoSuchKey error (expected), false if it's a different error
+ */
+function isS3NoSuchKeyError(error, bucketContext = 'S3') {
+    // Check all possible ways NoSuchKey can appear:
+    // - error.name: Error class name
+    // - error.message: Error message string
+    // - error.Code: AWS SDK error code
+    // - error.$metadata.httpStatusCode: HTTP 404
+    // - String(error): String representation of error
+    // - error itself if it's already a string
+    const isNoSuchKey = error.name === 'NoSuchKey' ||
+                       error.message === 'NoSuchKey' ||
+                       error.Code === 'NoSuchKey' ||
+                       error.$metadata?.httpStatusCode === 404 ||
+                       String(error) === 'NoSuchKey' ||
+                       String(error).includes('NoSuchKey') ||
+                       error === 'NoSuchKey';
+
+    if (!isNoSuchKey) {
+        logger.error(`Unexpected S3 error checking ${bucketContext}`, {
+            errorName: error.name,
+            errorCode: error.Code,
+            statusCode: error.$metadata?.httpStatusCode,
+            message: error.message,
+            stringified: String(error)
+        });
+    }
+
+    return isNoSuchKey;
 }
 
 async function uploadToS3(assistantId, conversationId, content) {
@@ -40,9 +77,11 @@ async function uploadToS3(assistantId, conversationId, content) {
             existingContent = await existingObject.Body.transformToString();
             foundInConsolidation = true;
         } catch (error) {
-            if (error.name !== 'NoSuchKey') {
+            // For first message in a conversation, the key won't exist yet - this is expected
+            if (!isS3NoSuchKeyError(error, 'consolidation bucket')) {
                 throw error;
             }
+            logger.debug('No existing conversation found in consolidation bucket (expected for first message)');
         }
 
         // If not found in consolidation bucket, check legacy bucket
@@ -54,9 +93,10 @@ async function uploadToS3(assistantId, conversationId, content) {
                 }));
                 existingContent = await existingObject.Body.transformToString();
             } catch (error) {
-                if (error.name !== 'NoSuchKey') {
+                if (!isS3NoSuchKeyError(error, 'legacy bucket')) {
                     throw error;
                 }
+                logger.debug('No existing conversation found in legacy bucket');
             }
         }
 
@@ -79,7 +119,12 @@ async function uploadToS3(assistantId, conversationId, content) {
         // Return just the key path (without s3:// prefix) to indicate migrated record
         return consolidationKey;
     } catch (error) {
-        logger.error(`Error uploading to S3: ${error}`);
+        logger.error(`Error uploading to S3: ${error}`, {
+            errorName: error.name,
+            errorMessage: error.message,
+            conversationId,
+            assistantId
+        });
         throw error;
     }
 }
@@ -353,6 +398,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
             // Validate and parse the response
             let analysis = null;
             if (analysisResult && analysisResult.systemRating) {
+                logger.debug("System rating received from analysis:", analysisResult.systemRating);
                 try {
                     const systemRating = parseInt(analysisResult.systemRating);
                     if (!isNaN(systemRating) && systemRating >= 1 && systemRating <= 5) {
@@ -471,14 +517,15 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
  */
 export async function queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
     try {
-        logger.info("Conversation analysis with async queueing initiated");
 
         const queueUrl = process.env.CONVERSATION_ANALYSIS_QUEUE_URL;
-        
+
         if (!queueUrl) {
-            logger.error("CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
+            logger.error("❌ CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
             return false;
         }
+
+        logger.info("📮 Queue URL found, preparing message:", { queueUrl });
         
         const messageBody = {
             chatRequest,
@@ -507,9 +554,10 @@ export async function queueConversationAnalysis(chatRequest, llmResponse, accoun
             }
         });
         
+        logger.info("📤 Sending message to SQS...");
         const result = await sqsClient.send(command);
-        
-        logger.debug('Successfully queued conversation analysis', {
+
+        logger.info('✅ Successfully queued conversation analysis', {
             messageId: result.MessageId,
             conversationId: chatRequest?.options?.conversationId,
             assistantId: chatRequest?.options?.assistantId,
@@ -572,7 +620,7 @@ export async function queueConversationAnalysisWithFallback(chatRequest, llmResp
  * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
  */
 // Wrap with trackExecution for automatic usage tracking
-export const sqsProcessorHandler = trackExecution(async (event, context) => {
+export const sqsProcessorHandler = trackExecution("conversation_analysis", "system", "system")(async (event, context) => {
     const startTime = Date.now();
     logger.info('🚀 Starting SQS conversation analysis processing', { 
         recordCount: event.Records?.length,
@@ -621,8 +669,53 @@ export const sqsProcessorHandler = trackExecution(async (event, context) => {
                 user: account?.user,
                 performCategoryAnalysis,
                 queuedAt,
-                queueDelay: queuedAt ? Date.now() - new Date(queuedAt).getTime() : 'unknown'
+                queueDelay: queuedAt ? Date.now() - new Date(queuedAt).getTime() : 'unknown',
+                // Debug: log the full chatRequest.options structure
+                chatRequestOptions: chatRequest?.options ? Object.keys(chatRequest.options) : 'no options'
             });
+
+            // Validate required fields are present
+            if (!chatRequest?.options?.conversationId) {
+                const generatedConversationId = uuidv4();
+
+                logger.warn('⚠️ Missing conversationId - generating fallback ID', {
+                    messageId: record.messageId,
+                    generatedConversationId,
+                    assistantId: chatRequest?.options?.assistantId,
+                    assistantName: chatRequest?.options?.assistantName,
+                    user: account?.user,
+                    hasOptions: !!chatRequest?.options,
+                    optionsKeys: chatRequest?.options ? Object.keys(chatRequest.options) : []
+                });
+
+                // Log as critical error for monitoring - this indicates API clients not passing conversationId
+                await logCriticalError({
+                    functionName: 'conversationAnalysis_sqsHandler',
+                    errorType: 'MissingConversationId',
+                    errorMessage: `API call to group assistant without conversationId - generated fallback: ${generatedConversationId}`,
+                    currentUser: account?.user || 'unknown',
+                    severity: 'LOW',
+                    stackTrace: '',
+                    context: {
+                        messageId: record.messageId,
+                        assistantId: chatRequest?.options?.assistantId,
+                        assistantName: chatRequest?.options?.assistantName,
+                        generatedConversationId,
+                        optionsKeys: chatRequest?.options ? Object.keys(chatRequest.options) : []
+                    }
+                });
+
+                // Assign generated conversationId to prevent downstream failures
+                chatRequest.options.conversationId = generatedConversationId;
+            }
+
+            if (!chatRequest?.options?.assistantId) {
+                logger.error('❌ Missing required field: assistantId', {
+                    messageId: record.messageId,
+                    conversationId: chatRequest?.options?.conversationId
+                });
+                throw new Error('Missing required field: assistantId in chatRequest.options');
+            }
             
             // Check for empty responses
             if (!llmResponse || (typeof llmResponse === 'string' && llmResponse.trim().length === 0)) {

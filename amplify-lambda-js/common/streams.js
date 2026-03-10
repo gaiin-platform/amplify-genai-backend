@@ -316,10 +316,14 @@ export const sendResultToStream = (resultStream, result) => {
 }
 
 export const endStream = (resultStream) => {
-    if (!resultStream || resultStream.writableEnded) {
+    if (!resultStream || resultStream.writableEnded || !resultStream.writable) {
         return;
     }
-    resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
+    try {
+        resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
+    } catch (err) {
+        // Stream may have been closed between check and write - ignore
+    }
 }
 
 export const forceFlush = (resultStream) => {

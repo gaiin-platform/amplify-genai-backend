@@ -531,7 +531,8 @@ class DOCXHandler(TextExtractionHandler):
         section_headers = {}
 
         for i, paragraph in enumerate(doc.paragraphs, start=1):
-            if paragraph.style.name.startswith("Heading"):
+            # Defensive: Skip paragraphs with no style (corrupted/malformed documents)
+            if paragraph.style and paragraph.style.name and paragraph.style.name.startswith("Heading"):
                 current_section_index += 1
                 section_headers[current_section_index] = paragraph.text
 
@@ -700,9 +701,14 @@ class DOCXHandler(TextExtractionHandler):
                     drawing_element = pic_element
                     while drawing_element is not None and drawing_element.tag.split('}')[-1] != 'drawing':
                         drawing_element = drawing_element.getparent()
-                    
+
+                    # DEFENSIVE: Check both drawing_element and its parent exist before removing
                     if drawing_element is not None:
-                        drawing_element.getparent().remove(drawing_element)
+                        parent = drawing_element.getparent()
+                        if parent is not None:
+                            parent.remove(drawing_element)
+                        else:
+                            logger.warning(f"[DOCX_IMAGE] Drawing element has no parent, skipping removal")
                 
                 # Add visual marker text to the run
                 if marker_index < len(markers):

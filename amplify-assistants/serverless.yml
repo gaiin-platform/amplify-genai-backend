@@ -26,12 +26,8 @@ custom:
   pythonRequirements:
     dockerizePip: true
 
-  booleanMap:
-    "true": true
-    "false": false
-
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   
   prune:
     automatic: true
@@ -101,6 +97,7 @@ provider:
     MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    POLL_STATUS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/POLL_STATUS_TABLE}
     REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
@@ -340,6 +337,35 @@ functions:
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: create_ast
+            path: /assistant/create
+            method: POST
+          - name: chat_code_int_ast
+            path: /assistant/chat/codeinterpreter
+            method: POST
 
     AssistantLookupDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -637,6 +663,12 @@ resources:
           Statement:
             - Effect: Allow
               Action:
+                - lambda:InvokeFunction
+              Resource:
+                - "arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-api-${sls:stage}-uploadIntegrationFiles"
+
+            - Effect: Allow
+              Action:
                 - secretsmanager:GetSecretValue
                 - dynamodb:Query
                 - dynamodb:Scan
@@ -685,6 +717,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
 
 
@@ -724,3 +758,9 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            - Effect: Allow
+              Action:
+                - bedrock:GetKnowledgeBase
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"

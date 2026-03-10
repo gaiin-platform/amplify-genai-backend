@@ -13,13 +13,10 @@ custom:
   serverless-offline:
     custom:
       config: ${file(../var/${self:provider.stage}-var.yml)}
-
-  booleanMap:
-    "true": true
-    "false": false
+      
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
@@ -111,7 +108,7 @@ provider:
 
 
 functions:
-  chat_stream:
+  chat_stream: # API_BASE_URL + /chat_stream  -  API Gateway Streaming
     handler: index.streamHandler
     memorySize: 1024
     timeout: 900
@@ -119,8 +116,8 @@ functions:
     # NO http event - we manually define the API Gateway method in resources section
     # to enable streaming with ContentHandling: CONVERT_TO_TEXT
 
-  # To be deprecated - kept for backward compatibility in the short term 
-  chat:
+  # To be deprecated - kept for backward compatibility in the short term
+  chat: # Function URL
     handler: index.handler
     memorySize: 1024
     timeout: 900
@@ -129,16 +126,16 @@ functions:
       cors: true
       invokeMode: RESPONSE_STREAM
 
-  api_g_chat:
-    handler: indexApiG.handler
-    memorySize: 1024
-    timeout: 180
-    events:
-      - http:
-          path: api_g_chat/chat
-          method: post
-          cors: true
-
+  # UNCOMMENT ONLY FOR DEPLOYMENTS THAT DO NOT SUPPORT STREAMING TO THE CLIENT
+  # api_g_chat:
+  #   handler: indexApiG.handler
+  #   memorySize: 1024
+  #   timeout: 180
+  #   events:
+  #     - http:
+  #         path: api_g_chat/chat
+  #         method: post
+  #         cors: true
 
   reset_billing:
     handler: billing/reset.handler
@@ -218,6 +215,21 @@ functions:
 
 resources:
   Resources:
+   
+
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -519,7 +531,7 @@ resources:
         HttpMethod: POST
         AuthorizationType: NONE
         Integration:
-          Type: AWS  # NOT AWS_PROXY - streaming requires custom integration
+          Type: AWS_PROXY
           IntegrationHttpMethod: POST
           Uri:
             Fn::Join:
@@ -528,33 +540,22 @@ resources:
                 - !Ref AWS::Partition
                 - ":apigateway:"
                 - !Ref AWS::Region
-                - ":lambda:path/2015-03-31/functions/"
+                - ":lambda:path/2021-11-15/functions/"
                 - !GetAtt ChatUnderscorestreamLambdaFunction.Arn
-                - "/invocations"
+                - "/response-streaming-invocations"
 
-          # KEY: Enable streaming - this is what Serverless doesn't set
-          ContentHandling: CONVERT_TO_TEXT
+          # Required: Must be STREAM when using /response-streaming-invocations endpoint
+          ResponseTransferMode: STREAM
 
-          # Request Template to map Authorization header into body
-          RequestTemplates:
-            application/json: |
-              #set($authHeader = $input.params().header.get('Authorization'))
-              {
-                "authHeader": "$authHeader",
-                "bodyData": $input.json('$')
-              }
+          # Timeout for streaming responses: up to 15 minutes (900000ms) supported
+          # Default is 29000ms which was causing streams to die at ~27 seconds
+          TimeoutInMillis: 900000
 
-          # REQUIRED: Integration responses for AWS integration (not proxy)
-          IntegrationResponses:
-            - StatusCode: 200
-              ResponseParameters:
-                method.response.header.Access-Control-Allow-Origin: "'*'"
-
-        # REQUIRED: Method responses for AWS integration
         MethodResponses:
           - StatusCode: 200
             ResponseParameters:
               method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Content-Type: true
 
     # OPTIONS method for CORS preflight
     ApiGatewayMethodChatstreamOptions:

@@ -1,12 +1,12 @@
 # serverless-compose.yml
 services:
-  amplify-assistants:
-    path: ./amplify-assistants
-
   amplify-lambda:
     path: ./amplify-lambda
+
+  amplify-assistants:
+    path: ./amplify-assistants
     dependsOn:
-      - amplify-assistants
+      - amplify-lambda
 
   amplify-lambda-admin:
     path: ./amplify-lambda-admin

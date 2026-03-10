@@ -7,7 +7,7 @@ from agent.core import ActionContext
 from pycommon.logger import getLogger
 logger = getLogger("tool_worfklow")
 
-@register_tool(tags=["workflow"])
+# @register_tool(tags=["workflow"])
 def execute_workflow(
     agent, action_context: ActionContext, workflow: List[dict]
 ) -> dict:
