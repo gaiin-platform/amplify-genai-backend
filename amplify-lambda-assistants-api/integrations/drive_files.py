@@ -3,6 +3,8 @@ import os
 import re
 import boto3
 import requests
+import aiohttp
+import random
 from datetime import datetime
 import copy
 from integrations.oauth import IntegrationType, provider_case
@@ -150,7 +152,7 @@ def download_integration_file(event, context, current_user, name, data):
     direct_download = data.get("direct_download", True)
     return prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download)
 
-def prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download=False):
+async def prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download=False, return_content=False):
     logger.info(f"Starting download for integration {integration_provider}, file {file_id}")
     result = request_download_link(integration_provider, file_id, token, integration)
     logger.debug(f"Download link result: {result}")
@@ -192,12 +194,23 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                 logger.debug(
                     "Downloading file: %s, mime type: %s, safe name: %s", file_name, file_mime_type, safe_file_name
                 )
-                file_content = get_file_contents(
+                file_content = await get_file_contents(
                     integration_provider, credentials, download_file_id, download_url
                 )
                 if not file_content:
                     return {"success": False, "error": "Failed to get file contents"}
 
+                # If caller wants content directly (for upload_integration_files flow),
+                # return it without going through S3 presigned URL
+                if return_content:
+                    logger.debug("[DIRECT CONTENT] Returning file content directly (skipping S3 presigned URL)")
+                    if requires_cleanup:
+                        cleanup_after_download_file(
+                            integration_provider, download_file_id, token
+                        )
+                    return {"success": True, "data": file_content}
+
+                # Otherwise, save to S3 and return presigned URL (for download_file flow - CORS compatibility)
                 # Create an S3 key using the safe file name; no double extension.
                 key = f"tempIntegrationFiles/{current_user}/{safe_file_name}"
 
@@ -270,7 +283,7 @@ def request_download_link(integration_provider, file_id, token, integration=None
                 )
 
 
-def get_file_contents(integration_provider, credentials, file_id, download_url):
+async def get_file_contents(integration_provider, credentials, file_id, download_url):
     logger.debug(
         "Getting file contents for integration: %s, file_id: %s", integration_provider, file_id
     )
@@ -294,20 +307,38 @@ def get_file_contents(integration_provider, credentials, file_id, download_url):
 
                 integration_token = credentials["token"]
                 headers = {"Authorization": f"Bearer {integration_token}"}
-                response = requests.get(download_url, headers=headers, timeout=30)
-                if not response.ok:
-                    logger.error(
-                        "Error downloading Microsoft file: HTTP %s - %s", response.status_code, response.reason
-                    )
-                    return None
 
-                # Use BytesIO to accumulate streamed content
-                file_content = BytesIO()
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        file_content.write(chunk)
+                # Add random delay to stagger downloads and avoid rate limiting
+                # Using very small delay (0.1-0.3s) to prevent simultaneous API hits without slowing down
+                stagger_delay = random.uniform(0.1, 0.3)
+                logger.debug("[MICROSOFT DOWNLOAD] Staggering download by %.2fs to avoid rate limits", stagger_delay)
+                await asyncio.sleep(stagger_delay)
 
-                return file_content.getvalue()
+                # Use async HTTP client for non-blocking download with retry logic
+                file_content = None
+                max_retries = 3
+                for attempt in range(max_retries):
+                    file_content = BytesIO()
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(download_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            if response.ok:
+                                async for chunk in response.content.iter_chunked(8192):
+                                    if chunk:
+                                        file_content.write(chunk)
+                                logger.debug("[MICROSOFT DOWNLOAD] Successfully downloaded file (attempt %s/%s)", attempt + 1, max_retries)
+                                return file_content.getvalue()
+                            elif response.status == 403 and attempt < max_retries - 1:
+                                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                                logger.warning("[MICROSOFT RETRY] Got 403 for %s, retrying in %ss (attempt %s/%s)", file_id, wait_time, attempt + 1, max_retries)
+                                await asyncio.sleep(wait_time)
+                            else:
+                                logger.error(
+                                    "[MICROSOFT DOWNLOAD ERROR] HTTP %s - %s (attempt %s/%s)", response.status, response.reason, attempt + 1, max_retries
+                                )
+                                if attempt == max_retries - 1:
+                                    return None
+
+                return None
     except Exception as e:
         logger.error(
             "Error getting file contents for integration: %s - error: %s", integration_provider, e
@@ -551,14 +582,38 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
         
         end_time = time.time()
         
-        # Cache statistics
+        # Cache statistics - track what actually happened in this run
+        # Files are added to cache when processed. To distinguish uploaded vs skipped:
+        # - Uploaded files have a NEW lastCaptured timestamp (just set)
+        # - Skipped files have an OLD lastCaptured timestamp (from before this run)
         total_cached = len(processed_files_cache)
-        successful_cached = len([f for f in processed_files_cache.values() if f.get("datasource")])
-        skipped_cached = len([f for f in processed_files_cache.values() if not f.get("datasource") and f.get("lastCaptured")])
-        
+
+        # Count files processed in THIS run by checking if lastCaptured is very recent (within last minute)
+        from datetime import datetime, timedelta
+        now = datetime.now(datetime.now().astimezone().tzinfo)
+        one_minute_ago = now - timedelta(minutes=1)
+
+        uploaded_count = 0
+        skipped_count = 0
+
+        for file_data in processed_files_cache.values():
+            if file_data.get("lastCaptured"):
+                try:
+                    last_captured = datetime.fromisoformat(file_data["lastCaptured"].replace('Z', '+00:00'))
+                    if last_captured >= one_minute_ago:
+                        uploaded_count += 1  # Recently uploaded in this run
+                    else:
+                        skipped_count += 1  # Old timestamp, was skipped
+                except:
+                    # If we can't parse timestamp, assume it has datasource = uploaded
+                    if file_data.get("datasource"):
+                        uploaded_count += 1
+            elif file_data.get("datasource"):
+                uploaded_count += 1
+
         logger.info("[ASYNC COMPLETE] Total processing time: %.2fs", end_time - start_time)
         logger.info("[CACHE STATS] Total unique files processed: %s", total_cached)
-        logger.info("[CACHE STATS] Results - Uploaded: %s | Skipped (no update needed): %s", successful_cached, skipped_cached)
+        logger.info("[CACHE STATS] Results - Uploaded: %s | Skipped (no update needed): %s", uploaded_count, skipped_count)
         if total_cached > 0:
             logger.info("[CACHE STATS] Cache efficiency: Prevented duplicate processing for any overlapping files")
         
@@ -626,7 +681,7 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
 
 
 async def process_files_with_cache(files_data, provider_type, token, current_user, integration_provider, processed_files_cache):
-    """Process individual files for syncing with global cache awareness (async with 15 concurrent workers)."""
+    """Process individual files for syncing with global cache awareness (async with 10 concurrent workers)."""
     updated_files = {}
     cache_updates = {}
     total_files = len(files_data)
@@ -635,10 +690,10 @@ async def process_files_with_cache(files_data, provider_type, token, current_use
     error_count = 0
     cached_count = 0
 
-    logger.info("[FILES START] Processing %s files for %s with 15 concurrent workers", total_files, integration_provider)
+    logger.info("[FILES START] Processing %s files for %s with 5 concurrent workers", total_files, integration_provider)
 
     # Create semaphore to limit concurrent file processing
-    semaphore = asyncio.Semaphore(15)
+    semaphore = asyncio.Semaphore(3)
 
     async def process_single_file(file_id, file_metadata, file_index):
         """Process a single file with semaphore control."""
@@ -664,25 +719,18 @@ async def process_files_with_cache(files_data, provider_type, token, current_use
                 if needs_update:
                     logger.info("[FILE %s/%s] Updating %s", file_index + 1, total_files, file_id)
 
-                    # Use prepare_download_link to handle file conversion and get presigned URL
-                    download_result = prepare_download_link(
-                        integration_provider, provider_type, file_id, current_user, token, direct_download=False
+                    # Use prepare_download_link with return_content=True to get file content directly
+                    # This skips the unnecessary S3 presigned URL download for backend upload flow
+                    download_result = await prepare_download_link(
+                        integration_provider, provider_type, file_id, current_user, token,
+                        direct_download=False, return_content=True
                     )
 
                     if download_result and download_result.get("success") and download_result.get("data"):
-                        presigned_url = download_result["data"]
-                        logger.debug("[FILE DOWNLOAD] Got presigned URL for %s", file_id)
-
-                        # Download file contents from presigned URL
-                        response = requests.get(presigned_url, timeout=30)
-                        if response.ok:
-                            file_contents = response.content
-                            logger.debug("[FILE DOWNLOAD] Downloaded %s (%s bytes)", file_id, len(file_contents))
-                        else:
-                            logger.error("[FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
-                            file_contents = None
+                        file_contents = download_result["data"]
+                        logger.debug("[FILE CONTENT] Got file content directly for %s (%s bytes)", file_id, len(file_contents))
                     else:
-                        logger.error("[FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
+                        logger.error("[FILE ERROR] Failed to get file content for %s: %s", file_id, download_result)
                         file_contents = None
 
                     if file_contents:
@@ -781,7 +829,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
             logger.debug("[FOLDER DEBUG] %s - Found %s files in folder tree", folder_id, len(current_folder_files))
 
             # Create semaphore for concurrent file processing within this folder
-            semaphore = asyncio.Semaphore(15)
+            semaphore = asyncio.Semaphore(3)
 
             async def process_folder_file(provider_file, file_index):
                 """Process a single file within a folder with semaphore control."""
@@ -808,7 +856,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
 
                         if needs_update:
                             logger.info("[FOLDER FILE %s/%s] Updating: %s", file_index + 1, len(current_folder_files), file_id)
-                            updated_file = process_single_file_with_cache(
+                            updated_file = await process_single_file_with_cache(
                                 file_id, existing_metadata, provider_file,
                                 provider_type, token, current_user, integration_provider, processed_files_cache
                             )
@@ -826,7 +874,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
                             "lastCaptured": None,
                             "datasource": None
                         }
-                        updated_file = process_single_file_with_cache(
+                        updated_file = await process_single_file_with_cache(
                             file_id, new_file_metadata, provider_file,
                             provider_type, token, current_user, integration_provider, processed_files_cache
                         )
@@ -885,7 +933,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
 
 
 
-def process_single_file_with_cache(file_id, file_metadata, provider_file, provider_type, token, current_user, integration_provider, processed_files_cache):
+async def process_single_file_with_cache(file_id, file_metadata, provider_file, provider_type, token, current_user, integration_provider, processed_files_cache):
     """Process a single file for upload/update with cache awareness."""
     try:
         # Check cache first
@@ -896,26 +944,19 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
             return cached_result
         
         logger.info("[SINGLE FILE] Processing %s", file_id)
-        
-        # Use prepare_download_link to handle file conversion and get presigned URL
-        download_result = prepare_download_link(
-            integration_provider, provider_type, file_id, current_user, token, direct_download=False
+
+        # Use prepare_download_link with return_content=True to get file content directly
+        # This skips the unnecessary S3 presigned URL download for backend upload flow
+        download_result = await prepare_download_link(
+            integration_provider, provider_type, file_id, current_user, token,
+            direct_download=False, return_content=True
         )
-        
+
         if download_result and download_result.get("success") and download_result.get("data"):
-            presigned_url = download_result["data"]
-            logger.debug("[SINGLE FILE] Got presigned URL for %s", file_id)
-            
-            # Download file contents from presigned URL
-            response = requests.get(presigned_url, timeout=30)
-            if response.ok:
-                file_contents = response.content
-                logger.debug("[SINGLE FILE] Downloaded %s (%s bytes)", file_id, len(file_contents))
-            else:
-                logger.error("[SINGLE FILE ERROR] Failed to download from presigned URL: %s", response.status_code)
-                file_contents = None
+            file_contents = download_result["data"]
+            logger.debug("[SINGLE FILE] Got file content directly for %s (%s bytes)", file_id, len(file_contents))
         else:
-            logger.error("[SINGLE FILE ERROR] Failed to prepare download link for %s: %s", file_id, download_result)
+            logger.error("[SINGLE FILE ERROR] Failed to get file content for %s: %s", file_id, download_result)
             file_contents = None
         
         if file_contents:
@@ -955,44 +996,49 @@ def process_single_file_with_cache(file_id, file_metadata, provider_file, provid
 
 
 def should_update_file(file_metadata, file_id, provider_type, token, integration=None):
-    """Check if a file needs to be updated based on lastCaptured vs lastModified."""
-    if not file_metadata.get("lastCaptured"):
-        logger.debug("[FILE CHECK] %s - Never captured, needs update", file_id)
+    """Check if a file needs to be updated based on lastCaptured/syncedAt vs lastModified."""
+    # Check for lastCaptured (top-level) or syncedAt (nested in datasource.data)
+    last_captured_str = file_metadata.get("lastCaptured")
+    if not last_captured_str and file_metadata.get("datasource", {}).get("data", {}).get("syncedAt"):
+        last_captured_str = file_metadata["datasource"]["data"]["syncedAt"]
+
+    if not last_captured_str:
+        logger.debug("[FILE CHECK] %s - Never captured/synced, needs update", file_id)
         return True  # Never captured before
-    
+
     try:
         # Get file's last modified date from provider
         logger.debug(f"[TIMESTAMP DEBUG] {file_id} - Getting metadata from {provider_type}")
         provider_file_info = get_file_metadata_from_provider(file_id, provider_type, token, integration)
         logger.debug(f"[TIMESTAMP DEBUG] {file_id} - Raw provider response: {provider_file_info}")
-        
+
         if provider_file_info and (provider_file_info.get("lastModified") or provider_file_info.get("modifiedTime") or provider_file_info.get("lastModifiedDateTime")):
-            last_captured = datetime.fromisoformat(file_metadata["lastCaptured"].replace('Z', '+00:00'))
+            last_captured = datetime.fromisoformat(last_captured_str.replace('Z', '+00:00'))
             # Get the correct field name from provider response
             last_modified_str = provider_file_info.get("lastModified") or provider_file_info.get("modifiedTime") or provider_file_info.get("lastModifiedDateTime")
             last_modified = datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
-            
-            logger.debug("[TIMESTAMP DEBUG] %s - Raw lastCaptured: %s", file_id, file_metadata['lastCaptured'])
+
+            logger.debug("[TIMESTAMP DEBUG] %s - Raw lastCaptured/syncedAt: %s", file_id, last_captured_str)
             logger.debug("[TIMESTAMP DEBUG] %s - Raw lastModified: %s", file_id, last_modified_str)
-            logger.debug("[TIMESTAMP DEBUG] %s - Parsed lastCaptured: %s", file_id, last_captured.isoformat())
+            logger.debug("[TIMESTAMP DEBUG] %s - Parsed lastCaptured/syncedAt: %s", file_id, last_captured.isoformat())
             logger.debug("[TIMESTAMP DEBUG] %s - Parsed lastModified: %s", file_id, last_modified.isoformat())
-            
+
             needs_update = last_modified > last_captured
-            
+
             if needs_update:
                 logger.info("[FILE CHECK] %s - NEEDS UPDATE: Modified %s > Captured %s", file_id, last_modified.isoformat(), last_captured.isoformat())
             else:
                 logger.debug("[FILE CHECK] %s - NO UPDATE NEEDED: Modified %s <= Captured %s", file_id, last_modified.isoformat(), last_captured.isoformat())
-            
+
             return needs_update
         else:
             logger.warning("[TIMESTAMP DEBUG] %s - No timestamp fields found in provider response", file_id)
-        
+
     except Exception as e:
         logger.error("[FILE CHECK ERROR] Error checking %s: %s", file_id, e)
         import traceback
         logger.debug("[FILE CHECK ERROR] Traceback: %s", traceback.format_exc())
-    
+
     logger.warning("[FILE CHECK] %s - Cannot determine, skipping update", file_id)
     return False  # Default to no update if can't determine
 

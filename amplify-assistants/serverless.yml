@@ -663,6 +663,12 @@ resources:
           Statement:
             - Effect: Allow
               Action:
+                - lambda:InvokeFunction
+              Resource:
+                - "arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-api-${sls:stage}-uploadIntegrationFiles"
+
+            - Effect: Allow
+              Action:
                 - secretsmanager:GetSecretValue
                 - dynamodb:Query
                 - dynamodb:Scan
