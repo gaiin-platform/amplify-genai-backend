@@ -905,12 +905,17 @@ def update_range_handler(current_user, data):
                 "default": 0,
             },
             "filter_query": {"type": "string", "description": "OData filter query"},
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include message body and bodyPreview",
+                "default": False,
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None
+        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False
     )(current_user, data)
 
 
