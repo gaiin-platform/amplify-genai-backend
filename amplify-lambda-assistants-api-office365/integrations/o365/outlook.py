@@ -60,6 +60,7 @@ def list_messages(
     top: int = 10,
     skip: int = 0,
     filter_query: Optional[str] = None,
+    include_body: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -71,6 +72,7 @@ def list_messages(
         top: Maximum number of messages to retrieve
         skip: Number of messages to skip
         filter_query: OData filter query
+        include_body: Whether to include message body and bodyPreview (default: False)
 
     Returns:
         List of message details
@@ -83,20 +85,25 @@ def list_messages(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
+        # Build select fields based on include_body parameter
+        base_select = "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories"
+        select_fields = f"{base_select},bodyPreview,body" if include_body else base_select
+
         # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
         if filter_query:
             # When filtering, use minimal parameters to avoid complexity error
             params = {
                 "$filter": filter_query,
-                "$top": top
-                # Skip $skip, $select, $orderby, and $expand to avoid "too complex" error
+                "$top": top,
+                "$select": select_fields
+                # Skip $skip, $orderby, and $expand to avoid "too complex" error
             }
         else:
             # When not filtering, use full parameter set
             params = {
-                "$top": top, 
+                "$top": top,
                 "$skip": skip,
-                "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+                "$select": select_fields,
                 "$orderby": "receivedDateTime desc",
                 "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
             }
@@ -107,7 +114,8 @@ def list_messages(
             handle_graph_error(response)
 
         messages = response.json().get("value", [])
-        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
+        # Use detailed=True and pass include_body parameter to format_message
+        return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
 
     except requests.RequestException as e:
         raise OutlookError(f"Network error while listing messages: {str(e)}")
@@ -634,7 +642,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
             "categories": message.get("categories", []),
             "webLink": message.get("webLink", ""),
         }
-        
+
         # Only include body content if requested and available
         if include_body and "body" in message:
             # For level 4 sensitive emails, redact the body content
@@ -649,8 +657,12 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
             detailed_fields["body"] = ""
             detailed_fields["bodyType"] = "text"
         # If include_body is False, don't add body fields at all
-        
+
         formatted.update(detailed_fields)
+
+    # Always include bodyPreview if requested (even when not detailed)
+    if include_body and "bodyPreview" in message:
+        formatted["bodyPreview"] = message.get("bodyPreview", "")
 
     return formatted
 
