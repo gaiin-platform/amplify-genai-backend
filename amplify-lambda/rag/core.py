@@ -17,7 +17,7 @@ from nltk.tokenize import sent_tokenize
 import asyncio
 
 from pycommon.logger import getLogger
-from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH, SEVERITY_LOW
 from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 logger = getLogger("rag")
@@ -49,6 +49,76 @@ from rag.rag_secrets import get_rag_secrets_for_document, delete_rag_secrets_for
 
 s3 = boto3.client("s3")
 sqs = boto3.client("sqs")
+
+# Global flag to track NLTK data initialization
+_nltk_data_initialized = False
+
+def _ensure_nltk_data():
+    """
+    Ensure NLTK punkt_tab data is available in Lambda environment.
+    Downloads to /tmp on first call and reuses on subsequent invocations.
+
+    CRITICAL: Must download to /tmp (not /tmp/nltk_data) because Lambda environment
+    already searches /tmp in the default NLTK data path.
+    """
+    global _nltk_data_initialized
+
+    if _nltk_data_initialized:
+        return
+
+    try:
+        # Lambda's /tmp is writeable and already in NLTK's search path
+        # We download directly to /tmp (not /tmp/nltk_data)
+        tmp_path = "/tmp"
+
+        # Ensure /tmp is in the NLTK data path (it usually is by default in Lambda)
+        if tmp_path not in nltk.data.path:
+            nltk.data.path.insert(0, tmp_path)
+            logger.info("Added %s to NLTK data path", tmp_path)
+
+        # Try to use the tokenizer - will raise LookupError if not available
+        try:
+            sent_tokenize("Test sentence.")
+            logger.info("✅ NLTK punkt_tab data already available")
+            _nltk_data_initialized = True
+            return
+        except LookupError:
+            logger.info("NLTK punkt_tab data not found, downloading to %s...", tmp_path)
+
+        # Download punkt_tab directly to /tmp
+        # This creates /tmp/tokenizers/punkt_tab/... which NLTK will find
+        logger.info("Downloading punkt_tab to %s", tmp_path)
+        download_result = nltk.download("punkt_tab", download_dir=tmp_path, quiet=False)
+
+        if not download_result:
+            raise RuntimeError("nltk.download returned False - download may have failed")
+
+        # Verify download succeeded by actually using the tokenizer
+        logger.info("Verifying punkt_tab download...")
+        try:
+            sent_tokenize("Test sentence.")
+            logger.info("✅ NLTK punkt_tab data successfully downloaded and verified")
+            _nltk_data_initialized = True
+        except LookupError:
+            # punkt_tab didn't work, try the old punkt tokenizer (for older NLTK versions)
+            logger.warning("punkt_tab downloaded but sent_tokenize still failed, trying old 'punkt' tokenizer...")
+            logger.info("Downloading punkt (legacy) to %s", tmp_path)
+            download_result_legacy = nltk.download("punkt", download_dir=tmp_path, quiet=False)
+
+            if not download_result_legacy:
+                raise RuntimeError("nltk.download('punkt') returned False - download may have failed")
+
+            # Verify the old tokenizer works
+            logger.info("Verifying punkt (legacy) download...")
+            sent_tokenize("Test sentence.")
+            logger.info("✅ NLTK punkt (legacy) data successfully downloaded and verified")
+            _nltk_data_initialized = True
+
+    except Exception as e:
+        logger.error("Failed to initialize NLTK data: %s", str(e), exc_info=True)
+        logger.error("Current NLTK data path: %s", nltk.data.path)
+        # Re-raise to fail fast - we can't proceed without tokenization
+        raise RuntimeError(f"Cannot initialize NLTK tokenizer: {e}") from e
 
 
 def decode_text(file_content, encoding):
@@ -242,9 +312,8 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_
 
 
 def chunk_content(key, text_content, split_params, object_key=None, force_reprocess=False):
-    # nltk.download('punkt')
-    nltk.data.path.append("/tmp")
-    nltk.download("punkt", download_dir="/tmp")
+    # Initialize NLTK data for tokenization
+    _ensure_nltk_data()
     # Normalize whitespace once at the start.
 
     # Get chunk reprocessing status once per document (avoid redundant DynamoDB calls)
@@ -285,7 +354,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
     total_chunks = 0  # Initialize total_chunks
     # HARD LIMIT: 26,000 chars = ~6,500 tokens (20% safety buffer from 8,192 token API limit)
-    max_sentence_chars = 30000
+    max_sentence_chars = 26000  # Fixed: was 26,000 which creates a tuple (26, 0) instead of int
     
     # Track sentence splitting for reprocessing logic
     has_sentence_splits = False
@@ -1368,7 +1437,7 @@ def chunk_document_for_rag(event, context):
                 log_critical_error(
                     function_name="chunk_document_for_rag",
                     error_type="ChunkingFailure",
-                    error_message=f"chunk_s3_file_content returned None for {key}",
+                    error_message="chunk_s3_file_content returned None - document chunking failed",
                     current_user='system',
                     severity=SEVERITY_HIGH,
                     stack_trace='',
@@ -1376,7 +1445,8 @@ def chunk_document_for_rag(event, context):
                         "document_key": key,
                         "bucket": bucket,
                         "object_key": object_key if object_key else 'N/A',
-                        "force_reprocess": force_reprocess
+                        "force_reprocess": force_reprocess,
+                        "failure_type": "chunk_s3_file_content_returned_none"
                     }
                 )
                 continue
@@ -1385,6 +1455,22 @@ def chunk_document_for_rag(event, context):
             
             if chunks_created == 0:
                 logger.warning("No chunks were created for %s", key)
+                log_critical_error(
+                    function_name="chunk_document_for_rag",
+                    error_type="ZeroChunksProduced",
+                    error_message="Document text extraction succeeded but chunking produced 0 chunks - file may be empty, unsupported format, or contain only binary data",
+                    current_user=original_creator,
+                    severity=SEVERITY_LOW,
+                    stack_trace='',
+                    context={
+                        "document_key": key,
+                        "bucket": bucket,
+                        "object_key": object_key if object_key else 'N/A',
+                        "original_creator": original_creator,
+                        "force_reprocess": force_reprocess,
+                        "diagnostic": "Common causes: empty file, unsupported file type, or extraction produced no readable text"
+                    }
+                )
                 continue
 
             # Use chunk FILES count, not individual chunks

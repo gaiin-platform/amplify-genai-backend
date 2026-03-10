@@ -207,7 +207,7 @@ def get_all_apis(action_context: ActionContext) -> dict:
     return call_api(action_context=action_context, name="getOperations", payload={})
 
 
-@register_tool(tags=["ops"])
+# @register_tool(tags=["ops"])
 def call_api(action_context: ActionContext, name: str, payload: dict) -> dict:
     # Extract parameters from action context
     params = {

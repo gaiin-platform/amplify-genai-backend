@@ -118,7 +118,7 @@ The next action to take is:
 """
 
 
-@register_tool(tags=["planning"])
+# @register_tool(tags=["planning"])
 def create_plan(action_context, _memory: Memory, action_registry: ActionRegistry):
 
     def get_memory_message(memory):
@@ -157,7 +157,7 @@ Write out your concrete step by step plan for me referencing the available actio
     return prompt_llm_with_messages(action_context=action_context, prompt=messages)
 
 
-@register_tool(tags=["planning"])
+# @register_tool(tags=["planning"])
 def determine_progress(
     action_context, _memory: Memory, action_registry: ActionRegistry
 ):

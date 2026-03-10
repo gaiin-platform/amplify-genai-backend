@@ -12,18 +12,16 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-cloudformation-changesets-v3
+  
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
   pythonRequirements:
     dockerizePip: true
 
-  booleanMap:
-    "true": true
-    "false": false
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}} 
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   stages:
     - dev
     - staging
@@ -126,6 +124,19 @@ functions:
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
     DataDisclosureIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

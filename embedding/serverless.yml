@@ -24,12 +24,9 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
 
-  booleanMap:
-    "true": true
-    "false": false
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -92,6 +89,7 @@ provider:
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+    RAG_POSTGRES_DB_PORT: ${ssm:/amplify/${sls:stage}/RAG_POSTGRES_DB_PORT, '3306'}
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
     SERVICE_NAME: ${self:service}
@@ -179,8 +177,8 @@ functions:
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
         LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-        MODEL_RATE_TABLE: amplify-${self:custom.depName}-chat-billing-${sls:stage}-model-rates
-        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs
+        MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+        AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}
         API_VERSION: ${self:provider.environment.API_VERSION}
         EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
         REGION: ${self:provider.region}
@@ -288,6 +286,17 @@ functions:
           method: post
           cors: true
 
+  bedrock_kb_download:
+    handler: bedrock-kb-download.bedrock_kb_download
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /bedrock-kb/download
+          method: post
+          cors: true
+
   tools_op:
     handler: tools_ops.api_tools_handler
     timeout: 30
@@ -307,6 +316,34 @@ resources:
         - 'prod'
 
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: get_dual_embeddings
+            path: /embedding-dual-retrieval
+            method: POST
+
+
     EmbeddingIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -359,8 +396,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-dlq"
+                - !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueArn"
+                - !ImportValue "${sls:stage}-EmbeddingChunksIndexDlqArn"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
@@ -374,7 +411,7 @@ resources:
               Action:
                 - sqs:SendMessage
               Resource:
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-lambda-${sls:stage}-rag-document-chunk-queue"
+                - !ImportValue "${sls:stage}-RagChunkDocumentQueueArn"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -409,6 +446,26 @@ resources:
 
             - Effect: Allow
               Action:
+                - bedrock:Retrieve
+                - bedrock:RetrieveAndGenerate
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
+
+            - Effect: Allow
+              Action:
+                - bedrock:ListDataSources
+                - bedrock:GetDataSource
+              Resource:
+                - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
+
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::*/*"
+
+            - Effect: Allow
+              Action:
                 - dynamodb:PutItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
@@ -428,12 +485,12 @@ resources:
         VpcId: ${self:provider.environment.VPC_ID}
         SecurityGroupIngress:
           - IpProtocol: tcp
-            FromPort: 3306
-            ToPort: 3306
+            FromPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
+            ToPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
             CidrIp: ${self:provider.environment.VPC_CIDR}
           - IpProtocol: tcp
-            FromPort: 3306
-            ToPort: 3306
+            FromPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
+            ToPort: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
             CidrIp: '10.2.224.0/20'
     
     LambdaSecurityGroup:
@@ -480,14 +537,15 @@ resources:
         DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
         DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
         Engine: aurora-postgresql
-        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
+        EngineVersion: '15.12' # Specify the compatible engine version for Serverless v2
+        Port: ${self:provider.environment.RAG_POSTGRES_DB_PORT}
         ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
           MinCapacity: ${self:provider.environment.MIN_ACU}
           MaxCapacity: ${self:provider.environment.MAX_ACU}
         EnableHttpEndpoint: true
         EnableCloudwatchLogsExports:
           - postgresql
-        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}  
+        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
         MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
         VpcSecurityGroupIds:
           - !Ref RagPostgresDbSecurityGroup

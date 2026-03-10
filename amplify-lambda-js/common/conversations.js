@@ -83,6 +83,8 @@ Where:
  - newTopic: Specify the title of the new topic if isNewTopic is true. This should be a concise title of no more than 6 words.
  - currentTopicDescription: Provide a 1-3 line description of the conversation history you received, specifically those messages that fall under "Current Topic", helping to clarify the context or main idea. Applicable only if isNewTopic is true. If current topic is 'NO CURRENT TOPIC' then omit currentTopicDescription
 
+CRITICAL: If currentTopic is "NO CURRENT TOPIC", this means no topic has been established yet. You MUST set isNewTopic=true and provide a newTopic based on what the conversation is about. This establishes the initial topic for tracking.
+
 Example Valid Responses:
 
 Example 1 (Introducing a New Topic):
@@ -352,8 +354,39 @@ Guidelines for Evaluation:
 - Be selective - only include artifacts that are truly needed for the current query to save tokens.
 `;
 
-const SMART_INCLUDE_ARTIFACT_INSTRUCTIONS = (prompt, triggerConditions) => `
-Task 4 Instructions:
+const SMART_INCLUDE_ARTIFACT_INSTRUCTIONS = (prompt, triggerConditions, messages = []) => {
+    // Build conversation context (last 3 messages, truncated)
+    let conversationContext = '';
+
+    if (messages && messages.length > 1) {
+        const recentMessages = messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .slice(-4, -1); // Last 3 messages before current prompt (exclude the current one)
+
+        if (recentMessages.length > 0) {
+            conversationContext = '\n\nRecent Conversation Context (for understanding references like "it", "that", "the button"):\n';
+
+            recentMessages.forEach((msg, idx) => {
+                const role = msg.role === 'user' ? 'User' : 'Assistant';
+                const content = msg.content || '';
+
+                // Truncate long messages to 150 chars for context
+                const truncated = content.length > 150
+                    ? content.substring(0, 150) + '...[truncated]'
+                    : content;
+
+                // Detect if assistant created an artifact (contains autoArtifacts marker)
+                const hadArtifact = msg.role === 'assistant' && content.includes('```autoArtifacts');
+                const artifactNote = hadArtifact ? ' [📦 CREATED ARTIFACT]' : '';
+
+                conversationContext += `${idx + 1}. ${role}${artifactNote}: ${truncated}\n`;
+            });
+
+            conversationContext += '\n';
+        }
+    }
+
+    return `Task 4 Instructions:
 Determine if we should include the artifact creation instructions based on the current user prompt.
 
 CRITICAL: Only set includeInstructions=true if the user is requesting to CREATE, GENERATE, or BUILD something new.
@@ -369,9 +402,13 @@ Guidelines:
 - Evaluate User Input to determine if it matches the artifact trigger conditions based on keywords such as "create," "build," "generate," "make," "write," "develop," "outline," "full project," "detailed analysis," or "extensive documentation."
 - Consider the likelihood of the user wanting to CREATE A NEW artifact based on the request. Only likelihood above 60% should be included.
 - If the user is asking about or analyzing EXISTING artifacts, respond with false.
+- Use the conversation context below to understand references (e.g., if user says "make it bigger" and previous message created an artifact, include instructions).
+- If you see [📦 CREATED ARTIFACT] in recent context and the current prompt modifies/extends it, include instructions.
 - If you are unsure, err on the side of false to save tokens.
+${conversationContext}
 
-User Prompt:
+
+Current User Prompt:
 ${prompt}
 
 Response Format:
@@ -381,6 +418,7 @@ Response Format:
 
 IMPORTANT: You must respond to BOTH Task 3 (if artifacts exist) AND Task 4. Provide both response blocks.
 `;
+};
 
 /**
  * Gather topic data from conversation history
@@ -548,7 +586,8 @@ const parseTopicEvaluation = (response, currentTopic, currentTopicStart, current
         return undefined;
     }
 
-    const isNewTopicMatch = response.match(/isNewTopic=\{(true|false)\}/);
+    // Handle both formats: isNewTopic={true} and isNewTopic=true
+    const isNewTopicMatch = response.match(/isNewTopic=\{?(true|false)\}?/);
     const isNewTopic = isNewTopicMatch ? isNewTopicMatch[1] === 'true' : false;
 
     logger.debug("🔍 [parseTopicEvaluation] Parsing:", {
@@ -558,11 +597,12 @@ const parseTopicEvaluation = (response, currentTopic, currentTopicStart, current
 
     if (isNewTopic) {
         const topicData = { currentTopic: '' };
-        const newTopicMatch = response.match(/newTopic=\{([^}]+)\}/);
-        const topicDescriptionMatch = response.match(/currentTopicDescription=\{([^}]+)\}/);
+        // Handle both formats: newTopic={value} and newTopic=value
+        const newTopicMatch = response.match(/newTopic=\{([^}]+)\}/) || response.match(/newTopic=([^\n\/]+)/);
+        const topicDescriptionMatch = response.match(/currentTopicDescription=\{([^}]+)\}/) || response.match(/currentTopicDescription=([^\n\/]+)/);
 
-        const newTopic = newTopicMatch ? newTopicMatch[1] : null;
-        const topicDescription = topicDescriptionMatch ? topicDescriptionMatch[1] : null;
+        const newTopic = newTopicMatch ? newTopicMatch[1].trim() : null;
+        const topicDescription = topicDescriptionMatch ? topicDescriptionMatch[1].trim() : null;
 
         logger.debug("🔍 [parseTopicEvaluation] Extracted:", {
             newTopic,
@@ -811,10 +851,11 @@ export const processSmartMessages = async ({
         if (!options.smartMessages && options.artifacts) {
             logger.info("⚡ [Smart Messages] Artifacts-only mode - running artifact creation detection only");
 
-            // Build TASK 4 instructions to determine if artifact instructions should be included
+            // Build TASK 4 instructions with conversation context
             let instructions = SMART_INCLUDE_ARTIFACT_INSTRUCTIONS(
                 messages[messages.length - 1].content,
-                ARTIFACT_TRIGGER_CONDITIONS
+                ARTIFACT_TRIGGER_CONDITIONS,
+                messages
             );
 
             // If artifacts exist, add TASK 3 instructions for artifact relevance detection
@@ -846,7 +887,8 @@ export const processSmartMessages = async ({
                     model,
                     options: {
                         temperature: 0.8,
-                        max_tokens: 500
+                        max_tokens: 500,
+                        disableReasoning: true
                     }
                 },
                 llmMessages,
@@ -881,7 +923,8 @@ export const processSmartMessages = async ({
             return {
                 filteredMessages: updatedMessages,
                 metadata: { processed: true },
-                artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
+                includeArtifactInstructions: includeArtifactInstr,
+                // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
                 _internal: {
                     removedCount: 0,
                     relevantArtifactIds,
@@ -910,7 +953,8 @@ export const processSmartMessages = async ({
         if (options.artifacts) {
             instructions += "\n\n" + SMART_INCLUDE_ARTIFACT_INSTRUCTIONS(
                 messages[messages.length - 1].content,
-                ARTIFACT_TRIGGER_CONDITIONS
+                ARTIFACT_TRIGGER_CONDITIONS,
+                messages
             );
         }
 
@@ -945,7 +989,8 @@ export const processSmartMessages = async ({
                 account,
                 options: {
                     model,
-                    requestId
+                    requestId,
+                    disableReasoning: true,
                 }
             },
             llmMessages,
@@ -1050,9 +1095,10 @@ export const processSmartMessages = async ({
         const result = {
             filteredMessages,
             metadata: {
-                processed: true  // Only field actually used by router
+                processed: true,
+                topicChange: topicEval  // Sent to frontend, saved to message.data.state.smartMessages
             },
-            artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
+            // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
             // Internal fields for logging only (not sent to frontend)
             _internal: {
                 topicChange: topicEval,

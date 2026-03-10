@@ -1,12 +1,11 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-# set up retriever function that accepts a a query, user, and/or list of keys for where claus
-
 import json
 import os
 import time
 import asyncio
+import math
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from pycommon.decorators import required_env_vars
@@ -17,10 +16,12 @@ from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SQSOperation, SecretsManagerOperation
 )
 from pycommon.api.credentials import get_credentials
-from shared_functions import generate_embeddings
+from shared_functions import generate_embeddings, truncate_content_for_model, embedding_model_name
 import boto3
 import asyncio
 from boto3.dynamodb.conditions import Key
+
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime")
 from pycommon.api.ops import api_tool
 from pycommon.api.amplify_groups import verify_user_in_amp_group
 from datetime import datetime, timezone
@@ -40,12 +41,14 @@ logger = getLogger("embedding_dual_retrieval")
 pg_host = os.environ["RAG_POSTGRES_DB_READ_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
+pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306 if not set
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 api_version = os.environ["API_VERSION"]
 object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
 queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
 s3_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 sqs = boto3.client("sqs")
+
 
 # Define the permission levels that grant access
 permission_levels = ["read", "write", "owner"]
@@ -186,12 +189,29 @@ performance_cache = EmbeddingPerformanceCache()
 
 
 def get_top_similar_qas(query_embedding, src_ids, limit=5):
+    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+    if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
+        logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_qas - refusing to query PostgreSQL")
+        log_critical_error(
+            function_name="get_top_similar_qas",
+            error_type="NaNInQAQueryEmbedding",
+            error_message="NaN or empty values detected in query embedding before PostgreSQL vector search",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src_ids_count": len(src_ids) if src_ids else 0,
+                "limit": limit,
+                "embedding_length": len(query_embedding) if query_embedding else 0
+            }
+        )
+        return []  # Return empty results instead of crashing PostgreSQL
+
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
         user=pg_user,
         password=pg_password,
-        port=3306,
+        port=pg_port,
     ) as conn:
 
         # Register pgvector extension
@@ -258,12 +278,29 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
 
 
 def get_top_similar_docs(query_embedding, src_ids, limit=5):
+    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+    if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
+        logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_docs - refusing to query PostgreSQL")
+        log_critical_error(
+            function_name="get_top_similar_docs",
+            error_type="NaNInDocQueryEmbedding",
+            error_message="NaN or empty values detected in query embedding before PostgreSQL vector search",
+            severity=SEVERITY_HIGH,
+            stack_trace=traceback.format_exc(),
+            context={
+                "src_ids_count": len(src_ids) if src_ids else 0,
+                "limit": limit,
+                "embedding_length": len(query_embedding) if query_embedding else 0
+            }
+        )
+        return []  # Return empty results instead of crashing PostgreSQL
+
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
         user=pg_user,
         password=pg_password,
-        port=3306,
+        port=pg_port,
     ) as conn:
 
         # Register pgvector extension
@@ -616,6 +653,76 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     return accessible_src_ids, access_denied_src_ids
 
 
+def retrieve_from_bedrock_kb(knowledge_base_id, query_text, limit=10):
+    """Retrieve relevant documents from a Bedrock Knowledge Base.
+
+    Args:
+        knowledge_base_id (str): The Bedrock Knowledge Base ID.
+        query_text (str): The user query to search for.
+        limit (int): Maximum number of results to return.
+
+    Returns:
+        list: List of result tuples matching the PostgreSQL retrieval format:
+              (content, src, locations, orig_indexes, char_index, token_count, id, score)
+    """
+    try:
+        response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={"text": query_text},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {
+                    "numberOfResults": limit,
+                }
+            },
+        )
+        results = []
+        for i, result in enumerate(response.get("retrievalResults", [])):
+            content = result.get("content", {}).get("text", "")
+            score = float(result.get("score", 0.0))
+            location = result.get("location", {})
+            source_uri = location.get("s3Location", {}).get("uri", "") or location.get("type", "")
+            # Format as tuple matching PostgreSQL result format:
+            # (content, src, locations, orig_indexes, char_index, token_count, id, score)
+            # locations must be an array of objects for the JS createSuperset() function
+            results.append((
+                content,                                    # content
+                f"bedrock-kb://{knowledge_base_id}",        # src (key)
+                [{"source": source_uri}],                   # locations (array of objects)
+                [],                                         # orig_indexes
+                0,                                          # char_index
+                len(content.split()),                       # token_count (approximate)
+                f"bedrock-kb-{knowledge_base_id}-{i}",      # id
+                score,                                      # score/distance
+            ))
+        logger.info(f"Retrieved {len(results)} results from Bedrock KB {knowledge_base_id}")
+        return results
+    except Exception as e:
+        logger.error(f"Error retrieving from Bedrock KB {knowledge_base_id}: {e}")
+        return []
+
+
+async def retrieve_from_all_bedrock_kbs(bedrock_kb_ids, query_text, limit=10):
+    """Retrieve from multiple Bedrock Knowledge Bases in parallel.
+
+    Args:
+        bedrock_kb_ids (list): List of Knowledge Base IDs.
+        query_text (str): The user query.
+        limit (int): Max results per KB.
+
+    Returns:
+        list: Combined results from all KBs.
+    """
+    tasks = [
+        asyncio.to_thread(retrieve_from_bedrock_kb, kb_id, query_text, limit)
+        for kb_id in bedrock_kb_ids
+    ]
+    results_per_kb = await asyncio.gather(*tasks)
+    combined = []
+    for results in results_per_kb:
+        combined.extend(results)
+    return combined
+
+
 @api_tool(
     path="/embedding-dual-retrieval",
     name="retrieveEmbeddings",
@@ -734,6 +841,22 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     raw_ast_src_ids = data.get("astDataSources", {})
     limit = data.get("limit", 10)
 
+    # Separate Bedrock KB datasources from standard datasources
+    bedrock_kb_ids = []
+    filtered_raw_src_ids = []
+    for src in raw_src_ids:
+        src_id = src if isinstance(src, str) else src.get("id", "")
+        if src_id.startswith("bedrock-kb://"):
+            kb_id = src_id.split("bedrock-kb://")[1]
+            if kb_id and kb_id not in bedrock_kb_ids:
+                bedrock_kb_ids.append(kb_id)
+        else:
+            filtered_raw_src_ids.append(src)
+    raw_src_ids = filtered_raw_src_ids
+
+    if bedrock_kb_ids:
+        logger.info(f"Found {len(bedrock_kb_ids)} Bedrock KB datasources: {bedrock_kb_ids}")
+
     # Run all permission checks in parallel - only run what's needed
     tasks = []
     results_map = {}
@@ -758,13 +881,13 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
     # CRITICAL: Check if we have any accessible sources before proceeding
-    if not src_ids:
+    if not src_ids and not bedrock_kb_ids:
         logger.error(f"[NO_ACCESSIBLE_SOURCES] No accessible sources after permission checks")
         logger.error(f"Raw sources provided: individual={len(raw_src_ids)}, groups={len(raw_group_src_ids)}, ast={len(raw_ast_src_ids)}")
 
         log_critical_error(
             function_name="_async_process_input_with_dual_retrieval_no_access",
-            error_type="NoAccessibleDataSources",
+            error_type=f"NoAccessibleDataSources {raw_ast_src_ids or raw_group_src_ids or raw_src_ids}",
             error_message=f"User has no access to any of the provided data sources",
             current_user=current_user,
             severity=SEVERITY_HIGH,
@@ -785,6 +908,17 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
                 "total_sources_requested": len(raw_src_ids) + sum(len(v) for v in raw_group_src_ids.values()) + sum(len(v) for v in raw_ast_src_ids.values()),
                 "accessible_sources": 0
             }
+        }
+
+    # If only Bedrock KB sources exist (no standard sources), skip the embedding pipeline
+    if not src_ids and bedrock_kb_ids:
+        logger.info(f"Only Bedrock KB sources present, skipping standard embedding pipeline")
+        bedrock_kb_results = await retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit)
+        return {
+            "result": bedrock_kb_results,
+            "documents_processed": len(bedrock_kb_ids),
+            "results_returned": len(bedrock_kb_results),
+            "bedrock_kb_ids": bedrock_kb_ids,
         }
 
     # Advanced polling strategy with exponential backoff and early termination
@@ -885,6 +1019,20 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     # CRITICAL: Verify we still have sources after polling loop
     if not src_ids:
+        # If Bedrock KB sources exist, fall back to KB-only retrieval
+        if bedrock_kb_ids:
+            logger.info(f"Standard sources failed but Bedrock KB sources available, falling back to KB-only retrieval")
+            bedrock_kb_results = await retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit)
+            return {
+                "result": bedrock_kb_results,
+                "documents_processed": len(bedrock_kb_ids),
+                "results_returned": len(bedrock_kb_results),
+                "bedrock_kb_ids": bedrock_kb_ids,
+                "warning": f"All standard data sources failed. Results from Bedrock KB only.",
+                "failed_documents": failed_documents,
+                "total_failed": len(failed_documents),
+            }
+
         logger.error(f"[NO_SOURCES_AFTER_POLLING] All sources were removed during polling loop")
         logger.error(f"Failed documents: {failed_documents}")
 
@@ -912,12 +1060,64 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     logger.info(f"Starting embedding generation for user input query with {len(src_ids)} accessible sources")
     logger.info(f"Source IDs for retrieval: {src_ids}")
 
+    # SAFETY NET: Truncate user input to prevent token limit errors (defense in depth)
+    # This catches edge cases where user input might exceed embedding model token limit
+    # Use 8000 tokens (not 8192) to leave buffer room for special tokens
+    original_length = len(content)
+    content = truncate_content_for_model(content, embedding_model_name, 8000)
+    if len(content) < original_length:
+        logger.warning(f"[TOKEN_SAFETY] User input truncated from {original_length} to {len(content)} chars to fit embedding token limit")
+
     response_embeddings = generate_embeddings(content)
+
+    # NaN RETRY: If embedding generation fails due to NaN, try with sanitized text
+    if not response_embeddings["success"]:
+        error_msg = response_embeddings.get('error', '')
+        if 'NaN' in error_msg or 'nan' in error_msg.lower():
+            logger.warning(f"[NaN_DETECTED] NaN error from API for user input (length: {len(content)}), attempting retry with sanitized text")
+
+            # RETRY: Clean text more aggressively and retry once
+            sanitized_content = ''.join(char for char in content if ord(char) < 128 and (char.isprintable() or char.isspace()))
+            sanitized_content = ' '.join(sanitized_content.split())  # Normalize whitespace
+
+            if sanitized_content and len(sanitized_content.strip()) > 0:
+                logger.info(f"[NaN_RETRY] Retrying with ASCII-only text (original: {len(content)} chars, sanitized: {len(sanitized_content)} chars)")
+                response_embeddings = generate_embeddings(sanitized_content)
+
+                if response_embeddings["success"]:
+                    logger.info(f"[NaN_RETRY] ✅ Retry succeeded with sanitized text")
+                    content = sanitized_content  # Use sanitized content going forward
+                else:
+                    logger.error(f"[NaN_RETRY] Retry failed: {response_embeddings.get('error')}")
+            else:
+                logger.error(f"[NaN_RETRY] Sanitized content is empty, cannot retry")
 
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
         token_count = response_embeddings["token_count"]
         logger.info(f"Generated embeddings with {token_count} tokens")
+
+        # VALIDATION: Check for NaN values in embedding vector before using in PostgreSQL queries
+        if any(math.isnan(x) if isinstance(x, (int, float)) else False for x in embeddings):
+            logger.error(f"[VALIDATION] NaN detected in query embedding vector. Content length: {len(content)}, Preview: {content[:200]}")
+            log_critical_error(
+                function_name="_async_process_input_with_dual_retrieval",
+                error_type="NaNInQueryEmbedding",
+                error_message="NaN values detected in query embedding vector - cannot perform PostgreSQL vector search",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace=traceback.format_exc(),
+                context={
+                    "content_length": len(content),
+                    "content_preview": content[:200],
+                    "token_count": token_count,
+                    "src_ids_count": len(src_ids)
+                }
+            )
+            return {
+                "error": "Query embedding generation produced invalid NaN values",
+                "content_preview": content[:200]
+            }
     else:
         error = response_embeddings["error"]
         logger.error(f"Embedding generation failed: {error}")
@@ -947,7 +1147,7 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             database=pg_database,
             user=pg_user,
             password=pg_password,
-            port=3306,
+            port=pg_port,
         ) as conn:
             with conn.cursor() as cur:
                 # Query to check if any rows exist with these src values
@@ -971,45 +1171,73 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     def get_similar_qas():
         return get_top_similar_qas(embeddings, src_ids, limit)
 
-    # Execute both retrieval operations in parallel
-    related_docs, related_qas = await asyncio.gather(
+    # Execute retrieval operations in parallel (including Bedrock KB if present)
+    retrieval_tasks = [
         asyncio.to_thread(get_similar_docs),
-        asyncio.to_thread(get_similar_qas)
-    )
-    
+        asyncio.to_thread(get_similar_qas),
+    ]
+    if bedrock_kb_ids:
+        retrieval_tasks.append(retrieve_from_all_bedrock_kbs(bedrock_kb_ids, content, limit))
+
+    retrieval_results = await asyncio.gather(*retrieval_tasks)
+
+    related_docs = retrieval_results[0]
+    related_qas = retrieval_results[1]
+    bedrock_kb_results = retrieval_results[2] if bedrock_kb_ids else []
+
     # Combine results
     related_docs.extend(related_qas)
+    related_docs.extend(bedrock_kb_results)
 
     logger.info(f"Retrieved {len(related_docs)} related documents/QAs")
 
-    # CRITICAL: Check if we got no results despite having sources
+    # Check if we got no results despite having sources - investigate why
     if len(related_docs) == 0 and len(src_ids) > 0:
-        logger.error(f"[NO_RESULTS_WITH_SOURCES] PostgreSQL returned 0 results despite having {len(src_ids)} accessible sources")
-        logger.error(f"Source IDs queried: {src_ids}")
+        logger.warning(f"[NO_RESULTS_WITH_SOURCES] PostgreSQL returned 0 results despite having {len(src_ids)} accessible sources")
+        logger.warning(f"Source IDs queried: {src_ids}")
 
-        log_critical_error(
-            function_name="_async_process_input_with_dual_retrieval_no_results",
-            error_type="PostgreSQLNoResultsWithSources",
-            error_message=f"PostgreSQL returned 0 results despite having accessible sources",
-            current_user=current_user,
-            severity=SEVERITY_HIGH,
-            stack_trace="",
-            context={
-                "src_ids_count": len(src_ids),
-                "src_ids": src_ids,
-                "limit": limit,
-                "query_length": len(content),
-                "pg_host": pg_host,
-                "pg_database": pg_database
-            }
-        )
+        # Check embedding status to distinguish between "no embeddings" vs "no matches"
+        embedding_status_check = await check_embedding_completion(src_ids, account_data, None, 0)
+        documents_missing_embeddings = embedding_status_check.get("requires_embedding", [])
+        documents_failed_embeddings = embedding_status_check.get("failed_documents", [])
+
+        # CRITICAL: If documents have no embeddings or failed, this is a real problem
+        if documents_missing_embeddings or documents_failed_embeddings:
+            logger.error(f"[EMBEDDING_ISSUE] Documents are missing embeddings or failed:")
+            logger.error(f"  - Missing embeddings: {len(documents_missing_embeddings)} documents")
+            logger.error(f"  - Failed embeddings: {len(documents_failed_embeddings)} documents")
+
+            log_critical_error(
+                function_name="_async_process_input_with_dual_retrieval_no_embeddings",
+                error_type="MissingOrFailedEmbeddings",
+                error_message=f"Documents lack embeddings: {len(documents_missing_embeddings)} missing, {len(documents_failed_embeddings)} failed",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace="",
+                context={
+                    "src_ids_count": len(src_ids),
+                    "missing_embeddings": documents_missing_embeddings[:5],  # First 5 for brevity
+                    "failed_embeddings": documents_failed_embeddings[:5],
+                    "total_missing": len(documents_missing_embeddings),
+                    "total_failed": len(documents_failed_embeddings),
+                    "limit": limit,
+                    "query_length": len(content)
+                }
+            )
+        else:
+            # Documents have embeddings but no matches - this is normal (just no relevant content)
+            logger.info(f"[NO_MATCHES] Documents have embeddings but no content matched the query - this is normal")
 
     # Build response
     response = {
         "result": related_docs,
-        "documents_processed": len(src_ids),
+        "documents_processed": len(src_ids) + len(bedrock_kb_ids),
         "results_returned": len(related_docs)
     }
+
+    if bedrock_kb_ids:
+        response["bedrock_kb_ids"] = bedrock_kb_ids
+        response["bedrock_kb_results_count"] = len(bedrock_kb_results)
     
     # Add warning about failed documents if any
     if failed_documents:

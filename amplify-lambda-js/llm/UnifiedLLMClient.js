@@ -4,11 +4,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Writable } from 'stream';
 import { getLogger } from '../common/logging.js';
-import { 
-    sendDeltaToStream, 
-    sendStatusEventToStream, 
+import {
+    sendDeltaToStream,
+    sendStatusEventToStream,
     sendErrorMessage,
-    endStream 
+    endStream
 } from '../common/streams.js';
 import { newStatus, getThinkingMessage } from '../common/status.js';
 import { getAccountId } from '../common/params.js';
@@ -23,27 +23,22 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
+import {ARTIFACTS_PROMPT} from "../common/conversations.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
+
+// Import context overflow handling
+import { handleContextOverflow, detectContextOverflow, buildMessagesWithHistoricalContext, extractHistoricalContext, calculateBudgets, calculateHistoricalContextStructure } from './contextOverflow.js';
+
+// Import cache for proactive overflow prevention
+import { CacheManager } from '../common/cache.js';
 
 const logger = getLogger('UnifiedLLMClient');
 
 // Active request tracking
 const activeRequests = new Map();
 
-// Model type detection utilities
-const isOpenAIModel = (modelId) => {
-    return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
-};
-
-const isGeminiModel = (modelId) => {
-    return modelId && modelId.includes("gemini");
-};
-
-const isBedrockModel = (modelId) => {
-    return modelId && (modelId.includes("claude") || modelId.includes("mistral") || modelId.includes("amazon"));
-};
 
 /**
  * Get the appropriate chat function and transformer for a model
@@ -97,26 +92,42 @@ const getProviderConfig = (model) => {
 /**
  * Queue conversation analysis with fallback
  */
-async function queueConversationAnalysisWithFallback(params, messages, result) {
+async function queueConversationAnalysisWithFallback(params, messages, result, options = {}) {
     try {
         const { queueConversationAnalysisWithFallback: queueConversationAnalysisImpl } = await import('../groupassistants/conversationAnalysis.js');
-        
+
         if (params.options?.trackConversations) {
+            // Extract conversationId from either options parameter or params.options
+            // (chatWithData passes it in options param, line 530 of chatWithData.js)
+            const conversationId = options.conversationId || params.options?.conversationId;
+
             // Construct proper chatRequest object
+            // Merge params.options with conversationId
             const chatRequest = {
                 messages: messages,
-                options: params.options
+                options: {
+                    ...params.options,
+                    // Ensure conversationId is included
+                    conversationId: conversationId
+                }
             };
-            
+
+            // Log for debugging
+            logger.debug('Queueing conversation analysis', {
+                conversationId: chatRequest.options.conversationId,
+                assistantId: chatRequest.options.assistantId,
+                hasConversationId: !!chatRequest.options.conversationId
+            });
+
             // Construct llmResponse object
             const llmResponse = result?.content || "";
-            
+
             // Use account from params
             const account = params.account;
-            
+
             // Always perform analysis for system rating, categories are handled separately in analysis function
             const performCategoryAnalysis = true; // Always analyze for rating, categories determined by analysisCategories presence
-            
+
             await queueConversationAnalysisImpl(
                 chatRequest,
                 llmResponse,
@@ -249,9 +260,134 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
     const model = params.options?.model || params.model;
-    
+
     if (!model) {
         throw new Error('Model not specified');
+    }
+
+    // ⚡ PROACTIVE OVERFLOW PREVENTION: Check if we know this conversation overflows
+    // Cache tells us WHERE the historical cutoff is - but we ALWAYS do fresh query-aware extraction
+    // because each user question needs different relevant context
+    const smartMessagesFiltered = options.smartMessagesFiltered === true;
+    const conversationId = options.conversationId || params.options?.conversationId;
+    let finalMessages = messages;
+    let proactiveExtractionNeeded = false;
+    let cachedHistoricalEndIndex = null;
+
+    if (!smartMessagesFiltered && conversationId && messages.length >= 20 && !options._isInternalCall) {
+        const userId = params.account?.user || params.user || 'unknown';
+        const modelId = model?.id || model?.name || 'unknown';
+        const cached = await CacheManager.getCachedHistoricalContext(userId, conversationId, modelId);
+
+        if (cached && messages.length >= cached.messageCount) {
+            // Cache tells us this conversation has overflowed before
+            // We know the historical cutoff point - trigger proactive extraction
+            logger.info(`[PROACTIVE] Cache HIT: Conversation ${conversationId} previously overflowed at index ${cached.historicalEndIndex} (model: ${modelId})`);
+            proactiveExtractionNeeded = true;
+            cachedHistoricalEndIndex = cached.historicalEndIndex;
+        }
+    } else if (smartMessagesFiltered && conversationId) {
+        logger.debug('Skipping proactive cache check (smart messages filtered - cache unsafe)');
+    }
+
+    // ⚡ PROACTIVE EXTRACTION: If cache tells us this conversation overflows, do fresh extraction NOW
+    // This is QUERY-AWARE - we ALWAYS re-extract based on the current user question
+    if (proactiveExtractionNeeded && cachedHistoricalEndIndex !== null) {
+        logger.info(`[PROACTIVE] ========== EXTRACTION TRIGGERED ==========`);
+        logger.info(`[PROACTIVE] Cache indicated overflow at index ${cachedHistoricalEndIndex}`);
+
+        // Send status event to user so they know something is happening
+        if (responseStream && !responseStream.writableEnded) {
+            sendStatusEventToStream(responseStream, newStatus({
+                id: 'context-extraction',
+                summary: 'Analyzing conversation context...',
+                message: 'Analyzing conversation context...',
+                inProgress: true,
+                animated: true
+            }));
+        }
+
+        // Calculate budgets for extraction FIRST - we need this to determine the split
+        const budgets = calculateBudgets(model, options.max_tokens);
+
+        // IMPORTANT: Recalculate the split based on CURRENT messages, not cached index
+        // The cached index tells us overflow happened, but new messages may have been added
+        const structure = calculateHistoricalContextStructure(messages, budgets);
+
+        const historicalMessages = structure.historicalMessages;
+        const intactMessages = structure.intactMessages;
+        const currentQuestion = messages[messages.length - 1]?.content || '';
+
+        logger.info(`[PROACTIVE] Message split: ${historicalMessages.length} historical, ${intactMessages.length} intact (intactBudget: ${budgets.intactBudget})`);
+        logger.debug(`Historical tokens: ${structure.historicalTokens}, Intact tokens: ${structure.intactTokens}`);
+
+        const cheapestModel = params.options?.cheapestModel || options.cheapestModel || model;
+
+        // Create internal LLM call function for extraction (non-streaming)
+        // extractHistoricalContext calls: llmCallFn(params, messages, model, options)
+        // We need to adapt to callUnifiedLLM(params, messages, responseStream, options)
+        const internalLLMCallFn = async (p, msgs, m, opts) => {
+            // m is the model passed from extraction - set it in params.options
+            const paramsWithModel = {
+                ...p,
+                options: {
+                    ...p.options,
+                    model: m
+                }
+            };
+            // Non-streaming call for extraction - pass null for responseStream
+            return await callUnifiedLLM(paramsWithModel, msgs, null, {
+                ...opts,
+                _isInternalCall: true
+            });
+        };
+
+        try {
+            const extractionOptions = {
+                ...options,
+                totalMessageCount: messages.length,
+                historicalBudget: budgets.historicalBudget,
+                cheapestModel,
+                conversationId,
+                smartMessagesFiltered
+            };
+
+            const extractionResult = await extractHistoricalContext(
+                params,
+                historicalMessages,
+                currentQuestion,
+                cheapestModel,
+                internalLLMCallFn,
+                extractionOptions
+            );
+
+            if (extractionResult.extractedContext) {
+                finalMessages = buildMessagesWithHistoricalContext(
+                    intactMessages,
+                    extractionResult.extractedContext
+                );
+                logger.info(`[PROACTIVE] Extraction complete: ${extractionResult.extractedContext.length} chars from historical`);
+                logger.info(`[PROACTIVE] Final messages: ${finalMessages.length} total`);
+                finalMessages.forEach((msg, idx) => {
+                    logger.info(`[PROACTIVE]   [${idx}] ${msg.role}: ${msg.content?.length || 0} chars`);
+                });
+                logger.info(`[PROACTIVE] ========== PROCEEDING WITH CALL ==========`);
+            } else {
+                logger.info('[PROACTIVE] Extraction returned no content, using intact messages only');
+                finalMessages = intactMessages;
+            }
+        } catch (error) {
+            logger.error(`[PROACTIVE] Extraction failed: ${error.message}, falling back to original messages`);
+            // Fall back to original messages - let overflow handler deal with it if needed
+        } finally {
+            // Clear the status event
+            if (responseStream && !responseStream.writableEnded) {
+                sendStatusEventToStream(responseStream, newStatus({
+                    id: 'context-extraction',
+                    inProgress: false
+                }));
+            }
+        }
     }
 
     // Get provider configuration
@@ -294,10 +430,18 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 
         // Prepare request body
         // Extract internal options that should NOT be passed to providers
-        const { keepStreamOpen, ...providerOptions } = options;
+        const {
+            keepStreamOpen,
+            _contexts,
+            _isInternalCall,
+            smartMessagesFiltered,  // Internal: cache safety flag
+            conversationId,         // Internal: cache key
+            disableReasoning,       // Internal: controls extended thinking (Bedrock only)
+            ...providerOptions
+        } = options;
 
         const chatBody = {
-            messages,
+            messages: finalMessages,
             model: model.id || model,
             stream: !!responseStream,
             max_tokens: providerOptions.max_tokens || 2000,
@@ -306,7 +450,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             options: {
                 ...params.options,
                 model,
-                requestId
+                requestId,
+                user: params?.account?.user || params.user || "unknown",
+                disableReasoning
             }
         };
 
@@ -329,6 +475,24 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             chatBody.function_call = options.function_call;
         }
 
+        // Handle artifact instructions - add as system message at the front
+        if (params.options?.options?.artifacts) {
+            // Insert system message at the beginning (after any existing system messages)
+            const firstNonSystemIndex = chatBody.messages.findIndex(m => m.role !== 'system');
+            const insertIndex = firstNonSystemIndex === -1 ? chatBody.messages.length : firstNonSystemIndex;
+
+            chatBody.messages = [
+                ...chatBody.messages.slice(0, insertIndex),
+                {
+                    role: 'system',
+                    content: ARTIFACTS_PROMPT
+                },
+                ...chatBody.messages.slice(insertIndex)
+            ];
+
+            logger.info("✅ [Artifacts] Instructions added as system message");
+        }
+
         let result;
 
         if (responseStream) {
@@ -342,6 +506,16 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 capturedContent
             );
 
+            // Keep-alive: Send ping every 15s to prevent API Gateway timeout during thinking pauses
+            const keepAliveInterval = setInterval(() => {
+                if (!requestState.cancelled && responseStream && !responseStream.writableEnded) {
+                    responseStream.write(': keep-alive\n\n');
+                }
+            }, 15000);
+
+            // Store interval for cleanup
+            requestState.keepAliveInterval = keepAliveInterval;
+
             // Call provider with appropriate arguments
             if (providerConfig.needsEndpointProvider) {
                 // OpenAI needs getLLMConfig as first argument
@@ -349,6 +523,12 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             } else {
                 // Bedrock and Gemini just need chatBody and stream
                 result = await providerConfig.chatFn(chatBody, interceptor);
+            }
+
+            // Clear keep-alive interval
+            if (requestState.keepAliveInterval) {
+                clearInterval(requestState.keepAliveInterval);
+                requestState.keepAliveInterval = null;
             }
 
             // Ensure stream is properly ended (unless keepStreamOpen is set for tool loops)
@@ -445,15 +625,64 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             );
         }
 
-        // Queue conversation analysis
-        await queueConversationAnalysisWithFallback(params, messages, result);
+        // Queue conversation analysis - pass options to ensure conversationId is included
+        await queueConversationAnalysisWithFallback(params, messages, result, options);
 
         return result || { usage: requestState.totalUsage };
 
     } catch (error) {
+        // Check if this is a recoverable context overflow error
+        const overflowInfo = error.overflowInfo || detectContextOverflow(error);
+
+        if (overflowInfo.isOverflow && !error.criticalErrorLogged) {
+            // Attempt overflow recovery
+            logger.info(`Overflow detected, attempting recovery for requestId ${requestId}`);
+
+            try {
+                // Get contexts from options if available (passed from chatWithData)
+                const contexts = options._contexts || null;
+
+                const recovery = await handleContextOverflow({
+                    error,
+                    params,
+                    messages,  // Use ORIGINAL messages for recovery (not finalMessages)
+                    contexts,
+                    model,
+                    responseStream,
+                    cacheOptions: {},  // Cache options not available at this layer
+                    llmCallFn: callUnifiedLLM,  // Recursive call for retry
+                    internalLLMCallFn: async (p, msgs, mdl, opts) => {
+                        // Non-streaming internal call for context extraction
+                        // mdl is the model passed from extraction - set it in params.options
+                        const paramsWithModel = {
+                            ...p,
+                            options: {
+                                ...p.options,
+                                model: mdl
+                            }
+                        };
+                        return callUnifiedLLM(paramsWithModel, msgs, null, { ...opts, _isInternalCall: true });
+                    },
+                    llmOptions: {
+                        ...options,
+                        conversationId,  // Pass conversationId for cache updates
+                        smartMessagesFiltered  // Pass for cache safety check
+                    }
+                });
+
+                if (recovery.success) {
+                    logger.info(`Context overflow recovery succeeded for requestId ${requestId}`);
+                    return recovery.result;
+                }
+            } catch (recoveryError) {
+                logger.error(`Context overflow recovery failed for requestId ${requestId}:`, recoveryError);
+                // Fall through to original error handling
+            }
+        }
+
         logger.error(`UnifiedLLM call failed for requestId ${requestId}:`, error);
         logger.error('Error stack:', error.stack);
-        
+
         if (responseStream && !responseStream.writableEnded) {
             try {
                 sendErrorMessage(responseStream, error.message || 'LLM call failed');
@@ -462,12 +691,15 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 logger.error('Failed to send error to stream:', streamError);
             }
         }
-        
+
         throw error;
     } finally {
         // Cleanup
         if (requestState.statusTimer) {
             clearTimeout(requestState.statusTimer);
+        }
+        if (requestState.keepAliveInterval) {
+            clearInterval(requestState.keepAliveInterval);
         }
         activeRequests.delete(requestId);
     }
@@ -477,106 +709,116 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
-    params, 
-    messages, 
+    params,
+    messages,
     outputFormat,
     _responseStream = null // Currently unused, kept for API compatibility
 ) {
     const model = params.options?.model || params.model;
-    
+
     if (!model) {
         throw new Error('Model not specified');
     }
 
-    // Convert output format to function schema
-    const functionSchema = {
-        name: 'extract_data',
-        description: 'Extract structured data from the response',
-        parameters: outputFormat
-    };
-
-    // Determine if model supports function calling based on provider and model type
-    // OpenAI and Gemini models support functions, regardless of which provider serves them
-    // DISABLED: Function calling has parsing issues with Azure OpenAI SSE responses, always use JSON schema
-    //  const supportsFunctions = model.provider === 'OpenAI' || 
-    //                         model.provider === 'Azure' || 
-    //                         model.provider === 'Gemini' || 
-    //                         (model.provider === 'Bedrock' && (isOpenAIModel(model.id) || isGeminiModel(model.id)));
-    
-    const supportsFunctions = false; // Was: model.provider === 'OpenAI' || model.provider === 'Azure' || ...
-
-    if (supportsFunctions) {
-        // Use function calling
-        const result = await callUnifiedLLM(
-            params,
-            messages,
-            null, // No streaming for structured data
-            {
-                tools: [{ type: 'function', function: functionSchema }],
-                tool_choice: { type: 'function', function: { name: 'extract_data' } }
-            }
-        );
-
-        // Parse function call response
-        if (result.content) {
-            try {
-                // Check if response contains tool calls
-                const response = typeof result.content === 'string'
-                    ? JSON.parse(result.content)
-                    : result.content;
-
-                if (response.tool_calls?.[0]?.function?.arguments) {
-                    const parsed = JSON.parse(response.tool_calls[0].function.arguments);
-                    logger.debug('✅ [promptUnifiedLLMForData] Function calling succeeded, returning parsed result');
-                    return parsed;
-                }
-
-                // Sometimes the response is directly in the content
-                if (typeof response === 'object' && !response.choices) {
-                    logger.debug('✅ [promptUnifiedLLMForData] Direct object response, returning as-is');
-                    return response;
-                }
-
-                logger.warn('⚠️ [promptUnifiedLLMForData] Function call response format unexpected, falling back to JSON schema', {
-                    hasToolCalls: !!response.tool_calls,
-                    responseType: typeof response,
-                    hasChoices: !!response.choices
-                });
-            } catch (e) {
-                logger.error('❌ [promptUnifiedLLMForData] Failed to parse function call response, falling back to JSON schema:', e.message);
-            }
-        } else {
-            logger.warn('⚠️ [promptUnifiedLLMForData] No content in function call result, falling back to JSON schema');
-        }
-    }
-
-    // Fallback: Use JSON schema in prompt
+    // Always include JSON instructions in messages (works with all models/endpoints)
+    // Use strong, explicit language to prevent conversational responses
     const jsonPrompt = `
-Please respond with a JSON object that matches this schema:
+CRITICAL INSTRUCTION: Ignore all previous conversational context. You MUST respond with ONLY a JSON object.
+
+Required JSON schema:
 ${JSON.stringify(outputFormat, null, 2)}
 
-Respond ONLY with valid JSON, no explanation or markdown.`;
+RULES:
+- Your response must be ONLY valid JSON matching this exact schema
+- Do NOT provide explanations, commentary, or conversational text
+- Do NOT respond to previous messages in the conversation
+- Do NOT use markdown code blocks
+- Output ONLY the raw JSON object`;
 
-    const enhancedMessages = [
+    const finalMessages = [
         ...messages,
         { role: 'system', content: jsonPrompt }
     ];
 
-    const result = await callUnifiedLLM(params, enhancedMessages, null);
-    
+    // Prepare structured output options based on provider (additional enforcement if supported)
+    const provider = model?.provider;
+    let structuredOutputOptions = {};
+
+    if (provider === 'Bedrock') {
+        structuredOutputOptions.outputConfig = {
+            textFormat: {
+                type: "json_schema",
+                structure: {
+                    jsonSchema: {
+                        schema: JSON.stringify(outputFormat)
+                    }
+                }
+            }
+        };
+    } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
+        structuredOutputOptions.response_format = {
+            type: "json_schema",
+            json_schema: {
+                name: "data_extraction",
+                strict: true,
+                schema: { ...outputFormat, additionalProperties: false }
+            }
+        };
+    }
+
+    let result;
+    let usedStructuredOutput = false;
+    let retried = false;
+
+    // Try with structured output first (if supported by provider)
+    if (Object.keys(structuredOutputOptions).length > 0) {
+        try {
+            usedStructuredOutput = true;
+            result = await callUnifiedLLM(params, finalMessages, null, structuredOutputOptions);
+
+            // Check if response is actually JSON (some models ignore structured output config)
+            const content = result.content || '';
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            const testContent = jsonMatch ? jsonMatch[0] : content;
+
+            try {
+                JSON.parse(testContent);
+                // Valid JSON, continue
+            } catch (jsonTestError) {
+                // Structured output returned non-JSON, retry without flag
+                logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
+                usedStructuredOutput = false;
+                retried = true;
+                result = await callUnifiedLLM(params, finalMessages, null, {});
+            }
+        } catch (structuredError) {
+            logger.warn(`Structured output call failed for ${provider}, retrying without structured output flag:`, structuredError.message);
+            usedStructuredOutput = false;
+            retried = true;
+            // Fallback: retry without structured output
+            result = await callUnifiedLLM(params, finalMessages, null, {});
+        }
+    } else {
+        // No structured output support, call directly
+        result = await callUnifiedLLM(params, finalMessages, null, {});
+    }
+
+    // Parse JSON response
     try {
         const content = result.content || '';
-        // Try to extract JSON from response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             return JSON.parse(jsonMatch[0]);
         }
         return JSON.parse(content);
-    } catch (e) {
-        logger.error('Failed to parse JSON response:', e);
-        // Response was unparseable
+    } catch (parseError) {
+        logger.error('Failed to parse JSON response:', parseError);
+        logger.error('Raw response content:', result.content);
+        logger.error('Used structured output:', usedStructuredOutput);
+        logger.error('Retried without structured output:', retried);
         throw new Error('Failed to extract structured data from response');
     }
+
 }
 
 /**

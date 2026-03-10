@@ -2645,11 +2645,15 @@ def delete_attachment_handler(current_user, data):
     path="/microsoft/integrations/search_messages",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftSearchMessages",
-    description="Searches messages for a given query string. Note: Pagination with skip is not supported in search queries.",
+    description="Searches messages for a given query string. Optionally search within a specific folder by providing folder_id. Note: Pagination with skip is not supported in search queries.",
     parameters={
         "type": "object",
         "properties": {
             "search_query": {"type": "string", "description": "Search query"},
+            "folder_id": {
+                "type": "string",
+                "description": "Optional folder ID to search within a specific folder only",
+            },
             "top": {
                 "type": "integer",
                 "minimum": 1,
@@ -2662,7 +2666,7 @@ def delete_attachment_handler(current_user, data):
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, top=10)(
+    return common_handler(search_messages, search_query=None, folder_id=None, top=10)(
         current_user, data
     )
 

@@ -2,7 +2,7 @@ from agent.components.tool import register_tool
 from agent.core import ActionContext
 
 
-@register_tool(tags=["agent_communication"])
+# @register_tool(tags=["agent_communication"])
 def list_available_agents(action_context: ActionContext):
     """
     List all available agents that work can be handed-off to.
@@ -17,7 +17,7 @@ def list_available_agents(action_context: ActionContext):
     return action_context.get_agent_registry().get_descriptions()
 
 
-@register_tool(terminal=True, tags=["agent_communication"])
+# @register_tool(terminal=True, tags=["agent_communication"])
 def handoff_to_agent(
     action_context: ActionContext, agent_id: str, instructions_for_agent: str
 ) -> str:

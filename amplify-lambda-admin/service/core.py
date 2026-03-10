@@ -79,6 +79,7 @@ class AdminConfigTypes(Enum):
     AI_EMAIL_DOMAIN = 'aiEmailDomain'
     CRITICAL_ERRORS = "criticalErrors"
     WEB_SEARCH_CONFIG = "webSearchConfig"
+    USER_DOCUMENTATION_URL = "userDocumentationUrl"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -523,33 +524,48 @@ def handle_web_search_config_update(update_data: dict) -> dict:
     Returns:
         dict: Success status and message
     """
+
+    # If update_data is None (user clicked "Remove"), clear the config but keep the row
+    # Don't delete - just reset to empty state
+    if update_data is None:
+        logger.info("Clearing web search config (user removed admin key)")
+        config_data = {
+            "allowUserWebSearchKeys": False,
+            "isEnabled": False,
+            "lastUpdated": datetime.now(timezone.utc).isoformat(),
+        }
+        return update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
+    
     provider = update_data.get("provider")
     api_key = update_data.get("api_key")
+    allow_user_keys = update_data.get("allowUserWebSearchKeys", False)
 
-    # Validate provider
+    # Validate provider if provided
     if provider and provider not in WEB_SEARCH_SUPPORTED_PROVIDERS:
         return {
             "success": False,
             "message": f"Unsupported provider: {provider}. Supported: {', '.join(WEB_SEARCH_SUPPORTED_PROVIDERS)}"
         }
 
-    # If no provider, this is a delete/disable operation
+    # If no provider, save just the allowUserWebSearchKeys setting
+    # This allows users to add their own keys even when admin hasn't configured one
     if not provider:
-        # Delete the config from DynamoDB
-        try:
-            admin_table.delete_item(Key={"config_id": AdminConfigTypes.WEB_SEARCH_CONFIG.value})
-            logger.info("Deleted web search config from admin table")
-            return {"success": True, "message": "Web search configuration disabled"}
-        except Exception as e:
-            logger.error("Error deleting web search config: %s", str(e))
-            return {"success": False, "message": f"Error deleting config: {str(e)}"}
+        logger.info(f"Saving allowUserWebSearchKeys={allow_user_keys} without admin provider")
+        config_data = {
+            "allowUserWebSearchKeys": allow_user_keys,
+            "isEnabled": False,  # No admin key
+            "lastUpdated": datetime.now(timezone.utc).isoformat(),
+        }
+        return update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
 
-    # If API key provided, store it in SSM
+    # Determine if web search should be enabled by checking if API key exists in SSM
+    ssm_client = boto3.client("ssm")
+    param_name = build_web_search_parameter_name(provider)
+    has_api_key = False
+
+    # If API key provided in this request, store it in SSM
     if api_key and api_key.strip():
         try:
-            ssm_client = boto3.client("ssm")
-            param_name = build_web_search_parameter_name(provider)
-
             ssm_client.put_parameter(
                 Name=param_name,
                 Value=api_key.strip(),
@@ -559,13 +575,30 @@ def handle_web_search_config_update(update_data: dict) -> dict:
             )
 
             logger.info("Stored web search API key in SSM: %s", param_name)
+            has_api_key = True
         except ClientError as e:
             logger.error("Error storing web search API key in SSM: %s", str(e))
             return {"success": False, "message": f"Failed to store API key: {str(e)}"}
+    else:
+        # No new API key provided - check if one already exists in SSM
+        try:
+            ssm_client.get_parameter(Name=param_name, WithDecryption=False)
+            has_api_key = True
+            logger.info("Using existing API key from SSM: %s", param_name)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ParameterNotFound':
+                logger.info("No API key found in SSM: %s", param_name)
+                has_api_key = False
+            else:
+                logger.error("Error checking for API key in SSM: %s", str(e))
+                has_api_key = False
 
     # Store config in DynamoDB (without the API key - that's in SSM)
+    # isEnabled is true only if an API key exists in SSM
     config_data = {
         "provider": provider,
+        "allowUserWebSearchKeys": update_data.get("allowUserWebSearchKeys", False),
+        "isEnabled": has_api_key,
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -649,7 +682,8 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.EMAIL_SUPPORT
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
-            | AdminConfigTypes.DEFAULT_MODELS ):
+            | AdminConfigTypes.DEFAULT_MODELS
+            | AdminConfigTypes.USER_DOCUMENTATION_URL ):
             logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
@@ -917,6 +951,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.DEFAULT_MODELS,
             AdminConfigTypes.CRITICAL_ERRORS,
             AdminConfigTypes.WEB_SEARCH_CONFIG,
+            AdminConfigTypes.USER_DOCUMENTATION_URL,
         ]
 
         for config_type in dynamo_config_types:
@@ -983,7 +1018,7 @@ def get_configs(event, context, current_user, name, data):
                             }
                     elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
                         # Enrich web search config with masked API key from SSM
-                        provider = new_data.get("provider")
+                        provider = new_data and new_data.get("provider")
                         if provider:
                             try:
                                 ssm_client = boto3.client("ssm")
@@ -1150,10 +1185,14 @@ def initialize_config(config_type):
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
         item["data"] = ""
+    elif config_type == AdminConfigTypes.USER_DOCUMENTATION_URL:
+        item["data"] = ""
     elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
+    elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
+        item["data"] = None
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
@@ -1175,13 +1214,23 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
         AdminConfigTypes.AI_EMAIL_DOMAIN,
+        AdminConfigTypes.PROMPT_COST_ALERT,
+        AdminConfigTypes.WEB_SEARCH_CONFIG,
+        AdminConfigTypes.USER_DOCUMENTATION_URL,
     ]
     configs = {}
     for config_type in app_configs:
         try:
             response = admin_table.get_item(Key={"config_id": config_type.value})
             if "Item" in response:
-                configs[config_type.value] = response["Item"]["data"]
+                config_data = response["Item"]["data"]
+                # For web search config, only pass the allowUserWebSearchKeys flag
+                if config_type == AdminConfigTypes.WEB_SEARCH_CONFIG and config_data:
+                    configs[config_type.value] = {
+                        "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False)
+                    }
+                else:
+                    configs[config_type.value] = config_data
             else:
                 logger.warning("No %s Data Found, skipping...", config_type.value)
         except Exception as e:

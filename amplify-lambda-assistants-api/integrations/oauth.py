@@ -17,7 +17,7 @@ from integrations.oauth_encryption import (
 from integrations.scopes import scopes
 from msal import ConfidentialClientApplication
 from pycommon.api.auth_admin import verify_user_as_admin
-
+from pycommon.api.secrets import store_secret_parameter
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SSMOperation
@@ -301,7 +301,18 @@ def get_user_credentials(current_user, integration):
             integration_map = record["integrations"]
             credentials = integration_map.get(integration)
             if credentials:
-                return decrypt_oauth_data(credentials)
+                decrypted_credentials = decrypt_oauth_data(credentials)
+
+                # Check if decryption failed
+                if decrypted_credentials is None:
+                    logger.error(
+                        "Failed to decrypt credentials for user %s and integration %s", current_user, integration
+                    )
+                    raise Exception(
+                        f"Failed to decrypt credentials for user {current_user} and integration {integration}"
+                    )
+
+                return decrypted_credentials
         raise MissingCredentialsError(
             f"No credentials found for user {current_user} and integration {integration}"
         )
@@ -534,7 +545,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
 
     # Update the integrations map for this integration.
     integration_map[integration] = encrypt_oauth_data(credentials_data)
-    logger.debug("Updated integrations map: %s", integration_map)
+    # logger.debug("Umltkx %s", integration_map)
     timestamp = datetime.now(timezone.utc).isoformat()
     try:
         # Store (or update) the new record in DynamoDB.

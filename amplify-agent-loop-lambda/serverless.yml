@@ -10,7 +10,7 @@ package:
 plugins:
   - serverless-offline
   - serverless-prune-plugin
-  - serverless-cloudformation-changesets
+  - serverless-cloudformation-changesets-v3
   - serverless-python-requirements
 
 custom:
@@ -30,11 +30,9 @@ custom:
     - dev
     - staging
     - prod
-  booleanMap:
-    "true": true
-    "false": false
+
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
 provider:
   name: aws
@@ -73,7 +71,7 @@ provider:
     AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state #Marked for future deletion
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
-    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
+    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated-v2
     SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs #Marked for future deletion
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
@@ -155,6 +153,19 @@ functions:
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
     LambdaAgentLoopIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

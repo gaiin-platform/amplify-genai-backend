@@ -38,4 +38,6 @@ FEATURE_FLAGS = {
     "createAssistantWorkflows": False,
     "scheduledTasks": False,
     "criticalErrorTracking": False,
+    "webSearch": True,
+    "userDocumentation": False,  # Controls the documentation button in settings sidebar
 }

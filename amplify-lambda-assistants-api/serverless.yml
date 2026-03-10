@@ -19,16 +19,18 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
-    slim: true    
+    slim: true
+    slimPatternsAppendDefaults: true
+    slimPatterns:
+      - "**/*.egg-info*"
+      - "**/tests/**"
+      - "**/googleapiclient/discovery_cache/documents/**"
     useStaticCache: false
-    useDownloadCache: false             
+    useDownloadCache: false
 
-  booleanMap:
-    "true": true
-    "false": false
 
   cf-changesets:
-    requireChangeSet: ${self:custom.booleanMap.${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}}
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
  
   stages:
     - dev
@@ -129,7 +131,7 @@ functions:
     handler: integrations/drive_files.drive_files_to_data_sources
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 700
     events:
       - http:
           path: integrations/user/files/upload
@@ -320,6 +322,36 @@ functions:
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        # ServiceToken references the populator Lambda in amplify-lambda service
+        ServiceToken:
+          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
+
+    # Custom resource to extend API Gateway timeouts for long-running functions
+    ApiGatewayTimeoutConfig:
+      Type: Custom::ApiGatewayTimeout
+      Properties:
+        ServiceToken:
+          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
+        ApiGatewayId:
+          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        Functions:
+          - name: uploadIntegrationFiles
+            path: /integrations/user/files/upload
+            method: POST
+          - name: listIntegrationFiles
+            path: /integrations/user/files
+            method: POST
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
