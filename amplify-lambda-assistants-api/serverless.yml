@@ -180,7 +180,7 @@ functions:
     handler: service/core.execute_custom_auto
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
+    timeout: 300
     events:
       - http:
           path: assistant-api/execute-custom-auto
@@ -350,6 +350,9 @@ resources:
             method: POST
           - name: listIntegrationFiles
             path: /integrations/user/files
+            method: POST
+          - name: execute_custom_auto
+            path: /assistant-api/execute-custom-auto
             method: POST
 
     LambdaAPIIAMPolicy:
