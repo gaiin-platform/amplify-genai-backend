@@ -517,7 +517,7 @@ def update_oauth_user_credentials(current_user, integration, credentials_data):
         record = response.get("Item")
         if record:
             integration_map = record.get("integrations", {})
-            logger.debug("Found existing integrations map: %s", integration_map)
+            logger.debug("Found existing integrations map")
         else:
             logger.debug("No record found; initializing a new integrations map.")
     except Exception as e:
@@ -871,7 +871,42 @@ def list_user_integrations(supported_integrations, current_user):
                 filtered_ids = [
                     id for id in integration_ids if id in available_integrations
                 ]
-                connected_list.extend(filtered_ids)
+
+                # Check each integration for token expiry
+                current_timestamp = int(time.time())
+                for integration_id in filtered_ids:
+                    encrypted_credentials = integration_map.get(integration_id)
+                    if not encrypted_credentials:
+                        continue
+
+                    try:
+                        credentials = decrypt_oauth_data(encrypted_credentials)
+                        if credentials is None:
+                            logger.warning("Failed to decrypt credentials for %s", integration_id)
+                            continue
+
+                        expires_at = credentials.get("expires_at", 0)
+
+                        # Check if token is expired or expiring soon (within 30 seconds)
+                        if expires_at < (current_timestamp + 30):
+                            logger.info("Token expired/expiring for %s, attempting refresh", integration_id)
+
+                            # Try to refresh the token
+                            refresh_result = refresh_credentials(current_user, integration_id, credentials)
+
+                            if not refresh_result.get("success"):
+                                logger.warning("Failed to refresh token for %s, marking as disconnected", integration_id)
+                                continue  # Skip this integration (show as disconnected)
+
+                            logger.info("Successfully refreshed token for %s", integration_id)
+
+                        # Token is valid (or successfully refreshed), add to connected list
+                        connected_list.append(integration_id)
+
+                    except Exception as e:
+                        logger.error("Error checking token expiry for %s: %s", integration_id, str(e))
+                        continue
+
         except Exception as e:
             logger.error(
                 "Error retrieving record for integration %s for user %s: %s", provider, current_user, str(e)
