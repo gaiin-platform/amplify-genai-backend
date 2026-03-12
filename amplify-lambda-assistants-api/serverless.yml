@@ -116,6 +116,9 @@ functions:
       - http:
           path: integrations/oauth/user/list
           method: get
+    environment:
+      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
+
 
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
