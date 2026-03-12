@@ -2440,6 +2440,12 @@ def update_message_handler(current_user, data):
                 "default": "normal",
                 "description": "Email importance (optional)",
             },
+            "content_type": {
+                "type": "string",
+                "enum": ["text", "html"],
+                "default": "text",
+                "description": "Content type (text or html) (optional)",
+            },
         },
         "required": ["subject", "body"],
     },
@@ -2453,6 +2459,7 @@ def create_draft_handler(current_user, data):
         cc_recipients=None,
         bcc_recipients=None,
         importance="normal",
+        content_type="text",
     )(current_user, data)
 
 

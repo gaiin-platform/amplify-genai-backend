@@ -47,8 +47,11 @@ def handle_graph_error(response: requests.Response) -> None:
     try:
         error_data = response.json()
         error_message = error_data.get("error", {}).get("message", "Unknown error")
+        error_details = error_data.get("error", {})
+        logger.error(f"❌ Full Graph API error response: {error_data}")
     except json.JSONDecodeError:
         error_message = response.text
+        logger.error(f"❌ Graph API error (non-JSON): {response.text}")
     raise OutlookError(
         f"Graph API error: {error_message} (Status: {response.status_code})"
     )
@@ -86,8 +89,9 @@ def list_messages(
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
         # Build select fields based on include_body parameter
-        base_select = "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories"
-        select_fields = f"{base_select},bodyPreview,body" if include_body else base_select
+        # IMPORTANT: Include conversationId, toRecipients, ccRecipients for thread deduplication and recipient display
+        base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+        select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
 
         # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
         if filter_query:
@@ -610,6 +614,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
     
     formatted = {
         "id": message["id"],
+        "conversationId": message.get("conversationId", ""),  # CRITICAL: Preserve for thread grouping
         "subject": message.get("subject", ""),
         "from": message.get("from", {}).get("emailAddress", {}).get("address", ""),
         "receivedDateTime": message.get("receivedDateTime", ""),
@@ -716,6 +721,7 @@ def create_draft(
     cc_recipients: Optional[List[str]] = None,
     bcc_recipients: Optional[List[str]] = None,
     importance: str = "normal",
+    content_type: str = "text",
     access_token: str = None,
 ) -> Dict:
     """
@@ -729,6 +735,7 @@ def create_draft(
         cc_recipients: Optional list of CC recipient email addresses
         bcc_recipients: Optional list of BCC recipient email addresses
         importance: Importance level ('low', 'normal', 'high')
+        content_type: Content type ('text' or 'html')
         access_token: Optional access token
 
     Returns:
@@ -742,7 +749,7 @@ def create_draft(
         url = f"{GRAPH_ENDPOINT}/me/messages"
         payload = {
             "subject": subject,
-            "body": {"contentType": "text", "content": body},
+            "body": {"contentType": content_type, "content": body},
             "importance": importance,
         }
         if to_recipients:
