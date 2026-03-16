@@ -313,6 +313,10 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                             },
                             // Include attachment context so the client can pass files to the MCP server
                             attachments: hasAttachments ? attachmentContext : undefined
+                        }]
+                    });
+                }
+
                 // Return partial result - frontend will continue the conversation
                 return {
                     content: result.content || '',
