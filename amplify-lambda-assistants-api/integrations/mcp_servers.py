@@ -47,6 +47,25 @@ def create_hash_key(user_id: str, app_id: str) -> str:
     return f"{sanitized_user}#{sanitized_app}"
 
 
+def _sanitize_headers_for_response(headers):
+    """Return headers safe for API responses (redacts sensitive auth values)."""
+    if not isinstance(headers, dict):
+        return {}
+
+    redacted = {}
+    for key, value in headers.items():
+        if str(key).lower() == "authorization":
+            continue
+        redacted[key] = value
+    return redacted
+
+
+def _default_mcp_oauth_callback_url() -> str:
+    """Canonical callback URL for provider redirects (backend endpoint)."""
+    api_base = os.environ.get("API_BASE_URL", "").rstrip("/")
+    return f"{api_base}/integrations/mcp/server/oauth/callback" if api_base else ""
+
+
 
 
 def generate_server_id() -> str:
@@ -107,7 +126,7 @@ def list_mcp_servers(event, context, current_user, name, data):
                 "lastError": server_data.get("lastError"),
                 "createdAt": server_data.get("createdAt"),
                 "updatedAt": server_data.get("updatedAt"),
-                "headers": server_data.get("headers", {}),
+                "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
                 "oauthConnected": server_data.get("oauthConnected", False),
                 "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
             })
@@ -185,7 +204,7 @@ def get_mcp_server(event, context, current_user, name, data):
                 "lastError": server_data.get("lastError"),
                 "createdAt": server_data.get("createdAt"),
                 "updatedAt": server_data.get("updatedAt"),
-                "headers": server_data.get("headers", {}),
+                "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
                 "oauthConnected": server_data.get("oauthConnected", False),
                 "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
             }
@@ -293,7 +312,10 @@ def add_mcp_server(event, context, current_user, name, data):
             "success": True,
             "data": {
                 "id": server_id,
-                **server_data,
+                **{
+                    **server_data,
+                    "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
+                },
             }
         }
 
@@ -399,7 +421,10 @@ def update_mcp_server(event, context, current_user, name, data):
             "success": True,
             "data": {
                 "id": server_id,
-                **existing_data,
+                **{
+                    **existing_data,
+                    "headers": _sanitize_headers_for_response(existing_data.get("headers", {})),
+                },
             }
         }
 
@@ -858,7 +883,7 @@ def refresh_mcp_server_tools(event, context, current_user, name, data):
 # Flow:
 #   1. Frontend calls POST /integrations/mcp/server/oauth/start with
 #      { serverId, clientId, clientSecret, authorizationUrl, tokenUrl, scopes }
-#   2. Backend stores those settings encrypted on the server record, then
+#   2. Backend stores those settings in short-lived OAuth state (TTL), then
 #      returns a redirect URL that the frontend opens in a popup/tab.
 #   3. User authenticates; provider redirects to /integrations/mcp/server/oauth/callback
 #   4. Backend exchanges the code for a token and writes it as
@@ -945,17 +970,6 @@ def _discover_mcp_oauth(server_url: str, auth_response=None) -> dict | None:
         return None
 
 
-def _encrypt_oauth2_config(config: dict) -> str:
-    """Encrypt a dict to a compact string using the same Fernet key as OAuth integrations."""
-    from integrations.oauth_encryption import encrypt_oauth_data
-    return encrypt_oauth_data(config)
-
-
-def _decrypt_oauth2_config(blob) -> dict:
-    from integrations.oauth_encryption import decrypt_oauth_data
-    return decrypt_oauth_data(blob)
-
-
 @api_tool(
     path="/integrations/mcp/server/oauth/start",
     name="startMCPOAuth",
@@ -1005,8 +1019,15 @@ def start_mcp_oauth(event, context, current_user, name, data):
     authorization_url = req.get("authorizationUrl", "").strip()
     token_url = req.get("tokenUrl", "").strip()
     scopes = req.get("scopes", "").strip()
-    # Frontend passes its own origin so local dev redirects to localhost
+    # Optional client override for local dev or custom frontends.
     redirect_uri_from_client = req.get("redirectUri", "").strip()
+    redirect_uri = redirect_uri_from_client or _default_mcp_oauth_callback_url()
+
+    if not redirect_uri:
+        return {
+            "success": False,
+            "message": "Could not determine redirect URI. Set API_BASE_URL or provide redirectUri.",
+        }
 
     if not server_id:
         return {"success": False, "message": "serverId is required"}
@@ -1049,10 +1070,7 @@ def start_mcp_oauth(event, context, current_user, name, data):
         if not client_id and registration_url:
             import requests as _requests_reg
             try:
-                reg_redirect_uri = redirect_uri_from_client or (
-                    os.environ.get("FRONTEND_URL", os.environ.get("API_BASE_URL", "")).rstrip("/")
-                    + "/api/mcp-oauth-callback"
-                )
+                reg_redirect_uri = redirect_uri
                 # Use a unique client_name per redirect-URI origin so that
                 # OAuth servers (e.g. scite.ai) don't deduplicate registrations
                 # across environments, which would cause redirect_uri mismatches
@@ -1118,10 +1136,7 @@ def start_mcp_oauth(event, context, current_user, name, data):
     # Store code_verifier (PKCE) so callback can use it in token exchange
     if code_verifier:
         state_item["code_verifier"] = code_verifier
-    # Build redirect_uri: prefer what the client sent (supports local dev),
-    # fall back to the FRONTEND_URL env var for server-to-server flows.
-    frontend_base = os.environ.get("FRONTEND_URL", os.environ.get("API_BASE_URL", "")).rstrip("/")
-    redirect_uri = redirect_uri_from_client or f"{frontend_base}/api/mcp-oauth-callback"
+    # Persist redirect URI used for authorization so token exchange uses the exact same value.
     state_item["redirect_uri"] = redirect_uri
     state_table.put_item(Item=state_item)
 
@@ -1305,9 +1320,8 @@ def _do_mcp_token_exchange(code: str, state: str, current_user: str) -> dict:
 
     server_data = server_resp["Item"].get("data", {})
 
-    # Use the redirect_uri stored during start_mcp_oauth (frontend's own origin)
-    frontend_base = os.environ.get("FRONTEND_URL", os.environ.get("API_BASE_URL", "")).rstrip("/")
-    redirect_uri = item.get("redirect_uri") or f"{frontend_base}/api/mcp-oauth-callback"
+    # Use the redirect_uri stored during start_mcp_oauth.
+    redirect_uri = item.get("redirect_uri") or _default_mcp_oauth_callback_url()
 
     token_payload = {
         "grant_type": "authorization_code",
@@ -1422,7 +1436,7 @@ def _do_mcp_token_exchange(code: str, state: str, current_user: str) -> dict:
 })
 @validated("mcp_oauth_exchange")
 def mcp_oauth_exchange(event, context, current_user, name, data):
-    """Complete the OAuth2 code exchange. Called (with a valid JWT) from the frontend /api/mcp-oauth-callback page."""
+    """Complete the OAuth2 code exchange. Used by frontend-managed callback flows with a valid JWT."""
     req = data.get("data", {})
     code = req.get("code", "").strip()
     state = req.get("state", "").strip()

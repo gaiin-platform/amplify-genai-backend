@@ -74,7 +74,6 @@ provider:
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     OAUTH_STATE_TABLE: ${self:service}-${sls:stage}-oauth-state
     OAUTH_USER_TABLE: ${self:service}-${sls:stage}-user-oauth-integrations
-    FRONTEND_URL: "https://${self:custom.stageVars.CUSTOM_DOMAIN, ssm:/amplify/${sls:stage}/CUSTOM_DOMAIN}"
     OP_LOG_DYNAMO_TABLE: ${self:service}-${sls:stage}-op-log
     
     # Imported Variables from Parameter Store
