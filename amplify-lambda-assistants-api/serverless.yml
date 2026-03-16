@@ -322,6 +322,49 @@ functions:
           path: integrations/mcp/server/refresh
           method: post
 
+  startMCPOAuth:
+    handler: integrations/mcp_servers.start_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/start
+          method: post
+          cors: true
+
+  mcpOAuthCallback:
+    handler: integrations/mcp_servers.mcp_oauth_callback
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/callback
+          method: get
+
+  mcpOAuthExchange:
+    handler: integrations/mcp_servers.mcp_oauth_exchange
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/exchange
+          method: post
+          cors: true
+
+  disconnectMCPOAuth:
+    handler: integrations/mcp_servers.disconnect_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/disconnect
+          method: post
+          cors: true
+
 
 resources:
   Resources:
