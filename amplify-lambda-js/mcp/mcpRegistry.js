@@ -91,7 +91,8 @@ export async function getUserMCPServers(userId) {
                     lastConnected: serverConfig.lastConnected,
                     status: serverConfig.status || 'disconnected',
                     createdAt: serverConfig.createdAt,
-                    updatedAt: serverConfig.updatedAt
+                    updatedAt: serverConfig.updatedAt,
+                    headers: serverConfig.headers || {}
                 });
             }
         }
@@ -134,6 +135,7 @@ export async function addMCPServer(userId, serverConfig) {
             enabled: serverConfig.enabled !== false,
             tools: [],
             status: 'disconnected',
+            headers: (serverConfig.headers && typeof serverConfig.headers === 'object') ? serverConfig.headers : {},
             createdAt: now,
             updatedAt: now
         }
@@ -272,6 +274,7 @@ export async function testMCPConnection(userId, serverConfig) {
         name: serverConfig.name,
         url: serverConfig.url,
         transport: serverConfig.transport || 'http',
+        headers: serverConfig.headers || {},
         timeout: 10000 // Shorter timeout for testing
     });
 
@@ -330,7 +333,8 @@ export async function connectMCPServer(userId, serverId) {
         id: serverId,
         name: serverConfig.name,
         url: serverConfig.url,
-        transport: serverConfig.transport
+        transport: serverConfig.transport,
+        headers: serverConfig.headers || {}
     });
 
     try {
@@ -431,9 +435,10 @@ export async function getMCPToolDefinitions(userId) {
  * @param {string} userId - The user ID
  * @param {string} toolName - Full tool name (mcp_{serverId}_{toolName})
  * @param {Object} args - Tool arguments
+ * @param {Object} [attachmentContext] - Optional attachment context (images, documents) to forward
  * @returns {Object} Tool execution result
  */
-export async function executeMCPTool(userId, toolName, args) {
+export async function executeMCPTool(userId, toolName, args, attachmentContext) {
     const { serverId, originalName } = await import('./mcpClient.js').then(m => m.parseMCPToolName(toolName));
 
     if (!serverId || !originalName) {
@@ -441,7 +446,7 @@ export async function executeMCPTool(userId, toolName, args) {
     }
 
     const client = await connectMCPServer(userId, serverId);
-    return await client.executeTool(originalName, args);
+    return await client.executeTool(originalName, args, attachmentContext);
 }
 
 // Re-export the isMCPTool function for convenience
