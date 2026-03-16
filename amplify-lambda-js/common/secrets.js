@@ -21,10 +21,6 @@ const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' });
 
 export const getSecret = async (secretName) => {
 
-    // In local development, check for an environment variable override before hitting AWS.
-    // For ARNs (arn:aws:...:secret:name-SUFFIX), extract the name and strip the random suffix.
-    // e.g. "dev-openai-endpoints"                         -> LOCAL_SECRET_DEV_OPENAI_ENDPOINTS
-    //      "arn:...:secret:dev-amplify-app-secrets-BMNOEY" -> LOCAL_SECRET_DEV_AMPLIFY_APP_SECRETS
     if (process.env.LOCAL_DEVELOPMENT === 'true') {
         let lookupName = secretName;
         if (secretName && secretName.startsWith('arn:')) {
