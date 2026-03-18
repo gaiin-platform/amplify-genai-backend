@@ -365,8 +365,18 @@ functions:
           method: post
           cors: true
 
+  refreshMCPOAuthToken:
+    handler: integrations/mcp_servers.refresh_mcp_oauth_token
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/refresh
+          method: post
+          cors: true
 
-resources:
+
   Resources:
     # Custom Resource: Auto-populate Parameter Store with locally defined variables
     # This runs on every deployment to ensure SSM parameters are up-to-date
