@@ -40,11 +40,38 @@ def get_idp_prefix():
 
 
 def create_hash_key(user_id: str, app_id: str) -> str:
-    """Create hash key matching storage format"""
+    """Create hash key matching storage format (JS mcpRegistry.js convention).
+    Prepends IDP_PREFIX so the PK aligns with what the JS layer writes/reads."""
+    import re
+    idp_prefix = get_idp_prefix()
+    full_user_id = f"{idp_prefix}_{user_id}" if idp_prefix else user_id
+    sanitized_user = re.sub(r'[^a-zA-Z0-9@._-]', '-', full_user_id)
+    sanitized_app = re.sub(r'[^a-zA-Z0-9-]', '-', app_id)
+    return f"{sanitized_user}#{sanitized_app}"
+
+
+def create_legacy_hash_key(user_id: str, app_id: str) -> str:
+    """Create the historical non-prefixed hash key for backward compatibility."""
     import re
     sanitized_user = re.sub(r'[^a-zA-Z0-9@._-]', '-', user_id)
     sanitized_app = re.sub(r'[^a-zA-Z0-9-]', '-', app_id)
     return f"{sanitized_user}#{sanitized_app}"
+
+
+def get_mcp_pk_candidates(user_id: str) -> list[str]:
+    """Return primary and legacy PKs for MCP records, newest format first."""
+    primary_pk = f"{create_hash_key(user_id, MCP_APP_ID)}#{MCP_ENTITY_TYPE}"
+    legacy_pk = f"{create_legacy_hash_key(user_id, MCP_APP_ID)}#{MCP_ENTITY_TYPE}"
+    return [primary_pk] if legacy_pk == primary_pk else [primary_pk, legacy_pk]
+
+
+def get_mcp_item_with_fallback(table, user_id: str, server_id: str):
+    """Get one MCP server item trying both current and legacy PK formats."""
+    for pk in get_mcp_pk_candidates(user_id):
+        response = table.get_item(Key={"PK": pk, "SK": server_id})
+        if "Item" in response:
+            return response["Item"], pk
+    return None, None
 
 
 def _sanitize_headers_for_response(headers):
@@ -101,35 +128,38 @@ def list_mcp_servers(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
-
-        logger.info(f"Querying MCP servers for user: {current_user}, PK: {pk}")
-
-        response = table.query(
-            KeyConditionExpression="PK = :pk",
-            ExpressionAttributeValues={":pk": pk}
-        )
-
         servers = []
-        for item in response.get("Items", []):
-            server_data = item.get("data", {})
-            servers.append({
-                "id": item.get("SK"),
-                "name": server_data.get("name"),
-                "url": server_data.get("url"),
-                "transport": server_data.get("transport", "http"),
-                "enabled": server_data.get("enabled", True),
-                "tools": server_data.get("tools", []),
-                "status": server_data.get("status", "disconnected"),
-                "lastConnected": server_data.get("lastConnected"),
-                "lastError": server_data.get("lastError"),
-                "createdAt": server_data.get("createdAt"),
-                "updatedAt": server_data.get("updatedAt"),
-                "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
-                "oauthConnected": server_data.get("oauthConnected", False),
-                "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
-            })
+        seen_ids = set()
+
+        for pk in get_mcp_pk_candidates(current_user):
+            logger.info(f"Querying MCP servers for user: {current_user}, PK: {pk}")
+            response = table.query(
+                KeyConditionExpression="PK = :pk",
+                ExpressionAttributeValues={":pk": pk}
+            )
+
+            for item in response.get("Items", []):
+                item_id = item.get("SK")
+                if item_id in seen_ids:
+                    continue
+                seen_ids.add(item_id)
+                server_data = item.get("data", {})
+                servers.append({
+                    "id": item.get("SK"),
+                    "name": server_data.get("name"),
+                    "url": server_data.get("url"),
+                    "transport": server_data.get("transport", "http"),
+                    "enabled": server_data.get("enabled", True),
+                    "tools": server_data.get("tools", []),
+                    "status": server_data.get("status", "disconnected"),
+                    "lastConnected": server_data.get("lastConnected"),
+                    "lastError": server_data.get("lastError"),
+                    "createdAt": server_data.get("createdAt"),
+                    "updatedAt": server_data.get("updatedAt"),
+                    "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
+                    "oauthConnected": server_data.get("oauthConnected", False),
+                    "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
+                })
 
         logger.info(f"Retrieved {len(servers)} MCP servers for user")
         return {"success": True, "data": servers}
@@ -179,15 +209,11 @@ def get_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:       
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+        item, _pk = get_mcp_item_with_fallback(table, current_user, server_id)
 
-        response = table.get_item(Key={"PK": pk, "SK": server_id})
-
-        if "Item" not in response:
+        if not item:
             return {"success": False, "message": "MCP server not found"}
 
-        item = response["Item"]
         server_data = item.get("data", {})
 
         return {
@@ -368,16 +394,12 @@ def update_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+        item, pk = get_mcp_item_with_fallback(table, current_user, server_id)
 
-        # Get existing item
-        response = table.get_item(Key={"PK": pk, "SK": server_id})
-
-        if "Item" not in response:
+        if not item:
             return {"success": False, "message": "MCP server not found"}
 
-        existing_data = response["Item"].get("data", {})
+        existing_data = item.get("data", {})
 
         # Update only provided fields
         if "name" in request_data and request_data["name"]:
@@ -472,8 +494,9 @@ def delete_mcp_server(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+        item, pk = get_mcp_item_with_fallback(table, current_user, server_id)
+        if not item:
+            return {"success": False, "message": "MCP server not found"}
 
         table.delete_item(Key={"PK": pk, "SK": server_id})
 
@@ -704,14 +727,11 @@ def test_mcp_connection(event, context, current_user, name, data):
         table = dynamodb.Table(os.environ.get("USER_STORAGE_TABLE", ""))
 
 
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
-
-        response = table.get_item(Key={"PK": pk, "SK": server_id})
-        if "Item" not in response:
+        item, _pk = get_mcp_item_with_fallback(table, current_user, server_id)
+        if not item:
             return {"success": False, "error": "MCP server not found"}
 
-        stored = response["Item"].get("data", {})
+        stored = item.get("data", {})
         server_url = stored.get("url")
         # Use stored headers when no inline headers provided
         if not inline_headers:
@@ -762,15 +782,12 @@ def get_mcp_server_tools(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+        item, _pk = get_mcp_item_with_fallback(table, current_user, server_id)
 
-        response = table.get_item(Key={"PK": pk, "SK": server_id})
-
-        if "Item" not in response:
+        if not item:
             return {"success": False, "message": "MCP server not found"}
 
-        server_data = response["Item"].get("data", {})
+        server_data = item.get("data", {})
         tools = server_data.get("tools", [])
 
         return {"success": True, "data": tools}
@@ -820,15 +837,12 @@ def refresh_mcp_server_tools(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
 
     try:
-        hash_key = create_hash_key(current_user, MCP_APP_ID)
-        pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+        item, pk = get_mcp_item_with_fallback(table, current_user, server_id)
 
-        response = table.get_item(Key={"PK": pk, "SK": server_id})
-
-        if "Item" not in response:
+        if not item:
             return {"success": False, "message": "MCP server not found"}
 
-        server_data = response["Item"].get("data", {})
+        server_data = item.get("data", {})
         server_url = server_data.get("url")
         server_headers = server_data.get("headers", {})
         if not isinstance(server_headers, dict):
@@ -1267,6 +1281,7 @@ def disconnect_mcp_oauth(event, context, current_user, name, data):
         headers.pop("Authorization", None)
     server_data["headers"] = headers
     server_data.pop("oauth2Config", None)
+    server_data.pop("oauthRefreshToken", None)
     server_data["oauthConnected"] = False
     server_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
@@ -1276,7 +1291,147 @@ def disconnect_mcp_oauth(event, context, current_user, name, data):
     return {"success": True}
 
 
-def _do_mcp_token_exchange(code: str, state: str, current_user: str) -> dict:
+@api_tool(
+    path="/integrations/mcp/server/oauth/refresh",
+    name="refreshMCPOAuthToken",
+    method="POST",
+    tags=["MCP"],
+    description="Silently refresh the OAuth2 access token for an MCP server using the stored refresh token",
+    parameters={
+        "type": "object",
+        "properties": {
+            "serverId": {"type": "string"},
+        },
+        "required": ["serverId"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean"},
+            "message": {"type": "string"},
+        },
+        "required": ["success"],
+    },
+)
+@required_env_vars({
+    "USER_STORAGE_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
+@validated("refresh_mcp_oauth_token")
+def refresh_mcp_oauth_token(event, context, current_user, name, data):
+    """Use the stored refresh_token to get a new access_token and update the server record."""
+    import http.client as _http_client
+    import urllib.parse as _urllib_parse
+    import json as _json_mod
+
+    req = data.get("data", {})
+    server_id = req.get("serverId")
+
+    if not server_id:
+        return {"success": False, "message": "serverId is required"}
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["USER_STORAGE_TABLE"])
+
+    hash_key = create_hash_key(current_user, MCP_APP_ID)
+    pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
+
+    response = table.get_item(Key={"PK": pk, "SK": server_id})
+    if "Item" not in response:
+        # Fallback: try the legacy non-prefixed PK for servers stored before the
+        # IDP prefix alignment fix was applied.
+        idp_prefix = get_idp_prefix()
+        if idp_prefix:
+            import re as _re
+            sanitized_user = _re.sub(r'[^a-zA-Z0-9@._-]', '-', current_user)
+            sanitized_app = _re.sub(r'[^a-zA-Z0-9-]', '-', MCP_APP_ID)
+            legacy_pk = f"{sanitized_user}#{sanitized_app}#{MCP_ENTITY_TYPE}"
+            legacy_response = table.get_item(Key={"PK": legacy_pk, "SK": server_id})
+            if "Item" in legacy_response:
+                logger.debug(f"Found server {server_id} at legacy PK (no IDP prefix)")
+                response = legacy_response
+                pk = legacy_pk  # write back to the same PK we found it at
+
+    if "Item" not in response:
+        return {"success": False, "message": "MCP server not found"}
+
+    server_data = response["Item"].get("data", {})
+
+    refresh_token = server_data.get("oauthRefreshToken")
+    if not refresh_token:
+        return {"success": False, "message": "No refresh token stored. Please re-authenticate."}
+
+    cfg = server_data.get("oauth2Config", {})
+    token_url = cfg.get("tokenUrl", "")
+    client_id = cfg.get("clientId", "")
+    client_secret = cfg.get("clientSecret", "")
+
+    if not token_url or not client_id:
+        return {"success": False, "message": "OAuth2 config incomplete. Please re-authenticate."}
+
+    token_payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+    }
+    if client_secret and not cfg.get("publicClient"):
+        token_payload["client_secret"] = client_secret
+
+    _parsed = _urllib_parse.urlparse(token_url)
+    _conn_cls = _http_client.HTTPSConnection if _parsed.scheme == "https" else _http_client.HTTPConnection
+    _conn = _conn_cls(_parsed.netloc, timeout=15)
+    _path = _parsed.path + (f"?{_parsed.query}" if _parsed.query else "")
+    _body = _urllib_parse.urlencode(token_payload).encode("utf-8")
+
+    try:
+        _conn.request(
+            "POST", _path, body=_body,
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        )
+        _resp = _conn.getresponse()
+        _resp_text = _resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        logger.error(f"MCP OAuth refresh network error: {e}")
+        return {"success": False, "message": f"Token refresh failed: {str(e)[:150]}"}
+    finally:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+
+    if _resp.status not in (200, 201):
+        logger.error(f"MCP OAuth refresh HTTP {_resp.status}: {_resp_text[:500]}")
+        return {"success": False, "message": f"Token refresh failed (HTTP {_resp.status}). Please re-authenticate."}
+
+    try:
+        token_data = _json_mod.loads(_resp_text)
+    except Exception:
+        return {"success": False, "message": "Token refresh: invalid JSON from provider."}
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return {"success": False, "message": "No access_token in refresh response."}
+
+    existing_headers = server_data.get("headers", {})
+    if not isinstance(existing_headers, dict):
+        existing_headers = {}
+    existing_headers["Authorization"] = f"Bearer {access_token}"
+    server_data["headers"] = existing_headers
+
+    # Update stored refresh_token if provider rotated it
+    new_refresh = token_data.get("refresh_token")
+    if new_refresh:
+        server_data["oauthRefreshToken"] = new_refresh
+
+    server_data["oauthConnected"] = True
+    server_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
+
+    table.put_item(Item={"PK": pk, "SK": server_id, "data": server_data})
+
+    logger.info(f"MCP OAuth token refreshed for server {server_id}, user {current_user}")
+    return {"success": True}
+
+
+def _do_mcp_token_exchange(code, state, current_user):
     """
     Shared logic: look up the pending state, do the PKCE token exchange, and
     write the access_token as headers.Authorization on the server record.
@@ -1394,6 +1549,12 @@ def _do_mcp_token_exchange(code: str, state: str, current_user: str) -> dict:
     server_data["headers"] = existing_headers
     server_data["oauthConnected"] = True
     server_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
+
+    # Persist refresh_token and oauth2Config so we can silently refresh later
+    refresh_token = token_data.get("refresh_token")
+    if refresh_token:
+        server_data["oauthRefreshToken"] = refresh_token
+    server_data["oauth2Config"] = cfg
 
     table.put_item(Item={"PK": pk, "SK": server_id, "data": server_data})
 

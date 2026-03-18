@@ -362,8 +362,18 @@ functions:
           method: post
           cors: true
 
+  refreshMCPOAuthToken:
+    handler: integrations/mcp_servers.refresh_mcp_oauth_token
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/refresh
+          method: post
+          cors: true
 
-resources:
+
   Resources:
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
