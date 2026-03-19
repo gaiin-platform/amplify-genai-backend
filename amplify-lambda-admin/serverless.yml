@@ -232,18 +232,6 @@ functions:
 
 resources:
   Resources:
-    # Custom Resource: Auto-populate Parameter Store with locally defined variables
-    # This runs on every deployment to ensure SSM parameters are up-to-date
-    ParameterStoreAutoPopulate:
-      Type: Custom::ParameterStorePopulate
-      Properties:
-        # ServiceToken references the populator Lambda in amplify-lambda service
-        ServiceToken:
-          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
-        ServiceName: ${self:service}
-        Stage: ${sls:stage}
-        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
-
 
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
