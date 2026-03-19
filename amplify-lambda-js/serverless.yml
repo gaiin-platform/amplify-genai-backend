@@ -72,6 +72,8 @@ provider:
     HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-lambda-${sls:stage}-history-cost-calculations
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
+    SKILLS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-skills
+    SKILL_SHARES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-skill-shares
     TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
     CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
   
@@ -274,6 +276,8 @@ resources:
                 - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -296,6 +300,7 @@ resources:
                 - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -378,6 +383,39 @@ resources:
             AttributeName: type
             KeyType: HASH
         TableName: ${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}
+    SkillsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        TableName: ${self:provider.environment.SKILLS_DYNAMODB_TABLE}
     CostCalculationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
