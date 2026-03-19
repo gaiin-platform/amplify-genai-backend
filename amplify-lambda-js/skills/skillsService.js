@@ -13,6 +13,12 @@ const dynamodbClient = new DynamoDBClient({});
 import { lru } from "tiny-lru";
 const userSkillsCache = lru(500, 60000, false); // 1 minute cache
 
+// Helper to invalidate all cache entries for a user
+const invalidateUserCache = (user) => {
+    userSkillsCache.delete(`${user}:true`);
+    userSkillsCache.delete(`${user}:false`);
+};
+
 /**
  * Normalize skill object for API response
  * Converts isPublic from string to boolean for frontend compatibility
@@ -139,7 +145,7 @@ export const createSkill = async (user, skillData) => {
     }));
 
     // Invalidate cache
-    userSkillsCache.delete(user);
+    invalidateUserCache(user);
 
     logger.info(`Created skill ${skillId} for user ${user}`);
     return normalizeSkill(skill);
@@ -292,7 +298,7 @@ export const updateSkill = async (user, skillId, updates) => {
     }));
 
     // Invalidate cache
-    userSkillsCache.delete(user);
+    invalidateUserCache(user);
 
     logger.info(`Updated skill ${skillId} for user ${user}`);
     return await getSkillById(skillId);
@@ -321,7 +327,7 @@ export const deleteSkill = async (user, skillId) => {
     }));
 
     // Invalidate cache
-    userSkillsCache.delete(user);
+    invalidateUserCache(user);
 
     logger.info(`Deleted skill ${skillId} for user ${user}`);
     return { success: true };
