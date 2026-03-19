@@ -348,12 +348,13 @@ export const autoSelectSkills = async (user, userMessage, context = {}) => {
 
     const selectedSkills = [];
     const messageLower = userMessage.toLowerCase();
+    const messageWords = messageLower.split(/\s+/).filter(w => w.length > 2);
 
     for (const skill of enabledSkills) {
         let matchScore = 0;
         let matchType = null;
 
-        // Check trigger phrases (highest priority)
+        // 1. Check trigger phrases (highest priority - exact match)
         const triggered = skill.triggerPhrases?.some(phrase =>
             messageLower.includes(phrase.toLowerCase())
         );
@@ -362,7 +363,39 @@ export const autoSelectSkills = async (user, userMessage, context = {}) => {
             matchType = 'trigger';
         }
 
-        // Check tags against conversation/assistant context
+        // 2. Check if message contains any of the skill's tags
+        if (!matchType && skill.tags?.length > 0) {
+            const tagInMessage = skill.tags.some(tag => {
+                const tagLower = tag.toLowerCase();
+                return messageLower.includes(tagLower);
+            });
+
+            if (tagInMessage) {
+                matchScore = 0.8;
+                matchType = 'tag-in-message';
+            }
+        }
+
+        // 3. Check if message contains keywords from skill name (skip common words)
+        if (!matchType && skill.name) {
+            const skipWords = ['skill', 'helper', 'assistant', 'tool', 'the', 'for', 'and', 'with'];
+            const nameWords = skill.name.toLowerCase()
+                .split(/[\s\-_]+/)
+                .filter(w => w.length > 3 && !skipWords.includes(w));
+
+            const nameMatch = nameWords.some(nameWord =>
+                messageWords.some(msgWord =>
+                    msgWord.includes(nameWord) || nameWord.includes(msgWord)
+                )
+            );
+
+            if (nameMatch) {
+                matchScore = 0.7;
+                matchType = 'name-match';
+            }
+        }
+
+        // 4. Check tags against conversation/assistant context tags
         if (!matchType && skill.tags?.length > 0) {
             const contextTags = [
                 ...(context.tags || []),
@@ -376,11 +409,11 @@ export const autoSelectSkills = async (user, userMessage, context = {}) => {
 
             if (tagMatch) {
                 matchScore = 0.6;
-                matchType = 'tag';
+                matchType = 'context-tag';
             }
         }
 
-        // Check category match
+        // 5. Check category match
         if (!matchType && skill.category && context.category) {
             if (skill.category.toLowerCase() === context.category.toLowerCase()) {
                 matchScore = 0.5;
@@ -395,6 +428,7 @@ export const autoSelectSkills = async (user, userMessage, context = {}) => {
                 confidence: matchScore,
                 score: (skill.priority || 5) * matchScore
             });
+            logger.debug(`Skill "${skill.name}" matched via ${matchType} with score ${matchScore}`);
         }
     }
 
