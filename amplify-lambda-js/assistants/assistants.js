@@ -16,6 +16,7 @@ import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
+import * as skillsService from "../skills/skillsService.js";
 
 const logger = getLogger("assistants");
 
@@ -42,6 +43,74 @@ const defaultAssistant = {
         const model = (body.options && body.options.model) ? body.options.model : params.model;
 
         logger.debug("Using model: ", model);
+
+        // 🎯 SKILLS INTEGRATION: Inject skills for default assistant too
+        try {
+            const user = params.account?.user;
+            const skillsEnabled = process.env.SKILLS_DYNAMODB_TABLE;
+
+            if (skillsEnabled && user) {
+                const injectedSkills = [];
+
+                // Get manually selected skills from request body
+                const manualSkills = body.skills || body.options?.skills || [];
+                logger.info(`[Default Assistant] Skills check: body.skills=${JSON.stringify(body.skills)}, body.options?.skills=${JSON.stringify(body.options?.skills)}, manualSkills=${JSON.stringify(manualSkills)}`);
+
+                if (manualSkills.length > 0) {
+                    logger.info(`[Default Assistant] Loading ${manualSkills.length} manually selected skills: ${manualSkills.join(', ')}`);
+
+                    for (const skillId of manualSkills) {
+                        const skill = await skillsService.getSkillById(skillId, user);
+                        logger.debug(`[Default Assistant] Loaded skill ${skillId}: ${skill ? skill.name : 'NOT FOUND'}`);
+                        if (skill && !injectedSkills.find(s => s.id === skill.id)) {
+                            injectedSkills.push(skill);
+                            skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                        }
+                    }
+                }
+
+                // Auto-select skills based on user message (if enabled)
+                const skillSelectionMode = body.skillSelectionMode || body.options?.skillSelectionMode || 'auto';
+
+                if (skillSelectionMode !== 'manual' && injectedSkills.length < 3) {
+                    const userMessage = body.messages[body.messages.length - 1]?.content || "";
+                    const autoSkills = await skillsService.autoSelectSkills(user, userMessage, {});
+
+                    for (const skill of autoSkills) {
+                        if (!injectedSkills.find(s => s.id === skill.id) && injectedSkills.length < 3) {
+                            injectedSkills.push(skill);
+                            skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                        }
+                    }
+                }
+
+                // Inject skills into messages
+                if (injectedSkills.length > 0) {
+                    const skillsContextMessage = skillsService.buildSkillContextMessage(injectedSkills);
+
+                    if (skillsContextMessage) {
+                        // Prepend skill context as system message
+                        body.messages = [
+                            { role: "system", content: skillsContextMessage },
+                            ...body.messages
+                        ];
+
+                        const activeSkills = injectedSkills.map(s => ({
+                            id: s.id,
+                            name: s.name,
+                            description: s.description
+                        }));
+
+                        logger.info(`[Default Assistant] Injected ${injectedSkills.length} skills: ${injectedSkills.map(s => s.name).join(', ')}`);
+
+                        // Send active skills state event to frontend
+                        sendStateEventToStream(responseStream, { activeSkills });
+                    }
+                }
+            }
+        } catch (skillsError) {
+            logger.debug("[Default Assistant] Skills processing skipped or failed:", skillsError.message);
+        }
 
         // 🚫 DEPRECATED: Token limit calculation for mapReduce routing
         // Now handled by 85% split logic in chatWithData.js
