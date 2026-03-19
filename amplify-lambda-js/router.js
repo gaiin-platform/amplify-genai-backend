@@ -50,7 +50,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
         
         if (params && params.statusCode) {
             returnResponse(responseStream, params);
-        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest)) {
+        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest && !params.body.skillsRequest)) {
             logger.info("Invalid request body", params.body);
 
             returnResponse(responseStream, {
@@ -91,6 +91,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             logger.info("Processing datasource request");
             const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
             returnResponse(responseStream, response);
+        } else if(params.body.skillsRequest) {
+            // Handle skills request
+            logger.info("Processing skills request");
+            const { handleSkillsRequest } = await import("./skills/skillsEndpoint.js");
+            const response = await handleSkillsRequest(params, params.body.skillsRequest);
+            returnResponse(responseStream, {
+                statusCode: response.success ? 200 : 400,
+                body: response
+            });
         } else {
             // 🛡️ DEFENSIVE VALIDATION
             try {
