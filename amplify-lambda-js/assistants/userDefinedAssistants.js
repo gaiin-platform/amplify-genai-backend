@@ -370,11 +370,14 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
 
                     // 2. Get manually selected skills from request body
-                    if (body.options?.skills && body.options.skills.length > 0) {
-                        logger.debug(`Loading ${body.options.skills.length} manually selected skills`);
+                    const manualSkills = body.skills || body.options?.skills || [];
+                    logger.info(`Skills check: body.skills=${JSON.stringify(body.skills)}, body.options?.skills=${JSON.stringify(body.options?.skills)}, manualSkills=${JSON.stringify(manualSkills)}`);
+                    if (manualSkills.length > 0) {
+                        logger.info(`Loading ${manualSkills.length} manually selected skills: ${manualSkills.join(', ')}`);
 
-                        for (const skillId of body.options.skills) {
+                        for (const skillId of manualSkills) {
                             const skill = await skillsService.getSkillById(skillId, user);
+                            logger.debug(`Loaded skill ${skillId}: ${skill ? skill.name : 'NOT FOUND'}`);
                             if (skill && !injectedSkills.find(s => s.id === skill.id)) {
                                 injectedSkills.push(skill);
                                 skillsService.incrementSkillUsage(skill.id).catch(() => {});
@@ -383,7 +386,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
 
                     // 3. Auto-select skills based on user message (if enabled)
-                    const skillSelectionMode = body.options?.skillSelectionMode || assistant.data?.skillSelectionMode || 'auto';
+                    const skillSelectionMode = body.skillSelectionMode || body.options?.skillSelectionMode || assistant.data?.skillSelectionMode || 'auto';
 
                     if (skillSelectionMode !== 'manual' && injectedSkills.length < 3) {
                         const userMessage = body.messages[body.messages.length - 1]?.content || "";
