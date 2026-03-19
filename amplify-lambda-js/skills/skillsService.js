@@ -14,6 +14,18 @@ import { lru } from "tiny-lru";
 const userSkillsCache = lru(500, 60000, false); // 1 minute cache
 
 /**
+ * Normalize skill object for API response
+ * Converts isPublic from string to boolean for frontend compatibility
+ */
+const normalizeSkill = (skill) => {
+    if (!skill) return skill;
+    return {
+        ...skill,
+        isPublic: skill.isPublic === "true"
+    };
+};
+
+/**
  * Parse skill markdown frontmatter to extract configuration
  * @param {string} content - Full markdown content with frontmatter
  * @returns {Object} Parsed config and body
@@ -106,7 +118,7 @@ export const createSkill = async (user, skillData) => {
         priority: skillData.priority || parsed.config.priority || 5,
         category: skillData.category || parsed.config.category || "general",
         isEnabled: skillData.isEnabled !== undefined ? skillData.isEnabled : true,
-        isPublic: skillData.isPublic || false,
+        isPublic: skillData.isPublic ? "true" : "false",
         metadata: {
             version: 1,
             createdAt: now,
@@ -130,7 +142,7 @@ export const createSkill = async (user, skillData) => {
     userSkillsCache.delete(user);
 
     logger.info(`Created skill ${skillId} for user ${user}`);
-    return skill;
+    return normalizeSkill(skill);
 };
 
 /**
@@ -162,7 +174,7 @@ export const getUserSkills = async (user, includeShared = true) => {
         ExpressionAttributeValues: marshall({ ":user": user })
     }));
 
-    let skills = ownedResponse.Items?.map(item => unmarshall(item)) || [];
+    let skills = ownedResponse.Items?.map(item => normalizeSkill(unmarshall(item))) || [];
 
     // Get shared skills if requested
     if (includeShared) {
@@ -212,13 +224,13 @@ export const getSkillById = async (skillId, requestingUser = null) => {
     // Check permissions if user specified
     if (requestingUser && skill.user !== requestingUser) {
         const hasAccess = await checkSkillAccess(skillId, requestingUser);
-        if (!hasAccess && !skill.isPublic) {
+        if (!hasAccess && skill.isPublic !== "true") {
             logger.warn(`User ${requestingUser} does not have access to skill ${skillId}`);
             return null;
         }
     }
 
-    return skill;
+    return normalizeSkill(skill);
 };
 
 /**
@@ -256,7 +268,12 @@ export const updateSkill = async (user, skillId, updates) => {
         if (updates[field] !== undefined) {
             updateExpressions.push(`#${field} = :${field}`);
             expressionAttributeNames[`#${field}`] = field;
-            expressionAttributeValues[`:${field}`] = updates[field];
+            // Convert isPublic boolean to string for GSI compatibility
+            if (field === 'isPublic') {
+                expressionAttributeValues[`:${field}`] = updates[field] ? "true" : "false";
+            } else {
+                expressionAttributeValues[`:${field}`] = updates[field];
+            }
         }
     }
 
@@ -542,12 +559,12 @@ export const getPublicSkills = async (limit = 50, tags = null) => {
             TableName: tableName,
             IndexName: "public-skills-index",
             KeyConditionExpression: "isPublic = :isPublic",
-            ExpressionAttributeValues: marshall({ ":isPublic": true }),
+            ExpressionAttributeValues: marshall({ ":isPublic": "true" }),
             Limit: limit,
             ScanIndexForward: false // Descending by usage count
         }));
 
-        let skills = response.Items?.map(item => unmarshall(item)) || [];
+        let skills = response.Items?.map(item => normalizeSkill(unmarshall(item))) || [];
 
         // Filter by tags if specified
         if (tags && tags.length > 0) {

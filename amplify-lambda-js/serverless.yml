@@ -278,6 +278,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -301,6 +303,7 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -390,32 +393,62 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
-          - AttributeName: PK
+          - AttributeName: id
             AttributeType: S
-          - AttributeName: SK
+          - AttributeName: user
             AttributeType: S
-          - AttributeName: GSI1PK
-            AttributeType: S
-          - AttributeName: GSI1SK
+          - AttributeName: isPublic
             AttributeType: S
         KeySchema:
-          - AttributeName: PK
+          - AttributeName: id
             KeyType: HASH
-          - AttributeName: SK
-            KeyType: RANGE
         GlobalSecondaryIndexes:
-          - IndexName: GSI1
+          - IndexName: user-index
             KeySchema:
-              - AttributeName: GSI1PK
+              - AttributeName: user
                 KeyType: HASH
-              - AttributeName: GSI1SK
-                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: public-skills-index
+            KeySchema:
+              - AttributeName: isPublic
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.SKILLS_DYNAMODB_TABLE}
+    SkillSharesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: shareId
+            AttributeType: S
+          - AttributeName: sharedWith
+            AttributeType: S
+          - AttributeName: skillId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: shareId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: sharedWith-index
+            KeySchema:
+              - AttributeName: sharedWith
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: skillId-index
+            KeySchema:
+              - AttributeName: skillId
+                KeyType: HASH
             Projection:
               ProjectionType: ALL
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true
-        TableName: ${self:provider.environment.SKILLS_DYNAMODB_TABLE}
+        TableName: ${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}
     CostCalculationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
