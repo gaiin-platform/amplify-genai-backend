@@ -21,6 +21,21 @@ const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' });
 
 export const getSecret = async (secretName) => {
 
+    if (process.env.LOCAL_DEVELOPMENT === 'true') {
+        let lookupName = secretName;
+        if (secretName && secretName.startsWith('arn:')) {
+            const arnParts = secretName.split(':');
+            // Strip the random 6-character suffix appended by Secrets Manager (e.g. "-BMNOEY")
+            lookupName = arnParts[arnParts.length - 1].replace(/-[A-Za-z0-9]{6}$/, '');
+        }
+        const envVarName = 'LOCAL_SECRET_' + (lookupName || '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+        if (process.env[envVarName]) {
+            logger.info(`[LOCAL_DEV] Using env var override '${envVarName}' for secret '${secretName}'`);
+            return process.env[envVarName];
+        }
+        logger.debug(`[LOCAL_DEV] No local override found for secret '${secretName}' (checked env var: ${envVarName})`);
+    }
+
     const command = new GetSecretValueCommand({ SecretId: secretName });
 
     try {
@@ -74,45 +89,19 @@ const secret_name = process.env.LLM_ENDPOINTS_SECRETS_NAME;
 let secret_data;
 let parsed_secret;
 
-const isLocalDevelopment = process.env.LOCAL_DEVELOPMENT === 'true';
-
-if (isLocalDevelopment) {
-    // For local development, try to load real secrets first, fall back to mock
-    logger.info(`[SECRETS_INIT] LOCAL_DEVELOPMENT mode - attempting to load real LLM endpoints from: ${secret_name}`);
-    try {
-        secret_data = await getSecret(secret_name);
-        parsed_secret = JSON.parse(secret_data);
-        logger.info(`[SECRETS_INIT] Successfully loaded real LLM endpoints configuration for local dev`);
-    } catch (error) {
-        logger.warn(`[SECRETS_INIT] Could not load real secrets (${error.message}), falling back to mock LLM endpoints`);
-        parsed_secret = {
-            models: [
-                {
-                    "gpt-35-turbo": {
-                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                    }
-                },
-                {
-                    "gpt-4o": {
-                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                    }
-                },
-                {
-                    "gpt-4o-mini": {
-                        endpoints: [{ url: "https://api.openai.com/v1", key: "mock-key" }]
-                    }
-                }
-            ]
-        };
-        logger.info(`[SECRETS_INIT] Mock LLM endpoints configuration loaded as fallback`);
-    }
-} else {
-    try {
-        logger.info(`[SECRETS_INIT] Loading LLM endpoints configuration from: ${secret_name}`);
-        secret_data = await getSecret(secret_name);
-        parsed_secret = JSON.parse(secret_data);
-        logger.info(`[SECRETS_INIT] Successfully loaded LLM endpoints configuration`);
-    } catch (error) {
+try {
+    logger.info(`[SECRETS_INIT] Loading LLM endpoints configuration from: ${secret_name}`);
+    secret_data = await getSecret(secret_name);
+    parsed_secret = JSON.parse(secret_data);
+    logger.info(`[SECRETS_INIT] Successfully loaded LLM endpoints configuration`);
+} catch (error) {
+    if (process.env.LOCAL_DEVELOPMENT === 'true') {
+        const localEnvVar = 'LOCAL_SECRET_' + (secret_name || '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+        logger.warn(`[LOCAL_DEV] Could not load LLM endpoints from AWS Secrets Manager: ${error.message}`);
+        logger.warn(`[LOCAL_DEV] To provide a local override, set ${localEnvVar} in .env.local with the JSON endpoints payload.`);
+        logger.warn(`[LOCAL_DEV] Server will start, but LLM calls using Azure/non-OpenAI providers will fail until this is configured.`);
+        parsed_secret = null;
+    } else {
         logger.error(`[CRITICAL_SECRETS_ERROR] Failed to load LLM endpoints configuration during module initialization:`, error);
         const criticalError = new Error(`LAMBDA_TERMINATION_REQUIRED: Critical error loading LLM endpoints configuration: ${error.message}`);
         criticalError.isLambdaTermination = true;

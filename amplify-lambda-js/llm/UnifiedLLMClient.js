@@ -92,16 +92,32 @@ const getProviderConfig = (model) => {
 /**
  * Queue conversation analysis with fallback
  */
-async function queueConversationAnalysisWithFallback(params, messages, result) {
+async function queueConversationAnalysisWithFallback(params, messages, result, options = {}) {
     try {
         const { queueConversationAnalysisWithFallback: queueConversationAnalysisImpl } = await import('../groupassistants/conversationAnalysis.js');
 
         if (params.options?.trackConversations) {
+            // Extract conversationId from either options parameter or params.options
+            // (chatWithData passes it in options param, line 530 of chatWithData.js)
+            const conversationId = options.conversationId || params.options?.conversationId;
+
             // Construct proper chatRequest object
+            // Merge params.options with conversationId
             const chatRequest = {
                 messages: messages,
-                options: params.options
+                options: {
+                    ...params.options,
+                    // Ensure conversationId is included
+                    conversationId: conversationId
+                }
             };
+
+            // Log for debugging
+            logger.debug('Queueing conversation analysis', {
+                conversationId: chatRequest.options.conversationId,
+                assistantId: chatRequest.options.assistantId,
+                hasConversationId: !!chatRequest.options.conversationId
+            });
 
             // Construct llmResponse object
             const llmResponse = result?.content || "";
@@ -495,6 +511,16 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 capturedContent
             );
 
+            // Keep-alive: Send ping every 15s to prevent API Gateway timeout during thinking pauses
+            const keepAliveInterval = setInterval(() => {
+                if (!requestState.cancelled && responseStream && !responseStream.writableEnded) {
+                    responseStream.write(': keep-alive\n\n');
+                }
+            }, 15000);
+
+            // Store interval for cleanup
+            requestState.keepAliveInterval = keepAliveInterval;
+
             // Call provider with appropriate arguments
             if (providerConfig.needsEndpointProvider) {
                 // OpenAI needs getLLMConfig as first argument
@@ -502,6 +528,12 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             } else {
                 // Bedrock and Gemini just need chatBody and stream
                 result = await providerConfig.chatFn(chatBody, interceptor);
+            }
+
+            // Clear keep-alive interval
+            if (requestState.keepAliveInterval) {
+                clearInterval(requestState.keepAliveInterval);
+                requestState.keepAliveInterval = null;
             }
 
             // Ensure stream is properly ended (unless keepStreamOpen is set for tool loops)
@@ -598,8 +630,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             );
         }
 
-        // Queue conversation analysis
-        await queueConversationAnalysisWithFallback(params, messages, result);
+        // Queue conversation analysis - pass options to ensure conversationId is included
+        await queueConversationAnalysisWithFallback(params, messages, result, options);
 
         return result || { usage: requestState.totalUsage };
 
@@ -670,6 +702,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         // Cleanup
         if (requestState.statusTimer) {
             clearTimeout(requestState.statusTimer);
+        }
+        if (requestState.keepAliveInterval) {
+            clearInterval(requestState.keepAliveInterval);
         }
         activeRequests.delete(requestId);
     }

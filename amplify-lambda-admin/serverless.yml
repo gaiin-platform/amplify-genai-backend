@@ -232,6 +232,7 @@ functions:
 
 resources:
   Resources:
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -434,6 +435,7 @@ resources:
       Properties:
         TopicName: ${self:service}-${sls:stage}-critical-errors-notifications
         DisplayName: "Critical Error Notifications"
+        KmsMasterKeyId: alias/aws/sns  # Enable encryption at rest using AWS-managed SNS key
 
   Outputs:
     AmplifyAdminTableStreamArn:
