@@ -16,10 +16,11 @@ export const canReadDatasource = (userId, datasourceId) => {
 export const canReadDataSources = async (accessToken, dataSources) => {
     // Bypass permissions check in local development since S3 event triggers
     // (which call update_object_permissions) don't fire with serverless offline
-    if (process.env.LOCAL_DEVELOPMENT) {
-        logger.debug("Local dev detected, bypassing permissions check");
-        return true;
-    }
+    // Uncomment for local development if needed 
+    // if (process.env.LOCAL_DEVELOPMENT) {
+    //     logger.debug("Local dev detected, bypassing permissions check");
+    //     return true;
+    // }
 
     const accessLevels = {}
     dataSources.forEach(ds => {

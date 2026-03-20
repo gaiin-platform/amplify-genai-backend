@@ -17,38 +17,6 @@ import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 
 const logger = getLogger("chatWithData");
 
-
-/**
- * ✅ OPTIMIZED: Fit messages within token limit efficiently
- */
-const fitMessagesInTokenLimit = (messages, tokenLimit) => {
-    let tokenCount = 0;
-    const messagesToKeep = [];
-
-    // Process messages in reverse order (keeping most recent)
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const currCount = countChatTokens([messages[i]]);
-        const remaining = tokenLimit - tokenCount;
-
-        if (currCount <= remaining) {
-            messagesToKeep.push(messages[i]);
-            tokenCount += currCount;
-        } else if (i === messages.length - 1 && remaining > 100) {
-            // Keep at least part of the most recent message
-            const ratio = Math.min(0.9, remaining / currCount);
-            const splitIndex = Math.floor(messages[i].content.length * ratio);
-            messagesToKeep.push({
-                ...messages[i],
-                content: messages[i].content.slice(-splitIndex)
-            });
-            break;
-        } else {
-            break; // Can't fit more messages
-        }
-    }
-
-    return messagesToKeep.reverse();
-}
 // If contexts use >= 85% of available budget, split them from conversation to avoid overflow
 const CONTEXT_FULLNESS_THRESHOLD = 0.85;
 
@@ -60,34 +28,34 @@ const CONTEXT_FULLNESS_THRESHOLD = 0.85;
  * - Direct native provider integration (no Python subprocess)
  */
 export const chatWithDataStateless = async (params, model, chatRequestOrig, dataSources, responseStream) => {
-    if (!chatRequestOrig.messages) {
+    if(!chatRequestOrig.messages){
         throw new Error("Chat request must have messages.");
     }
 
     const account = params.account;
     const options = params.options || {};
     const srcPrefix = options.source || defaultSource;
-
-
+    
+    
     // 🚀 PERFORMANCE BREAKTHROUGH: Use pre-resolved data sources directly - NO duplicate calls!
     const tokenCounter = createTokenCounter();
-
+    
     // If we're routed here, router should ALWAYS provide pre-resolved sources
     if (!params.preResolvedDataSourcesByUse) {
         logger.error("❌ CRITICAL: chatWithDataStateless called without pre-resolved data sources - this should never happen!");
         throw new Error("Pre-resolved data sources required but not provided");
     }
-
+    
     logger.debug("✅ Using pre-resolved data sources from router (ZERO duplicate calls)");
     const dataSourcesByUse = params.preResolvedDataSourcesByUse;
 
     logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
-
+    
 
     // Extract categorized data sources
     const categorizedDataSources = dataSourcesByUse.dataSources || [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
-    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ?
+    const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
         (dataSourcesByUse.conversationDataSources || []) : [];
 
 
@@ -99,10 +67,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ✅ STEP 1: Process RAG first (sequential, not parallel)
     let ragResults = { messages: [], sources: [] };
-
+    
     if (ragDataSources.length > 0) {
         logger.info(`🔍 RAG Query: Starting with ${ragDataSources.length} data sources`);
-
+        
         // Send RAG status
         const ragStatus = newStatus({
             inProgress: true,
@@ -114,10 +82,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             sendStatusEventToStream(responseStream, ragStatus);
             forceFlush(responseStream);
         }
-
+        
         // Perform RAG query with error handling
         logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
-
+        
         try {
             ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
             logger.debug(`✅ RAG Query completed:`, {
@@ -137,14 +105,14 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }
             ragResults = { messages: [], sources: [] }; // Empty result on failure
         }
-
+        
         // ✅ IMMEDIATELY send RAG sources following original pattern
         if (responseStream && !responseStream.destroyed) {
             ragStatus.inProgress = false;
-            ragStatus.message = ragResults.sources.length > 0 ?
+            ragStatus.message = ragResults.sources.length > 0 ? 
                 "Found relevant information" : "No relevant information found";
             sendStatusEventToStream(responseStream, ragStatus);
-
+            
             if (ragResults.sources.length > 0) {
                 sendStateEventToStream(responseStream, {
                     sources: {
@@ -160,20 +128,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
     }
 
-    // TODO: Future improvement for improving context overflows.
-
-    // Simple token reservation: flat 1500 tokens if there are any data sources
-    const totalDataSources = categorizedDataSources.length + conversationDataSources.length;
-    const minTokensForContext = totalDataSources > 0 ? 1000 : 0;
-
-    // Calculate space for messages (context windows are huge in 2026, so this is fine)
-    const maxTokensForMessages = Math.max(
-        1000, // Minimum safety buffer
-        model.inputContextWindow - minTokensForContext
-    );
-
-    // Trim messages to fit
-    const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
+    // =====================================================
+    // NO PRE-TRUNCATION: Fail-first overflow recovery handles this
+    // See llm/contextOverflow.js - zero latency for normal users
+    // =====================================================
 
     // Build safe messages and insert RAG context (no pre-truncation)
     const safeMessages = chatRequestOrig.messages.map(m => ({ role: m.role, content: m.content }));
@@ -232,32 +190,32 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, options);
                 if (cached && Array.isArray(cached) && cached.length > 0) {
                     logger.debug(`Using cached contexts for datasource ${ds.id}`);
-                    return cached.map(r => ({ ...r, type: "documentContext", dataSourceId: ds.id }));
+                    return cached.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
                 }
-
+                
                 // Not cached, fetch and cache
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options);
                 // Only cache successful results, not null/empty
                 if (results && Array.isArray(results) && results.length > 0) {
                     CacheManager.setCachedContexts(account.user, ds, maxTokens, options, results);
                 }
-                return (results || []).map(r => ({ ...r, type: "documentContext", dataSourceId: ds.id }));
+                return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
             }),
             ...conversationDataSources.map(async ds => {
                 // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
                 // depends on the user's current message! Each query needs fresh extraction.
                 // Only the raw document content should be cached (inside getContent).
-
+                
                 // Always fetch fresh - extraction depends on current user message
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
-                return (results || []).map(r => ({ ...r, type: "documentCacheContext", dataSourceId: ds.id }));
+                return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
             })
         ]);
 
         contexts = contextResults
             .flat()
             .filter(context => context !== null)
-            .map(context => ({ ...context, id: srcPrefix + "#" + context.id }));
+            .map(context => ({...context, id: srcPrefix + "#" + context.id}));
 
         // Clear all statuses
         if (responseStream && !responseStream.destroyed) {
@@ -434,19 +392,73 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         });
     }
 
-    const rawMessages = [
-        ...chatRequest.messages.slice(0, -1),  // Includes original messages + RAG context
-        ...contextMessages,                    // Add document contexts
-        ...chatRequest.messages.slice(-1)     // Last message
-    ];
+    // =====================================================
+    // SMART CONTEXT SPLITTING: Check if contexts are too full
+    // If >= 85% of budget used by contexts, split them from
+    // conversation to avoid overflow. Otherwise, merge all.
+    // =====================================================
+    const contextTokens = contextMessages.length > 0
+        ? countChatTokens(contextMessages)
+        : 0;
+    const contextFullness = maxTokens > 0 ? contextTokens / maxTokens : 0;
+    const shouldSplitContexts = contextMessages.length > 0 && contextFullness >= CONTEXT_FULLNESS_THRESHOLD;
+
+    logger.debug(`Context analysis: ${contextTokens}/${maxTokens} tokens (${(contextFullness * 100).toFixed(1)}% full), split: ${shouldSplitContexts}`);
+
+    let finalMessages;
+    let contextResponse = null;
+
+    if (shouldSplitContexts) {
+        // Context is >= 85% full - process contexts separately to avoid overflow
+        logger.debug(`Context fullness ${(contextFullness * 100).toFixed(1)}% >= threshold - splitting contexts`);
+
+        try {
+            // Get user's question (last message)
+            const userQuestion = chatRequest.messages[chatRequest.messages.length - 1]?.content || '';
+
+            // Process contexts separately using cheap model
+            contextResponse = await processContextsSeparately(
+                { account, options: { ...options, model } },
+                contextMessages,
+                userQuestion,
+                model
+            );
+
+            // Build final messages: conversation + context response (no raw contexts)
+            finalMessages = [
+                ...chatRequest.messages.slice(0, -1),  // Conversation history
+                contextResponse,                        // Context analysis result
+                ...chatRequest.messages.slice(-1)      // User's question
+            ];
+
+            logger.debug(`Contexts processed separately and integrated into conversation`);
+
+        } catch (splitError) {
+            logger.error(`Context splitting failed: ${splitError.message}, falling back to merged approach`);
+            // Fallback: try merged approach anyway (might overflow, but fail-first will handle)
+            finalMessages = [
+                ...chatRequest.messages.slice(0, -1),
+                ...contextMessages,
+                ...chatRequest.messages.slice(-1)
+            ];
+        }
+    } else {
+        // Context is < 85% full - merge everything (normal case)
+        logger.debug(`Context fullness ${(contextFullness * 100).toFixed(1)}% < threshold - merging all`);
+        finalMessages = [
+            ...chatRequest.messages.slice(0, -1),  // Includes original messages + RAG context
+            ...contextMessages,                     // Add document contexts
+            ...chatRequest.messages.slice(-1)      // Last message
+        ];
+    }
 
     // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call
-    const cleanedMessages = rawMessages
+    const cleanedMessages = finalMessages
         .filter(msg => msg && msg.role && msg.content !== undefined)
         .map(msg => ({
             role: msg.role,
             content: typeof msg.content === 'string' ?
-                msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() : // Remove Location: {...}
+                msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() :
                 msg.content
         }))
         .filter(msg => msg.content && msg.content.length > 0);
@@ -461,7 +473,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const hasContexts = contexts.length > 0;
 
     if (hasRAGSources || hasContexts) {
-        logger.debug(`Final request: RAG sources: ${ragResults.sources.length}, contexts: ${contexts.length}`);
+        logger.debug(`Final request: RAG sources: ${ragResults.sources.length}, contexts: ${contexts.length}, split: ${shouldSplitContexts}`);
     }
     if (!params.options.ragOnly && !hasRAGSources && !hasContexts) {
         logger.debug("No relevant contexts found, making direct LLM call");
@@ -517,7 +529,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             imageSources: chatRequestOrig.imageSources,
             videoSources: chatRequestOrig.videoSources,
             // Only pass contexts if we DIDN'T split them (for fail-first recovery on edge cases)
-            _contexts: (contexts.length > 0) ? contexts : null,
+            _contexts: (!shouldSplitContexts && contexts.length > 0) ? contexts : null,
             // Pass smart messages filter flag for safe caching
             smartMessagesFiltered: smartMessagesFiltered,
             // Pass conversationId for cache management in overflow handler

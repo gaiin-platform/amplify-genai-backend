@@ -457,11 +457,11 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             }
         };
 
-        // ✅ FIX: Pass imageSources from options to chatBody for provider compatibility
+        // Pass imageSources from options to chatBody for provider compatibility
         if (options.imageSources) {
             chatBody.imageSources = options.imageSources;
         }
-        // ✅ FIX: Pass videoSources from options to chatBody for provider compatibility
+        // Pass videoSources from options to chatBody for provider compatibility
         if (options.videoSources) {
             chatBody.videoSources = options.videoSources;
         }
