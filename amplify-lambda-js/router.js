@@ -94,6 +94,33 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
         } else if(params.body.skillsRequest) {
             // Handle skills request
             logger.info("Processing skills request");
+            // Build account object (needed by accounting/LLM calls such as skill screening)
+            params.account = {
+                user: params.user,
+                username: params.username,
+                accessToken: params.accessToken,
+                accountId: params.body?.options?.accountId,
+                apiKeyId: params.apiKeyId
+            };
+            // Populate model shortcuts so skill screening can use cheapestModel etc.
+            try {
+                let userModelData = await CacheManager.getCachedUserModels(params.user, params.accessToken);
+                if (!userModelData) {
+                    userModelData = await getUserAvailableModels(params.accessToken);
+                    CacheManager.setCachedUserModels(params.user, params.accessToken, userModelData);
+                }
+                if (userModelData && userModelData.cheapest) {
+                    params.cheapestModel = userModelData.cheapest;
+                    params.advancedModel = userModelData.advanced ?? userModelData.cheapest;
+                    params.documentCachingModel = userModelData.documentCaching ?? userModelData.cheapest;
+                    params.options = params.options || {};
+                    params.options.cheapestModel = params.cheapestModel;
+                    params.options.advancedModel = params.advancedModel;
+                    params.options.documentCachingModel = params.documentCachingModel;
+                }
+            } catch (e) {
+                logger.warn("Could not fetch user models for skill screening:", e.message);
+            }
             const { handleSkillsRequest } = await import("./skills/skillsEndpoint.js");
             const response = await handleSkillsRequest(params, params.body.skillsRequest);
             returnResponse(responseStream, {
