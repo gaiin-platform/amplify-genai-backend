@@ -14,6 +14,8 @@ import {newStatus} from "../common/status.js";
 import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 import {getLogger} from "../common/logging.js";
+// Skills integration
+import * as skillsService from "../skills/skillsService.js";
 // import AWSXRay from "aws-xray-sdk";
 
 const logger = getLogger("user-defined-assistants");
@@ -339,6 +341,103 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
+            // 🎯 SKILLS INTEGRATION: Inject skills into assistant context
+            let activeSkills = [];
+            try {
+                const user = params.account?.user;
+                const skillsEnabled = process.env.SKILLS_DYNAMODB_TABLE; // Feature flag via env var existence
+
+                if (skillsEnabled && user) {
+                    const injectedSkills = [];
+
+                    // 1. Get required skills from assistant config
+                    if (assistant.data?.skills && assistant.data.skills.length > 0) {
+                        logger.debug(`Loading ${assistant.data.skills.length} assistant-configured skills`);
+
+                        for (const skillRef of assistant.data.skills) {
+                            if (skillRef.isRequired || assistant.data.skillSelectionMode === 'manual') {
+                                const skill = skillRef.overrideContent
+                                    ? { content: skillRef.overrideContent, name: skillRef.name || 'Custom Skill', id: skillRef.skillId }
+                                    : await skillsService.getSkillById(skillRef.skillId, user);
+
+                                if (skill && !injectedSkills.find(s => s.id === skill.id)) {
+                                    injectedSkills.push(skill);
+                                    // Track usage
+                                    skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Get manually selected skills from request body
+                    const manualSkills = body.skills || body.options?.skills || [];
+                    logger.info(`Skills check: body.skills=${JSON.stringify(body.skills)}, body.options?.skills=${JSON.stringify(body.options?.skills)}, manualSkills=${JSON.stringify(manualSkills)}`);
+                    if (manualSkills.length > 0) {
+                        logger.info(`Loading ${manualSkills.length} manually selected skills: ${manualSkills.join(', ')}`);
+
+                        for (const skillId of manualSkills) {
+                            const skill = await skillsService.getSkillById(skillId, user);
+                            logger.debug(`Loaded skill ${skillId}: ${skill ? skill.name : 'NOT FOUND'}`);
+                            if (skill && !injectedSkills.find(s => s.id === skill.id)) {
+                                injectedSkills.push(skill);
+                                skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                            }
+                        }
+                    }
+
+                    // 3. Auto-select skills based on user message (if enabled)
+                    const skillSelectionMode = body.skillSelectionMode || body.options?.skillSelectionMode || assistant.data?.skillSelectionMode || 'auto';
+
+                    if (skillSelectionMode !== 'manual' && injectedSkills.length < 3) {
+                        const userMessage = body.messages[body.messages.length - 1]?.content || "";
+                        const autoSkills = await skillsService.autoSelectSkills(
+                            user,
+                            userMessage,
+                            {
+                                tags: assistant.tags || [],
+                                assistantTags: assistant.data?.tags || [],
+                                category: assistant.data?.category
+                            }
+                        );
+
+                        // Add auto-selected skills that aren't already included (up to 3 total)
+                        for (const skill of autoSkills) {
+                            if (!injectedSkills.find(s => s.id === skill.id) && injectedSkills.length < 3) {
+                                injectedSkills.push(skill);
+                                skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                            }
+                        }
+                    }
+
+                    // 4. Inject skills into system context
+                    if (injectedSkills.length > 0) {
+                        const skillsContextMessage = skillsService.buildSkillContextMessage(injectedSkills);
+
+                        if (skillsContextMessage) {
+                            extraMessages.push({
+                                role: "system",
+                                content: skillsContextMessage
+                            });
+
+                            activeSkills = injectedSkills.map(s => ({
+                                id: s.id,
+                                name: s.name,
+                                description: s.description
+                            }));
+
+                            logger.info(`Injected ${injectedSkills.length} skills: ${injectedSkills.map(s => s.name).join(', ')}`);
+                        }
+                    }
+                }
+            } catch (skillsError) {
+                logger.debug("Skills processing skipped or failed:", skillsError.message);
+                // Continue without skills - they're optional
+            }
+
+            // Send active skills state event to frontend
+            if (activeSkills.length > 0) {
+                sendStateEventToStream(responseStream, { activeSkills });
+            }
 
             if (assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
