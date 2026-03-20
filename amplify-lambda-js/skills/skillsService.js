@@ -5,6 +5,8 @@ import { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand, DeleteIte
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { v4 as uuidv4 } from 'uuid';
 import { getLogger } from "../common/logging.js";
+import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
+import { getModelByType, ModelTypes } from "../common/params.js";
 
 const logger = getLogger("skills-service");
 const dynamodbClient = new DynamoDBClient({});
@@ -17,6 +19,128 @@ const userSkillsCache = lru(500, 60000, false); // 1 minute cache
 const invalidateUserCache = (user) => {
     userSkillsCache.delete(`${user}:true`);
     userSkillsCache.delete(`${user}:false`);
+};
+
+/**
+ * Screen skill content before making it public
+ * Uses the cheapest model to check for inappropriate content
+ * @param {Object} params - Request params containing model config
+ * @param {Object} skillData - Skill data to screen
+ * @returns {Object} { approved: boolean, reason?: string }
+ */
+export const screenSkillForPublic = async (params, skillData) => {
+    try {
+        const model = getModelByType(params, ModelTypes.CHEAPEST);
+
+        if (!model) {
+            logger.warn("No model available for skill screening, allowing by default");
+            return { approved: true };
+        }
+
+        const screeningPrompt = `You are a content moderator for a skill-sharing platform. Review the following skill content and determine if it is appropriate for public sharing.
+
+SKILL TO REVIEW:
+- Name: ${skillData.name || 'Untitled'}
+- Description: ${skillData.description || 'No description'}
+- Tags: ${(skillData.tags || []).join(', ') || 'None'}
+- Content:
+${skillData.content || 'No content'}
+
+REJECT the skill if it contains ANY of the following:
+1. Hate speech, discrimination, or content targeting protected groups
+2. Instructions for illegal activities (hacking, fraud, violence, etc.)
+3. Sexually explicit or pornographic content
+4. Personal attacks or harassment instructions
+5. Malware, phishing, or security exploitation techniques
+6. Misinformation or harmful health/medical advice
+7. Content designed to manipulate or deceive users
+8. Jailbreaking prompts or attempts to bypass AI safety measures
+9. Private/personal information (PII) of real individuals
+10. Copyright-infringing content or plagiarism
+
+APPROVE the skill if it is:
+- Educational, helpful, or creative
+- Professional or productivity-focused
+- Entertainment that doesn't violate above rules
+- General purpose assistance
+
+Respond with your assessment.`;
+
+        const outputSchema = {
+            type: "object",
+            properties: {
+                approved: {
+                    type: "boolean",
+                    description: "Whether the skill is approved for public sharing"
+                },
+                reason: {
+                    type: "string",
+                    description: "Brief explanation for the decision (required if rejected)"
+                },
+                category: {
+                    type: "string",
+                    enum: ["safe", "borderline", "violation"],
+                    description: "Content category classification"
+                }
+            },
+            required: ["approved", "reason", "category"]
+        };
+
+        const messages = [
+            { role: "user", content: screeningPrompt }
+        ];
+
+        logger.info(`Screening skill "${skillData.name}" for public sharing`);
+
+        const result = await promptUnifiedLLMForData(
+            {
+                account: params.account,
+                options: {
+                    model,
+                    requestId: params.requestId || `skill-screen-${Date.now()}`
+                }
+            },
+            messages,
+            outputSchema,
+            null
+        );
+
+        const content = result.content || result;
+        let screening;
+
+        try {
+            // Parse JSON from response
+            const jsonMatch = typeof content === 'string'
+                ? content.match(/\{[\s\S]*\}/)
+                : null;
+            screening = jsonMatch ? JSON.parse(jsonMatch[0]) : content;
+        } catch (parseError) {
+            logger.error("Failed to parse screening response:", parseError);
+            // Default to rejection on parse error for safety
+            return {
+                approved: false,
+                reason: "Unable to verify content safety. Please try again.",
+                category: "borderline"
+            };
+        }
+
+        logger.info(`Skill screening result for "${skillData.name}": ${screening.approved ? 'APPROVED' : 'REJECTED'} - ${screening.reason}`);
+
+        return {
+            approved: screening.approved,
+            reason: screening.reason,
+            category: screening.category
+        };
+
+    } catch (error) {
+        logger.error("Skill screening failed:", error);
+        // On error, reject for safety
+        return {
+            approved: false,
+            reason: "Content screening failed. Please try again later.",
+            category: "error"
+        };
+    }
 };
 
 /**

@@ -24,11 +24,30 @@ export const handleSkillsRequest = async (params, request) => {
 
     try {
         switch (action) {
-            case "create":
+            case "create": {
+                // Screen skill if being made public
+                if (data.isPublic) {
+                    logger.info(`Screening skill "${data.name}" before making public`);
+                    const screening = await skillsService.screenSkillForPublic(params, data);
+
+                    if (!screening.approved) {
+                        return {
+                            success: false,
+                            message: `Skill cannot be made public: ${screening.reason}`,
+                            screening: {
+                                approved: false,
+                                reason: screening.reason,
+                                category: screening.category
+                            }
+                        };
+                    }
+                }
+
                 return {
                     success: true,
                     data: await skillsService.createSkill(user, data)
                 };
+            }
 
             case "list":
                 return {
@@ -36,7 +55,7 @@ export const handleSkillsRequest = async (params, request) => {
                     data: await skillsService.getUserSkills(user, data?.includeShared ?? true)
                 };
 
-            case "get":
+            case "get": {
                 if (!data?.skillId) {
                     throw new Error("skillId is required");
                 }
@@ -51,15 +70,50 @@ export const handleSkillsRequest = async (params, request) => {
                     success: true,
                     data: skill
                 };
+            }
 
-            case "update":
+            case "update": {
                 if (!data?.skillId) {
                     throw new Error("skillId is required");
                 }
+
+                const updates = data.updates || data;
+
+                // Screen skill if being made public (check if isPublic is being set to true)
+                if (updates.isPublic === true) {
+                    // Get existing skill to check if it was already public
+                    const existingSkill = await skillsService.getSkillById(data.skillId, user);
+
+                    // Only screen if changing from private to public
+                    if (existingSkill && !existingSkill.isPublic) {
+                        // Merge existing skill data with updates for complete screening
+                        const skillToScreen = {
+                            ...existingSkill,
+                            ...updates
+                        };
+
+                        logger.info(`Screening skill "${skillToScreen.name}" before making public`);
+                        const screening = await skillsService.screenSkillForPublic(params, skillToScreen);
+
+                        if (!screening.approved) {
+                            return {
+                                success: false,
+                                message: `Skill cannot be made public: ${screening.reason}`,
+                                screening: {
+                                    approved: false,
+                                    reason: screening.reason,
+                                    category: screening.category
+                                }
+                            };
+                        }
+                    }
+                }
+
                 return {
                     success: true,
-                    data: await skillsService.updateSkill(user, data.skillId, data.updates || data)
+                    data: await skillsService.updateSkill(user, data.skillId, updates)
                 };
+            }
 
             case "delete":
                 if (!data?.skillId) {
