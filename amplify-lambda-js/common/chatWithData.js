@@ -496,6 +496,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 max_tokens: requestWithContext.max_tokens || 2000,
                 imageSources: chatRequestOrig.imageSources,
                 videoSources: chatRequestOrig.videoSources,
+                // Pass document data source metadata so MCP tools can reference attached files
+                dataSources: categorizedDataSources,
                 mcpClientSide: mcpEnabled,
                 tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
                 webSearchEnabled: webSearchEnabled,

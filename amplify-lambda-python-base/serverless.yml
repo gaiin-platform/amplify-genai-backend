@@ -87,6 +87,7 @@ functions:
           cors: true
 resources:
   Resources:
+
     LambdaPythonBaseIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
