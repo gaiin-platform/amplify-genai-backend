@@ -8,7 +8,7 @@ from PIL import Image
 from io import BytesIO
 import urllib.parse
 from rag.core import update_object_permissions
-from pycommon.const import IMAGE_FILE_TYPES
+from pycommon.const import IMAGE_FILE_TYPES, VIDEO_FILE_TYPES
 
 s3 = boto3.client("s3")
 
@@ -132,16 +132,6 @@ def process_images_for_chat(event, context):
             )
             image_data = response["Body"].read()
         else:
-            # Check if this is a video file that should be skipped
-            VIDEO_FILE_TYPES = [
-                "video/mp4",
-                "video/mpeg", 
-                "video/quicktime",
-                "video/x-msvideo",  # .avi
-                "video/x-ms-wmv",   # .wmv
-                "video/webm",
-                "video/ogg"
-            ]
             
             if content_type in VIDEO_FILE_TYPES:
                 # Video files go to the same bucket as images but don't need image processing
