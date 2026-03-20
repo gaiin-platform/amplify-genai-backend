@@ -127,7 +127,7 @@ export const extractParams = async (event) => {
             current_user = extractCleanUsername();
         }
        
-        logger.debug("Current user: " + current_user);
+        logger.info("Current user: " + current_user);
 
         // Extract clean username (without IDP prefix) for services that need it
         const cleanUsername = extractCleanUsername();

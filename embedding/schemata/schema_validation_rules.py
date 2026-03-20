@@ -15,6 +15,7 @@ rules = {
         "/embedding/check-completion": {"embeddings-check": embedding_ids_schema},
         "/embedding/register_ops": {"register_ops": tools_op_schema},
         "/embedding/status": {"get_status": data_source_key_type_schema},
+        "/bedrock-kb/download": {"bedrock-kb-download": {}},
     },
     "api_validators": {
         "/embedding-dual-retrieval": {"dual-retrieval": dual_retrieval_schema},
@@ -22,5 +23,6 @@ rules = {
         "/embedding/check-completion": {"embeddings-check": embedding_ids_schema},
         "/embedding/register_ops": {"register_ops": tools_op_schema}, 
         "/embedding/status": {"get_status": data_source_key_type_schema},
+        "/bedrock-kb/download": {"bedrock-kb-download": {}},
     },
 }

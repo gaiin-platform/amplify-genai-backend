@@ -556,6 +556,11 @@ def handle_web_search_config_update(update_data: dict) -> dict:
             "isEnabled": False,  # No admin key
             "lastUpdated": datetime.now(timezone.utc).isoformat(),
         }
+        # Include webSearchUserMessage if provided and non-empty after trimming
+        if "webSearchUserMessage" in update_data:
+            message = update_data["webSearchUserMessage"]
+            if message and isinstance(message, str) and message.strip():
+                config_data["webSearchUserMessage"] = message.strip()
         return update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
 
     # Determine if web search should be enabled by checking if API key exists in SSM
@@ -601,6 +606,11 @@ def handle_web_search_config_update(update_data: dict) -> dict:
         "isEnabled": has_api_key,
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
+    # Include webSearchUserMessage if provided and non-empty after trimming
+    if "webSearchUserMessage" in update_data:
+        message = update_data["webSearchUserMessage"]
+        if message and isinstance(message, str) and message.strip():
+            config_data["webSearchUserMessage"] = message.strip()
 
     result = update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
 
@@ -1224,10 +1234,11 @@ def get_user_app_configs(event, context, current_user, name, data):
             response = admin_table.get_item(Key={"config_id": config_type.value})
             if "Item" in response:
                 config_data = response["Item"]["data"]
-                # For web search config, only pass the allowUserWebSearchKeys flag
+                # For web search config, only pass the allowUserWebSearchKeys flag and optional message
                 if config_type == AdminConfigTypes.WEB_SEARCH_CONFIG and config_data:
                     configs[config_type.value] = {
-                        "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False)
+                        "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False),
+                        "webSearchUserMessage": config_data.get("webSearchUserMessage")
                     }
                 else:
                     configs[config_type.value] = config_data

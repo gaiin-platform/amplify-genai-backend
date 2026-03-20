@@ -108,7 +108,7 @@ provider:
 
 
 functions:
-  chat_stream: # API_BASE_URL + /chat_stream  -  API Gateway Streaming 
+  chat_stream: # API_BASE_URL + /chat_stream  -  API Gateway Streaming
     handler: index.streamHandler
     memorySize: 1024
     timeout: 900
@@ -116,8 +116,8 @@ functions:
     # NO http event - we manually define the API Gateway method in resources section
     # to enable streaming with ContentHandling: CONVERT_TO_TEXT
 
-  # To be deprecated - kept for backward compatibility in the short term 
-  chat: # Function URL 
+  # To be deprecated - kept for backward compatibility in the short term
+  chat: # Function URL
     handler: index.handler
     memorySize: 1024
     timeout: 900
@@ -215,19 +215,7 @@ functions:
 
 resources:
   Resources:
-    # Custom resource to extend API Gateway timeouts for long-running functions
-    ApiGatewayTimeoutConfig:
-      Type: Custom::ApiGatewayTimeout
-      Properties:
-        ServiceToken:
-          Fn::ImportValue: !Sub "${sls:stage}-RuntimeConfigManagerArn"
-        ApiGatewayId:
-          Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
-        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
-        Functions:
-          - name: chat_stream
-            path: /chat_stream
-            method: POST
+   
 
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
@@ -545,6 +533,10 @@ resources:
 
           # Required: Must be STREAM when using /response-streaming-invocations endpoint
           ResponseTransferMode: STREAM
+
+          # Timeout for streaming responses: up to 15 minutes (900000ms) supported
+          # Default is 29000ms which was causing streams to die at ~27 seconds
+          TimeoutInMillis: 900000
 
         MethodResponses:
           - StatusCode: 200

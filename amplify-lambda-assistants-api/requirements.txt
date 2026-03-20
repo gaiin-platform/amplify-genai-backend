@@ -5,6 +5,8 @@ git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 #
 #    pip-compile
 #
+aiohttp==3.11.11
+    # via -r requirements.in (for async HTTP requests)
 cachetools==5.5.2
     # via google-auth
 certifi==2025.6.15

@@ -155,6 +155,7 @@ functions:
   
 resources:
   Resources:
+
     ChatBillingIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

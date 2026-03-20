@@ -232,6 +232,7 @@ functions:
 
 resources:
   Resources:
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
