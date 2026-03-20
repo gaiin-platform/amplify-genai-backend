@@ -16,7 +16,9 @@ const logger = getLogger("gemini");
 
 // Always fetch API key fresh for security - no caching of secrets
 const getGeminiApiKey = async () => {
-    return process.env.LOCAL_DEVELOPMENT ? process.env.GEMINI_API_KEY : await getSecretApiKey("GEMINI_API_KEY");
+    // Uncommnet if needed for LOCAL_DEVELOPMENT with env var override
+    // return process.env.LOCAL_DEVELOPMENT ? process.env.GEMINI_API_KEY : await getSecretApiKey("GEMINI_API_KEY");
+    return await getSecretApiKey("GEMINI_API_KEY");
 };
 
 const constructGeminiUrl = () => {

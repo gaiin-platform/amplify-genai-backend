@@ -72,10 +72,12 @@ export const shouldKill = async (user, requestId) => {
 }
 
 export const createRequestState = async (user, requestId) => {
-    if(process.env.LOCAL_DEVELOPMENT) {
-        return true; // In local development, we don't want to create a request state entry in the database.
+    try {
+        return await updateKillswitch(user, requestId, false);
+    } catch (e) {
+        logger.error("Error creating request state: " + e);
+        logger.error("Failed to create request state, but allowing request to proceed without state tracking. This may lead to inability to kill the request if needed.");
     }
-    return await updateKillswitch(user, requestId, false);
 }
 
 export const deleteRequestState = async (user, requestId) => {
