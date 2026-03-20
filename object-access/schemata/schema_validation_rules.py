@@ -20,6 +20,7 @@ from .groupId_schema import groupId_schema
 from .assistant_path_schema import assistant_path_schema
 from .add_assistant_path_schema import add_assistant_path_schema
 from .validate_users_schema import validate_users_schema
+from .manage_group_layered_assistants_schema import manage_group_layered_assistants_schema
 
 rules = {
     "validators": {
@@ -53,6 +54,7 @@ rules = {
         "/groups/assistants/amplify": {"create": create_amplify_assistants_group_schema},
         "/groups/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
         "/groups/verify_ast_group_member": {"verify_member": groupId_schema},
+        "/groups/layered_assistants": {"manage_layered_assistants": manage_group_layered_assistants_schema},
     },
     "api_validators": {
         "/utilities/update_object_permissions": {

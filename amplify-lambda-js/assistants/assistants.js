@@ -10,6 +10,7 @@ import { getTokenCount } from "../datasource/datasources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import { isLayeredAssistantId, resolveLayeredAssistant } from "./layeredAssistantRouter.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
@@ -226,19 +227,48 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         // For group assistants
         const user = account.user;
         const token = account.accessToken;
-        
-        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, clientSelectedAssistant, token);
-        if (!selectedAssistant) {
-            sendStatusEventToStream(responseStream, newStatus(
-                {   inProgress: false,
-                    message: "Selected Assistant Not Found",
-                    icon: "assistant",
-                    sticky: true
-                }));
-            forceFlush(responseStream);
 
-            if (body.options.api_accessed) {
-                throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+        // ── Layered Assistant routing ──────────────────────────────────────────
+        // If the selected ID is a layered assistant (astr/ or astgr/), resolve it
+        // down to a concrete leaf assistant before the normal lookup flow.
+        let resolvedAssistantId = clientSelectedAssistant;
+        if (isLayeredAssistantId(clientSelectedAssistant)) {
+            logger.info(`Layered assistant detected: ${clientSelectedAssistant} — resolving via tree routing`);
+            const leafId = await resolveLayeredAssistant(
+                account,
+                _model,
+                body,
+                clientSelectedAssistant,
+                responseStream
+            );
+            if (!leafId) {
+                // resolveLayeredAssistant already sent appropriate status to stream
+                if (body.options.api_accessed) {
+                    throw new Error("Provided Layered Assistant ID is invalid, inaccessible, or could not be routed.");
+                }
+                // Leave selectedAssistant as null — falls through to defaultAssistant below
+                resolvedAssistantId = null;
+            } else {
+                resolvedAssistantId = leafId;
+                logger.info(`Layered assistant resolved to leaf: ${leafId}`);
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────
+
+        if (resolvedAssistantId) {
+            selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, resolvedAssistantId, token);
+            if (!selectedAssistant) {
+                sendStatusEventToStream(responseStream, newStatus(
+                    {   inProgress: false,
+                        message: "Selected Assistant Not Found",
+                        icon: "assistant",
+                        sticky: true
+                    }));
+                forceFlush(responseStream);
+
+                if (body.options.api_accessed) {
+                    throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+                }
             }
         }
     } else if (getTools(body.messages).length > 0) {

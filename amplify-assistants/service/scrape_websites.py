@@ -774,6 +774,30 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 urls = extract_urls_from_sitemap(url, max_pages, exclusions)
                 logger.debug("  Extracted %s URLs from sitemap", len(urls))
 
+                # CLEANUP: Find orphaned data sources - ones from this sitemap that are no longer in it
+                current_sitemap_url = url
+                freshly_extracted_urls = set(urls)  # URLs currently in the sitemap
+                orphaned_count = 0
+
+                for ds in existing_web_ds:
+                    ds_metadata = ds.get("metadata", {})
+                    ds_from_sitemap = ds_metadata.get("fromSitemap")
+                    ds_source_url = ds_metadata.get("sourceUrl")
+
+                    # If this data source came from the current sitemap
+                    if ds_from_sitemap == current_sitemap_url:
+                        # But its source URL is no longer in the fresh sitemap
+                        if ds_source_url not in freshly_extracted_urls:
+                            # Mark it for deletion (orphaned)
+                            if ds not in old_ds_to_delete:
+                                old_ds_to_delete.append(ds)
+                                orphaned_count += 1
+                                logger.info("  Marked orphaned data source for deletion: %s (sourceUrl: %s no longer in sitemap)",
+                                           ds['id'], ds_source_url)
+
+                if orphaned_count > 0:
+                    logger.info("  Found %s orphaned data sources from this sitemap that will be cleaned up", orphaned_count)
+
                 # PARALLEL: Process sitemap URLs concurrently
                 max_sitemap_workers = min(25, len(urls))
                 logger.info("  Processing %s sitemap URLs with %s concurrent workers", len(urls), max_sitemap_workers)
@@ -855,25 +879,47 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 "message": "Failed to scrape any content from the websites",
             }
         
-        # Only delete old data sources for URLs that were successfully rescraped
+        # Only delete old data sources for URLs that were successfully rescraped or orphaned from sitemaps
         logger.info("Deleting old data sources for %s successfully rescraped URLs", len(successful_urls))
+
+        # Build a map of sitemap URLs to their freshly extracted page URLs (for orphan detection)
+        sitemap_to_fresh_urls = {}
+        for website_url_entry in urls_to_rescan:
+            if website_url_entry.get("type") == "website/sitemap":
+                sitemap_url = website_url_entry["url"]
+                exclusions = website_url_entry.get("exclusions")
+                max_pages = website_url_entry.get("maxPages")
+                if max_pages is not None:
+                    max_pages = int(max_pages)
+                fresh_urls = extract_urls_from_sitemap(sitemap_url, max_pages, exclusions)
+                sitemap_to_fresh_urls[sitemap_url] = set(fresh_urls)
+
         for old_ds in old_ds_to_delete:
             ds_metadata = old_ds.get("metadata", {})
             old_ds_source_url = ds_metadata.get("sourceUrl")
             old_ds_from_sitemap = ds_metadata.get("fromSitemap")
-            
-            # Delete if the URL that created this data source was successfully rescraped:
+
+            # Delete if:
             # 1. For direct URLs: sourceUrl matches a successful URL
             # 2. For sitemap-derived: fromSitemap matches a successful URL
+            # 3. For orphaned: fromSitemap was rescanned but sourceUrl is not in fresh sitemap
+            is_orphaned = False
+            if old_ds_from_sitemap and old_ds_from_sitemap in sitemap_to_fresh_urls:
+                # Check if this sourceUrl is no longer in the fresh sitemap
+                is_orphaned = old_ds_source_url not in sitemap_to_fresh_urls[old_ds_from_sitemap]
+
             should_delete = (
-                old_ds_source_url in successful_urls or 
-                old_ds_from_sitemap in successful_urls
+                old_ds_source_url in successful_urls or
+                old_ds_from_sitemap in successful_urls or
+                is_orphaned
             )
-            
+
             if should_delete:
                 try:
                     delete_file(access_token, old_ds["id"])
-                    logger.info("Deleted old web data source: %s (sourceUrl: %s, fromSitemap: %s)", old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
+                    deletion_reason = "orphaned (no longer in sitemap)" if is_orphaned else "rescraped"
+                    logger.info("Deleted old web data source (%s): %s (sourceUrl: %s, fromSitemap: %s)",
+                               deletion_reason, old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
                 except Exception as e:
                     logger.error("Error deleting old web data source: %s", e)
             else:

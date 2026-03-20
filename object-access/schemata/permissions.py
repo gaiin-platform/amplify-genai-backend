@@ -81,4 +81,5 @@ permissions_by_state_type = {
     "/groups/assistants/amplify": {"create": can_create},
     "/groups/assistant/add_path": {"add_assistant_path": can_add_path},
     "/groups/verify_ast_group_member": {"verify_member": can_read},
+    "/groups/layered_assistants": {"manage_layered_assistants": can_update},
 }

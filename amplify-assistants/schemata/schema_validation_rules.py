@@ -1,4 +1,6 @@
 from .delete_assistant_schema import delete_assistant_schema
+from .create_layered_assistant_schema import create_layered_assistant_schema
+from .delete_layered_assistant_schema import delete_layered_assistant_schema
 from .lookup_assistant_schema import lookup_assistant_schema
 from .add_assistant_path_schema import add_assistant_path_schema
 from .create_assistant_schema import create_assistant_schema
@@ -51,6 +53,14 @@ rules = {
         "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": extract_sitemap_urls_schema},
         "/assistant/process_drive_sources": {"process_drive_sources": assistant_id_schema},
         "/assistant/register_ops": {"register_ops": tools_op_schema},
+        # ── Layered Assistants ──────────────────────────────────────────────
+        "/assistant/layered/create_or_update": {
+            "create_or_update_layered_assistant": create_layered_assistant_schema
+        },
+        "/assistant/layered/list":   {"list_layered_assistants": {}},
+        "/assistant/layered/delete": {
+            "delete_layered_assistant": delete_layered_assistant_schema
+        },
     },
     "api_validators": {
         "/assistant/create": {"create": create_assistant_schema},
@@ -89,5 +99,13 @@ rules = {
         "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": extract_sitemap_urls_schema},
         "/assistant/process_drive_sources": {"process_drive_sources": assistant_id_schema},
         "/assistant/register_ops": {"register_ops": tools_op_schema},
+        # ── Layered Assistants ──────────────────────────────────────────────
+        "/assistant/layered/create_or_update": {
+            "create_or_update_layered_assistant": create_layered_assistant_schema
+        },
+        "/assistant/layered/list":   {"list_layered_assistants": {}},
+        "/assistant/layered/delete": {
+            "delete_layered_assistant": delete_layered_assistant_schema
+        },
     },
 }

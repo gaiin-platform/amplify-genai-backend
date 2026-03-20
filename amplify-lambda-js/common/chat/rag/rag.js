@@ -143,7 +143,7 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
         logger.debug("🔍 RAG: About to call promptUnifiedLLMForData with", dataSources.length, "dataSources");
         
         const promptMessages = [
-            ...chatBody.messages,
+            ...chatBody.messages.filter(m => m.role !== "system"), 
             {
                 role: "user",
                 content: `

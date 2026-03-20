@@ -1162,11 +1162,18 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.debug(f"[DIAGNOSTIC] ✅ Vector embedding successful for local chunk {local_chunk_index}")
 
                     logger.debug(f"[DIAGNOSTIC] ❓ Generating QA summary for local chunk {local_chunk_index}")
-                    response_qa_summary = generate_questions(clean_text, account_data)
+
+                    # DEFENSIVE: Wrap in try-catch to handle any unexpected errors from generate_questions
+                    try:
+                        response_qa_summary = generate_questions(clean_text, account_data)
+                    except Exception as gen_error:
+                        error_msg = f"generate_questions raised exception: {str(gen_error)}"
+                        logger.error(f"[DIAGNOSTIC] ❌ {error_msg}")
+                        response_qa_summary = {"success": False, "error": error_msg}
 
                     # DEFENSIVE: Handle unexpected response format (should always be dict, but protect against edge cases)
                     if not isinstance(response_qa_summary, dict):
-                        error_msg = f"Unexpected response type from generate_questions: {type(response_qa_summary).__name__}"
+                        error_msg = f"Unexpected response type from generate_questions: {type(response_qa_summary).__name__}, value: {str(response_qa_summary)[:200]}"
                         logger.error(f"[DIAGNOSTIC] ❌ {error_msg}")
                         response_qa_summary = {"success": False, "error": error_msg}
 

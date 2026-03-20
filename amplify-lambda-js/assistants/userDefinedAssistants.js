@@ -177,7 +177,7 @@ export const getAstgGroupId = async (assistantPublicId) => {
     return ast?.data?.groupId;
 }
 
-const getLatestAssistant = async (assistantPublicId) => {
+export const getLatestAssistant = async (assistantPublicId) => {
     /**
      * Retrieves the most recent version of an assistant from the DynamoDB table.
      *

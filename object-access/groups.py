@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import requests
 from datetime import datetime, timezone
 from pycommon.api.api_key import deactivate_key
 from pycommon.api.assistants import (
@@ -717,6 +718,145 @@ def update_system_users(event, context, current_user, name, data):
     except Exception as e:
         logger.error(f"Failed to update group system users in DynamoDB: {str(e)}")
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
+
+
+# ── Group Layered Assistants ─────────────────────────────────────────────────
+
+def _call_layered_assistant_api(api_key: str, method: str, endpoint: str, payload: dict = None):
+    """
+    Forward a request to the layered assistant service using the group API key.
+    This makes the downstream call appear as the group system user.
+    """
+    base_url = os.environ.get("API_BASE_URL", "").rstrip("/")
+    url = f"{base_url}{endpoint}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    try:
+        if method.upper() == "GET":
+            resp = requests.get(url, headers=headers, timeout=25)
+        else:
+            resp = requests.post(url, json={"data": payload or {}}, headers=headers, timeout=25)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logger.error("Layered assistant API call failed [%s %s]: %s", method, endpoint, exc)
+        return {"success": False, "message": str(exc)}
+
+
+def _group_member_with_api_key(group_id, user):
+    """
+    Check that *user* is any kind of member (read/write/admin) of the group and
+    return the group item + resolved API key.  Used for read-only group operations.
+    """
+    response = groups_table.get_item(Key={"group_id": group_id})
+    item = response.get("Item")
+    if not item:
+        return {"message": "Group not found", "success": False}
+    members = item.get("members", {})
+    if user not in members:
+        return {"message": "User is not a member of the group", "success": False}
+    api_key_result = retrieve_api_key(group_id)
+    if not api_key_result["success"]:
+        return api_key_result
+    item["access"] = api_key_result["apiKey"]
+    return {"item": item, "success": True}
+
+
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@validated(op="manage_layered_assistants")
+def manage_group_layered_assistants(event, context, current_user, name, data):
+    """
+    Proxy endpoint for group-scoped Layered Assistant CRUD.
+
+    The real work is done by the layered_assistants service, but it must run as
+    the group's system user so that 'createdBy' is set to the group_id and the
+    publicId gets the 'astgr/' prefix.
+
+    Request body (inside data["data"]):
+    {
+        "group_id": "GroupName_<uuid>",
+        "action":   "create_or_update" | "list" | "delete",
+
+        # For create_or_update:
+        "layeredAssistant": {
+            "publicId":    "astgr/<uuid>",   # omit / empty to create
+            "name":        "My Router",
+            "description": "...",
+            "rootNode":    { ... }
+        },
+
+        # For delete:
+        "publicId": "astgr/<uuid>"
+    }
+    """
+    payload  = data["data"]
+    group_id = payload.get("group_id", "").strip()
+    action   = payload.get("action", "").strip()
+
+    if not group_id:
+        return {"success": False, "message": "group_id is required."}
+    if action not in ("create_or_update", "list", "delete"):
+        return {"success": False, "message": f"Unknown action '{action}'. Expected: create_or_update, list, delete."}
+
+    # ----- authorisation -----
+    if action == "list":
+        # Read-only — any group member may list
+        auth_check = _group_member_with_api_key(group_id, current_user)
+    else:
+        # Mutating — require write or admin
+        auth_check = authorized_user(group_id, current_user)
+
+    if not auth_check["success"]:
+        return auth_check
+
+    group_api_key = auth_check["item"]["access"]
+
+    # ----- forward to layered assistant service -----
+    if action == "create_or_update":
+        la = payload.get("layeredAssistant", {})
+        if not la.get("name"):
+            return {"success": False, "message": "layeredAssistant.name is required."}
+        result = _call_layered_assistant_api(
+            group_api_key, "POST",
+            "/assistant/layered/create_or_update",
+            {
+                "publicId":    la.get("publicId", ""),
+                "name":        la["name"],
+                "description": la.get("description", ""),
+                "rootNode":    la.get("rootNode", {}),
+                "group_id":    group_id,   # explicit, so the LA service can store it directly
+            },
+        )
+
+    elif action == "list":
+        result = _call_layered_assistant_api(
+            group_api_key, "GET",
+            "/assistant/layered/list",
+        )
+
+    elif action == "delete":
+        public_id = payload.get("publicId", "").strip()
+        if not public_id:
+            return {"success": False, "message": "publicId is required for delete."}
+        result = _call_layered_assistant_api(
+            group_api_key, "POST",
+            "/assistant/layered/delete",
+            {"publicId": public_id},
+        )
+
+    log_item(
+        group_id,
+        f"Layered Assistant {action}",
+        current_user,
+        f"action={action} success={result.get('success')}",
+    )
+    return result
 
 
 def is_valid_group_id(group_id):
