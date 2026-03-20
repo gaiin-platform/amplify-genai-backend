@@ -214,23 +214,20 @@ export const handler = awslambda.streamifyResponse(protectedHandler);
 
 // streamHandler: For API Gateway REST API streaming with AWS_PROXY + ResponseTransferMode: STREAM
 export const streamHandler = awslambda.streamifyResponse(async (event, responseStream, context) => {
-    logger.debug("streamHandler: API Gateway AWS_PROXY streaming mode - using metadata format");
+    logger.debug("streamHandler: API Gateway AWS_PROXY streaming mode - using HttpResponseStream.from()");
 
-    // API Gateway requires metadata JSON + 8-byte delimiter before payload
-    const metadata = JSON.stringify({
+    // API Gateway requires metadata + delimiter - HttpResponseStream.from() handles this automatically
+    const httpResponseMetadata = {
         statusCode: 200,
         headers: {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Access-Control-Allow-Origin': '*'
         }
-    });
+    };
 
-    // Write metadata
-    responseStream.write(metadata);
-
-    // Write 8 null bytes as delimiter (required by API Gateway)
-    responseStream.write('\x00\x00\x00\x00\x00\x00\x00\x00');
+    // Use HttpResponseStream.from() to properly format response with metadata + 8-byte delimiter
+    responseStream = awslambda.HttpResponseStream.from(responseStream, httpResponseMetadata);
 
     // Now call protectedHandler which will stream the actual payload
     return await protectedHandler(event, responseStream, context);

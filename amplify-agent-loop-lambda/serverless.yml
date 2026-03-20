@@ -148,6 +148,7 @@ functions:
 
 resources:
   Resources:
+
     LambdaAgentLoopIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

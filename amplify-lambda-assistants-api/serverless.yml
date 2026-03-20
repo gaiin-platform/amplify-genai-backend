@@ -116,6 +116,9 @@ functions:
       - http:
           path: integrations/oauth/user/list
           method: get
+    environment:
+      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
+
 
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
@@ -131,7 +134,7 @@ functions:
     handler: integrations/drive_files.drive_files_to_data_sources
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 700
     events:
       - http:
           path: integrations/user/files/upload
@@ -180,7 +183,7 @@ functions:
     handler: service/core.execute_custom_auto
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
+    timeout: 300
     events:
       - http:
           path: assistant-api/execute-custom-auto
@@ -319,9 +322,63 @@ functions:
           path: integrations/mcp/server/refresh
           method: post
 
+  startMCPOAuth:
+    handler: integrations/mcp_servers.start_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/start
+          method: post
+          cors: true
 
-resources:
+  mcpOAuthCallback:
+    handler: integrations/mcp_servers.mcp_oauth_callback
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/callback
+          method: get
+
+  mcpOAuthExchange:
+    handler: integrations/mcp_servers.mcp_oauth_exchange
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/exchange
+          method: post
+          cors: true
+
+  disconnectMCPOAuth:
+    handler: integrations/mcp_servers.disconnect_mcp_oauth
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/disconnect
+          method: post
+          cors: true
+
+  refreshMCPOAuthToken:
+    handler: integrations/mcp_servers.refresh_mcp_oauth_token
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: integrations/mcp/server/oauth/refresh
+          method: post
+          cors: true
+
+
   Resources:
+
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
@@ -337,6 +394,9 @@ resources:
             method: POST
           - name: listIntegrationFiles
             path: /integrations/user/files
+            method: POST
+          - name: execute_custom_auto
+            path: /assistant-api/execute-custom-auto
             method: POST
 
     LambdaAPIIAMPolicy:

@@ -41,7 +41,11 @@ create_assistant_schema = {
                     "id": {
                         "type": "string",
                         "description": "The key of the data source",
-                    }
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "The type of the data source (e.g. 'bedrock/knowledge-base')",
+                    },
                 },
             },
         },

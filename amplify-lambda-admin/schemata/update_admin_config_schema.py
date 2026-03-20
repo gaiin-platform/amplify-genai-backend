@@ -556,6 +556,7 @@ update_admin_config_schema = {
                                             },
                                             "isEnabled": {"type": "boolean"},
                                             "allowUserWebSearchKeys": {"type": "boolean"},
+                                            "webSearchUserMessage": {"type": "string"},
                                             "api_key": {"type": "string"}
                                         },
                                         "required": [],

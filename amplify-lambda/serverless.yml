@@ -109,6 +109,7 @@ provider:
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-data-storage
+    POLL_STATUS_TABLE: ${self:service}-${sls:stage}-poll-status
 
     # Imported Variables from Parameter Store
     ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
@@ -211,6 +212,13 @@ functions:
           method: POST
           cors: true
 
+  parameter_store_populator:
+    handler: utilities/parameter_store_populator.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    description: Auto-populates Parameter Store with locally defined variables
+
   get_conversation:
     handler: state/conversation.get_conversation
     layers:
@@ -254,6 +262,16 @@ functions:
           method: get
           cors: true
 
+  get_poll_status:
+    handler: utilities/poll_status.get_poll_status_handler
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: poll/status
+          method: get
+          cors: true
 
   upload_file:
     handler: files/file.get_presigned_url
@@ -361,6 +379,7 @@ functions:
 
   user_share_load:
     handler: state/share.load_data_from_s3
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -565,6 +584,16 @@ resources:
         - LambdaIAMPolicyAPIGateway
 
   Resources:
+    # Custom resource to auto-populate Parameter Store with locally defined variables
+    ParameterStoreAutoPopulate:
+      Type: Custom::ParameterStorePopulate
+      Properties:
+        ServiceToken: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+        # No need to pass EnvironmentVariables - Lambda dynamically fetches them!
+
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
@@ -603,7 +632,13 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*  # Imported vars (with hyphen)
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
 
     # S3 Policy
     LambdaIAMPolicyS3:
@@ -694,6 +729,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
 
     # SQS Policy
     LambdaIAMPolicySQS:
@@ -1414,6 +1451,48 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
 
+    PollStatusTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.POLL_STATUS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: requestId
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: requestId
+            KeyType: HASH
+          - AttributeName: user
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: user-createdAt-index
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: status-index
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
   Outputs:
     AccountingChatUsageDynamoStreamArn:
       Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
@@ -1499,3 +1578,10 @@ resources:
       Export:
         Name:
           Fn::Sub: "${sls:stage}-EmbeddingChunksIndexDlqArn"
+   
+    ParameterStorePopulatorArn:
+      Description: "ARN of the parameter store populator Lambda function"
+      Value: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-ParameterStorePopulatorArn"

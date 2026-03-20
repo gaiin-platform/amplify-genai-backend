@@ -124,6 +124,7 @@ functions:
 
 resources:
   Resources:
+
     DataDisclosureIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

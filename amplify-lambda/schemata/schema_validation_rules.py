@@ -80,7 +80,8 @@ rules = {
         "/state/settings/save": {"save": save_settings_schema},
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
-        "/state/register_ops": {"register_ops": tools_op_schema}, 
+        "/state/register_ops": {"register_ops": tools_op_schema},
+        "/poll/status": {"get_poll_status": {}},
         **user_data_validators,
     },
     "api_validators": {
