@@ -115,17 +115,6 @@ def get_presigned_download_url(event, context, current_user, name, data):
 
     download_filename = item["name"]
     
-    # Define video file types (same as in create_file_metadata_entry)
-    VIDEO_FILE_TYPES = [
-        "video/mp4",
-        "video/mpeg", 
-        "video/quicktime",
-        "video/x-msvideo",  # .avi
-        "video/x-ms-wmv",   # .wmv
-        "video/webm",
-        "video/ogg"
-    ]
-    
     is_media_file = item["type"] in IMAGE_FILE_TYPES or item["type"] in VIDEO_FILE_TYPES
     response_headers = (
         {"ResponseContentDisposition": f'attachment; filename="{download_filename}"'}
@@ -304,18 +293,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         
         item = response["Item"]
         file_type = item.get("type")
-        
-        # Define video file types (same as in create_file_metadata_entry)
-        VIDEO_FILE_TYPES = [
-            "video/mp4",
-            "video/mpeg", 
-            "video/quicktime",
-            "video/x-msvideo",  # .avi
-            "video/x-ms-wmv",   # .wmv
-            "video/webm",
-            "video/ogg"
-        ]
-        
+      
         if file_type and (file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES):
             media_type = "image" if file_type in IMAGE_FILE_TYPES else "video"
             logger.warning("File %s is a %s file, not supported for reprocessing", key, media_type)
@@ -1858,19 +1836,8 @@ def delete_file(event, context, current_user, name, data):
         file_type = item.get("type")
         logger.debug("File type: %s", file_type)
         
-        # Define video file types (same as in create_file_metadata_entry)
-        VIDEO_FILE_TYPES = [
-            "video/mp4",
-            "video/mpeg", 
-            "video/quicktime",
-            "video/x-msvideo",  # .avi
-            "video/x-ms-wmv",   # .wmv
-            "video/webm",
-            "video/ogg"
-        ]
         
         is_media_file = file_type and (file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES)
-        is_image = file_type and file_type in IMAGE_FILE_TYPES
 
         file_contents_hash = None
         global_key = key
