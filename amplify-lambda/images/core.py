@@ -82,6 +82,12 @@ def cal_total_tokens_claude(width, height):
     return math.ceil(tokens)
 
 
+def cal_total_tokens_gemini_video(duration_seconds):
+    # Gemini - 263 tokens per second of video (fixed rate per Google's token counting docs)
+    # Ref: https://ai.google.dev/gemini-api/docs/tokens
+    return math.ceil(263 * duration_seconds)
+
+
 def cal_total_tokens_gpt(width, height):
     # GPT token calculation for high resolution only
     # The image should already be resized to fit within the required constraints
@@ -156,12 +162,26 @@ def process_images_for_chat(event, context):
                 name = item.get("name", "Unknown")
                 tags = item.get("tags", [])
                 createdAt = item.get("createdAt", datetime.now().isoformat())
-                
+                duration_seconds = float(item.get("data", {}).get("durationSeconds", 0) or 0)
+
                 # Get video file size from the head response
                 content_length = head_response.get("ContentLength", 0)
 
                 # Create video metadata and write to S3
-                put_video_file_metadata(bucket_name, file_key, name, tags, content_type, content_length, createdAt)
+                video_metadata = put_video_file_metadata(bucket_name, file_key, name, tags, content_type, content_length, createdAt, duration_seconds)
+
+                # Update totalTokens in DynamoDB (same as images do)
+                try:
+                    files_table.update_item(
+                        Key={"id": file_key},
+                        UpdateExpression="SET totalTokens = :totalTokens",
+                        ExpressionAttributeValues={
+                            ":totalTokens": video_metadata["totalTokens"]
+                        },
+                    )
+                    logger.info("Updated file total tokens for video %s", file_key)
+                except Exception as e:
+                    logger.error("Error updating file total tokens for video %s: %s", file_key, str(e))
 
                 # Update permissions for the video file
                 user = file_key.split("/")[0]
@@ -291,13 +311,17 @@ def put_image_file_metadata(bucket_name, key, name, tags, image_size, createdAt)
     return image_metadata
 
 
-def put_video_file_metadata(bucket_name, key, name, tags, content_type, content_length, createdAt):
+def put_video_file_metadata(bucket_name, key, name, tags, content_type, content_length, createdAt, duration_seconds=0):
+    gemini_tokens = cal_total_tokens_gemini_video(duration_seconds) if duration_seconds else 0
     metadata_key = key + ".metadata.json"
     video_metadata = {
         "name": name,
         "contentKey": key,
         "createdAt": createdAt,
-        "totalTokens": 0,
+        "totalTokens": {
+            "gemini": gemini_tokens,
+        },
+        "durationSeconds": duration_seconds,
         "tags": tags,
         "isImage": False,
         "isVideo": True,
