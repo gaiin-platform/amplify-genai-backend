@@ -8,7 +8,7 @@ from PIL import Image
 from io import BytesIO
 import urllib.parse
 from rag.core import update_object_permissions
-from pycommon.const import IMAGE_FILE_TYPES
+from pycommon.const import IMAGE_FILE_TYPES, VIDEO_FILE_TYPES
 
 s3 = boto3.client("s3")
 
@@ -82,6 +82,12 @@ def cal_total_tokens_claude(width, height):
     return math.ceil(tokens)
 
 
+def cal_total_tokens_gemini_video(duration_seconds):
+    # Gemini - 263 tokens per second of video (fixed rate per Google's token counting docs)
+    # Ref: https://ai.google.dev/gemini-api/docs/tokens
+    return math.ceil(263 * duration_seconds)
+
+
 def cal_total_tokens_gpt(width, height):
     # GPT token calculation for high resolution only
     # The image should already be resized to fit within the required constraints
@@ -102,14 +108,22 @@ def process_images_for_chat(event, context):
         bucket_name = event["Records"][0]["s3"]["bucket"]["name"]
         file_key = urllib.parse.unquote(event["Records"][0]["s3"]["object"]["key"])
 
+        # Skip metadata files to prevent recursive invocations when metadata is written back to the bucket
+        if file_key.endswith(".metadata.json"):
+            logger.info("Skipping metadata file: %s", file_key)
+            return {
+                "statusCode": 200,
+                "body": json.dumps("Skipping metadata file"),
+            }
+
         # Get object metadata to retrieve the ContentType
         head_response = s3.head_object(Bucket=bucket_name, Key=file_key)
-        response = s3.get_object(Bucket=bucket_name, Key=file_key)
         content_type = head_response["ContentType"]
 
         # Handle different content type scenarios
         if content_type == "text/plain":
             # Check if this is a base64-encoded image (already processed)
+            response = s3.get_object(Bucket=bucket_name, Key=file_key)
             file_content = response["Body"].read()
             if is_base64_image(file_content):
                 logger.info(
@@ -130,12 +144,66 @@ def process_images_for_chat(event, context):
             logger.info(
                 "Processing new image file: %s with content type: %s", file_key, content_type
             )
+            response = s3.get_object(Bucket=bucket_name, Key=file_key)
             image_data = response["Body"].read()
         else:
-            # This is an unsupported file type
-            raise Exception(
-                f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES}"
-            )
+            
+            if content_type in VIDEO_FILE_TYPES:
+                # Video files go to the same bucket as images but don't need image processing
+                # However, we must create a .metadata.json so the frontend stops polling
+                logger.info("Processing video file metadata for: %s with content type: %s", file_key, content_type)
+                
+                # Look up file info from DynamoDB
+                dynamodb = boto3.resource("dynamodb")
+                files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
+                db_response = files_table.get_item(Key={"id": file_key})
+                item = db_response.get("Item", {})
+                
+                name = item.get("name", "Unknown")
+                tags = item.get("tags", [])
+                createdAt = item.get("createdAt", datetime.now().isoformat())
+                duration_seconds = float(item.get("data", {}).get("durationSeconds", 0) or 0)
+
+                # Get video file size from the head response
+                content_length = head_response.get("ContentLength", 0)
+
+                # Create video metadata and write to S3
+                video_metadata = put_video_file_metadata(bucket_name, file_key, name, tags, content_type, content_length, createdAt, duration_seconds)
+
+                # Update totalTokens in DynamoDB (same as images do)
+                try:
+                    files_table.update_item(
+                        Key={"id": file_key},
+                        UpdateExpression="SET totalTokens = :totalTokens",
+                        ExpressionAttributeValues={
+                            ":totalTokens": video_metadata["totalTokens"]
+                        },
+                    )
+                    logger.info("Updated file total tokens for video %s", file_key)
+                except Exception as e:
+                    logger.error("Error updating file total tokens for video %s: %s", file_key, str(e))
+
+                # Update permissions for the video file
+                user = file_key.split("/")[0]
+                permissions_update = {
+                    "dataSources": [file_key],
+                    "emailList": [user],
+                    "permissionLevel": "write",
+                    "policy": "",
+                    "principalType": "user",
+                    "objectType": "datasource",
+                }
+                update_object_permissions(user, permissions_update)
+
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps("Video file metadata created successfully"),
+                }
+            else:
+                # This is an unsupported file type
+                raise Exception(
+                    f"Unsupported file type for image processing: {content_type}. Supported types: {IMAGE_FILE_TYPES + VIDEO_FILE_TYPES}"
+                )
 
         image = resize_image(Image.open(BytesIO(image_data)))
 
@@ -241,3 +309,28 @@ def put_image_file_metadata(bucket_name, key, name, tags, image_size, createdAt)
     logger.info("Uploaded metadata to %s/%s", bucket_name, metadata_key)
 
     return image_metadata
+
+
+def put_video_file_metadata(bucket_name, key, name, tags, content_type, content_length, createdAt, duration_seconds=0):
+    gemini_tokens = cal_total_tokens_gemini_video(duration_seconds) if duration_seconds else 0
+    metadata_key = key + ".metadata.json"
+    video_metadata = {
+        "name": name,
+        "contentKey": key,
+        "createdAt": createdAt,
+        "totalTokens": {
+            "gemini": gemini_tokens,
+        },
+        "durationSeconds": duration_seconds,
+        "tags": tags,
+        "isImage": False,
+        "isVideo": True,
+        "contentType": content_type,
+        "contentLength": content_length,
+    }
+    logger.debug("Video metadata: %s", video_metadata)
+
+    s3.put_object(Bucket=bucket_name, Key=metadata_key, Body=json.dumps(video_metadata))
+    logger.info("Uploaded video metadata to %s/%s", bucket_name, metadata_key)
+
+    return video_metadata

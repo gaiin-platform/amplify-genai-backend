@@ -25,7 +25,7 @@ from rag.rag_secrets import get_rag_secrets_for_document
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
+from pycommon.const import APIAccessType, IMAGE_FILE_TYPES, VIDEO_FILE_TYPES
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
 from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
@@ -1885,59 +1885,85 @@ def terminate_embedding(event, context, current_user, name, data):
 
 
 async def _check_image_status_async(ds_key, image_bucket, executor):
-    """Async helper to check individual image status"""
+    """Async helper to check individual image/video status"""
     try:
         if not image_bucket:
-            logger.error(f"[GET_STATUS] S3_IMAGE_INPUT_BUCKET_NAME not configured for image: {ds_key}")
+            logger.error(f"[GET_STATUS] S3_IMAGE_INPUT_BUCKET_NAME not configured for: {ds_key}")
             return ds_key, None
-        
+
         # Run S3 head_object in thread pool
         loop = asyncio.get_event_loop()
         s3_client = boto3.client("s3")
-        
+
         def _head_object():
             return s3_client.head_object(Bucket=image_bucket, Key=ds_key)
-        
+
         try:
             head_response = await loop.run_in_executor(executor, _head_object)
             content_type = head_response.get("ContentType", "")
-            
-            # If ContentType is text/plain, it means the image was processed to base64
+
+            # Images: process_images_for_chat replaces the file with base64 text
             if content_type == "text/plain":
                 return ds_key, "completed"
+
+            # Videos: process_images_for_chat does NOT modify the original file —
+            # it only writes a .metadata.json alongside it. So we check for that file.
+            elif content_type in VIDEO_FILE_TYPES:
+                def _head_metadata():
+                    return s3_client.head_object(Bucket=image_bucket, Key=ds_key + ".metadata.json")
+
+                try:
+                    await loop.run_in_executor(executor, _head_metadata)
+                    # Metadata file exists — video was processed successfully
+                    return ds_key, "completed"
+                except ClientError as meta_e:
+                    meta_error_code = meta_e.response["Error"]["Code"]
+                    if meta_error_code in ("NoSuchKey", "404"):
+                        # Metadata not written yet — check how long ago the video was uploaded
+                        last_modified = head_response.get("LastModified")
+                        if last_modified:
+                            now = datetime.datetime.now(datetime.timezone.utc)
+                            time_diff = (now - last_modified).total_seconds()
+                            if time_diff <= 300:  # 5 minutes
+                                return ds_key, "processing"
+                            else:
+                                logger.warning(f"[GET_STATUS] Video {ds_key} uploaded {time_diff:.0f}s ago with no metadata, likely failed processing")
+                                return ds_key, "failed"
+                        else:
+                            return ds_key, "failed"
+                    else:
+                        logger.error(f"[GET_STATUS] S3 error checking video metadata for {ds_key}: {meta_e}")
+                        return ds_key, None
+
+            # Images: original image still present but not yet processed
             elif content_type in IMAGE_FILE_TYPES:
-                # Original image exists but not yet processed - check if recent upload
                 last_modified = head_response.get("LastModified")
                 if last_modified:
                     now = datetime.datetime.now(datetime.timezone.utc)
                     time_diff = (now - last_modified).total_seconds()
-                    
-                    # If uploaded within last 5 minutes, consider it processing
                     if time_diff <= 300:  # 5 minutes
                         return ds_key, "processing"
                     else:
-                        # Been too long, likely failed
                         logger.warning(f"[GET_STATUS] Image {ds_key} uploaded {time_diff:.0f}s ago, likely failed processing")
                         return ds_key, "failed"
                 else:
                     return ds_key, "failed"
+
             else:
                 # Unknown content type
-                logger.warning(f"[GET_STATUS] Image {ds_key} has unexpected ContentType: {content_type}")
+                logger.warning(f"[GET_STATUS] {ds_key} has unexpected ContentType: {content_type}")
                 return ds_key, "failed"
-                
+
         except ClientError as e:
             error_code = e.response["Error"]["Code"]
             if error_code == "NoSuchKey":
-                # Image doesn't exist at all
                 return ds_key, "not_found"
             else:
-                # Other S3 error
-                logger.error(f"[GET_STATUS] S3 error checking image {ds_key}: {e}")
+                logger.error(f"[GET_STATUS] S3 error checking {ds_key}: {e}")
                 return ds_key, None
-                
+
     except Exception as e:
-        logger.error(f"[GET_STATUS] Error checking image status for {ds_key}: {e}")
+        logger.error(f"[GET_STATUS] Error checking status for {ds_key}: {e}")
         return ds_key, None
 
 
@@ -2019,7 +2045,7 @@ async def _get_embedding_status_async(data_sources_input):
             logger.warning(f"[GET_STATUS] Skipping data source with missing key: {ds}")
             continue
             
-        if ds_type in IMAGE_FILE_TYPES:
+        if ds_type in IMAGE_FILE_TYPES or ds_type in VIDEO_FILE_TYPES:
             image_data_sources.append(ds)
         else:
             text_data_sources.append(ds)
