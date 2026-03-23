@@ -17,6 +17,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
 
+from pycommon.db_utils import convert_floats_to_decimal
 from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH, SEVERITY_CRITICAL
 import traceback
@@ -373,7 +374,7 @@ def create_file_metadata_entry(
             "name": name,
             "type": file_type,
             "tags": tags,
-            "data": data_props,
+            "data": convert_floats_to_decimal(data_props),
             "knowledgeBase": knowledge_base,
             "createdAt": datetime.now().isoformat(),
             "updatedAt": datetime.now().isoformat(),
@@ -686,11 +687,13 @@ def get_presigned_url(event, context, current_user, name, data):
         # overwrite this with updated metadata (e.g. content length).
         if file_type in VIDEO_FILE_TYPES:
             logger.info("Creating immediate video metadata for local compatibility")
+            duration_seconds = float(props.get("durationSeconds", 0) or 0)
             video_metadata = {
                 "name": name,
                 "contentKey": key,
                 "createdAt": datetime.now().isoformat(),
                 "totalTokens": 0,
+                "durationSeconds": duration_seconds,
                 "tags": tags,
                 "isImage": False,
                 "isVideo": True,
