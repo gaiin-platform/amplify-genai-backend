@@ -102,14 +102,22 @@ def process_images_for_chat(event, context):
         bucket_name = event["Records"][0]["s3"]["bucket"]["name"]
         file_key = urllib.parse.unquote(event["Records"][0]["s3"]["object"]["key"])
 
+        # Skip metadata files to prevent recursive invocations when metadata is written back to the bucket
+        if file_key.endswith(".metadata.json"):
+            logger.info("Skipping metadata file: %s", file_key)
+            return {
+                "statusCode": 200,
+                "body": json.dumps("Skipping metadata file"),
+            }
+
         # Get object metadata to retrieve the ContentType
         head_response = s3.head_object(Bucket=bucket_name, Key=file_key)
-        response = s3.get_object(Bucket=bucket_name, Key=file_key)
         content_type = head_response["ContentType"]
 
         # Handle different content type scenarios
         if content_type == "text/plain":
             # Check if this is a base64-encoded image (already processed)
+            response = s3.get_object(Bucket=bucket_name, Key=file_key)
             file_content = response["Body"].read()
             if is_base64_image(file_content):
                 logger.info(
@@ -130,6 +138,7 @@ def process_images_for_chat(event, context):
             logger.info(
                 "Processing new image file: %s with content type: %s", file_key, content_type
             )
+            response = s3.get_object(Bucket=bucket_name, Key=file_key)
             image_data = response["Body"].read()
         else:
             

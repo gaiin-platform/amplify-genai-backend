@@ -4,7 +4,7 @@ import os
 import traceback
 import boto3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from model_rates.update_table import load_model_rate_table, get_csv_model_ids
+from model_rates.update_table import load_model_rate_table, get_csv_model_ids, required_new_cols
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation
@@ -158,7 +158,7 @@ logger = getLogger("models")
 def get_user_available_models(event, context, current_user, name, data):
     with ThreadPoolExecutor(max_workers=3) as executor:
         # Submit all independent operations simultaneously
-        supported_models_future = executor.submit(get_supported_models)
+        supported_models_future = executor.submit(lambda: get_supported_models(allow_new_col_defaults=True))
         affiliated_groups_future = executor.submit(lambda: get_user_affiliated_groups(data["access_token"]))
         default_models_future = executor.submit(get_admin_default_models)
         
@@ -197,7 +197,7 @@ def get_user_available_models(event, context, current_user, name, data):
         )
     ]
     
-    logger.debug("Available user models:", available_models)
+    logger.debug(f"Available user models: {available_models}")
 
     default_results = get_admin_default_models()
     # setting as None if not found
@@ -218,6 +218,7 @@ def get_user_available_models(event, context, current_user, name, data):
             "documentCaching": None,
         }
         available_models_by_id = {model["id"]: model for model in available_models}
+        logger.debug(f"available_models_by_id: {available_models_by_id}")
 
         # Process all default model types in a loop
         for model_type in default_model_types.keys():
@@ -352,6 +353,7 @@ def extract_data(model_id, model_data):
         "outputTokenLimit": model_data.get("outputTokenLimit", -1),
         "supportsImages": model_data.get("supportsImages", False),
         "supportsVideo": supports_video,
+        "supportsImageGeneration": model_data.get("supportsImageGeneration", False),
         "supportsReasoning": model_data.get("supportsReasoning", False),
         "provider": model_data.get("provider", ""),
         "supportsSystemPrompts": model_data.get("supportsSystemPrompts", False),
@@ -380,20 +382,55 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
 
     if not verify_user_as_admin(data["access_token"], "Get Supported Models"):
         return {"success": False, "error": "Unable to authenticate user as admin"}
-    model_result = get_supported_models()
-    current_model_data = model_result.get("data", {})
-    # if there was an error or there were models in the table then we can return the value like normal
-    # otherwise we need to run the fill model table
-    if not model_result["success"] or models_are_current(current_model_data):
-        return model_result
 
-    logger.info("Models are not popluated or are outdated")
-    load_model_rate_table({})
+    logger.info("Admin get supported models: checking if backfill needed")
+    if not models_are_current_in_db():
+        logger.info("Models are not populated or are outdated, triggering load_model_rate_table backfill")
+        load_result = load_model_rate_table({})
+        logger.info("load_model_rate_table completed with result: %s", load_result)
+    else:
+        logger.info("Models are current, no backfill needed")
+
     return get_supported_models()
+
+
+def models_are_current_in_db():
+    """Check raw DynamoDB rows directly — not the in-memory defaulted data."""
+    try:
+        model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
+        response = model_rate_table.scan()
+        raw_items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = model_rate_table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+            raw_items.extend(response.get("Items", []))
+    except Exception as e:
+        logger.error("models_are_current_in_db: failed to scan table: %s", str(e))
+        return False
+
+    csv_model_ids = get_csv_model_ids()
+    raw_ids = {item.get("ModelID") for item in raw_items if item.get("ModelID")}
+
+    missing_ids = csv_model_ids - raw_ids
+    if missing_ids:
+        logger.info("models_are_current_in_db: %d CSV models missing from table: %s", len(missing_ids), missing_ids)
+        return False
+
+    # Check that every row has all required new columns
+    models_missing_cols = [
+        item["ModelID"] for item in raw_items
+        if not all(col in item for col in required_new_cols)
+    ]
+    if models_missing_cols:
+        logger.info("models_are_current_in_db: %d models missing new columns: %s", len(models_missing_cols), models_missing_cols)
+        return False
+
+    logger.info("models_are_current_in_db: all models are current")
+    return True
 
 
 def models_are_current(models_data):
     if not models_data:
+        logger.info("models_are_current: no models data, considered outdated")
         return False
 
     csv_model_ids = get_csv_model_ids()
@@ -401,8 +438,29 @@ def models_are_current(models_data):
         model.get("id") for model in models_data.values() if model.get("id") is not None
     }
 
-    # Verify that all CSV model IDs are present in the models_data
-    return csv_model_ids.issubset(models_data_ids)
+    missing_from_table = csv_model_ids - models_data_ids
+    if missing_from_table:
+        logger.info("models_are_current: %d CSV models missing from table: %s", len(missing_from_table), missing_from_table)
+        return False
+
+    logger.info("models_are_current: all %d CSV models present in table", len(csv_model_ids))
+
+    # Also check that existing rows have all required new columns
+    required_new_internal = {
+        dynamodb_to_internal_field_map[col]
+        for col in required_new_cols
+        if col in dynamodb_to_internal_field_map
+    }
+    models_missing_cols = [
+        model_id for model_id, model in models_data.items()
+        if not required_new_internal.issubset(model.keys())
+    ]
+    if models_missing_cols:
+        logger.info("models_are_current: %d models missing new columns, backfill needed: %s", len(models_missing_cols), models_missing_cols)
+        return False
+
+    logger.info("models_are_current: all models have required columns")
+    return True
 
 
 def is_model_current(model_data):
@@ -410,11 +468,11 @@ def is_model_current(model_data):
         return False
 
     required_cols_set = set(dynamodb_to_internal_field_map.values())
-    existing_columns = set(model_data.keys()) if model_data else set()
+    existing_columns = set(model_data.keys())
     return required_cols_set.issubset(existing_columns)
 
 
-def get_supported_models():
+def get_supported_models(allow_new_col_defaults=False):
     model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
     models_data = []
     try:
@@ -449,6 +507,22 @@ def get_supported_models():
             # Filter out outdated models
             if is_model_current(transformed_model):
                 return model_id, transformed_model
+            elif allow_new_col_defaults:
+                # User path: if the only missing fields are known new columns, fill in
+                # defaults and pass through. If it has missing core/old columns, skip it.
+                optional_new_fields = {
+                    dynamodb_to_internal_field_map[col]
+                    for col in required_new_cols
+                    if col in dynamodb_to_internal_field_map
+                }
+                missing = set(dynamodb_to_internal_field_map.values()) - set(transformed_model.keys())
+                if missing.issubset(optional_new_fields):
+                    for field in missing:
+                        transformed_model[field] = False
+                    return model_id, transformed_model
+                else:
+                    logger.debug("Skipping outdated model: %s", model_id)
+                    return None, None
             else:
                 logger.debug("Skipping outdated model: %s", model_id)
                 return None, None
@@ -605,6 +679,8 @@ dynamodb_to_internal_field_map = {
     "Built-In": "isBuiltIn",
     "SupportsSystemPrompts": "supportsSystemPrompts",
     "AdditionalSystemPrompt": "systemPrompt",
+    "SupportsImageGeneration": "supportsImageGeneration",
+    "SupportsVideo": "supportsVideo",
 }
 
 

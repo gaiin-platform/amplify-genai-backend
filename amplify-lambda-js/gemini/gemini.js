@@ -5,7 +5,7 @@ import axios from 'axios';
 import { getLogger } from "../common/logging.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { trace } from "../common/trace.js";
-import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content, getVideoBase64Content, isVideo } from "../datasource/datasources.js";
+import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content, getVideoBase64Content, isVideo, extractKey } from "../datasource/datasources.js";
 import { sendErrorMessage, sendStateEventToStream, sendStatusEventToStream } from "../common/streams.js";
 import { getSecretApiKey } from "../common/secrets.js";
 import { newStatus, getThinkingMessage } from "../common/status.js";
@@ -478,6 +478,9 @@ async function includeImageSources(imageSources, messages, model, responseStream
             }
         }
 
+        sendStateEventToStream(responseStream, {
+            sources: { images: { sources: imageSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
+        });
         sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
@@ -536,6 +539,9 @@ async function includeVideoSources(videoSources, messages, model, responseStream
             }
         }
 
+        sendStateEventToStream(responseStream, {
+            sources: { videos: { sources: videoSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
+        });
         sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
