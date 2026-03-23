@@ -67,6 +67,12 @@ export async function getUserMCPServers(userId) {
 
         logger.debug(`Querying MCP servers for user: ${fullUserId}, PK: ${pk}`);
 
+        // Also query without IDP prefix for backward compatibility with records stored
+        // by the Python backend before the IDP prefix alignment fix.
+        const legacyHashKey = createHashKey(userId, APP_ID);
+        const legacyPk = `${legacyHashKey}#${ENTITY_TYPE}`;
+        const queryLegacy = legacyPk !== pk;
+
         const command = new QueryCommand({
             TableName: tableName,
             KeyConditionExpression: 'PK = :pk',
@@ -77,9 +83,12 @@ export async function getUserMCPServers(userId) {
 
         const response = await docClient.send(command);
         const servers = [];
+        const seenIds = new Set();
 
-        if (response.Items && response.Items.length > 0) {
-            for (const item of response.Items) {
+        function collectItems(items) {
+            for (const item of (items || [])) {
+                if (seenIds.has(item.SK)) continue;
+                seenIds.add(item.SK);
                 const serverConfig = item.data || {};
                 servers.push({
                     id: item.SK,
@@ -94,6 +103,22 @@ export async function getUserMCPServers(userId) {
                     updatedAt: serverConfig.updatedAt,
                     headers: serverConfig.headers || {}
                 });
+            }
+        }
+
+        collectItems(response.Items);
+
+        // Fallback: also query the legacy (non-prefixed) PK for records stored before
+        // the IDP prefix was applied consistently (e.g. early OAuth-registered servers).
+        if (queryLegacy) {
+            const legacyResponse = await docClient.send(new QueryCommand({
+                TableName: tableName,
+                KeyConditionExpression: 'PK = :pk',
+                ExpressionAttributeValues: { ':pk': legacyPk }
+            }));
+            if (legacyResponse.Items?.length > 0) {
+                logger.debug(`Found ${legacyResponse.Items.length} legacy (non-prefixed) MCP server(s) for user`);
+                collectItems(legacyResponse.Items);
             }
         }
 
@@ -322,6 +347,9 @@ export async function connectMCPServer(userId, serverId) {
     if (activeClients.has(cacheKey)) {
         const existingClient = activeClients.get(cacheKey);
         if (existingClient.connected) {
+            // Sync headers from DynamoDB so OAuth token changes (disconnect/refresh)
+            // take effect immediately without restarting the server process.
+            existingClient.headers = serverConfig.headers || {};
             return existingClient;
         }
         // Remove stale client
@@ -436,17 +464,48 @@ export async function getMCPToolDefinitions(userId) {
  * @param {string} toolName - Full tool name (mcp_{serverId}_{toolName})
  * @param {Object} args - Tool arguments
  * @param {Object} [attachmentContext] - Optional attachment context (images, documents) to forward
+ * @param {string} [userToken] - Optional JWT access token for OAuth refresh on 401
  * @returns {Object} Tool execution result
  */
-export async function executeMCPTool(userId, toolName, args, attachmentContext) {
+export async function executeMCPTool(userId, toolName, args, attachmentContext, userToken) {
     const { serverId, originalName } = await import('./mcpClient.js').then(m => m.parseMCPToolName(toolName));
 
     if (!serverId || !originalName) {
         throw new Error(`Invalid MCP tool name: ${toolName}`);
     }
 
-    const client = await connectMCPServer(userId, serverId);
-    return await client.executeTool(originalName, args, attachmentContext);
+    let client = await connectMCPServer(userId, serverId);
+    let result = await client.executeTool(originalName, args, attachmentContext);
+
+    // Retry once on 401 (expired OAuth token) if we have a token to call the refresh endpoint
+    if (result.isError && result.content?.includes('401') && userToken) {
+        logger.info(`MCP tool 401 detected for server ${serverId}, attempting OAuth token refresh`);
+        try {
+            const apiBase = process.env.API_BASE_URL;
+            const refreshResp = await fetch(`${apiBase}/integrations/mcp/server/oauth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({ data: { serverId } })
+            });
+            const refreshData = await refreshResp.json();
+            if (refreshData.success) {
+                // Evict stale cached client so connectMCPServer re-reads new token from DynamoDB
+                const cacheKey = `${userId}:${serverId}`;
+                activeClients.delete(cacheKey);
+                client = await connectMCPServer(userId, serverId);
+                result = await client.executeTool(originalName, args, attachmentContext);
+            } else {
+                logger.warn(`MCP OAuth refresh failed for server ${serverId}: ${refreshData.message}`);
+            }
+        } catch (refreshErr) {
+            logger.error(`MCP OAuth refresh request failed for server ${serverId}: ${refreshErr.message}`);
+        }
+    }
+
+    return result;
 }
 
 // Re-export the isMCPTool function for convenience
