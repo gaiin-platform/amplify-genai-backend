@@ -1,8 +1,8 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand} from "@aws-sdk/client-dynamodb";
-import {unmarshall} from "@aws-sdk/util-dynamodb";
+import { DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -50,7 +50,7 @@ const checkUserInCognitoTable = async (userId) => {
             TableName: cognitoTable,
             Key: { 'user_id': { S: userId } }
         });
-        
+
         const response = await dynamodbClient.send(command);
         return !!response.Item;
     } catch (error) {
@@ -172,7 +172,7 @@ const api_authenticator = async (apiKey, event) => {
                 ':apiKeyVal': { S: lookupValue }
             }
         });
-        
+
 
         logger.debug("Checking API key validity.");
         const response = await dynamodbClient.send(command);
@@ -216,7 +216,7 @@ const api_authenticator = async (apiKey, event) => {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key does not have access to chat functionality" })
             };
-        }        
+        }
 
         // update last accessed.
         const updateItemCommand = new UpdateItemCommand({
@@ -239,7 +239,7 @@ const api_authenticator = async (apiKey, event) => {
         try {
             if (!apiData.account) {
                 const error = new Error("Account ID is missing from apiData");
-                error.code = 1001; 
+                error.code = 1001;
                 throw error;
             }
 
