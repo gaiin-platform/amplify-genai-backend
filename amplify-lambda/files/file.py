@@ -605,7 +605,7 @@ def get_presigned_url(event, context, current_user, name, data):
     groupId = data["data"].get("groupId", None)
 
     # Extract ragOn parameter, default to True if not provided
-    rag_on = data["data"].get("ragOn", False)
+    rag_on = data["data"].get("ragOn", True)
     logger.info("RAG processing is %s for this upload", 'enabled' if rag_on else 'disabled')
 
     if groupId:
