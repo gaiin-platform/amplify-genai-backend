@@ -377,6 +377,7 @@ functions:
           cors: true
 
 
+resources:
   Resources:
 
     # Custom resource to extend API Gateway timeouts for long-running functions
