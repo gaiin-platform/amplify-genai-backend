@@ -161,6 +161,23 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return {"success": False, "message": "File not found"}
 
 
+def is_group_admin(group_id, user):
+    if user == group_id: return True 
+    """Check directly if a user has admin role in a group."""
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    try:
+        response = groups_table.get_item(Key={"group_id": group_id})
+        item = response.get("Item")
+        if not item:
+            logger.warning("Group %s not found when checking admin access for %s", group_id, user)
+            return False
+        members = item.get("members", {})
+        return members.get(user) == "admin"
+    except ClientError as e:
+        logger.error("Error checking group admin status for %s in %s: %s", user, group_id, e)
+        return False
+
+
 def can_access_file(table_item, current_user, key, group_id, access_token):
     logger.debug(
         "Checking if user %s can access file %s with groupId %s", current_user, key, group_id
@@ -252,6 +269,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 # due to lambda layer requirements in rag.core, we have to define this function here
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
 })
@@ -265,6 +283,17 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     s3 = boto3.client("s3")
     access_token = data["access_token"]
 
+    data = data["data"]
+    key = data["key"]
+    group_id = data.get("groupId")
+
+    if group_id and not is_group_admin(group_id, current_user):
+        logger.warning("User %s attempted to reprocess group %s file without admin rights", current_user, group_id)
+        return {"success": False, "message": f"User does not have admin access to group: {group_id}"}
+
+    if group_id:
+        current_user = group_id
+
     account_data = {
         "user": current_user,
         "account": data["account"],
@@ -272,9 +301,6 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         "access_token": access_token,
     }
 
-    data = data["data"]
-    key = data["key"]
-    group_id = data.get("groupId")
     bucket = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
 
     if not bucket or not key:
@@ -586,6 +612,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
 )
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
     "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
@@ -610,6 +637,9 @@ def get_presigned_url(event, context, current_user, name, data):
 
     if groupId:
         logger.debug("GroupId ds upload: %s", groupId)
+        if not is_group_admin(groupId, current_user):
+            logger.warning("User %s attempted to upload to group %s without admin rights", current_user, groupId)
+            return {"success": False, "error": f"User does not have admin access to group: {groupId}"}
         current_user = groupId
 
     account_data = {
@@ -650,6 +680,27 @@ def get_presigned_url(event, context, current_user, name, data):
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
+
+    # Validate astp claim — user must have owner/write access to the assistant they're claiming.
+    # Without this check, anyone could write a permission row linking an arbitrary assistant
+    # to their uploaded file's global hash key during RAG processing.
+    astp_id = props.get("astp") if isinstance(props, dict) else None
+    if astp_id:
+        try:
+            oa_table = dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"])
+            response = oa_table.query(
+                KeyConditionExpression=Key("object_id").eq(astp_id) & Key("principal_id").eq(current_user)
+            )
+            has_ast_access = any(
+                item.get("permission_level") in ("owner", "write")
+                for item in response.get("Items", [])
+            )
+            if not has_ast_access:
+                logger.warning("User %s claimed astp %s in upload props but has no write access — stripping claim", current_user, astp_id)
+                props = {k: v for k, v in props.items() if k != "astp"}
+        except Exception as e:
+            logger.error("Error validating astp claim %s for user %s: %s — stripping claim", astp_id, current_user, e)
+            props = {k: v for k, v in props.items() if k != "astp"}
 
     logger.info(
         "Getting presigned URL for %s of type %s with tags %s and data %s and knowledge base %s", name, file_type, tags, data, knowledge_base
