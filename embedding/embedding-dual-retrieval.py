@@ -470,13 +470,19 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
         cached_result = performance_cache.get_cached_group_permissions(current_user, group_key)
         if cached_result:
             cached_accessible, cached_denied = cached_result
+            cached_known = set(cached_accessible) | set(cached_denied)
             # Filter cached results by current dataSourceIds
             group_accessible = [src_id for src_id in cached_accessible if src_id in dataSourceIds]
             group_denied = [src_id for src_id in cached_denied if src_id in dataSourceIds]
+            uncached_ids = [src_id for src_id in dataSourceIds if src_id not in cached_known]
             accessible_src_ids.extend(group_accessible)
             access_denied_src_ids.extend(group_denied)
-            logger.info(f"Cache hit for group {groupId}: {len(group_accessible)} accessible, {len(group_denied)} denied")
-            continue
+            logger.info(f"Cache hit for group {groupId}: {len(group_accessible)} accessible, {len(group_denied)} denied, {len(uncached_ids)} uncached")
+            if not uncached_ids:
+                continue
+            # Some requested IDs weren't in cache — fall through to check them freshly
+            logger.info(f"Cache miss for {len(uncached_ids)} new datasource IDs for group {groupId}, checking permissions")
+            dataSourceIds = uncached_ids
         
         try:
             # ensure the groupId has perms to the ds
@@ -580,13 +586,19 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
         cached_result = performance_cache.get_cached_ast_permissions(current_user, ast_key)
         if cached_result:
             cached_accessible, cached_denied = cached_result
+            cached_known = set(cached_accessible) | set(cached_denied)
             # Filter cached results by current data_source_ids
             ast_accessible = [src_id for src_id in cached_accessible if src_id in data_source_ids]
             ast_denied = [src_id for src_id in cached_denied if src_id in data_source_ids]
+            uncached_ids = [src_id for src_id in data_source_ids if src_id not in cached_known]
             accessible_src_ids.extend(ast_accessible)
             access_denied_src_ids.extend(ast_denied)
-            logger.info(f"Cache hit for AST {ast_id}: {len(ast_accessible)} accessible, {len(ast_denied)} denied")
-            continue
+            logger.info(f"Cache hit for AST {ast_id}: {len(ast_accessible)} accessible, {len(ast_denied)} denied, {len(uncached_ids)} uncached")
+            if not uncached_ids:
+                continue
+            # Some requested IDs weren't in cache — fall through to check them freshly
+            logger.info(f"Cache miss for {len(uncached_ids)} new datasource IDs for AST {ast_id}, checking permissions")
+            data_source_ids = uncached_ids
         
         try:
             # Query the lookup table directly by assistantId using GSI
