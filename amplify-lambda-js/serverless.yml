@@ -244,7 +244,9 @@ resources:
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"

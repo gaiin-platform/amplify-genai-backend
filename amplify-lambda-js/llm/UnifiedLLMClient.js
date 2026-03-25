@@ -453,7 +453,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 model,
                 requestId,
                 user: params?.account?.user || params.user || "unknown",
-                disableReasoning
+                disableReasoning: disableReasoning ?? params.options?.disableReasoning
             }
         };
 
