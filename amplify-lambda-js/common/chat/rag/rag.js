@@ -172,7 +172,7 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                     skipHistoricalContext: true  // RAG question extraction doesn't need conversation history
                 }
             },
-            promptMessages,
+            promptMessages.filter(m => m.role && m.role !== "system"), // Remove system messages to avoid confusion in the structured response
             {
                 type: "object",
                 properties: {

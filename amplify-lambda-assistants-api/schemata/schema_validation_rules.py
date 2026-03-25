@@ -40,6 +40,7 @@ rules = {
         "/integrations/mcp/server/oauth/start": {"start_mcp_oauth": {}},
         "/integrations/mcp/server/oauth/exchange": {"mcp_oauth_exchange": {}},
         "/integrations/mcp/server/oauth/disconnect": {"disconnect_mcp_oauth": {}},
+        "/integrations/mcp/server/oauth/refresh": {"refresh_mcp_oauth_token": {}},
     },
     "api_validators": {
         "/assistant-api/execute-custom-auto": {
@@ -68,5 +69,6 @@ rules = {
         "/integrations/mcp/server/oauth/start": {"start_mcp_oauth": {}},
         "/integrations/mcp/server/oauth/exchange": {"mcp_oauth_exchange": {}},
         "/integrations/mcp/server/oauth/disconnect": {"disconnect_mcp_oauth": {}},
+        "/integrations/mcp/server/oauth/refresh": {"refresh_mcp_oauth_token": {}},
     }
 }

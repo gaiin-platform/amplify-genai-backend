@@ -154,6 +154,17 @@ export class MCPClient {
                 }).join('\n');
             }
 
+            // Some MCP servers return structured results without text content.
+            // Provide a deterministic textual fallback so follow-up model turns
+            // can still reference and return the exact tool output.
+            if (!content && result) {
+                try {
+                    content = JSON.stringify(result, null, 2);
+                } catch {
+                    content = String(result);
+                }
+            }
+
             return {
                 success: true,
                 content: content,

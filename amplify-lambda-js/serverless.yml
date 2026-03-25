@@ -217,19 +217,6 @@ resources:
   Resources:
    
 
-    # Custom Resource: Auto-populate Parameter Store with locally defined variables
-    # This runs on every deployment to ensure SSM parameters are up-to-date
-    ParameterStoreAutoPopulate:
-      Type: Custom::ParameterStorePopulate
-      Properties:
-        # ServiceToken references the populator Lambda in amplify-lambda service
-        ServiceToken:
-          Fn::ImportValue: "${sls:stage}-ParameterStorePopulatorArn"
-        ServiceName: ${self:service}
-        Stage: ${sls:stage}
-        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
-
-
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -257,7 +244,9 @@ resources:
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
