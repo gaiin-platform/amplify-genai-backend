@@ -540,28 +540,34 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
     try:
         token = data["access_token"]
         payload = data["data"]
-        
+
+        # Extract optional assistantId (not a provider key)
+        assistant_id = payload.get("assistantId")
+
         logger.info("Processing drive files to data sources for user: %s", current_user)
         start_time = time.time()
-        
+
         # Create a deep copy of the payload to return with updates
         updated_payload = copy.deepcopy(payload)
-        
+
         # Global cache to track processed files across ALL providers and sections
         processed_files_cache = {}  # file_id -> file_metadata
-        
+
         # Create tasks for each provider to run concurrently
         provider_tasks = []
         provider_names = []
-        
+
         for integration_provider in payload.keys():
+            if integration_provider == "assistantId":
+                continue  # Skip the assistantId key, it's not a provider
             logger.debug("Creating async task for provider: %s", integration_provider)
             task = _process_provider_async(
-                integration_provider, 
-                payload[integration_provider], 
-                token, 
-                current_user, 
-                processed_files_cache
+                integration_provider,
+                payload[integration_provider],
+                token,
+                current_user,
+                processed_files_cache,
+                assistant_id
             )
             provider_tasks.append(task)
             provider_names.append(integration_provider)
@@ -624,7 +630,7 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
         return {"success": False, "error": str(e)}
 
 
-async def _process_provider_async(integration_provider: str, provider_data: Dict, token: str, current_user: str, processed_files_cache: Dict) -> Dict:
+async def _process_provider_async(integration_provider: str, provider_data: Dict, token: str, current_user: str, processed_files_cache: Dict, assistant_id: str = None) -> Dict:
     """
     Process a single integration provider asynchronously.
     Returns updated provider data structure.
@@ -640,16 +646,16 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
         if "files" in provider_data:
             files_data = provider_data["files"]
             updated_files, cache_updates = await process_files_with_cache(
-                files_data, provider_type, token, current_user, integration_provider, processed_files_cache
+                files_data, provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id
             )
             updated_provider_data["files"] = updated_files
             processed_files_cache.update(cache_updates)
-        
+
         # Process folders (with awareness of already processed files)
         if "folders" in provider_data:
             folders_data = provider_data["folders"]
             updated_folders = await process_folders_with_cache(
-                folders_data, provider_type, token, current_user, integration_provider, processed_files_cache
+                folders_data, provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id
             )
             # Filter out empty folders to prevent schema validation errors
             non_empty_folders = {k: v for k, v in updated_folders.items() if v}
@@ -680,7 +686,7 @@ async def _process_provider_async(integration_provider: str, provider_data: Dict
         raise e  # Re-raise to be caught by gather()
 
 
-async def process_files_with_cache(files_data, provider_type, token, current_user, integration_provider, processed_files_cache):
+async def process_files_with_cache(files_data, provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id=None):
     """Process individual files for syncing with global cache awareness (async with 10 concurrent workers)."""
     updated_files = {}
     cache_updates = {}
@@ -740,7 +746,7 @@ async def process_files_with_cache(files_data, provider_type, token, current_use
                         if file_info:
                             # Upload to our datasource
                             upload_result = upload_file_to_datasource(
-                                token, file_info, file_contents, file_metadata["type"], current_user
+                                token, file_info, file_contents, file_metadata["type"], current_user, assistant_id
                             )
 
                             if upload_result:
@@ -798,7 +804,7 @@ async def process_files_with_cache(files_data, provider_type, token, current_use
 
 
 
-async def process_folders_with_cache(folders_data, provider_type, token, current_user, integration_provider, processed_files_cache):
+async def process_folders_with_cache(folders_data, provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id=None):
     """Process folders and their contained files for syncing (async with 15 concurrent workers per folder)."""
     updated_folders = {}
     total_folders = len(folders_data)
@@ -858,7 +864,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
                             logger.info("[FOLDER FILE %s/%s] Updating: %s", file_index + 1, len(current_folder_files), file_id)
                             updated_file = await process_single_file_with_cache(
                                 file_id, existing_metadata, provider_file,
-                                provider_type, token, current_user, integration_provider, processed_files_cache
+                                provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id
                             )
                             updated_files_count += 1
                             return file_id, updated_file
@@ -876,7 +882,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
                         }
                         updated_file = await process_single_file_with_cache(
                             file_id, new_file_metadata, provider_file,
-                            provider_type, token, current_user, integration_provider, processed_files_cache
+                            provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id
                         )
                         # Only add file if it has required fields
                         if updated_file and updated_file.get("type"):
@@ -933,7 +939,7 @@ async def process_folders_with_cache(folders_data, provider_type, token, current
 
 
 
-async def process_single_file_with_cache(file_id, file_metadata, provider_file, provider_type, token, current_user, integration_provider, processed_files_cache):
+async def process_single_file_with_cache(file_id, file_metadata, provider_file, provider_type, token, current_user, integration_provider, processed_files_cache, assistant_id=None):
     """Process a single file for upload/update with cache awareness."""
     try:
         # Check cache first
@@ -962,11 +968,11 @@ async def process_single_file_with_cache(file_id, file_metadata, provider_file, 
         if file_contents:
             # Create file info from provider data
             file_info = format_provider_file_info(provider_file, provider_type)
-            
+
             upload_result = upload_file_to_datasource(
-                token, file_info, file_contents, file_metadata["type"], current_user
+                token, file_info, file_contents, file_metadata["type"], current_user, assistant_id
             )
-            
+
             if upload_result:
                 # Delete old datasource if it exists
                 if file_metadata.get("datasource") and file_metadata["datasource"].get("id"):
@@ -1142,7 +1148,7 @@ def get_file_metadata_from_provider(file_id, provider_type, token, integration=N
         return None
 
 
-def upload_file_to_datasource(token, file_info, file_contents, file_type, current_user):
+def upload_file_to_datasource(token, file_info, file_contents, file_type, current_user, assistant_id=None):
     """Upload file to datasource and return AttachedDocument structure."""
     try:
         file_name = file_info.get("name", "unknown_file")
@@ -1161,7 +1167,8 @@ def upload_file_to_datasource(token, file_info, file_contents, file_type, curren
                 "type": "assistant-drive-integration-file",
                 "originalFileId": file_info.get("id"),
                 "originalMimeType": mime_type,
-                "syncedAt": get_current_iso_timestamp()
+                "syncedAt": get_current_iso_timestamp(),
+                **(({"astp": assistant_id}) if assistant_id else {})
             },
             enter_rag_pipeline=True,
             groupId=None
