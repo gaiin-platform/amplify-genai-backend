@@ -713,6 +713,11 @@ def create_assistant(event, context, current_user, name, data):
     provider = extracted_data.get("provider", "amplify")
     is_group_user = is_group_sys_user(data)
 
+    # Ensure assistant_public_id exists before scraping so it can be embedded in data_props
+    ast_prefix = "astg" if is_group_user else "ast"
+    if not assistant_public_id:
+        assistant_public_id = f"{ast_prefix}p/{str(uuid.uuid4())}"
+
     # Identify and store website URLs
     website_data_sources = []
     standard_data_sources = []
@@ -785,7 +790,7 @@ def create_assistant(event, context, current_user, name, data):
                     # Attempt immediate scraping
                     max_pages = metadata.get("maxPages")
                     exclusions = metadata.get("exclusions")
-                    scraped_data = scrape_website_content(url, access_token, is_sitemap, max_pages, exclusions)
+                    scraped_data = scrape_website_content(url, access_token, is_sitemap, max_pages, exclusions, assistant_public_id)
                     scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
                     if scraped_data.get("success") and scraped_web_ds:
                         for ds in scraped_web_ds:
