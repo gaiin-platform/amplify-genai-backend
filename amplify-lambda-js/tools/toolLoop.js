@@ -297,11 +297,51 @@ export async function executeToolLoop(params, messages, model, responseStream, o
             const mcpClientSide = options.mcpClientSide === true;
 
             // If this is an MCP tool and client-side execution is requested,
-            // return the tool call to the frontend instead of executing
+            // first try server-side execution (OAuth servers are stored in DynamoDB with
+            // token refresh support). Only fall back to client-side if the server is not
+            // in the backend registry.
             if (isToolMCP && mcpClientSide) {
-                logger.info(`MCP tool ${toolName} requires client-side execution`);
+                try {
+                    logger.info(`MCP tool ${toolName} - trying server-side execution first`);
+                    if (responseStream && !responseStream.writableEnded) {
+                        sendStatusEventToStream(responseStream, newStatus({
+                            id: `mcp-tool-${toolName}`,
+                            summary: `Executing MCP tool: ${toolName}...`,
+                            inProgress: true,
+                            animated: true,
+                            icon: 'tool'
+                        }));
+                    }
+                    const serverSideResult = await executeMCPTool(mcpUserId, toolName, args,
+                        hasAttachments ? attachmentContext : undefined,
+                        params.account?.accessToken);
+                    if (responseStream && !responseStream.writableEnded) {
+                        sendStatusEventToStream(responseStream, newStatus({
+                            id: `mcp-tool-${toolName}`,
+                            summary: `MCP tool ${toolName} completed`,
+                            inProgress: false
+                        }));
+                    }
+                    toolResults.push(serverSideResult);
+                    continue; // processed server-side, move to next tool call
+                } catch (serverSideError) {
+                    if (!serverSideError.message?.includes('not found')) {
+                        // Server found but execution failed — surface as tool error
+                        logger.error(`MCP tool ${toolName} server-side execution failed: ${serverSideError.message}`);
+                        toolResults.push({
+                            callId: toolCall.id,
+                            toolName,
+                            content: `Error executing tool: ${serverSideError.message}`,
+                            isError: true
+                        });
+                        continue;
+                    }
+                    // Server not in backend registry — fall through to client-side
+                    logger.info(`MCP tool ${toolName} not in server registry, routing to client-side`);
+                }
 
-                // Send the tool call info to the frontend via state
+                // Client-side fallback: send tool call to frontend
+                logger.info(`MCP tool ${toolName} requires client-side execution`);
                 if (responseStream && !responseStream.writableEnded) {
                     sendStateEventToStream(responseStream, {
                         mcpToolCalls: [{
@@ -313,6 +353,10 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                             },
                             // Include attachment context so the client can pass files to the MCP server
                             attachments: hasAttachments ? attachmentContext : undefined
+                        }]
+                    });
+                }
+
                 // Return partial result - frontend will continue the conversation
                 return {
                     content: result.content || '',
@@ -353,7 +397,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     // Execute MCP tool server-side (for publicly accessible MCP servers)
                     // Use mcpUserId (Cognito sub) to match Python storage format
                     toolResult = await executeMCPTool(mcpUserId, toolName, args,
-                        hasAttachments ? attachmentContext : undefined);
+                        hasAttachments ? attachmentContext : undefined,
+                        params.account?.accessToken);
 
                     // Clear MCP tool status
                     if (responseStream && !responseStream.writableEnded) {

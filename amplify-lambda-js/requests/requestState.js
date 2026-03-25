@@ -72,7 +72,12 @@ export const shouldKill = async (user, requestId) => {
 }
 
 export const createRequestState = async (user, requestId) => {
-    return await updateKillswitch(user, requestId, false);
+    try {
+        return await updateKillswitch(user, requestId, false);
+    } catch (e) {
+        logger.error("Error creating request state: " + e);
+        logger.error("Failed to create request state, but allowing request to proceed without state tracking. This may lead to inability to kill the request if needed.");
+    }
 }
 
 export const deleteRequestState = async (user, requestId) => {
