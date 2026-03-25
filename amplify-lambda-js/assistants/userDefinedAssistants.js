@@ -622,13 +622,32 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         }
                     }
 
+                    // Build agent metadata with skills for Goal conversion in agent loop
+                    const agentMetadata = {
+                        assistant,
+                        model: params.model.id,
+                        ...workflowTemplateId,
+                        builtInOperations,
+                        operations
+                    };
+
+                    // Pass active skills to agent loop for Goal conversion
+                    if (activeSkills.length > 0) {
+                        // Include full skill content for Goal description
+                        agentMetadata.skills = injectedSkills.map(s => ({
+                            id: s.id,
+                            name: s.name,
+                            content: s.content
+                        }));
+                        logger.info(`Passing ${activeSkills.length} skills to agent loop: ${activeSkills.map(s => s.name).join(', ')}`);
+                    }
+
                     invokeAgent(
                         params.account.accessToken,
                         sessionId,
                         params.options.requestId,
                         body.messages,
-                        {assistant, model: params.model.id, ...workflowTemplateId, 
-                        builtInOperations, operations}
+                        agentMetadata
                     );
 
                     sendStatusEventToStream(responseStream, statusInfo);

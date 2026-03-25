@@ -502,6 +502,23 @@ def handle_event(
             logger.info("Assistant operations: %s", ops)
             operations.extend(ops)
 
+        # Convert skills from metadata to Goals
+        # Skills are passed from amplify-lambda-js when invoking the agent
+        if metadata and metadata.get("skills"):
+            skills = metadata.get("skills", [])
+            logger.info("Adding %d skills as goals from metadata", len(skills))
+            for skill in skills:
+                skill_name = skill.get("name", "Skill")
+                skill_content = skill.get("content", "")
+                if skill_content:
+                    additional_goals.append(
+                        Goal(
+                            name=f"Skill - {skill_name}:",
+                            description=skill_content
+                        )
+                    )
+                    logger.info("Added skill goal: %s", skill_name)
+
         if operations:
             # logger.debug("Operations: %s", operations)
             op_tools = ops_to_tools(operations)
