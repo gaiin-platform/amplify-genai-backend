@@ -2576,11 +2576,20 @@ def move_message_handler(current_user, data):
     path="/microsoft/integrations/list_folders",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftListFolders",
-    description="Lists all mail folders.",
-    parameters={},
+    description="Lists all mail folders, including nested child folders.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "includeChildFolders": {
+                "type": "boolean",
+                "description": "Whether to recursively fetch child/nested folders. Defaults to true.",
+            },
+        },
+        "required": [],
+    },
 )
 def list_folders_handler(current_user, data):
-    return common_handler(list_folders)(current_user, data)
+    return common_handler(list_folders, includeChildFolders=True)(current_user, data)
 
 
 @api_tool(

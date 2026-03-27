@@ -938,13 +938,14 @@ def move_message(
         raise OutlookError(f"Network error while moving message: {str(e)}")
 
 
-def list_folders(current_user: str, access_token: str = None) -> List[Dict]:
+def list_folders(current_user: str, access_token: str = None, include_child_folders: bool = True) -> List[Dict]:
     """
-    Lists all mail folders.
+    Lists all mail folders, including child/nested folders.
 
     Args:
         current_user: User identifier
         access_token: Optional access token
+        include_child_folders: Whether to recursively fetch child folders (default: True)
 
     Returns:
         List of mail folder details
@@ -954,11 +955,36 @@ def list_folders(current_user: str, access_token: str = None) -> List[Dict]:
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/mailFolders"
-        response = session.get(url)
-        if not response.ok:
-            handle_graph_error(response)
-        return response.json().get("value", [])
+
+        def fetch_folders(url: str) -> List[Dict]:
+            """Fetch all folders from a URL, following @odata.nextLink pagination."""
+            folders = []
+            while url:
+                response = session.get(url, params={"$top": 100} if "?" not in url else None)
+                if not response.ok:
+                    handle_graph_error(response)
+                data = response.json()
+                folders.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+            return folders
+
+        def fetch_with_children(parent_url: str) -> List[Dict]:
+            """Fetch folders and recursively fetch their child folders."""
+            folders = fetch_folders(parent_url)
+            if not include_child_folders:
+                return folders
+            result = []
+            for folder in folders:
+                result.append(folder)
+                child_count = folder.get("childFolderCount", 0)
+                if child_count > 0:
+                    child_url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder['id']}/childFolders"
+                    children = fetch_with_children(child_url)
+                    result.extend(children)
+            return result
+
+        return fetch_with_children(f"{GRAPH_ENDPOINT}/me/mailFolders")
+
     except requests.RequestException as e:
         raise OutlookError(f"Network error while listing folders: {str(e)}")
 
