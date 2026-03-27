@@ -93,6 +93,19 @@ class S3EmailNotesMessageHandler(MessageHandler):
 
                 logger.info(f"Email metadata: From={from_header}, To={to_header}, Subject={subject}")
 
+                # Validate destination email - only process emails sent to notes@
+                # Parse recipient email from "Name <email>" format or plain email
+                import re
+                to_email_match = re.search(r'<(.+?)>', to_header)
+                if to_email_match:
+                    destination_email = to_email_match.group(1).lower()
+                else:
+                    destination_email = to_header.lower().strip()
+
+                if destination_email != self.NOTES_EMAIL.lower():
+                    logger.warning(f"Email not sent to {self.NOTES_EMAIL}, ignoring. Destination: {destination_email}")
+                    return {"result": {"ignored": True, "reason": "wrong_destination", "destination": destination_email}}
+
                 # Parse sender email from "Name <email>" format
                 import re
                 email_match = re.search(r'<(.+?)>', from_header)
