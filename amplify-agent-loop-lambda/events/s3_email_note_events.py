@@ -93,6 +93,19 @@ class S3EmailNotesMessageHandler(MessageHandler):
 
                 logger.info(f"Email metadata: From={from_header}, To={to_header}, Subject={subject}")
 
+                # Validate destination email - only process emails sent to notes@
+                # Parse recipient email from "Name <email>" format or plain email
+                import re
+                to_email_match = re.search(r'<(.+?)>', to_header)
+                if to_email_match:
+                    destination_email = to_email_match.group(1).lower()
+                else:
+                    destination_email = to_header.lower().strip()
+
+                if destination_email != self.NOTES_EMAIL.lower():
+                    logger.warning(f"Email not sent to {self.NOTES_EMAIL}, ignoring. Destination: {destination_email}")
+                    return {"result": {"ignored": True, "reason": "wrong_destination", "destination": destination_email}}
+
                 # Parse sender email from "Name <email>" format
                 import re
                 email_match = re.search(r'<(.+?)>', from_header)
@@ -160,15 +173,20 @@ class S3EmailNotesMessageHandler(MessageHandler):
 
                     # Upload to Notes S3 bucket
                     try:
+                        # S3 metadata must be ASCII-only, so encode non-ASCII characters
+                        safe_filename = att["filename"].encode('ascii', 'ignore').decode('ascii')
+                        safe_sender = source_email.encode('ascii', 'ignore').decode('ascii')
+                        safe_username = sender_username.encode('ascii', 'ignore').decode('ascii')
+
                         s3.put_object(
                             Bucket=notes_bucket,
                             Key=attachment_s3_key,
                             Body=att["content"],
                             ContentType=att["content_type"],
                             Metadata={
-                                'original_filename': att["filename"],
-                                'sender': source_email,
-                                'username': sender_username,
+                                'original_filename': safe_filename,
+                                'sender': safe_sender,
+                                'username': safe_username,
                                 'upload_source': 'email_handler'
                             }
                         )
@@ -176,7 +194,7 @@ class S3EmailNotesMessageHandler(MessageHandler):
                         logger.info(f"Uploaded attachment to S3: {notes_bucket}/{attachment_s3_key}")
 
                         attachments_metadata.append({
-                            "filename": att["filename"],
+                            "filename": safe_filename,  # Use ASCII-safe filename
                             "content_type": att["content_type"],
                             "size": len(att["content"]),
                             "s3_bucket": notes_bucket,

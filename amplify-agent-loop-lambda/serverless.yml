@@ -109,6 +109,7 @@ provider:
     role:
       managedPolicies:
         - !Ref LambdaAgentLoopIAMPolicy
+        - !Ref LambdaEmailProcessingPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
 functions:
@@ -247,6 +248,16 @@ resources:
                 - s3:ListBucket
               Resource:
                 - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
+            # DynamoDB permissions for Cognito users
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
                 # AI Scheduler storage table (for SES email forwarding workflow)
@@ -570,3 +581,23 @@ resources:
               Condition:
                 StringEquals:
                   AWS:SourceAccount: !Ref AWS::AccountId
+
+    # Separate IAM policy for email processing (keeps main policy under 6KB limit)
+    LambdaEmailProcessingPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-${sls:stage}-email-processing-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
