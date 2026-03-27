@@ -194,7 +194,7 @@ class S3EmailNotesMessageHandler(MessageHandler):
                         logger.info(f"Uploaded attachment to S3: {notes_bucket}/{attachment_s3_key}")
 
                         attachments_metadata.append({
-                            "filename": att["filename"],
+                            "filename": safe_filename,  # Use ASCII-safe filename
                             "content_type": att["content_type"],
                             "size": len(att["content"]),
                             "s3_bucket": notes_bucket,
