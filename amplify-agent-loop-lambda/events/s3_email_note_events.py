@@ -173,15 +173,20 @@ class S3EmailNotesMessageHandler(MessageHandler):
 
                     # Upload to Notes S3 bucket
                     try:
+                        # S3 metadata must be ASCII-only, so encode non-ASCII characters
+                        safe_filename = att["filename"].encode('ascii', 'ignore').decode('ascii')
+                        safe_sender = source_email.encode('ascii', 'ignore').decode('ascii')
+                        safe_username = sender_username.encode('ascii', 'ignore').decode('ascii')
+
                         s3.put_object(
                             Bucket=notes_bucket,
                             Key=attachment_s3_key,
                             Body=att["content"],
                             ContentType=att["content_type"],
                             Metadata={
-                                'original_filename': att["filename"],
-                                'sender': source_email,
-                                'username': sender_username,
+                                'original_filename': safe_filename,
+                                'sender': safe_sender,
+                                'username': safe_username,
                                 'upload_source': 'email_handler'
                             }
                         )
