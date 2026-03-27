@@ -208,7 +208,9 @@ def get_event_details(current_user, event_id, access_token, user_timezone: str =
             handle_graph_error(response)
 
         event = response.json()
-        return format_event(event)
+        # If we sent Prefer timezone header, times are already local
+        already_local = user_timezone and user_timezone != "UTC"
+        return format_event(event, times_already_local=already_local)
 
     except requests.RequestException as e:
         raise CalendarError(f"Network error while fetching event: {str(e)}")
@@ -255,7 +257,9 @@ def get_events_between_dates(
 
             data = response.json()
             events = data.get("value", [])
-            all_events.extend([format_event(evt) for evt in events])
+            # If we sent Prefer timezone header, times are already local
+            already_local = user_timezone and user_timezone != "UTC"
+            all_events.extend([format_event(evt, times_already_local=already_local) for evt in events])
 
             # Handle pagination
             url = data.get("@odata.nextLink")
@@ -266,111 +270,95 @@ def get_events_between_dates(
         raise CalendarError(f"Network error while fetching events: {str(e)}")
 
 
-def format_event(event: Dict) -> Dict:
+def format_event(event: Dict, times_already_local: bool = False) -> Dict:
     """
     Format event data consistently with proper timezone handling.
-    Converts UTC times to Central Time before returning.
+
+    When `times_already_local` is True (caller sent Prefer: outlook.timezone header),
+    Graph already returned times in the requested timezone — pass through as-is.
+
+    When `times_already_local` is False (no Prefer header, e.g. create/update responses),
+    Graph returns UTC times — convert them to Central Time for display.
 
     Args:
         event: Raw event data from Graph API
+        times_already_local: If True, skip UTC→Central conversion (caller used Prefer header)
 
     Returns:
         Dict containing formatted event details with timezone information
     """
-    # Get UTC times from the event
-    start_utc_str = event.get("start", {}).get("dateTime", "")
-    end_utc_str = event.get("end", {}).get("dateTime", "")
+    start_raw = event.get("start", {}).get("dateTime", "")
+    end_raw = event.get("end", {}).get("dateTime", "")
 
-    # Convert UTC to Central Time
-    start_ct_str = start_utc_str
-    end_ct_str = end_utc_str
-    start_timezone = "Central Standard Time"
-    end_timezone = "Central Standard Time"
+    if times_already_local:
+        # Prefer header was sent — Graph already returned local times. Pass through.
+        start_str = start_raw
+        end_str = end_raw
+        start_timezone = event.get("start", {}).get("timeZone", "Central Standard Time")
+        end_timezone = event.get("end", {}).get("timeZone", "Central Standard Time")
+    else:
+        # No Prefer header — Graph returned UTC. Convert to Central Time.
+        start_str = start_raw
+        start_timezone = "Central Standard Time"
+        end_str = end_raw
+        end_timezone = "Central Standard Time"
 
-    if start_utc_str:
-        try:
-            # Parse UTC datetime (format: "2025-11-14T15:00:00.0000000" or "2025-11-14T15:00:00Z")
-            # Handle format with microseconds
-            if "." in start_utc_str:
-                # Remove extra digits after decimal to get standard format
-                parts = start_utc_str.split(".")
-                date_part = parts[0]
-                # Keep only first 6 digits of microseconds for parsing
-                micro_part = (
-                    parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
-                )
-                start_utc_clean = f"{date_part}.{micro_part}"
-            else:
-                start_utc_clean = start_utc_str
+        if start_raw:
+            try:
+                if "." in start_raw:
+                    parts = start_raw.split(".")
+                    micro_part = parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
+                    start_clean = f"{parts[0]}.{micro_part}"
+                else:
+                    start_clean = start_raw
 
-            # Parse and ensure UTC timezone
-            start_dt_utc = datetime.fromisoformat(
-                start_utc_clean.replace("Z", "+00:00")
-            )
-            if start_dt_utc.tzinfo is None:
-                start_dt_utc = start_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+                start_dt_utc = datetime.fromisoformat(start_clean.replace("Z", "+00:00"))
+                if start_dt_utc.tzinfo is None:
+                    start_dt_utc = start_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
 
-            # Convert to Central Time
-            start_dt_ct = start_dt_utc.astimezone(ZoneInfo("America/Chicago"))
-            # Format to match API format: "2025-11-14T15:00:00.0000000" (7 digits after decimal)
-            microseconds = start_dt_ct.strftime("%f")
-            start_ct_str = (
-                start_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
-            )
+                start_dt_ct = start_dt_utc.astimezone(ZoneInfo("America/Chicago"))
+                microseconds = start_dt_ct.strftime("%f")
+                start_str = start_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
 
-            # Determine if it's CST or CDT
-            if start_dt_ct.dst() != timedelta(0):
-                start_timezone = "Central Daylight Time"
-            else:
-                start_timezone = "Central Standard Time"
-        except (ValueError, AttributeError) as e:
-            # If parsing fails, keep original UTC time
-            start_ct_str = start_utc_str
-            start_timezone = event.get("start", {}).get("timeZone", "UTC")
+                if start_dt_ct.dst() != timedelta(0):
+                    start_timezone = "Central Daylight Time"
+                else:
+                    start_timezone = "Central Standard Time"
+            except (ValueError, AttributeError):
+                start_str = start_raw
+                start_timezone = event.get("start", {}).get("timeZone", "UTC")
 
-    if end_utc_str:
-        try:
-            # Parse UTC datetime (format: "2025-11-14T15:00:00.0000000" or "2025-11-14T15:00:00Z")
-            # Handle format with microseconds
-            if "." in end_utc_str:
-                # Remove extra digits after decimal to get standard format
-                parts = end_utc_str.split(".")
-                date_part = parts[0]
-                # Keep only first 6 digits of microseconds for parsing
-                micro_part = (
-                    parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
-                )
-                end_utc_clean = f"{date_part}.{micro_part}"
-            else:
-                end_utc_clean = end_utc_str
+        if end_raw:
+            try:
+                if "." in end_raw:
+                    parts = end_raw.split(".")
+                    micro_part = parts[1][:6] if len(parts[1]) >= 6 else parts[1].ljust(6, "0")
+                    end_clean = f"{parts[0]}.{micro_part}"
+                else:
+                    end_clean = end_raw
 
-            # Parse and ensure UTC timezone
-            end_dt_utc = datetime.fromisoformat(end_utc_clean.replace("Z", "+00:00"))
-            if end_dt_utc.tzinfo is None:
-                end_dt_utc = end_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+                end_dt_utc = datetime.fromisoformat(end_clean.replace("Z", "+00:00"))
+                if end_dt_utc.tzinfo is None:
+                    end_dt_utc = end_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
 
-            # Convert to Central Time
-            end_dt_ct = end_dt_utc.astimezone(ZoneInfo("America/Chicago"))
-            # Format to match API format: "2025-11-14T15:00:00.0000000" (7 digits after decimal)
-            microseconds = end_dt_ct.strftime("%f")
-            end_ct_str = end_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
+                end_dt_ct = end_dt_utc.astimezone(ZoneInfo("America/Chicago"))
+                microseconds = end_dt_ct.strftime("%f")
+                end_str = end_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
 
-            # Determine if it's CST or CDT
-            if end_dt_ct.dst() != timedelta(0):
-                end_timezone = "Central Daylight Time"
-            else:
-                end_timezone = "Central Standard Time"
-        except (ValueError, AttributeError) as e:
-            # If parsing fails, keep original UTC time
-            end_ct_str = end_utc_str
-            end_timezone = event.get("end", {}).get("timeZone", "UTC")
+                if end_dt_ct.dst() != timedelta(0):
+                    end_timezone = "Central Daylight Time"
+                else:
+                    end_timezone = "Central Standard Time"
+            except (ValueError, AttributeError):
+                end_str = end_raw
+                end_timezone = event.get("end", {}).get("timeZone", "UTC")
 
     return {
         "id": event.get("id", ""),
         "subject": event.get("subject", ""),
-        "start": start_ct_str,
+        "start": start_str,
         "startTimeZone": start_timezone,
-        "end": end_ct_str,
+        "end": end_str,
         "endTimeZone": end_timezone,
         "originalStartTimeZone": event.get("originalStartTimeZone", ""),
         "originalEndTimeZone": event.get("originalEndTimeZone", ""),
@@ -1120,7 +1108,9 @@ def list_calendar_events(
                 handle_graph_error(response)
             data = response.json()
             events = data.get("value", [])
-            all_events.extend([format_event(evt) for evt in events])
+            # If we sent Prefer timezone header, times are already local
+            already_local = user_timezone and user_timezone != "UTC"
+            all_events.extend([format_event(evt, times_already_local=already_local) for evt in events])
             url = data.get("@odata.nextLink")  # Continue if there's pagination
         return all_events
     except requests.RequestException as e:
