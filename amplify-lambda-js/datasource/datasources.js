@@ -345,7 +345,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if (params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
+    const _rawDataSourceOptions = chatRequestOrig.options?.dataSourceOptions || params.options?.dataSourceOptions;
+    if (_rawDataSourceOptions && Object.keys(_rawDataSourceOptions).length > 0) {
 
         const dataSourceOptions = {
             ...(chatRequestOrig.options.dataSourceOptions || {})
