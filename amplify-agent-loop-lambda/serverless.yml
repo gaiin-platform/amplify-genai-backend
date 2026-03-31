@@ -240,6 +240,8 @@ resources:
               Action:
                 - sqs:ChangeMessageVisibility
                 - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                - sqs:ReceiveMessage
                 - sqs:SendMessage
               Resource:
                 - !GetAtt AgentQueue.Arn

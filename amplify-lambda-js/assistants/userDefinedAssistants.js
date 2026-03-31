@@ -776,14 +776,25 @@ function extractDriveDatasources(data) {
 function extractAssistantDatasources(assistant) {
     if (!assistant) return [];
 
-    if (assistant.data?.integrationDriveData) {
+    const groupId = assistant.data?.groupId;
+
+    if (!groupId && assistant.data?.integrationDriveData) {
         const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
         // logger.debug("Drive datasources:", driveDatasources);
         assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
     }
 
-    // update ds with astp for dual embedding object access check 
-    if (assistant.data?.astPath) {
+    // For group assistants, tag all datasources with groupId so dual retrieval
+    // routes them through the group permission path. This covers existing assistants
+    // whose datasources were uploaded before group id was added in the metadata.
+    if (groupId) {
+        assistant.dataSources.forEach(ds => {
+            if (!ds.groupId) ds.groupId = groupId;
+        });
+    // update ds with astp for dual embedding object access check
+    // Only applies to non-group standalone assistants (astp/... prefix)
+    // Group assistants do group permission check on data sources
+    } else if (assistant.data?.astPath ) {
         assistant.dataSources.forEach(ds => {
             ds.ast = assistant.assistantId;
         });

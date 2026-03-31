@@ -91,18 +91,20 @@ const defaultAssistant = {
 
 
             // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
-            const enhancedParams = params.preResolvedDataSourcesByUse ? {
+            // Fallback to empty structure when router returned null (e.g. image-only requests with no dataSources/conversationId)
+            const enhancedParams = {
                 ...params,
                 options: {
                     ...params.options,
                     ...body.options  // Merge body.options to include trackConversations and other flags
                 },
-                preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
-            } : {
-                ...params,
-                options: {
-                    ...params.options,
-                    ...body.options  // Merge body.options to include trackConversations and other flags
+                preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse ?? {
+                    dataSources: [],
+                    ragDataSources: [],
+                    conversationDataSources: [],
+                    attachedDataSources: [],
+                    groupDataSources: [],
+                    astDataSources: []
                 }
             };
 
