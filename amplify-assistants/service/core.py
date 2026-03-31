@@ -810,14 +810,16 @@ def create_assistant(event, context, current_user, name, data):
                 except Exception as e:
                     logger.error("Error initially scraping website %s: %s", url, str(e))
 
-        # imported here to avoid circular import
-        from service.drive_datasources import process_assistant_drive_sources
-        integration_drive_ds_response = process_assistant_drive_sources(assistant_data, access_token)
-        if not integration_drive_ds_response.get("success", False):
-            return integration_drive_ds_response
-        integration_drive_ds_data = integration_drive_ds_response.get("data", {})
-        # update assistant_data with integration drive data
-        assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
+        # Drive datasources are not supported for group assistants
+        if not is_group_user:
+            # imported here to avoid circular import
+            from service.drive_datasources import process_assistant_drive_sources
+            integration_drive_ds_response = process_assistant_drive_sources(assistant_data, access_token)
+            if not integration_drive_ds_response.get("success", False):
+                return integration_drive_ds_response
+            integration_drive_ds_data = integration_drive_ds_response.get("data", {})
+            # update assistant_data with integration drive data
+            assistant_data["integrationDriveData"] = integration_drive_ds_data.get("integrationDriveData", {})
 
         # Validate Bedrock Knowledge Base datasources
         validated_bedrock_kb_ds = []
