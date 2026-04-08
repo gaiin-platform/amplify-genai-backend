@@ -124,6 +124,9 @@ def can_access_objects(event, context, current_user, name, data):
     try:
         data_sources = data["dataSources"]
 
+        # Track allowed sources checked so far
+        allowed_sources = []
+
         for object_id, access_type in data_sources.items():
             # Check if any permissions already exist for the object_id
             query_response = table.get_item(
@@ -132,13 +135,17 @@ def can_access_objects(event, context, current_user, name, data):
             item = query_response.get("Item")
 
             if not item:
+                # EARLY RETURN: Return what we checked so far + this denied one
+                logger.warning(f"User denied access to {object_id} (no permission record). Checked {len(allowed_sources)} before denial.")
                 return {
-                    "statusCode": 403,
+                    "statusCode": 207,  # Multi-Status: partial success
                     "body": json.dumps(
                         {
                             "message": f"User does not have access to objectId.",
                             "objectId": object_id,
                             "accessType": access_type,
+                            "reason": "no_permission_record",
+                            "allowedSources": allowed_sources
                         }
                     ),
                 }
@@ -148,17 +155,27 @@ def can_access_objects(event, context, current_user, name, data):
             if not is_sufficient_privilege(
                 object_id, permission_level, policy, access_type
             ):
-                logger.warning("User does not have access to objectId: %s", object_id)
+                # EARLY RETURN: Return what we checked so far + this denied one
+                logger.warning(f"User denied access to {object_id} (insufficient privilege). Checked {len(allowed_sources)} before denial.")
                 return {
-                    "statusCode": 403,
+                    "statusCode": 207,  # Multi-Status: partial success
                     "body": json.dumps(
                         {
                             "message": f"User does not have access to objectId.",
                             "objectId": object_id,
                             "accessType": access_type,
+                            "reason": "insufficient_privilege",
+                            "userLevel": permission_level,
+                            "allowedSources": allowed_sources
                         }
                     ),
                 }
+
+            # This source is allowed, add to list and continue
+            allowed_sources.append({
+                "objectId": object_id,
+                "accessType": access_type
+            })
 
     except ClientError as e:
         logger.error(
@@ -166,10 +183,21 @@ def can_access_objects(event, context, current_user, name, data):
         )
         return {
             "statusCode": 500,
-            "body": "Internal error determining access. Please try again later.",
+            "body": json.dumps({
+                "message": "Internal error determining access. Please try again later.",
+                "error": str(e)
+            })
         }
-    logger.info("User passed can access objects.")
-    return {"statusCode": 200, "body": "User has access to the object(s)."}
+
+    # All sources checked and allowed
+    logger.info(f"User has access to all {len(allowed_sources)} objects")
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "message": "User has access to all requested objects",
+            "allowedSources": allowed_sources
+        })
+    }
 
 
 @required_env_vars({

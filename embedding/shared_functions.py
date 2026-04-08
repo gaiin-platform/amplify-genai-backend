@@ -349,11 +349,12 @@ def generate_questions(content, account_data = None):
         logger.error(f"[QA_GENERATION_ERROR] {error_msg}")
         if account_data:
             logger.error(f"[QA_GENERATION_ERROR] account_data value: {str(account_data)[:200]}")
-        raise Exception(error_msg)
+        return {"success": False, "error": error_msg}
 
     if not chat_endpoint or not account_data or not account_data.get('access_token'):
-        logger.error("CHAT_ENDPOINT environment variable or account_data not set")
-        raise Exception("CHAT_ENDPOINT environment variable or account_data not set")
+        error_msg = "CHAT_ENDPOINT environment variable or account_data not set"
+        logger.error(f"[QA_GENERATION_ERROR] {error_msg}")
+        return {"success": False, "error": error_msg}
     
     logger.info(f"Generating questions with {qa_provider}")
     

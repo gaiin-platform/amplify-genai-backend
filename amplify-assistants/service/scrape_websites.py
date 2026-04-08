@@ -193,7 +193,7 @@ def sanitize_and_validate_url(url):
     except Exception as e:
         return False, None, f"URL parsing error: {str(e)}"
 
-def _process_single_url(url_to_scrape, access_token, is_sitemap_url=None, assistant_id=None):
+def _process_single_url(url_to_scrape, access_token, is_sitemap_url=None, assistant_id=None, group_id=None):
     """Helper function to fetch, parse, and save a single URL. Returns data source or None if failed."""
     try:
         logger.debug("Fetching and parsing URL: %s", url_to_scrape)
@@ -211,7 +211,7 @@ def _process_single_url(url_to_scrape, access_token, is_sitemap_url=None, assist
 
             # Save each URL as its own data source
             try:
-                data_source_data = save_scraped_content(current_data, access_token, assistant_id=assistant_id)
+                data_source_data = save_scraped_content(current_data, access_token, assistant_id=assistant_id, group_id=group_id)
                 logger.info("Saved data source for %s with ID: %s", url_to_scrape, data_source_data.get('id'))
                 return data_source_data
             except Exception as save_error:
@@ -224,7 +224,7 @@ def _process_single_url(url_to_scrape, access_token, is_sitemap_url=None, assist
         logger.error("Error processing URL %s: %s", url_to_scrape, e)
         return None
 
-def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, exclusions=None, assistant_id=None):
+def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, exclusions=None, assistant_id=None, group_id=None):
     """Helper function to scrape a website and return the data source key"""
     try:
         # Ensure max_pages is an integer or None for unlimited
@@ -268,7 +268,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all URL processing tasks
             future_to_url = {
-                executor.submit(_process_single_url, url_to_scrape, access_token, url if is_sitemap else None, assistant_id): url_to_scrape
+                executor.submit(_process_single_url, url_to_scrape, access_token, url if is_sitemap else None, assistant_id, group_id): url_to_scrape
                 for url_to_scrape in urls_to_scrape
             }
 
@@ -512,7 +512,7 @@ def fetch_and_parse_url(url):
         logger.error("Error processing URL %s: %s", url, e)
         return None
 
-def save_scraped_content(scraped_data, access_token, assistant_id=None):
+def save_scraped_content(scraped_data, access_token, assistant_id=None, group_id=None):
     logger.info("Saving scraped content as DS: %s", scraped_data['url'])
     timestamp = scraped_data["scrapedAt"]
     
@@ -549,7 +549,7 @@ def save_scraped_content(scraped_data, access_token, assistant_id=None):
         tags = ["website", "scraped"],
         data_props = safe_data_props,
         enter_rag_pipeline = True,
-        groupId = None, # note: group system user would be the one making the request, no need to provide the groupId in this case
+        groupId = group_id, # for group assistants rescanned by a regular user, pass groupId so upload is attributed to the group
     )
     if not file_resp or not file_resp.get('id'):
         logger.error("Upload failed for scraped content. Response: %s", file_resp)
@@ -628,7 +628,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         force_rescan = data["data"].get("forceRescan", False)
         if force_rescan:
             logger.info("Force rescanning all websites for assistant: %s", assistant_public_id)
-        
+
         # Get the most recent version of the assistant using public ID
         latest_assistant = get_most_recent_assistant_version(
             assistants_table, assistant_public_id
@@ -637,7 +637,14 @@ def rescan_websites(event, context, current_user, name, data=None):
         if not latest_assistant:
             return {"success": False, "message": "Assistant not found"}
 
-        result = process_assistant_websites(latest_assistant, access_token, force_rescan)
+        # For group assistants, rescan is triggered by a regular user via the modal.
+        # We need to pass the groupId so uploads are attributed to the group,
+        # matching the permissions set up by update_group_ds_perms.
+        group_id = latest_assistant.get("data", {}).get("groupId", None)
+        if group_id:
+            logger.info("Group assistant rescan: attributing uploads to group %s", group_id)
+
+        result = process_assistant_websites(latest_assistant, access_token, force_rescan, group_id=group_id)
 
         return {
             "success": result["success"],
@@ -650,7 +657,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         return {"success": False, "message": f"Failed to rescan websites: {str(e)}"}
 
 
-def process_assistant_websites(assistant, access_token, force_rescan=False):
+def process_assistant_websites(assistant, access_token, force_rescan=False, group_id=None):
     """Process websites for an assistant and update data sources with proper cleanup."""
     try:
         website_urls = assistant.get("data", {}).get("websiteUrls", [])
@@ -775,6 +782,30 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 urls = extract_urls_from_sitemap(url, max_pages, exclusions)
                 logger.debug("  Extracted %s URLs from sitemap", len(urls))
 
+                # CLEANUP: Find orphaned data sources - ones from this sitemap that are no longer in it
+                current_sitemap_url = url
+                freshly_extracted_urls = set(urls)  # URLs currently in the sitemap
+                orphaned_count = 0
+
+                for ds in existing_web_ds:
+                    ds_metadata = ds.get("metadata", {})
+                    ds_from_sitemap = ds_metadata.get("fromSitemap")
+                    ds_source_url = ds_metadata.get("sourceUrl")
+
+                    # If this data source came from the current sitemap
+                    if ds_from_sitemap == current_sitemap_url:
+                        # But its source URL is no longer in the fresh sitemap
+                        if ds_source_url not in freshly_extracted_urls:
+                            # Mark it for deletion (orphaned)
+                            if ds not in old_ds_to_delete:
+                                old_ds_to_delete.append(ds)
+                                orphaned_count += 1
+                                logger.info("  Marked orphaned data source for deletion: %s (sourceUrl: %s no longer in sitemap)",
+                                           ds['id'], ds_source_url)
+
+                if orphaned_count > 0:
+                    logger.info("  Found %s orphaned data sources from this sitemap that will be cleaned up", orphaned_count)
+
                 # PARALLEL: Process sitemap URLs concurrently
                 max_sitemap_workers = min(25, len(urls))
                 logger.info("  Processing %s sitemap URLs with %s concurrent workers", len(urls), max_sitemap_workers)
@@ -782,7 +813,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 with ThreadPoolExecutor(max_workers=max_sitemap_workers) as executor:
                     # Submit all sitemap URL processing tasks
                     future_to_sub_url = {
-                        executor.submit(_process_single_url, sub_url, access_token, url, assistant.get("assistantId")): sub_url
+                        executor.submit(_process_single_url, sub_url, access_token, url, assistant.get("assistantId"), group_id): sub_url
                         for sub_url in urls
                     }
 
@@ -820,7 +851,7 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                     }
                     # Save single URL as data source
                     try:
-                        data_source_data = save_scraped_content(current_data, access_token, assistant_id=assistant.get("assistantId"))
+                        data_source_data = save_scraped_content(current_data, access_token, assistant_id=assistant.get("assistantId"), group_id=group_id)
                         # Add metadata updates like core.py does
                         scan_frequency = website_url_entry.get("scanFrequency")
                         data_source_data.get("metadata", {}).update({
@@ -856,25 +887,47 @@ def process_assistant_websites(assistant, access_token, force_rescan=False):
                 "message": "Failed to scrape any content from the websites",
             }
         
-        # Only delete old data sources for URLs that were successfully rescraped
+        # Only delete old data sources for URLs that were successfully rescraped or orphaned from sitemaps
         logger.info("Deleting old data sources for %s successfully rescraped URLs", len(successful_urls))
+
+        # Build a map of sitemap URLs to their freshly extracted page URLs (for orphan detection)
+        sitemap_to_fresh_urls = {}
+        for website_url_entry in urls_to_rescan:
+            if website_url_entry.get("type") == "website/sitemap":
+                sitemap_url = website_url_entry["url"]
+                exclusions = website_url_entry.get("exclusions")
+                max_pages = website_url_entry.get("maxPages")
+                if max_pages is not None:
+                    max_pages = int(max_pages)
+                fresh_urls = extract_urls_from_sitemap(sitemap_url, max_pages, exclusions)
+                sitemap_to_fresh_urls[sitemap_url] = set(fresh_urls)
+
         for old_ds in old_ds_to_delete:
             ds_metadata = old_ds.get("metadata", {})
             old_ds_source_url = ds_metadata.get("sourceUrl")
             old_ds_from_sitemap = ds_metadata.get("fromSitemap")
-            
-            # Delete if the URL that created this data source was successfully rescraped:
+
+            # Delete if:
             # 1. For direct URLs: sourceUrl matches a successful URL
             # 2. For sitemap-derived: fromSitemap matches a successful URL
+            # 3. For orphaned: fromSitemap was rescanned but sourceUrl is not in fresh sitemap
+            is_orphaned = False
+            if old_ds_from_sitemap and old_ds_from_sitemap in sitemap_to_fresh_urls:
+                # Check if this sourceUrl is no longer in the fresh sitemap
+                is_orphaned = old_ds_source_url not in sitemap_to_fresh_urls[old_ds_from_sitemap]
+
             should_delete = (
-                old_ds_source_url in successful_urls or 
-                old_ds_from_sitemap in successful_urls
+                old_ds_source_url in successful_urls or
+                old_ds_from_sitemap in successful_urls or
+                is_orphaned
             )
-            
+
             if should_delete:
                 try:
                     delete_file(access_token, old_ds["id"])
-                    logger.info("Deleted old web data source: %s (sourceUrl: %s, fromSitemap: %s)", old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
+                    deletion_reason = "orphaned (no longer in sitemap)" if is_orphaned else "rescraped"
+                    logger.info("Deleted old web data source (%s): %s (sourceUrl: %s, fromSitemap: %s)",
+                               deletion_reason, old_ds['id'], old_ds_source_url, old_ds_from_sitemap)
                 except Exception as e:
                     logger.error("Error deleting old web data source: %s", e)
             else:

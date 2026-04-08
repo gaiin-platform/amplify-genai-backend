@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { getLogger } from "../common/logging.js";
@@ -131,7 +131,23 @@ async function uploadToS3(assistantId, conversationId, content) {
 
 async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, s3Location, options = {}) {
     // Extract optional parameters with defaults as undefined
-    const { employeeType, entryPoint, category, systemRating } = options;
+    const { employeeType, entryPoint, category, systemRating, routedToAssistantId } = options;
+
+    // Accumulate per-turn routing distribution — read existing record first
+    let routedToDistribution = {};
+    if (routedToAssistantId) {
+        try {
+            const existing = await docClient.send(new GetCommand({
+                TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
+                Key: { conversationId },
+                ProjectionExpression: 'routedToDistribution'
+            }));
+            routedToDistribution = existing.Item?.routedToDistribution || {};
+        } catch (e) {
+            logger.warn('Could not read existing routedToDistribution, starting fresh', { conversationId, error: e.message });
+        }
+        routedToDistribution[routedToAssistantId] = (routedToDistribution[routedToAssistantId] || 0) + 1;
+    }
 
     // Build the base Item object with required fields
     const item = {
@@ -150,6 +166,8 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
     if (entryPoint !== undefined) item.entryPoint = entryPoint;
     if (category !== undefined) item.category = category;
     if (systemRating !== undefined) item.systemRating = systemRating;
+    if (routedToAssistantId !== undefined) item.routedToAssistantId = routedToAssistantId;
+    if (Object.keys(routedToDistribution).length > 0) item.routedToDistribution = routedToDistribution;
 
     const params = {
         TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
@@ -164,7 +182,8 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
             employeeType: employeeType !== undefined,
             entryPoint: entryPoint !== undefined,
             category: category !== undefined,
-            systemRating: systemRating !== undefined
+            systemRating: systemRating !== undefined,
+            routedToAssistantId: routedToAssistantId !== undefined
         }
     });
 
@@ -243,6 +262,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     });
     const employeeType = data.groupType;
     const entryPoint = data.source || "Amplify";
+    const routedToAssistantId = data.routedToAssistantId;
 
     // Always get categories from options, regardless of performCategoryAnalysis flag
     const categories = data.analysisCategories || [];
@@ -285,7 +305,10 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
 
     const userPrompt = chatRequest.messages[chatRequest.messages.length - 1].content;
 
-    const content = `User Prompt:\n${userPrompt}\nAI Response:\n${llmResponse}\n`;
+    const routedToAssistantName = data.routedToAssistantName;
+    const routingLabel = routedToAssistantName || routedToAssistantId;
+    const routingMarker = routingLabel ? `[Routed To: ${routingLabel}]\n` : '';
+    const content = `User Prompt:\n${userPrompt}\nAI Response:\n${routingMarker}${llmResponse}\n`;
     
     logger.debug('📝 Content prepared for S3 upload', {
         conversationId,
@@ -486,7 +509,8 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                     employeeType: employeeType,
                     entryPoint: entryPoint,
                     category: category,
-                    systemRating: systemRating
+                    systemRating: systemRating,
+                    routedToAssistantId: routedToAssistantId
                 }
             );
             
