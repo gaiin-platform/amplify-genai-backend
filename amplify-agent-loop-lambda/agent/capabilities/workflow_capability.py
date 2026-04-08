@@ -1,3 +1,4 @@
+import hashlib
 import json
 from copy import deepcopy
 from importlib.metadata import metadata
@@ -129,7 +130,7 @@ class WorkflowCapability(Capability):
         self.remaining_steps = list(reversed(self.workflow.steps))
         self.current_step = None
         self.retry_count = {}  # Track retries for each step
-        self.max_retries = 2  # Maximum number of retries per step
+        self.max_retries = 0  # Default: 0 - non-idempotent steps must opt-in via Step.retries
         self.terminate_early = False
 
     def init(self, agent, action_context: ActionContext) -> dict:
@@ -202,13 +203,34 @@ class WorkflowCapability(Capability):
             logger.warning("Terminating Workflow: %s", action.get("error"))
             self.terminate_early = True
             return result
-        # Enhanced error detection covering multiple error scenarios
+        # -- Error detection ---------------------------------------------------------
+        #
+        # Trigger 1 - tool_executed=False: the Python function raised an exception
+        #   before or after the side-effect completed (e.g. network timeout after an
+        #   email was already dispatched to Microsoft Graph API).
+        #   We check `not tool_executed` rather than `"error" in result` to avoid
+        #   false-positives on result dicts that contain an "error" key for unrelated
+        #   reasons.
+        #
+        # Trigger 2 - success=False in the inner payload: the downstream API
+        #   explicitly reported failure.
+        #
+        # Trigger 3 - traceback present: unhandled exception serialised by the
+        #   environment wrapper.
+        #
+        # REMOVED: keyword scan on the "message" field (was checking for "error",
+        #   "failed", "invalid", "exception" in free-form text). This was causing
+        #   false-positives - e.g. an email subject containing the word "failed"
+        #   would match and re-queue a send-mail step that had already delivered
+        #   the email, resulting in duplicate sends.
         is_error = (
             isinstance(result, dict)
             and result.get("tool", "") != "terminate"
             and (
-                "error" in result
+                # Trigger 1: execution-level exception (action was not fully executed)
+                not result.get("tool_executed", True)
                 or (
+                    # Triggers 2 / 3: inner result signals failure
                     "result" in result
                     and isinstance(result["result"], dict)
                     and (
@@ -217,13 +239,6 @@ class WorkflowCapability(Capability):
                             and not result["result"]["success"]
                         )
                         or "traceback" in result["result"]
-                        or (
-                            "message" in result["result"]
-                            and any(
-                                x in result["result"].get("message", "").lower()
-                                for x in ["error", "failed", "invalid", "exception"]
-                            )
-                        )
                     )
                 )
             )
@@ -233,38 +248,55 @@ class WorkflowCapability(Capability):
             step_id = self._construct_step_id(self.current_step)
             error_message = "Unknown error"
 
-            if self.retry_count[step_id] < self.max_retries:
+            # Determine the retry limit for this specific step.
+            # Step.retries (set in the workflow definition) takes precedence over the
+            # workflow-level default. Non-idempotent steps (email sends, Teams messages,
+            # calendar event creation) should be defined with retries=0 so they are
+            # never re-executed after a transient error that may have already delivered
+            # the side-effect.
+            step_max_retries = (
+                self.current_step.retries
+                if self.current_step.retries is not None
+                else self.max_retries
+            )
+
+            if self.retry_count[step_id] < step_max_retries:
                 logger.info(
-                    "-- Retrying step %s (%s/%s) due to error --", self.current_step.tool, self.retry_count[step_id], self.max_retries
+                    "-- Retrying step %s (%s/%s) due to error --",
+                    self.current_step.tool,
+                    self.retry_count[step_id],
+                    step_max_retries,
                 )
                 self.retry_count[step_id] += 1
                 self.remaining_steps.append(self.current_step)
 
-                # Log retry information in memory
-                memory = action_context.get("memory")
-                if memory:
-
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            error_message = result["error"]
-                        elif (
-                            "result" in result
-                            and isinstance(result["result"], dict)
-                            and "message" in result["result"]
-                        ):
-                            error_message = result["result"]["message"]
+                if isinstance(result, dict):
+                    if not result.get("tool_executed", True) and "error" in result:
+                        error_message = result["error"]
+                    elif (
+                        "result" in result
+                        and isinstance(result["result"], dict)
+                        and "message" in result["result"]
+                    ):
+                        error_message = result["result"]["message"]
 
                 send_event = action_context.incremental_event()
-                # Send an event about the retry
                 send_event(
                     "workflow/step/retry",
                     {
                         "workflow": self.workflow,
                         "step": self.current_step.tool,
                         "retry_count": self.retry_count[step_id],
-                        "max_retries": self.max_retries,
+                        "max_retries": step_max_retries,
                         "error": error_message,
                     },
+                )
+            else:
+                logger.info(
+                    "-- Step %s exhausted retries (%s/%s), not retrying --",
+                    self.current_step.tool,
+                    self.retry_count[step_id],
+                    step_max_retries,
                 )
 
         return result
@@ -409,10 +441,20 @@ Respond with either YES or NO in all caps. Then write a short explanation (1-2 s
         return False
 
     def _construct_step_id(self, step: Step) -> str:
-        description_hash = hash(step.description) if step.description else "_"
-        args_hash = len(step.args.items()) if step.args else 0
-        instructions_hash = hash(step.instructions) if step.instructions else "_"
-        action_segment = step.actionSegment if step.actionSegment else "0"
-        step_name = step.stepName if step.stepName else "0"
+        # Use stable, content-based hashing (hashlib) rather than Python's built-in
+        # hash(), which is randomised per-process via PYTHONHASHSEED and therefore
+        # produces different values across Lambda cold-starts.
+        #
+        # Previously args_hash was just len(step.args), meaning two *different* steps
+        # with the same tool name and the same number of arguments would share a step
+        # ID and therefore share a retry counter, corrupting the per-step retry budget.
+        def _h(value: str) -> str:
+            return hashlib.md5(value.encode("utf-8")).hexdigest()[:10]
+
+        args_hash = _h(json.dumps(step.args or {}, sort_keys=True))
+        instructions_hash = _h(step.instructions or "")
+        description_hash = _h(step.description or "")
+        action_segment = step.actionSegment or "0"
+        step_name = step.stepName or "0"
 
         return f"{step.tool}-{step_name}-{action_segment}_{args_hash}_{instructions_hash}_{description_hash}"
