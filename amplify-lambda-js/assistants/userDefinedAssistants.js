@@ -177,7 +177,7 @@ export const getAstgGroupId = async (assistantPublicId) => {
     return ast?.data?.groupId;
 }
 
-const getLatestAssistant = async (assistantPublicId) => {
+export const getLatestAssistant = async (assistantPublicId) => {
     /**
      * Retrieves the most recent version of an assistant from the DynamoDB table.
      *
@@ -222,37 +222,55 @@ const getLatestAssistant = async (assistantPublicId) => {
 
 }
 
-export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
+export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token, layeredAstId = null) => {
     // ⚡ CACHE OPTIMIZATION: Check cache first
     const { CacheManager } = await import('../common/cache.js');
     const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
     if (cached) {
         logger.debug(`Using cached assistant: ${assistantPublicId}`);
-        return fillInAssistant(cached, assistantBase);
+        return fillInAssistant(cached, assistantBase, layeredAstId);
     }
     
+    // ── Layered assistant fast path ───────────────────────────────────────────
+    // Gate 1 (layeredAssistantRouter) already verified the user can access the
+    // Layered Assistant.  The leaf assistantId belongs to the LA creator, not
+    // current_user, so alias/standalone lookups keyed on current_user will
+    // always fail.  Fetch the leaf record directly by assistantId instead —
+    // no extra permission check needed here because Gate 1 already cleared it.
+    if (layeredAstId) {
+        const leafData = await getLatestAssistant(assistantPublicId);
+        if (!leafData) {
+            logger.warn(`Layered assistant leaf not found: ${assistantPublicId}`);
+            return null;
+        }
+        logger.debug(`Leaf assistant loaded directly for layered context: ${assistantPublicId}`);
+        CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, leafData);
+        return fillInAssistant(leafData, assistantBase, layeredAstId);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const ast_owner = assistantPublicId.startsWith("astgp") ? await getAstgGroupId(assistantPublicId) : current_user;
-    
+
     if (!ast_owner) return null;
 
     // ⚡ CACHE OPTIMIZATION: Check cached group membership
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
         logger.debug(`Checking if ${current_user} is a member of group: ${ast_owner}`);
-        
+
         // Check cache first
         const cachedMembership = await CacheManager.getCachedGroupMembership(current_user, ast_owner, token);
         let isMember = cachedMembership;
-        
+
         if (cachedMembership === null) {
             // Not in cache, check actual membership
             isMember = await isMemberOfGroup(current_user, ast_owner, token);
             // Cache the result
             CacheManager.setCachedGroupMembership(current_user, ast_owner, token, isMember);
         }
-        
+
         if (!isMember) return null;
     }
-    
+
     let assistantData = null;
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
@@ -271,7 +289,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
         // ⚡ CACHE: Store assistant data for future requests
         CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, assistantData);
         
-        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
+        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase, layeredAstId)
         logger.info(`Client Selected Assistant: ${userDefinedAssistant.displayName}`);
         return userDefinedAssistant;
     }
@@ -280,7 +298,10 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
 };
 
 
-export const fillInAssistant = (assistant, assistantBase) => {
+export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) => {
+    // Attach the layeredAstId to the assistant object so it is available
+    // inside the handler closure (extractAssistantDatasources reads it there).
+    if (layeredAstId) assistant._layeredAstId = layeredAstId;
     return {
         name: assistant.name,
         displayName: assistant.name,
@@ -588,14 +609,20 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
-            if (assistant.data && assistant.data.supportConvAnalysis) {
-                body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
-            }
+            // Only set tracking/analysis config if a layered-assistant router hasn't already configured it.
+            // When routerManagedTracking is true, the router owns assistantName, analysisCategories, etc.
+            if (!body.options.routerManagedTracking) {
+                if (assistant.data && assistant.data.supportConvAnalysis) {
+                    body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
+                }
 
-            if (assistant.data && assistant.data.trackConversations) {
-                body.options.trackConversations = true;
-                body.options.assistantName = assistant.name;
-                logger.info('✅ [User Defined Assistant] Set trackConversations=true for assistant:', assistant.name);
+                if (assistant.data && assistant.data.trackConversations) {
+                    body.options.trackConversations = true;
+                    body.options.assistantName = assistant.name;
+                    logger.info('✅ [User Defined Assistant] Set trackConversations=true for assistant:', assistant.name);
+                }
+            } else {
+                logger.info('ℹ️ [User Defined Assistant] Skipping tracking config override — router-managed tracking is active for:', body.options.assistantName);
             }
 
             const instructions = await fillInTemplate(
@@ -635,7 +662,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
                                 "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: extractAssistantDatasources(assistant)}
+                            data: {dataSources: extractAssistantDatasources(assistant, assistant._layeredAstId || null)}
                         },
                         {
                             role: 'system',
@@ -773,7 +800,7 @@ function extractDriveDatasources(data) {
         .filter(datasource => datasource && datasource.id);
 }
 
-function extractAssistantDatasources(assistant) {
+function extractAssistantDatasources(assistant, layeredAstId = null) {
     if (!assistant) return [];
 
     const groupId = assistant.data?.groupId;
@@ -791,10 +818,19 @@ function extractAssistantDatasources(assistant) {
         assistant.dataSources.forEach(ds => {
             if (!ds.groupId) ds.groupId = groupId;
         });
-    // update ds with astp for dual embedding object access check
-    // Only applies to non-group standalone assistants (astp/... prefix)
-    // Group assistants do group permission check on data sources
-    } else if (assistant.data?.astPath ) {
+    // If this assistant was reached via a Layered Assistant, tag datasources with
+    // both the LA publicId and the leaf assistantId. Dual retrieval will:
+    //   1. Check if the user has access to the *layered* assistant path
+    //   2. Check if the *leaf* assistant has access to the datasources
+    // This covers personal-leaf-without-astPath (Bug #7) and wrong-path-checked (Bug #6).
+    } else if (layeredAstId) {
+        assistant.dataSources.forEach(ds => {
+            ds.ast = { layeredAstId, astId: assistant.assistantId };
+        });
+    // update ds with ast for dual embedding object access check
+    // Only applies to non-group standalone assistants that have their own published path.
+    // Group assistants do group permission check on data sources.
+    } else if (assistant.data?.astPath) {
         assistant.dataSources.forEach(ds => {
             ds.ast = assistant.assistantId;
         });

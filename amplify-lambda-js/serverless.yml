@@ -83,6 +83,7 @@ provider:
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
     ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/LAYERED_ASSISTANTS_DYNAMODB_TABLE}
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
@@ -288,6 +289,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

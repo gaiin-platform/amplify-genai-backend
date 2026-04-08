@@ -329,6 +329,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         categories = {}
         employee_types = {}
         user_employee_types = {}
+        routed_to_assistants = {}
         total_user_rating = 0
         total_system_rating = 0
         user_rating_count = 0
@@ -339,6 +340,17 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             entry_points[conv.get("entryPoint", "")] = (
                 entry_points.get(conv.get("entryPoint", ""), 0) + 1
             )
+
+            # Aggregate per-turn routing distribution (routedToDistribution is a {leafId: turnCount} map)
+            dist = conv.get("routedToDistribution", {})
+            if dist:
+                for leaf_id, count in dist.items():
+                    routed_to_assistants[leaf_id] = routed_to_assistants.get(leaf_id, 0) + int(count)
+            else:
+                # Fallback for older records that only have a single routedToAssistantId
+                routed_to = conv.get("routedToAssistantId")
+                if routed_to:
+                    routed_to_assistants[routed_to] = routed_to_assistants.get(routed_to, 0) + 1
 
             # Determine categories
             category = (conv.get("category") or "").strip()
@@ -394,6 +406,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "entryPointDistribution": entry_points,
             "categoryDistribution": categories,
             "employeeTypeDistribution": employee_types,
+            "routedToAssistantDistribution": routed_to_assistants,
             "averageUserRating": average_user_rating,
             "averageSystemRating": average_system_rating,
         }
