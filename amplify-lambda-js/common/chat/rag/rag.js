@@ -124,10 +124,15 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 }
                 ragGroupDataSourcesKeys[ds.groupId].push(key);
             } else if (ds.ast) {
-                if (!ragAstDataSourcesKeys[ds.ast]) {   
-                    ragAstDataSourcesKeys[ds.ast] = [];
+                // ds.ast is either a plain assistantId string (standalone ast with path)
+                // or an object { layeredAstId, astId } (leaf reached via a Layered Assistant).
+                // Serialize objects to a stable JSON string so they survive as dict keys
+                // through to dual retrieval, where classify_ast_src_ids_by_access parses them.
+                const astKey = typeof ds.ast === 'object' ? JSON.stringify(ds.ast) : ds.ast;
+                if (!ragAstDataSourcesKeys[astKey]) {
+                    ragAstDataSourcesKeys[astKey] = [];
                 }
-                ragAstDataSourcesKeys[ds.ast].push(key);
+                ragAstDataSourcesKeys[astKey].push(key);
             } else {
                 ragDataSourceKeys.push(key)
                 // call the check-completion endpoint to ensure the embeddings are complete if not itll start

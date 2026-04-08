@@ -1,25 +1,10 @@
-# Schema for create_or_update_layered_assistant
-# publicId is optional: omit / empty string → create new, provide → update
-
-# Recursive node type is validated loosely as "object" here;
-# deep structural validation happens in the service layer.
-_node_schema = {
-    "type": "object",
-    "properties": {
-        "type":        {"type": "string", "enum": ["router", "leaf"]},
-        "id":          {"type": "string"},
-        "name":        {"type": "string"},
-        "description": {"type": "string"},
-    },
-    "required": ["type", "id", "name"],
-}
 
 create_layered_assistant_schema = {
     "type": "object",
     "properties": {
-        "publicId": {
+        "assistantId": {
             "type": "string",
-            "description": "Existing layered assistant public ID to update (astr/<uuid> or astgr/<uuid>). Omit to create.",
+            "description": "Existing layered assistant ID to update (astr/<uuid> or astgr/<uuid>). Omit to create.",
         },
         "purpose": {
             "type": "string",
@@ -50,6 +35,19 @@ create_layered_assistant_schema = {
                 },
             },
             "required": ["type", "id", "name", "children"],
+        },
+        "trackConversations": {
+            "type": "boolean",
+            "description": "Whether to record conversations under this layered assistant's assistantId.",
+        },
+        "supportConvAnalysis": {
+            "type": "boolean",
+            "description": "Whether to run AI analysis (systemRating + optional category) on tracked conversations.",
+        },
+        "analysisCategories": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Category list for AI conversation analysis. Only used when supportConvAnalysis is true.",
         },
     },
     "required": ["name", "rootNode"],

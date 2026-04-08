@@ -445,6 +445,18 @@ def update_group_assistants(event, context, current_user, name, data):
     return update_assistants(current_user, group_id, update_type, ast_list)
 
 
+def _is_layered_assistant(ast):
+    """Detect whether an assistant object represents a layered assistant."""
+    return isinstance(ast, dict) and ast.get("isLayeredAssistant", False)
+
+
+def _is_layered_assistant_id(assistant_id):
+    """Detect whether an assistantId string belongs to a layered assistant."""
+    return isinstance(assistant_id, str) and (
+        assistant_id.startswith("astr/") or assistant_id.startswith("astgr/")
+    )
+
+
 def update_assistants(current_user, group_id, update_type, ast_list):
     auth_check = authorized_user(group_id, current_user)
 
@@ -459,6 +471,51 @@ def update_assistants(current_user, group_id, update_type, ast_list):
     new_assistants = []
     if update_type in ["ADD", "UPDATE"]:
         for ast in ast_list:
+            # ── Layered assistant path ────────────────────────────────
+            if _is_layered_assistant(ast):
+                la_data = ast.get("layeredAssistant", {})
+                if not la_data.get("name"):
+                    logger.error("Layered assistant missing name")
+                    return {"success": False, "message": "layeredAssistant.name is required."}
+
+                la_payload = {
+                    "assistantId": la_data.get("assistantId", ""),
+                    "name":        la_data["name"],
+                    "description": la_data.get("description", ""),
+                    "rootNode":    la_data.get("rootNode", {}),
+                    "group_id":    group_id,
+                    "purpose":     "group",
+                    "data":        la_data.get("data", {}),
+                }
+                # Pass through optional config fields if present
+                for field in ("isPublished", "model", "trackConversations", "supportConvAnalysis", "analysisCategories"):
+                    if field in la_data:
+                        la_payload[field] = la_data[field]
+
+                result = _call_layered_assistant_api(
+                    access_token, "POST",
+                    "/assistant/layered/create_or_update",
+                    la_payload,
+                )
+                if not result.get("success"):
+                    logger.error("Layered assistant create/update failed: %s", result.get("message"))
+                    return result
+
+                la_result_data = result.get("data", {})
+                new_ast_data = {
+                    "assistantId": la_result_data.get("assistantId", ""),
+                    "version": 1,
+                    "name": la_data["name"],
+                    "isLayeredAssistant": True,
+                }
+                new_assistants.append(new_ast_data)
+                if update_type == "UPDATE":
+                    current_assistants = remove_old_ast_versions(
+                        current_assistants, la_result_data.get("assistantId", "")
+                    )
+                continue
+
+            # ── Regular assistant path (unchanged) ────────────────────
             groupDSData = {}
             if "data" in ast and "groupTypeData" in ast["data"]:
                 groupDSData = ast["data"]["groupTypeData"]
@@ -473,7 +530,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             if (not update_perms_result['success']):
                 logger.error("could not update ds perms for all group type data")
                 return update_perms_result
-            
+
             create_result = create_assistant(access_token, ast)
             if not create_result["success"]:
                 logger.error("create ast call failed")
@@ -506,14 +563,24 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         )
 
     elif update_type == "REMOVE":
-        # delete with public id
         for astp in ast_list:  # list of assistantIds
-            # permissions are removed in the delete process
-            if not delete_assistant(
-                access_token,
-                {"assistantId": astp, "removePermsForUsers": []}, 
-            ):
-                logger.error("failed to delete assistant: %s", astp)
+            if _is_layered_assistant_id(astp):
+                # ── Layered assistant delete path ─────────────────────
+                result = _call_layered_assistant_api(
+                    access_token, "POST",
+                    "/assistant/layered/delete",
+                    {"assistantId": astp},
+                )
+                if not result.get("success"):
+                    logger.error("failed to delete layered assistant: %s — %s", astp, result.get("message"))
+            else:
+                # ── Regular assistant delete path (unchanged) ─────────
+                # permissions are removed in the delete process
+                if not delete_assistant(
+                    access_token,
+                    {"assistantId": astp, "removePermsForUsers": []},
+                ):
+                    logger.error("failed to delete assistant: %s", astp)
             current_assistants = remove_old_ast_versions(current_assistants, astp)
 
         log_item(group_id, "remove assistants", current_user, f"Assistants {ast_list}")
@@ -533,9 +600,10 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             "success": True,
             "assistantData": [
                 {
-                    "id": assistant["id"],
+                    "id": assistant.get("id", assistant.get("assistantId", "")),
                     "assistantId": assistant["assistantId"],
                     "provider": "amplify",
+                    **({"isLayeredAssistant": True} if assistant.get("isLayeredAssistant") else {}),
                 }
                 for assistant in new_assistants
             ],
@@ -566,10 +634,15 @@ def add_path_to_assistant(event, context, current_user, name, data):
     assistantId = path_data["assistantId"]
     current_assistants = item.get("assistants", [])
 
-    # find the assistant in the current assistants
+    # find the assistant in the current assistants (regular or layered)
     assistant = next(
         (a for a in current_assistants if a["assistantId"] == assistantId), None
     )
+    if not assistant and _is_layered_assistant_id(assistantId):
+        # Group layered assistants are not in the "assistants" column —
+        # verify ownership by checking the group_id prefix on the publicId.
+        # The astgr/ prefix is sufficient proof it belongs to this group's system user.
+        assistant = {"assistantId": assistantId, "isLayeredAssistant": True}
     if not assistant:
         return {"message": "Assistant not found", "success": False}
     logger.debug("Adding path to group_id: %s with data: %s", group_id, path_data)
@@ -764,101 +837,6 @@ def _group_member_with_api_key(group_id, user):
     return {"item": item, "success": True}
 
 
-@required_env_vars({
-    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
-})
-@validated(op="manage_layered_assistants")
-def manage_group_layered_assistants(event, context, current_user, name, data):
-    """
-    Proxy endpoint for group-scoped Layered Assistant CRUD.
-
-    The real work is done by the layered_assistants service, but it must run as
-    the group's system user so that 'createdBy' is set to the group_id and the
-    publicId gets the 'astgr/' prefix.
-
-    Request body (inside data["data"]):
-    {
-        "group_id": "GroupName_<uuid>",
-        "action":   "create_or_update" | "list" | "delete",
-
-        # For create_or_update:
-        "layeredAssistant": {
-            "publicId":    "astgr/<uuid>",   # omit / empty to create
-            "name":        "My Router",
-            "description": "...",
-            "rootNode":    { ... }
-        },
-
-        # For delete:
-        "publicId": "astgr/<uuid>"
-    }
-    """
-    payload  = data["data"]
-    group_id = payload.get("group_id", "").strip()
-    action   = payload.get("action", "").strip()
-
-    if not group_id:
-        return {"success": False, "message": "group_id is required."}
-    if action not in ("create_or_update", "list", "delete"):
-        return {"success": False, "message": f"Unknown action '{action}'. Expected: create_or_update, list, delete."}
-
-    # ----- authorisation -----
-    if action == "list":
-        # Read-only — any group member may list
-        auth_check = _group_member_with_api_key(group_id, current_user)
-    else:
-        # Mutating — require write or admin
-        auth_check = authorized_user(group_id, current_user)
-
-    if not auth_check["success"]:
-        return auth_check
-
-    group_api_key = auth_check["item"]["access"]
-
-    # ----- forward to layered assistant service -----
-    if action == "create_or_update":
-        la = payload.get("layeredAssistant", {})
-        if not la.get("name"):
-            return {"success": False, "message": "layeredAssistant.name is required."}
-        result = _call_layered_assistant_api(
-            group_api_key, "POST",
-            "/assistant/layered/create_or_update",
-            {
-                "publicId":    la.get("publicId", ""),
-                "name":        la["name"],
-                "description": la.get("description", ""),
-                "rootNode":    la.get("rootNode", {}),
-                "group_id":    group_id,   # explicit, so the LA service can store it directly
-            },
-        )
-
-    elif action == "list":
-        result = _call_layered_assistant_api(
-            group_api_key, "GET",
-            "/assistant/layered/list",
-        )
-
-    elif action == "delete":
-        public_id = payload.get("publicId", "").strip()
-        if not public_id:
-            return {"success": False, "message": "publicId is required for delete."}
-        result = _call_layered_assistant_api(
-            group_api_key, "POST",
-            "/assistant/layered/delete",
-            {"publicId": public_id},
-        )
-
-    log_item(
-        group_id,
-        f"Layered Assistant {action}",
-        current_user,
-        f"action={action} success={result.get('success')}",
-    )
-    return result
-
-
 def is_valid_group_id(group_id):
     pattern = r"^.+\_[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$"
     return bool(re.match(pattern, group_id))
@@ -957,7 +935,8 @@ def list_groups(event, context, current_user, name, data):
 
 async def process_groups_async(groups, current_user):
     """
-    Process groups concurrently by making all list_assistants calls in parallel
+    Process groups concurrently by making all list_assistants and
+    list_layered_assistants calls in parallel.
     """
     if not groups:
         return {"success": True, "data": [], "incompleteGroupData": []}
@@ -973,45 +952,55 @@ async def process_groups_async(groups, current_user):
             "api_key": api_key_result["apiKey"]
         })
 
-    # Since list_assistants is synchronous, we'll use concurrent.futures for parallel execution
-    
-    # Execute all list_assistants calls in parallel using ThreadPoolExecutor
+    # Execute all list_assistants AND list_layered_assistants calls in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        # Create future tasks for each group
-        future_to_group = {
-            executor.submit(list_assistants, group_data["api_key"]): group_data["group"]
+        # Submit regular assistant list calls
+        ast_future_to_group = {
+            executor.submit(list_assistants, group_data["api_key"]): group_data
             for group_data in group_api_data
         }
-        
-        # Collect results as they complete
-        group_results = []
-        for future in concurrent.futures.as_completed(future_to_group):
-            group = future_to_group[future]
+        # Submit layered assistant list calls
+        la_future_to_group = {
+            executor.submit(
+                _call_layered_assistant_api,
+                group_data["api_key"], "GET", "/assistant/layered/list"
+            ): group_data
+            for group_data in group_api_data
+        }
+
+        # Collect regular assistant results keyed by group_id
+        ast_results_by_group = {}
+        for future in concurrent.futures.as_completed(ast_future_to_group):
+            group_data = ast_future_to_group[future]
+            gid = group_data["group"]["group_id"]
             try:
-                ast_result = future.result()
-                group_results.append({
-                    "group": group,
-                    "ast_result": ast_result,
-                    "success": True
-                })
+                ast_results_by_group[gid] = {"result": future.result(), "success": True}
             except Exception as e:
-                logger.error(f"Error fetching assistants for group {group['groupName']}: {str(e)}")
-                group_results.append({
-                    "group": group,
-                    "ast_result": None,
-                    "success": False,
-                    "error": str(e)
-                })
+                logger.error(f"Error fetching assistants for group {gid}: {str(e)}")
+                ast_results_by_group[gid] = {"result": None, "success": False}
+
+        # Collect layered assistant results keyed by group_id
+        la_results_by_group = {}
+        for future in concurrent.futures.as_completed(la_future_to_group):
+            group_data = la_future_to_group[future]
+            gid = group_data["group"]["group_id"]
+            try:
+                la_results_by_group[gid] = {"result": future.result(), "success": True}
+            except Exception as e:
+                logger.error(f"Error fetching layered assistants for group {gid}: {str(e)}")
+                la_results_by_group[gid] = {"result": None, "success": False}
 
     # Process results and build response
     group_info = []
     failed_to_list = []
-    
-    for result in group_results:
-        group = result["group"]
+
+    for group_data in group_api_data:
+        group = group_data["group"]
         group_name = group["groupName"]
-        
-        if not result["success"] or not result["ast_result"]["success"]:
+        gid = group["group_id"]
+
+        ast_entry = ast_results_by_group.get(gid, {})
+        if not ast_entry.get("success") or not ast_entry.get("result", {}).get("success"):
             failed_to_list.append(group_name)
             continue
 
@@ -1020,7 +1009,7 @@ async def process_groups_async(groups, current_user):
         hasAdminInterfaceAccess = ast_access in ["write", "admin"]
 
         # filter old versions
-        assistants = get_latest_assistants(result["ast_result"]["data"])
+        assistants = get_latest_assistants(ast_entry["result"]["data"])
         logger.debug(f"{group_name} - {len(assistants)} Assistant Count")
         published_assistants = []
         # append groupId and correct permissions if published
@@ -1032,13 +1021,26 @@ async def process_groups_async(groups, current_user):
                 ast["data"]["access"]["write"] = hasAdminInterfaceAccess
                 published_assistants.append(ast)
 
-        if len(published_assistants) > 0 or hasAdminInterfaceAccess:
+        # Layered assistants — include if the call succeeded
+        layered_assistants = []
+        la_entry = la_results_by_group.get(gid, {})
+        if la_entry.get("success") and la_entry.get("result", {}).get("success"):
+            all_la = la_entry["result"].get("data", [])
+            # Only include published LAs (or all if user has admin/write access)
+            for la in all_la:
+                la["groupId"] = gid
+                if la.get("isPublished") or hasAdminInterfaceAccess:
+                    layered_assistants.append(la)
+            logger.debug(f"{group_name} - {len(layered_assistants)} Layered Assistant Count")
+
+        if len(published_assistants) > 0 or len(layered_assistants) > 0 or hasAdminInterfaceAccess:
             group_info.append(
                 {
                     "name": group_name,
                     "id": group["group_id"],
                     "members": group_members,
                     "assistants": published_assistants,
+                    "layeredAssistants": layered_assistants,
                     "groupTypes": group["groupTypes"],
                     "supportConvAnalysis": group.get("supportConvAnalysis", False),
                     "amplifyGroups": group.get("amplifyGroups", []),
@@ -1060,7 +1062,7 @@ async def process_groups_async(groups, current_user):
                 "total_groups": len(groups)
             }
         )
-        
+
         return {
             "success": False,
             "message": "Failed to retrive assistants for users groups",

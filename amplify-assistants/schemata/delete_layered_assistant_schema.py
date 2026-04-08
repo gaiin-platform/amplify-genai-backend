@@ -1,11 +1,11 @@
 delete_layered_assistant_schema = {
     "type": "object",
     "properties": {
-        "publicId": {
+        "assistantId": {
             "type": "string",
             "minLength": 1,
-            "description": "Public ID of the layered assistant to delete (astrp/<uuid>).",
+            "description": "ID of the layered assistant to delete (astr/<uuid> or astgr/<uuid>).",
         },
     },
-    "required": ["publicId"],
+    "required": ["assistantId"],
 }
