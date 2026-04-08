@@ -309,17 +309,6 @@ functions:
           method: post
           cors: true
 
-  group_layered_asts:
-    handler: groups.manage_group_layered_assistants
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
-    events:
-      - http:
-          path: /groups/layered_assistants
-          method: post
-          cors: true
-
   delete_group:
     handler: groups.delete_group
     layers:

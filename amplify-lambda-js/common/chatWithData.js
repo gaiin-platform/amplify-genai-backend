@@ -324,25 +324,16 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }).filter(source => source);
 
             if (sources.length > 0) {
-                // Send document sources with proper categorization
-                const contextSources = {};
-                let hasAttachedDocuments = false;
-                let hasDocumentCache = false;
-
-                sources.forEach(source => {
-                    const categoryKey = source.type === "documentCacheContext" ? "documentCacheContext" : "documentContext";
-
-                    if (source.type === "documentCacheContext") {
-                        hasDocumentCache = true;
-                    } else {
-                        hasAttachedDocuments = true;
+                // Group sources by their actual type (matching original main branch behavior)
+                // This preserves distinct categories: documentContext, documentCacheContext, website, etc.
+                const contextSources = sources.reduce((acc, source) => {
+                    const categoryKey = source.type;
+                    if (!acc[categoryKey]) {
+                        acc[categoryKey] = { sources: [] };
                     }
-
-                    if (!contextSources[categoryKey]) {
-                        contextSources[categoryKey] = { sources: [] };
-                    }
-                    contextSources[categoryKey].sources.push(source);
-                });
+                    acc[categoryKey].sources.push(source);
+                    return acc;
+                }, {});
 
                 if (responseStream && !responseStream.destroyed) {
                     sendStateEventToStream(responseStream, {

@@ -547,119 +547,170 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
     logger.debug(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
 
+def _check_user_has_ast_path_access(lookup_table, ast_id, current_user, token):
+    """
+    Check if current_user has access to the published path of ast_id via
+    ASSISTANT_LOOKUP_DYNAMODB_TABLE (AssistantIdIndex GSI).
+
+    Returns (has_access: bool, item: dict | None)
+    """
+    try:
+        response = lookup_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(ast_id)
+        )
+        if not response.get("Items"):
+            logger.info(f"No lookup entry found for assistantId: '{ast_id}'")
+            return False, None
+
+        item = response["Items"][0]
+        access_to = item.get("accessTo", {})
+
+        if item.get("public", False):
+            logger.info(f"AST {ast_id} is public — access granted")
+            return True, item
+        if current_user == item.get("createdBy"):
+            logger.info(f"User {current_user} is creator of AST {ast_id} — access granted")
+            return True, item
+        if current_user in access_to.get("users", []):
+            logger.info(f"User {current_user} is listed in accessTo.users for AST {ast_id} — access granted")
+            return True, item
+        if verify_user_in_amp_group(token, access_to.get("amplifyGroups", [])):
+            logger.info(f"User {current_user} is member of amplifyGroups for AST {ast_id} — access granted")
+            return True, item
+
+        logger.info(f"User {current_user} does not have path-level access to AST {ast_id}")
+        return False, item
+    except Exception as e:
+        logger.error(f"Error querying lookup table for AST {ast_id}: {str(e)}")
+        return False, None
+
+
 def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
-    # if user meets the following criteria for an ast then all datasources are approved
-    # user has access to the ast
-    # ast is a standalone ast 
-    ### is publis
-    ### is a listed member
-    ### is member of listed amplify group
-    # if yes to any then we must check if the ast has access to the datasources
-    # classify_src_ids_by_access(raw_src_ids, assistant_id)
-    
+    """
+    For each ast key → datasource list decide whether the current user can read
+    those datasources.
+
+    The ast key is one of two shapes:
+
+    1. Plain string  e.g. "ast/yyy"
+       → User must have access to that assistant's published path in the lookup
+         table (public / accessTo / createdBy).
+       → Datasource access: OBJECT_ACCESS(object=key, principal=ast_id).
+       → Bug #5 fallback: if path-level check fails, fall back to direct user
+         ownership (OBJECT_ACCESS principal=current_user) so that assistants
+         shared via normal object-access still work even when they also have
+         a published path.
+
+    2. JSON-serialised object  e.g. '{"layeredAstId":"astr/xxx","astId":"ast/yyy"}'
+       Set by extractAssistantDatasources when a leaf was reached via a Layered
+       Assistant.
+       → User access check: against layeredAstId (the LA the user navigated to),
+         NOT the leaf's own published path.
+       → Datasource access: OBJECT_ACCESS(object=key, principal=astId) so the
+         leaf assistant's own file-ownership grants are honoured.
+    """
     accessible_src_ids = []
     access_denied_src_ids = []
-    
-    # Early exit if no AST sources
+
     if not raw_ast_src_ids:
         return accessible_src_ids, access_denied_src_ids
 
-    # Initialize a DynamoDB resource using boto3
     dynamodb = boto3.resource("dynamodb")
     assistant_lookup_table_name = os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
-    
+
     if not assistant_lookup_table_name:
         logger.error("ASSISTANT_LOOKUP_DYNAMODB_TABLE environment variable is not set")
-        # If table is not configured, deny all access
-        for ast_id, data_source_ids in raw_ast_src_ids.items():
+        for _, data_source_ids in raw_ast_src_ids.items():
             access_denied_src_ids.extend(data_source_ids)
         return accessible_src_ids, access_denied_src_ids
-    
+
     lookup_table = dynamodb.Table(assistant_lookup_table_name)
 
-    # Iterate over each ast_id and associated dataSourceIds  
-    for ast_id, data_source_ids in raw_ast_src_ids.items():
-        logger.info(f"Checking permissions for AST ID: {ast_id}, DS IDs: {data_source_ids}")
-        
-        # Check cache first for this AST
-        ast_key = f"{ast_id}:{current_user}"
-        cached_result = performance_cache.get_cached_ast_permissions(current_user, ast_key)
+    for raw_ast_key, data_source_ids in raw_ast_src_ids.items():
+        logger.info(f"Checking permissions for AST key: {raw_ast_key}, DS IDs: {data_source_ids}")
+
+        # ── Parse the key ──────────────────────────────────────────────────────
+        layered_ast_id = None
+        ast_id = raw_ast_key  # default: plain string
+
+        if isinstance(raw_ast_key, str) and raw_ast_key.startswith("{"):
+            try:
+                parsed = json.loads(raw_ast_key)
+                layered_ast_id = parsed.get("layeredAstId")
+                ast_id = parsed.get("astId", raw_ast_key)
+                logger.info(f"Parsed layered AST key — layeredAstId={layered_ast_id}, astId={ast_id}")
+            except (json.JSONDecodeError, AttributeError):
+                logger.warning(f"Could not parse AST key as JSON, treating as plain string: {raw_ast_key}")
+
+        # Cache key uses the full raw_ast_key so layered and plain variants don't collide
+        ast_cache_key = f"{raw_ast_key}:{current_user}"
+        cached_result = performance_cache.get_cached_ast_permissions(current_user, ast_cache_key)
         if cached_result:
             cached_accessible, cached_denied = cached_result
             cached_known = set(cached_accessible) | set(cached_denied)
-            # Filter cached results by current data_source_ids
-            ast_accessible = [src_id for src_id in cached_accessible if src_id in data_source_ids]
-            ast_denied = [src_id for src_id in cached_denied if src_id in data_source_ids]
-            uncached_ids = [src_id for src_id in data_source_ids if src_id not in cached_known]
+            ast_accessible = [s for s in cached_accessible if s in data_source_ids]
+            ast_denied    = [s for s in cached_denied    if s in data_source_ids]
+            uncached_ids  = [s for s in data_source_ids  if s not in cached_known]
             accessible_src_ids.extend(ast_accessible)
             access_denied_src_ids.extend(ast_denied)
-            logger.info(f"Cache hit for AST {ast_id}: {len(ast_accessible)} accessible, {len(ast_denied)} denied, {len(uncached_ids)} uncached")
+            logger.info(f"Cache hit for AST key {raw_ast_key}: {len(ast_accessible)} accessible, "
+                        f"{len(ast_denied)} denied, {len(uncached_ids)} uncached")
             if not uncached_ids:
                 continue
-            # Some requested IDs weren't in cache — fall through to check them freshly
-            logger.info(f"Cache miss for {len(uncached_ids)} new datasource IDs for AST {ast_id}, checking permissions")
             data_source_ids = uncached_ids
-        
-        try:
-            # Query the lookup table directly by assistantId using GSI
-            logger.info(f"Querying DynamoDB lookup table for assistantId: {ast_id}")
-            response = lookup_table.query(
-                IndexName="AssistantIdIndex",
-                KeyConditionExpression=Key("assistantId").eq(ast_id)
-            )
-            
-            logger.info(f"DynamoDB response: {response}")
-            
-            # Check if any items were found
-            if not response.get("Items") or len(response["Items"]) == 0:
-                logger.info(f"No item found for assistantId: '{ast_id}'")
-                access_denied_src_ids.extend(data_source_ids)
-                continue
 
-            item = response["Items"][0]
-            # Get accessTo information
-            access_to = item.get("accessTo", {})
-            # Check if the assistant is public or if the user has access
-            has_access = False
-            
-            if item.get("public", False):
-                # Assistant is public
-                has_access = True
-                logger.info(f"AST {ast_id} is public - access granted")
-            elif current_user == item.get("createdBy"):
-                # User is the creator
-                has_access = True
-                logger.info(f"User {current_user} is creator of AST {ast_id} - access granted")
-            elif current_user in access_to.get("users", []):
-                # User is in the allowed users list
-                has_access = True
-                logger.info(f"User {current_user} is listed in accessTo.users for AST {ast_id} - access granted")
-            elif verify_user_in_amp_group(token, access_to.get("amplifyGroups", [])):
-                # User is member of allowed amplify groups
-                has_access = True
-                logger.info(f"User {current_user} is member of amplifyGroups for AST {ast_id} - access granted")
-            
-            if has_access:
-                # User has access to the AST, now check if AST has access to the datasources
-                logger.info(f"User has access to AST {ast_id}, checking AST access to datasources")
-                ast_accessible_src_ids, ast_access_denied_src_ids = classify_src_ids_by_access(data_source_ids, ast_id)
-                accessible_src_ids.extend(ast_accessible_src_ids)
-                access_denied_src_ids.extend(ast_access_denied_src_ids)
-                # Cache the AST permission results
-                performance_cache.cache_ast_permissions(current_user, ast_key, ast_accessible_src_ids, ast_access_denied_src_ids)
+        try:
+            if layered_ast_id:
+                # ── LAYERED PATH ───────────────────────────────────────────────
+                # Check user access via the Layered Assistant's published path,
+                # then verify the leaf assistant owns the datasources.
+                has_access, _ = _check_user_has_ast_path_access(lookup_table, layered_ast_id, current_user, token)
+
+                if has_access:
+                    logger.info(f"User has access to LA {layered_ast_id}, checking leaf {ast_id} datasource ownership")
+                    good, bad = classify_src_ids_by_access(data_source_ids, ast_id)
+                    accessible_src_ids.extend(good)
+                    access_denied_src_ids.extend(bad)
+                    performance_cache.cache_ast_permissions(current_user, ast_cache_key, good, bad)
+                else:
+                    logger.info(f"User {current_user} denied access to LA {layered_ast_id}")
+                    access_denied_src_ids.extend(data_source_ids)
+                    performance_cache.cache_ast_permissions(current_user, ast_cache_key, [], data_source_ids)
+
             else:
-                # User does not have access to the AST
-                logger.info(f"User {current_user} does not have access to AST {ast_id} - access denied")
-                access_denied_src_ids.extend(data_source_ids)
-                # Cache denied access
-                performance_cache.cache_ast_permissions(current_user, ast_key, [], data_source_ids)
-                
+                # ── PLAIN AST PATH ─────────────────────────────────────────────
+                # Primary: check user access via the assistant's own published path.
+                has_path_access, _ = _check_user_has_ast_path_access(lookup_table, ast_id, current_user, token)
+
+                if has_path_access:
+                    logger.info(f"User has path-level access to AST {ast_id}, checking datasource ownership")
+                    good, bad = classify_src_ids_by_access(data_source_ids, ast_id)
+                    accessible_src_ids.extend(good)
+                    access_denied_src_ids.extend(bad)
+                    performance_cache.cache_ast_permissions(current_user, ast_cache_key, good, bad)
+                else:
+                    # Bug #5 fallback: the assistant may have been shared directly to this
+                    # user via normal object-access even though it also has a published path.
+                    # Try checking datasource ownership against current_user directly.
+                    logger.info(f"Path-level check failed for AST {ast_id}, falling back to "
+                                f"direct user ownership check for {current_user}")
+                    good, bad = classify_src_ids_by_access(data_source_ids, current_user)
+                    if good:
+                        logger.info(f"Fallback succeeded — {len(good)} datasources accessible via direct ownership")
+                        accessible_src_ids.extend(good)
+                        access_denied_src_ids.extend(bad)
+                        # Don't cache under ast_cache_key — this is a user-specific
+                        # direct-ownership grant, not a path-level permission.
+                    else:
+                        logger.info(f"User {current_user} has no access to AST {ast_id} via path or direct ownership")
+                        access_denied_src_ids.extend(data_source_ids)
+                        performance_cache.cache_ast_permissions(current_user, ast_cache_key, [], data_source_ids)
+
         except Exception as e:
-            logger.error(f"Error processing AST {ast_id}: {str(e)}")
-            # In case of error, deny access to be safe
+            logger.error(f"Error processing AST key {raw_ast_key}: {str(e)}")
             access_denied_src_ids.extend(data_source_ids)
-            # Cache error as denied to avoid repeated failures
-            performance_cache.cache_ast_permissions(current_user, ast_key, [], data_source_ids)
+            performance_cache.cache_ast_permissions(current_user, ast_cache_key, [], data_source_ids)
 
     logger.info(f"AST Accessible src_ids: {accessible_src_ids}, AST Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids

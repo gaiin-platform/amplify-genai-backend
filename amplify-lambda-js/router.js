@@ -119,15 +119,20 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
                 // 2. Get user available models (with caching)
                 (async () => {
-                    let cached = await CacheManager.getCachedUserModels(params.user, params.accessToken);
-                    if (!cached) {
-                        logger.debug("Cache miss for user models, fetching from API");
-                        cached = await getUserAvailableModels(params.accessToken);
-                        CacheManager.setCachedUserModels(params.user, params.accessToken, cached);
-                    } else {
-                        logger.debug("Cache hit for user models");
+                    try {
+                        let cached = await CacheManager.getCachedUserModels(params.user, params.accessToken);
+                        if (!cached) {
+                            logger.debug("Cache miss for user models, fetching from API");
+                            cached = await getUserAvailableModels(params.accessToken);
+                            CacheManager.setCachedUserModels(params.user, params.accessToken, cached);
+                        } else {
+                            logger.debug("Cache hit for user models");
+                        }
+                        return cached;
+                    } catch (e) {
+                        logger.warn("Failed to fetch user available models, proceeding without them:", e.message);
+                        return null;
                     }
-                    return cached;
                 })(),
 
                 // 3. Resolve data sources (with caching and translate hashes)
@@ -221,6 +226,46 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     if (imgSources.length > 0 || vidSources.length > 0) {
                         logger.info(`📎 [Media] Extracted from message data: ${imgSources.length} images, ${vidSources.length} videos`);
                     }
+                }
+            }
+
+            // Update params.body.dataSources with the filtered list from resolveDataSources
+            if (dataSources && dataSources.length > 0) {
+                params.body.dataSources = dataSources;
+            }
+
+            // Send status message if any data sources were filtered out
+            if (params.body._removedDataSources) {
+                const removed = params.body._removedDataSources;
+                const totalRemoved = removed.invalidIds.length + removed.deniedAccess.length + removed.invalidImageIds.length;
+
+                if (totalRemoved > 0) {
+                    const messages = [];
+                    if (removed.invalidIds.length > 0) {
+                        messages.push(`${removed.invalidIds.length} data source(s) with invalid IDs were removed`);
+                    }
+                    if (removed.deniedAccess.length > 0) {
+                        messages.push(`${removed.deniedAccess.length} data source(s) you don't have access to were removed`);
+                    }
+                    if (removed.invalidImageIds.length > 0) {
+                        messages.push(`${removed.invalidImageIds.length} image(s) with invalid IDs were removed`);
+                    }
+
+                    logger.info(`⚠️ [Router] Sending data source warning status: ${totalRemoved} items removed`);
+                    sendStatusEventToStream(responseStream, newStatus({
+                        inProgress: false,
+                        message: `⚠️ Some data sources were removed: ${messages.join('; ')}`,
+                        icon: "warning",
+                        sticky: true,
+                        metadata: {
+                            removedDataSources: removed
+                        }
+                    }));
+
+                    // Send state event to attach removed datasources to message for UI rendering
+                    sendStateEventToStream(responseStream, {
+                        removedDataSources: removed
+                    });
                 }
             }
 

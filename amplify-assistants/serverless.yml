@@ -541,8 +541,7 @@ resources:
         TableName: ${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}
 
     # ── Layered Assistants Table ──────────────────────────────────────────────
-    # Primary key:  id (lastr/<uuid>)
-    # GSI PublicIdIndex:   publicId  → enables get-by-public-id
+    # Primary key:  assistantId  ("astr/<uuid>" personal | "astgr/<uuid>" group)
     # GSI CreatedByIndex:  createdBy → enables list-by-user
     LayeredAssistantsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -551,24 +550,16 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: publicId
+          - AttributeName: assistantId
             AttributeType: S
           - AttributeName: createdBy
             AttributeType: S
           - AttributeName: updatedAt
             AttributeType: S
         KeySchema:
-          - AttributeName: id
+          - AttributeName: assistantId
             KeyType: HASH
         GlobalSecondaryIndexes:
-          - IndexName: PublicIdIndex
-            KeySchema:
-              - AttributeName: publicId
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
           - IndexName: CreatedByIndex
             KeySchema:
               - AttributeName: createdBy

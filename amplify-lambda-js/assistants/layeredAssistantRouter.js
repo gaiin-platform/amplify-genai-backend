@@ -35,10 +35,10 @@ const dynamoClient = new DynamoDBClient({});
 // ── DynamoDB helpers ──────────────────────────────────────────────────────────
 
 /**
- * Fetch a LayeredAssistant item by its publicId via the PublicIdIndex GSI.
+ * Fetch a LayeredAssistant item by its assistantId (primary key).
  * Returns the unmarshalled item or null.
  */
-async function getLayeredAssistantByPublicId(publicId) {
+async function getLayeredAssistantById(assistantId) {
     const tableName = process.env.LAYERED_ASSISTANTS_DYNAMODB_TABLE;
     if (!tableName) {
         logger.error("LAYERED_ASSISTANTS_DYNAMODB_TABLE env var not set");
@@ -46,21 +46,18 @@ async function getLayeredAssistantByPublicId(publicId) {
     }
 
     try {
-        const command = new QueryCommand({
+        const command = new GetItemCommand({
             TableName: tableName,
-            IndexName: "PublicIdIndex",
-            KeyConditionExpression: "publicId = :pid",
-            ExpressionAttributeValues: { ":pid": { S: publicId } },
-            Limit: 1,
+            Key: { assistantId: { S: assistantId } },
         });
         const response = await dynamoClient.send(command);
-        if (response.Count > 0 && response.Items?.length > 0) {
-            return unmarshall(response.Items[0]);
+        if (response.Item) {
+            return unmarshall(response.Item);
         }
-        logger.warn("No layered assistant found for publicId:", publicId);
+        logger.warn("No layered assistant found for assistantId:", assistantId);
         return null;
     } catch (err) {
-        logger.error("Error querying layered assistant by publicId:", err);
+        logger.error("Error fetching layered assistant by assistantId:", err);
         return null;
     }
 }
@@ -68,45 +65,78 @@ async function getLayeredAssistantByPublicId(publicId) {
 // ── Access checks ─────────────────────────────────────────────────────────────
 
 /**
- * Personal LA: caller is the owner, OR they have at least "read" access
- * via the object permissions system (used for shares).
+ * Personal LA: caller is the owner, OR they have "read" access via the
+ * object permissions system (shares), OR they have access via the LA's
+ * published standalone path (public / accessTo.users / accessTo.amplifyGroups).
  */
 async function canAccessPersonal(item, user, token) {
     // Owner always has access
     if (item.createdBy === user) return true;
 
-    // Check object permissions — shares grant "read" access
-    const publicId = item.publicId;
-    const dbId = item.id;
-    if (!publicId || !dbId) return false;
+    const assistantId = item.assistantId;
+    if (!assistantId) return false;
 
+    // disabling shares for now
+    // Check object permissions — explicit shares grant "read" access
+    // try {
+    //     const response = await fetch(objectPermissionsEndpoint, {
+    //         method: "POST",
+    //         headers: {
+    //             "Content-Type": "application/json",
+    //             Authorization: `Bearer ${token}`,
+    //         },
+    //         body: JSON.stringify({
+    //             data: {
+    //                 dataSources: {
+    //                     [assistantId]: "read",
+    //                 },
+    //             },
+    //         }),
+    //     });
+
+    //     const responseBody = await response.json();
+    //     const statusCode = responseBody.statusCode || undefined;
+    //     if (response.status === 200 && statusCode === 200) return true;
+    // } catch (err) {
+    //     logger.error("Error checking object permissions for personal LA:", err);
+    // }
+
+    // Check standalone path access — if the LA is published at an astPath,
+    // honour the lookup table's public / accessTo.users / accessTo.amplifyGroups.
     try {
-        const response = await fetch(objectPermissionsEndpoint, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                data: {
-                    dataSources: {
-                        [publicId]: "read",
-                        [dbId]:     "read",
-                    },
-                },
-            }),
-        });
+        const lookupTable = process.env.ASSISTANT_LOOKUP_DYNAMODB_TABLE;
+        if (lookupTable) {
+            const queryResp = await dynamoClient.send(new QueryCommand({
+                TableName: lookupTable,
+                IndexName: "AssistantIdIndex",
+                KeyConditionExpression: "assistantId = :aid",
+                ExpressionAttributeValues: { ":aid": { S: assistantId } },
+                Limit: 1,
+            }));
 
-        const responseBody = await response.json();
-        const statusCode = responseBody.statusCode || undefined;
-        if (response.status === 200 && statusCode === 200) return true;
+            const pathItem = queryResp.Items?.[0] ? unmarshall(queryResp.Items[0]) : null;
+            if (pathItem) {
+                // Public path — anyone can access
+                if (pathItem.public) return true;
 
-        logger.warn(`User ${user} denied read access to personal LA ${publicId}`);
-        return false;
+                const accessTo = pathItem.accessTo || {};
+
+                // Explicit user access
+                if (accessTo.users?.includes(user)) return true;
+
+                // Amplify group membership
+                if (accessTo.amplifyGroups?.length > 0) {
+                    const isMember = await checkAmplifyGroupMembership(accessTo.amplifyGroups, token);
+                    if (isMember) return true;
+                }
+            }
+        }
     } catch (err) {
-        logger.error("Error checking object permissions for personal LA:", err);
-        return false;
+        logger.error("Error checking standalone path access for personal LA:", err);
     }
+
+    logger.warn(`User ${user} denied access to personal LA ${assistantId}`);
+    return false;
 }
 
 /**
@@ -116,7 +146,7 @@ async function canAccessPersonal(item, user, token) {
 async function canAccessGroup(item, user, token) {
     const groupId = item.groupId;
     if (!groupId) {
-        logger.warn("Group LA has no groupId stored:", item.publicId);
+        logger.warn("Group LA has no groupId stored:", item.assistantId);
         return false;
     }
 
@@ -417,7 +447,7 @@ async function walkTree(node, userMessage, account, model, requestId, responseSt
             `Selected assistant: ${node.name}`,
             false
         );
-        return node.assistantId;
+        return { assistantId: node.assistantId, name: node.name };
     }
 
     if (node.type === "router") {
@@ -438,6 +468,7 @@ async function walkTree(node, userMessage, account, model, requestId, responseSt
         return walkTree(chosenChild, userMessage, account, model, requestId, responseStream, depth + 1, conversationHistory);
     }
 
+
     logger.error("Unknown node type encountered during routing:", node.type);
     return null;
 }
@@ -455,32 +486,32 @@ export function isLayeredAssistantId(assistantId) {
 }
 
 /**
- * Resolve a LayeredAssistant publicId down to a concrete leaf assistantId.
+ * Resolve a LayeredAssistant assistantId down to a concrete leaf assistantId.
  *
  * @param {object} account        - { user, accessToken }
  * @param {object} model          - the current chat model object
  * @param {object} body           - the chat request body (needs body.messages)
- * @param {string} publicId       - "astr/<uuid>" or "astgr/<uuid>"
+ * @param {string} assistantId    - "astr/<uuid>" or "astgr/<uuid>"
  * @param {object} responseStream - the response stream for status events
  * @returns {Promise<string|null>} - the leaf assistantId, or null if access denied / not found / error
  */
-export async function resolveLayeredAssistant(account, model, body, publicId, responseStream) {
+export async function resolveLayeredAssistant(account, model, body, assistantId, responseStream) {
     const { user, accessToken: token } = account;
 
-    logger.info(`Resolving layered assistant: ${publicId} for user: ${user}`);
+    logger.info(`Resolving layered assistant: ${assistantId} for user: ${user}`);
 
     sendRouterStatus(responseStream, "Routing your request…", true);
 
 
     // ── 1. Fetch the record ────────────────────────────────────────────────────
-    const item = await getLayeredAssistantByPublicId(publicId);
+    const item = await getLayeredAssistantById(assistantId);
     if (!item) {
         sendRouterStatus(responseStream, "Layered assistant not found.", false);
         return null;
     }
 
     // ── 2. Access check ────────────────────────────────────────────────────────
-    const isGroup = publicId.startsWith(GROUP_PREFIX);
+    const isGroup = assistantId.startsWith(GROUP_PREFIX);
 
     if (isGroup) {
         const hasAccess = await canAccessGroup(item, user, token);
@@ -489,7 +520,7 @@ export async function resolveLayeredAssistant(account, model, body, publicId, re
             return null;
         }
     } else {
-        if (!canAccessPersonal(item, user)) {
+        if (!await canAccessPersonal(item, user, token)) {
             sendRouterStatus(responseStream, "You don't have access to this layered assistant.", false);
             return null;
         }
@@ -498,7 +529,7 @@ export async function resolveLayeredAssistant(account, model, body, publicId, re
     // ── 3. Validate the tree ───────────────────────────────────────────────────
     const rootNode = item.rootNode;
     if (!rootNode) {
-        logger.error("Layered assistant has no rootNode:", publicId);
+        logger.error("Layered assistant has no rootNode:", assistantId);
         sendRouterStatus(responseStream, "Layered assistant is not configured correctly.", false);
         return null;
     }
@@ -518,7 +549,7 @@ export async function resolveLayeredAssistant(account, model, body, publicId, re
 
     // ── 5. Walk the tree ────────────────────────────────────────────────────────
     const requestId = body.options?.requestId || `layered_${Date.now()}`;
-    const resolvedAssistantId = await walkTree(
+    const walkResult = await walkTree(
         rootNode,
         userMessage,
         account,
@@ -529,11 +560,42 @@ export async function resolveLayeredAssistant(account, model, body, publicId, re
         historyMessages
     );
 
-    if (!resolvedAssistantId) {
+    if (!walkResult) {
         sendRouterStatus(responseStream, "Routing failed. Using default assistant.", false);
         return null;
     }
 
-    logger.info(`Layered assistant ${publicId} resolved to: ${resolvedAssistantId}`);
+    const resolvedAssistantId = walkResult.assistantId;
+    const resolvedAssistantName = walkResult.name;
+    logger.info(`Layered assistant ${assistantId} resolved to: ${resolvedAssistantId} ("${resolvedAssistantName}")`);
+
+    // ── Group LA conversation tracking ────────────────────────────────────────
+    // Config fields live inside item.data (nested map in DynamoDB).
+    const itemData = item.data || {};
+    if (isGroup && itemData.trackConversations) {
+        body.options.trackConversations      = true;
+        body.options.assistantName           = item.name;
+        body.options.routedToAssistantId     = resolvedAssistantId;
+        body.options.routedToAssistantName   = resolvedAssistantName;
+        body.options.routerManagedTracking   = true; // Prevent leaf from overwriting router's tracking config
+        if (itemData.supportConvAnalysis) {
+            body.options.analysisCategories = itemData.analysisCategories ?? [];
+        }
+        logger.info(`Group LA conversation tracking enabled for "${item.name}" (${assistantId}) → routed to ${resolvedAssistantId}`);
+    }
+
+    // ── Enforce model ─────────────────────────────────────────────────────────
+    // If the LA has a model set, override the request model so the leaf assistant
+    // uses the enforced model regardless of what the client sent.
+    if (itemData.model) {
+        body.model = { ...body.model, id: itemData.model };
+        // Also update body.options.model since assistants.js prefers body.options.model over body.model
+        if (body.options) {
+            body.options = { ...body.options, model: { ...(body.options.model || body.model), id: itemData.model } };
+        }
+        logger.info(`Layered assistant "${item.name}" enforcing model: ${itemData.model}`);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     return resolvedAssistantId;
 }

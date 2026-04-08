@@ -237,8 +237,12 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         // If the selected ID is a layered assistant (astr/ or astgr/), resolve it
         // down to a concrete leaf assistant before the normal lookup flow.
         let resolvedAssistantId = clientSelectedAssistant;
+        // Track the original LA publicId so we can pass it to getUserDefinedAssistant
+        // for datasource permission tagging (layered path check in dual retrieval).
+        let layeredAstId = null;
         if (isLayeredAssistantId(clientSelectedAssistant)) {
             logger.info(`Layered assistant detected: ${clientSelectedAssistant} — resolving via tree routing`);
+            layeredAstId = clientSelectedAssistant;
             const leafId = await resolveLayeredAssistant(
                 account,
                 _model,
@@ -253,6 +257,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
                 }
                 // Leave selectedAssistant as null — falls through to defaultAssistant below
                 resolvedAssistantId = null;
+                layeredAstId = null;
             } else {
                 resolvedAssistantId = leafId;
                 logger.info(`Layered assistant resolved to leaf: ${leafId}`);
@@ -261,7 +266,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         // ──────────────────────────────────────────────────────────────────────
 
         if (resolvedAssistantId) {
-            selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, resolvedAssistantId, token);
+            selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, resolvedAssistantId, token, layeredAstId);
             if (!selectedAssistant) {
                 sendStatusEventToStream(responseStream, newStatus(
                     {   inProgress: false,
@@ -315,7 +320,6 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     if (selectedAssistant.disclaimer) stateInfo = { ...stateInfo, currentAssistantDisclaimer: selectedAssistant.disclaimer };
     sendStateEventToStream(responseStream, stateInfo);
 
-    // Note: "Assistant is responding" status message moved to router (after smart messages)
 
     forceFlush(responseStream);
 
