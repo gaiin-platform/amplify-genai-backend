@@ -814,7 +814,11 @@ def create_assistant(event, context, current_user, name, data):
         if not is_group_user:
             # imported here to avoid circular import
             from service.drive_datasources import process_assistant_drive_sources
-            integration_drive_ds_response = process_assistant_drive_sources(assistant_data, access_token)
+            integration_drive_ds_response = process_assistant_drive_sources(
+                assistant_data,
+                access_token,
+                assistant_public_id
+            )
             if not integration_drive_ds_response.get("success", False):
                 return integration_drive_ds_response
             integration_drive_ds_data = integration_drive_ds_response.get("data", {})

@@ -20,7 +20,8 @@ from typing import Dict, List, Tuple, Any
 
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
-    S3Operation
+    S3Operation,
+    DynamoDBOperation
 )
 from pycommon.authz import validated, setup_validated
 from pycommon.api.files import upload_file, delete_file
@@ -161,20 +162,11 @@ async def prepare_download_link(integration, integration_provider, file_id, curr
         try:
             download_url = result["downloadLink"]
 
-            # Check if download_url is None (blocked sensitive file)
-            if download_url is None:
-                file_name = result.get("name", "file")
-                logger.warning(f"Download blocked for sensitive file: {file_name}")
-                return {
-                    "success": False,
-                    "error": "This file contains sensitive data and cannot be downloaded. Access is restricted for security compliance."
-                }
-
             download_file_id = result.get("id")
             requires_cleanup = file_id != download_file_id
 
             # when downloaded directly to the user
-            if direct_download and not requires_cleanup:
+            if direct_download and not requires_cleanup and download_url:
                 return {"success": True, "data": download_url}
             else:
                 file_name = result.get("name", "downloaded_file")
@@ -300,13 +292,21 @@ async def get_file_contents(integration_provider, credentials, file_id, download
                     status, done = downloader.next_chunk()
                 return file.getvalue()
             case IntegrationType.MICROSOFT:
-                # Safety check for None download_url (sensitive files)
-                if not download_url:
-                    logger.error("Cannot download file - download URL is None (likely a sensitive file)")
-                    return None
-
                 integration_token = credentials["token"]
                 headers = {"Authorization": f"Bearer {integration_token}"}
+
+                # If no pre-signed download URL was returned (happens for some file types
+                # like plain text), fall back to fetching content directly via Graph /content
+                if not download_url:
+                    logger.debug("[MICROSOFT DOWNLOAD] No download URL for %s, fetching via Graph /content endpoint", file_id)
+                    graph_content_url = f"https://graph.microsoft.com/v1.0/me/drive/items/{file_id}/content"
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(graph_content_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=True) as response:
+                            if response.ok:
+                                return await response.read()
+                            else:
+                                logger.error("[MICROSOFT DOWNLOAD ERROR] Graph /content returned HTTP %s for %s", response.status, file_id)
+                                return None
 
                 # Add random delay to stagger downloads and avoid rate limiting
                 # Using very small delay (0.1-0.3s) to prevent simultaneous API hits without slowing down
@@ -503,6 +503,18 @@ def cleanup_after_download_file(integration_provider, download_file_id, token):
         # no cleanup required
 
 
+def get_assistant(assistant_id):
+    """Fetch assistant record from DynamoDB to verify ownership."""
+    try:
+        dynamodb = boto3.resource("dynamodb")
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+        response = assistants_table.get_item(Key={"id": assistant_id})
+        return response.get("Item")
+    except Exception as e:
+        logger.error("Error fetching assistant %s: %s", assistant_id, e)
+        return None
+
+
 MIME_TO_EXT = {
     "application/pdf": ".pdf",
     "application/msword": ".doc",
@@ -522,6 +534,7 @@ MIME_TO_EXT = {
 
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("upload_files")
 def drive_files_to_data_sources(event, context, current_user, name, data):
@@ -543,6 +556,13 @@ async def _async_drive_files_to_data_sources(event, context, current_user, name,
 
         # Extract optional assistantId (not a provider key)
         assistant_id = payload.get("assistantId")
+
+        if assistant_id:
+            assistant = get_assistant(assistant_id)
+            if assistant and assistant.get("user") != current_user:
+                logger.warning("Unauthorized assistant access attempt by %s for assistant %s", current_user, assistant_id)
+                return {"success": False, "error": "Unauthorized: you do not have access to this assistant"}
+            logger.info("User has access to assistant: %s", assistant_id)
 
         logger.info("Processing drive files to data sources for user: %s", current_user)
         start_time = time.time()

@@ -9,7 +9,8 @@ import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import { getTokenCount } from "../datasource/datasources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
-import { fillInAssistant, getUserDefinedAssistant } from "./userDefinedAssistants.js";
+import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import { isLayeredAssistantId, resolveLayeredAssistant } from "./layeredAssistantRouter.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
@@ -232,19 +233,52 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         const user = account.user;
         const token = account.accessToken;
 
-        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, clientSelectedAssistant, token);
-        if (!selectedAssistant) {
-            sendStatusEventToStream(responseStream, newStatus(
-                {
-                    inProgress: false,
-                    message: "Selected Assistant Not Found",
-                    icon: "assistant",
-                    sticky: true
-                }));
-            forceFlush(responseStream);
+        // ── Layered Assistant routing ──────────────────────────────────────────
+        // If the selected ID is a layered assistant (astr/ or astgr/), resolve it
+        // down to a concrete leaf assistant before the normal lookup flow.
+        let resolvedAssistantId = clientSelectedAssistant;
+        // Track the original LA publicId so we can pass it to getUserDefinedAssistant
+        // for datasource permission tagging (layered path check in dual retrieval).
+        let layeredAstId = null;
+        if (isLayeredAssistantId(clientSelectedAssistant)) {
+            logger.info(`Layered assistant detected: ${clientSelectedAssistant} — resolving via tree routing`);
+            layeredAstId = clientSelectedAssistant;
+            const leafId = await resolveLayeredAssistant(
+                account,
+                _model,
+                body,
+                clientSelectedAssistant,
+                responseStream
+            );
+            if (!leafId) {
+                // resolveLayeredAssistant already sent appropriate status to stream
+                if (body.options.api_accessed) {
+                    throw new Error("Provided Layered Assistant ID is invalid, inaccessible, or could not be routed.");
+                }
+                // Leave selectedAssistant as null — falls through to defaultAssistant below
+                resolvedAssistantId = null;
+                layeredAstId = null;
+            } else {
+                resolvedAssistantId = leafId;
+                logger.info(`Layered assistant resolved to leaf: ${leafId}`);
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────
 
-            if (body.options.api_accessed) {
-                throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+        if (resolvedAssistantId) {
+            selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, resolvedAssistantId, token, layeredAstId);
+            if (!selectedAssistant) {
+                sendStatusEventToStream(responseStream, newStatus(
+                    {   inProgress: false,
+                        message: "Selected Assistant Not Found",
+                        icon: "assistant",
+                        sticky: true
+                    }));
+                forceFlush(responseStream);
+
+                if (body.options.api_accessed) {
+                    throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+                }
             }
         }
     } else if (getTools(body.messages).length > 0) {
@@ -286,7 +320,6 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     if (selectedAssistant.disclaimer) stateInfo = { ...stateInfo, currentAssistantDisclaimer: selectedAssistant.disclaimer };
     sendStateEventToStream(responseStream, stateInfo);
 
-    // Note: "Assistant is responding" status message moved to router (after smart messages)
 
     forceFlush(responseStream);
 
