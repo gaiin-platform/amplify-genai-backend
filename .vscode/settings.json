@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "./amplify-agent-loop-lambda/venv/lib/python3.11/site-packages",
+        "./amplify-lambda/markitdown/python"
+    ]
+}

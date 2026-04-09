@@ -172,7 +172,9 @@ def is_group_admin(group_id, user):
             logger.warning("Group %s not found when checking admin access for %s", group_id, user)
             return False
         members = item.get("members", {})
-        return members.get(user) == "admin"
+        can_continue = members.get(user) == "admin"
+        logger.info("User %s has admin access to group %s: %s", user, group_id, can_continue)
+        return can_continue
     except ClientError as e:
         logger.error("Error checking group admin status for %s in %s: %s", user, group_id, e)
         return False
@@ -281,7 +283,23 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     will handle all cleanup and determine what needs to be reprocessed.
     """
     s3 = boto3.client("s3")
+
+    # Extract values from the top-level data object BEFORE reassigning
     access_token = data["access_token"]
+    account = data["account"]
+    rate_limit = data["rate_limit"]
+
+    # Now extract the nested data object
+    data = data["data"]
+    key = data["key"]
+    group_id = data.get("groupId")
+
+    if group_id and not is_group_admin(group_id, current_user):
+        logger.warning("User %s attempted to reprocess group %s file without admin rights", current_user, group_id)
+        return {"success": False, "message": f"User does not have admin access to group: {group_id}"}
+
+    if group_id:
+        current_user = group_id
 
     data = data["data"]
     key = data["key"]
@@ -296,8 +314,8 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
 
     account_data = {
         "user": current_user,
-        "account": data["account"],
-        "rate_limit": data["rate_limit"],
+        "account": account,
+        "rate_limit": rate_limit,
         "access_token": access_token,
     }
 

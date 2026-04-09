@@ -5,7 +5,7 @@ integration_drive_files_ds_schema = {
             "assistantId": {"type": "string"}
         },
         "patternProperties": {
-            "^(google|microsoft|.*?)$": {
+            "^(?!assistantId$)(google|microsoft|.*?)$": {
                 "type": "object",
                 "properties": {
                     "folders": {

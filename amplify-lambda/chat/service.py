@@ -237,6 +237,7 @@ def get_data_source_details(data_sources):
                 "createdAt": item.get("createdAt", ""),
                 "tags": item.get("tags", []),
                 "totalTokens": item.get("totalTokens", 0),
+                "ragOnly": True,
             }
             id = item.get("id", "")
 

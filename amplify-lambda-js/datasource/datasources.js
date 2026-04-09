@@ -248,12 +248,30 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         };
     }
 
-    const msgDataSources =
+    // Build a set of denied source IDs from the permission filter already applied in resolveDataSources.
+    // This prevents denied datasources that appear in prior conversation messages from leaking into RAG.
+    const deniedAccessList = chatRequestOrig._removedDataSources?.deniedAccess || [];
+    const deniedIds = new Set(deniedAccessList.map(d => d.objectId));
+
+    const filterDenied = (sources) => {
+        if (deniedIds.size === 0) return sources;
+        return sources.filter(ds => {
+            const key = extractKey(ds.id);
+            if (deniedIds.has(key)) {
+                logger.warn(`getDataSourcesByUse: Filtering denied datasource from output: ${key}`);
+                return false;
+            }
+            return true;
+        });
+    };
+
+    const msgDataSources = filterDenied(
         await translateUserDataSourcesToHashDataSources(
             params,
             chatRequestOrig,
             (chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []).filter(ds => !isImage(ds) && !isVideo(ds))
-        );
+        )
+    );
 
     const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0, -1)
         .filter(m => {
@@ -270,13 +288,17 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         } : null
     });
 
-    const convoDataSources = await translateUserDataSourcesToHashDataSources(
-        params,
-        chatRequestOrig,
-        referencedDataSourcesInMessages
+    const convoDataSources = filterDenied(
+        await translateUserDataSourcesToHashDataSources(
+            params,
+            chatRequestOrig,
+            referencedDataSourcesInMessages
+        )
     );
 
-    dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
+    dataSources = filterDenied(
+        await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources)
+    );
 
     const getRagOnly = sources => sources.filter(ds =>
         chatRequestOrig.options?.ragOnly || (ds.metadata?.ragOnly));
@@ -330,6 +352,18 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
+    // If a document is already being inserted (in dataSources), don't also send it to RAG.
+    // This prevents double-processing when the same file appears in both the current message
+    // (attached → insert) and prior conversation messages (convoDataSources → RAG).
+    const insertIds = new Set(dataSources.map(ds => ds.id));
+    ragDataSources = ragDataSources.filter(ds => {
+        if (insertIds.has(ds.id)) {
+            logger.debug(`Skipping RAG for datasource already being inserted: ${ds.id}`);
+            return false;
+        }
+        return true;
+    });
+
     // Only check chatRequestOrig.options?.skipRag, not params.options?.skipRag
     // The router pre-resolves data sources and shouldn't override RAG detection
     if (chatRequestOrig.options?.skipRag) {
@@ -345,7 +379,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if (params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
+    const _rawDataSourceOptions = chatRequestOrig.options?.dataSourceOptions || params.options?.dataSourceOptions;
+    if (_rawDataSourceOptions && Object.keys(_rawDataSourceOptions).length > 0) {
 
         const dataSourceOptions = {
             ...(chatRequestOrig.options.dataSourceOptions || {})
@@ -544,25 +579,147 @@ export const resolveDataSources = async (params, body, dataSources) => {
         ...convoDataSources.filter(ds => !dataSources.find(d => d.id === ds.id))
     ]
 
+    // Filter out data sources with invalid IDs before processing
+    const originalAllDataSources = [...allDataSources];
+    allDataSources = allDataSources.filter(ds => ds && ds.id && typeof ds.id === 'string');
+    dataSources = dataSources.filter(ds => ds && ds.id && typeof ds.id === 'string');
+    const removed = originalAllDataSources.filter(ds => !allDataSources.includes(ds));
+    if (removed.length > 0) {
+        // Store removed data sources for user notification
+        if (!body._removedDataSources) {
+            body._removedDataSources = {
+                invalidIds: [],
+                deniedAccess: [],
+                invalidImageIds: []
+            };
+        }
+        body._removedDataSources.invalidIds.push(...removed);
+        logger.warn(`Filtered out ${removed.length} data sources with invalid IDs`);
+    }
+
     const nonUserSources = allDataSources.filter(ds =>
         !extractKey(ds.id).startsWith(params.user + "/") &&
         !ds.id.startsWith("bedrock-kb://")
     );
 
+    // Track removed/invalid data sources for user notification
+    if (!body._removedDataSources) {
+        body._removedDataSources = {
+            invalidIds: [],
+            deniedAccess: [],
+            invalidImageIds: []
+        };
+    }
+
+    // Filter out image sources with invalid IDs before processing
+    if (body.imageSources) {
+        const originalImageSources = [...body.imageSources];
+        const validImageSources = body.imageSources.filter(ds => ds && ds.id && typeof ds.id === 'string');
+        const removedImgs = originalImageSources.filter(ds => !validImageSources.includes(ds));
+        if (removedImgs.length > 0) {
+            body._removedDataSources.invalidImageIds.push(...removedImgs);
+            logger.warn(`Filtered out ${removedImgs.length} image sources with invalid IDs`);
+        }
+        body.imageSources = validImageSources;
+    }
+
     if (nonUserSources && nonUserSources.length > 0 ||
         (body.imageSources && body.imageSources.length > 0) ||
         (body.videoSources && body.videoSources.length > 0)) {
-        //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
-        const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
+        //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without
+        const ds_with_keys = nonUserSources.map(ds => ({ ...ds, originalId: ds.id, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds => ({ ...ds, id: extractKey(ds.id) })) : [];
         const video_ds_keys = body.videoSources ? body.videoSources.map(ds => ({ ...ds, id: extractKey(ds.id) })) : [];
         logger.debug("IMAGE: ds_with_keys", image_ds_keys);
         logger.debug("VIDEO: ds_with_keys", video_ds_keys);
-        if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys, ...video_ds_keys])) {
-            throw new Error("Unauthorized data source access.");
+
+        // Check permissions - backend stops at first denial and returns partial results
+        let allSourcesToCheck = [...ds_with_keys, ...image_ds_keys, ...video_ds_keys];
+        // Build stable lookups (global hash id → name/originalId) so we can enrich denied entries
+        const sourceNameById = {};
+        const sourceOriginalIdById = {};
+        for (const ds of allSourcesToCheck) {
+            if (ds.id && ds.name) sourceNameById[ds.id] = ds.name;
+            if (ds.id && ds.originalId) sourceOriginalIdById[ds.id] = ds.originalId;
+        }
+        let allAllowedSourceIds = [];
+        let allDeniedSourcesData = [];
+
+        // Loop to check all sources, handling early returns from backend
+        while (allSourcesToCheck.length > 0) {
+            const permissionResult = await canReadDataSources(params.accessToken, allSourcesToCheck);
+            const allowedSourceIds = permissionResult.allowedSources || [];
+            const deniedSourcesData = permissionResult.deniedSources || [];
+
+            // Accumulate allowed sources
+            allAllowedSourceIds.push(...allowedSourceIds);
+
+            // Accumulate denied sources, enriched with the original filename for UI display
+            if (deniedSourcesData.length > 0) {
+                allDeniedSourcesData.push(...deniedSourcesData.map(d => ({
+                    ...d,
+                    name: sourceNameById[d.objectId] || d.objectId,
+                    originalId: sourceOriginalIdById[d.objectId] || null
+                })));
+            }
+
+            // If backend stopped early (207 status), there are more sources to check
+            if (permissionResult.stoppedEarly) {
+                // Find which sources haven't been checked yet
+                const checkedSourceIds = new Set([...allowedSourceIds, ...deniedSourcesData.map(d => d.objectId)]);
+                const remainingSources = allSourcesToCheck.filter(ds => !checkedSourceIds.has(ds.id));
+
+                logger.info(`Backend stopped early: ${allowedSourceIds.length} allowed, ${deniedSourcesData.length} denied. ${remainingSources.length} sources remaining to check`);
+
+                // Continue with remaining sources
+                allSourcesToCheck = remainingSources;
+            } else {
+                // All sources checked, exit loop
+                logger.info(`Permission check complete: ${allAllowedSourceIds.length} total allowed, ${allDeniedSourcesData.length} total denied`);
+                break;
+            }
+        }
+
+        // Track denied sources with detailed info
+        if (allDeniedSourcesData.length > 0) {
+            body._removedDataSources.deniedAccess.push(...allDeniedSourcesData);
+            logger.warn(`User denied access to ${allDeniedSourcesData.length} data sources: ${allDeniedSourcesData.map(d => d.objectId).join(', ')}`);
+
+            // Filter out denied sources from allDataSources and dataSources
+            allDataSources = allDataSources.filter(ds => {
+                const key = extractKey(ds.id);
+                return allAllowedSourceIds.includes(key);
+            });
+
+            dataSources = dataSources.filter(ds => {
+                const key = extractKey(ds.id);
+                return allAllowedSourceIds.includes(key);
+            });
+
+            // Filter out denied image sources from body.imageSources
+            if (body.imageSources) {
+                body.imageSources = body.imageSources.filter(img => {
+                    const key = extractKey(img.id);
+                    return allAllowedSourceIds.includes(key);
+                });
+            }
+
+            // Filter out denied video sources from body.videoSources
+            if (body.videoSources) {
+                body.videoSources = body.videoSources.filter(vid => {
+                    const key = extractKey(vid.id);
+                    return allAllowedSourceIds.includes(key);
+                });
+            }
+
+            logger.info(`Filtered out ${allDeniedSourcesData.length} denied sources. Continuing with ${allDataSources.length} allowed data sources, ${body.imageSources?.length || 0} allowed image sources, and ${body.videoSources?.length || 0} allowed video sources`);
         }
     }
 
+    // Return only body-level dataSources (NOT conversation dataSources).
+    // Conversation dataSources are independently read from messages inside getDataSourcesByUse.
+    // Returning allDataSources here would double-count conversation docs (once as top-level
+    // dataSources in the insert path, and again as convoDataSources in the RAG path).
     return dataSources;
 }
 
