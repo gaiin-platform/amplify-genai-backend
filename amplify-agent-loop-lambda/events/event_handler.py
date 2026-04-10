@@ -96,7 +96,7 @@ Example:
 # Key: Descriptive constant name (use in handlers)
 # Value: Email address
 SPECIALIZED_EMAILS = {
-    "SCHEDULER": "schedule@vanderbilt.edu",
+    "SCHEDULER": "schedule@dev.vanderbilt.ai",
     "NOTES": "notes@dev.vanderbilt.ai",
 }
 

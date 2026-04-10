@@ -526,5 +526,5 @@ class SESMessageHandler(MessageHandler):
         else:
             logger.warning("No access token found")
 
-    def is_agent_loop_event(self, event: Dict[str, Any]) -> bool:
+    def is_agent_loop_event(self, event: Dict[str, Any] = None) -> bool:
         return True
