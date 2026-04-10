@@ -106,6 +106,8 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         logger.info(
                             "Ignoring event per handler instructions (e.g., return None)"
                         )
+                    # Only one handler should process each message — stop after first match
+                    break
                 else:
                     logger.info("Handler %s cannot handle this message", handler_name)
 

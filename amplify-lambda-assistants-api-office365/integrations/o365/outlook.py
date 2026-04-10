@@ -624,6 +624,9 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
         "isRead": message.get("isRead", False),
         "sensitivity": sensitivity_info["level"],
         "sensitivityLabel": sensitivity_info["label"],
+        # Calendar invite detection: Graph always annotates eventMessage subtypes with
+        # @odata.type = "#microsoft.graph.eventMessage" — no extra $select needed.
+        "isEventMessage": message.get("@odata.type") == "#microsoft.graph.eventMessage",
     }
 
     # Add attention note for level 4 sensitive emails

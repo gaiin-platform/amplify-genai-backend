@@ -32,7 +32,7 @@ custom:
     - prod
 
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    requireChangeSet: false
 
 provider:
   name: aws
@@ -102,7 +102,7 @@ provider:
     NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
     S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
     # AI Scheduler Configuration (SES Email Forwarding)
-    # AI_SCHEDULER_STORAGE_TABLE: ${ssm:/amplify/${sls:stage}/AI_SCHEDULER_STORAGE_TABLE}
+    AI_SCHEDULER_STORAGE_TABLE: ${ssm:/amplify/${sls:stage}/AI_SCHEDULER_STORAGE_TABLE, ""}
 
 
   iam:
@@ -261,9 +261,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
                 # AI Scheduler storage table (for SES email forwarding workflow)
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}"
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}/index/*"
-
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
