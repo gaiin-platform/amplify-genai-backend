@@ -409,14 +409,20 @@ Is this a meeting/scheduling request?"""
                 NON_SCHEDULING_INTENTS = ['no_action', 'informational', 'spam', 'out_of_scope', 'thank_you', 'follow_up_no_action']
                 if intent in NON_SCHEDULING_INTENTS:
                     logger.info("⏭️ Non-scheduling intent detected: %s — skipping processing", intent)
-                    return {
-                        "result": {
-                            "skipped": True,
-                            "reason": "non_scheduling_intent",
-                            "intent": intent,
-                            "confidence": confidence
-                        }
-                    }
+                    _result = {"skipped": True, "reason": "non_scheduling_intent", "intent": intent, "confidence": confidence}
+                    if is_test_run and test_request_id:
+                        try:
+                            _now = datetime.now(timezone.utc).isoformat()
+                            settings_table.update_item(
+                                Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
+                                UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
+                                ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
+                                ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': confidence, 'reasoning': f'Non-scheduling intent: {intent}'}, ':c': _now, ':u': _now}
+                            )
+                            logger.info("   ✅ Test record updated to completed (non_scheduling_intent)")
+                        except Exception as _te:
+                            logger.warning("   ⚠️ Failed to update test record: %s", _te)
+                    return {"result": _result}
 
             except Exception as e:
                 logger.error("❌ Failed to classify email: %s", e, exc_info=True)
@@ -566,13 +572,20 @@ Is this a meeting/scheduling request?"""
                     )
                     if is_blocked:
                         logger.info("🚫 Sender %s is in blocked list — skipping processing", source_email)
-                        return {
-                            "result": {
-                                "skipped": True,
-                                "reason": "blocked_sender",
-                                "sender_email": reply_to_email
-                            }
-                        }
+                        _result = {"skipped": True, "reason": "blocked_sender", "sender_email": reply_to_email}
+                        if is_test_run and test_request_id:
+                            try:
+                                _now = datetime.now(timezone.utc).isoformat()
+                                settings_table.update_item(
+                                    Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
+                                    UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
+                                    ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
+                                    ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': 0.0, 'reasoning': f'Sender blocked: {reply_to_email}'}, ':c': _now, ':u': _now}
+                                )
+                                logger.info("   ✅ Test record updated to completed (blocked_sender)")
+                            except Exception as _te:
+                                logger.warning("   ⚠️ Failed to update test record: %s", _te)
+                        return {"result": _result}
 
             except Exception as e:
                 logger.error("❌ Failed to fetch user settings: %s", e, exc_info=True)
@@ -666,6 +679,18 @@ Is this a meeting/scheduling request?"""
                 ])
                 if not calendar_has_active_setting:
                     logger.info("⏭️ Automation level is 'off' and no active calendar settings — skipping processing")
+                    if is_test_run and test_request_id:
+                        try:
+                            _now = datetime.now(timezone.utc).isoformat()
+                            settings_table.update_item(
+                                Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
+                                UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
+                                ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
+                                ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': confidence, 'reasoning': 'Automation is off and no active calendar settings', 'settings_applied': {'automation_level': automation_level}}, ':c': _now, ':u': _now}
+                            )
+                            logger.info("   ✅ Test record updated to completed (automation_off)")
+                        except Exception as _te:
+                            logger.warning("   ⚠️ Failed to update test record: %s", _te)
                     return {"result": {"skipped": True, "reason": "automation_off"}}
                 else:
                     logger.info("📅 Automation level is 'off' but calendar automation is active — continuing for calendar only")
@@ -1022,14 +1047,50 @@ Write a natural, warm, professional response that {executive_name} would send.""
 
                     draft_text = draft_text.strip()
 
+                    # Track what content type to send to Outlook.
+                    # Plain text by default; switches to 'html' when the signature is HTML.
+                    draft_content_type = 'text'
+
                     # Append signature if available
                     if primary_signature and primary_signature.get('content'):
-                        if not draft_text.endswith('\n\n'):
-                            draft_text += '\n\n'
-                        draft_text += primary_signature['content']
-                        logger.info("   ✅ Appended signature: %s", primary_signature.get('name'))
+                        sig_content = primary_signature['content']
+                        sig_format = primary_signature.get('format', 'text')
 
-                    logger.info("✅ Draft generated: %d chars", len(draft_text))
+                        if sig_format == 'html':
+                            # HTML signature — convert the entire draft to HTML so the
+                            # signature renders properly in Outlook and in our pane.
+                            # Wrap the message in a div and the signature in a sentinel div
+                            # (<div id="amplify-signature">) so the frontend can cleanly
+                            # split them: editable message body on top, read-only rendered
+                            # signature preview below.
+                            import html as _html_lib
+
+                            def _text_to_html_paragraphs(text):
+                                """Convert plain LLM text to HTML paragraphs."""
+                                paragraphs = text.strip().split('\n\n')
+                                parts = []
+                                for para in paragraphs:
+                                    escaped = _html_lib.escape(para).replace('\n', '<br>\n')
+                                    parts.append(f'<p>{escaped}</p>')
+                                return '\n'.join(parts)
+
+                            message_html = _text_to_html_paragraphs(draft_text)
+                            draft_text = (
+                                f'<div class="amplify-draft-message">\n{message_html}\n</div>\n'
+                                f'<div id="amplify-signature">\n{sig_content}\n</div>'
+                            )
+                            draft_content_type = 'html'
+                            logger.info("   ✅ Appended HTML signature (contentType=html): %s", primary_signature.get('name'))
+                        else:
+                            # Plain text signature — simple concatenation, stays as text
+                            if not draft_text.endswith('\n\n'):
+                                draft_text += '\n\n'
+                            draft_text += sig_content
+                            logger.info("   ✅ Appended plain text signature: %s", primary_signature.get('name'))
+                    else:
+                        logger.info("   ℹ️ No signature to append")
+
+                    logger.info("✅ Draft generated: %d chars (content_type=%s)", len(draft_text), draft_content_type)
 
                 except Exception as e:
                     logger.error("❌ Failed to generate draft: %s", e, exc_info=True)
@@ -1267,7 +1328,8 @@ Write a natural, warm, professional response that {executive_name} would send.""
                                         'to_recipients': [reply_to_email],
                                         'subject': draft_subject,
                                         'body': draft_text,
-                                        'importance': 'normal'
+                                        'importance': 'normal',
+                                        'content_type': draft_content_type
                                     }
                                 },
                                 timeout=30
@@ -1594,23 +1656,43 @@ Write a natural, warm, professional response that {executive_name} would send.""
             logger.info("   Requires Review: %s", requires_review)
             logger.info("=" * 60)
 
+            # Update test record to completed if this was a test run
+            _final_result = {
+                "request_id": request_id,
+                "draft_id": draft_id,
+                "intent": intent,
+                "confidence": confidence,
+                "action_taken": action_taken,
+                "draft_created": True,
+                "auto_sent": action_taken == 'auto_sent',
+                "outlook_draft_created": action_taken == 'draft_created',
+                "outlook_draft_id": outlook_draft_id,
+                "outlook_message_id": outlook_message_id,
+                "requires_review": requires_review,
+                "auto_send_blocked_reason": auto_send_blocked_reason,
+                "calendar_slots_found": len(calendar_slots),
+                "settings_applied": {
+                    "automation_level": automation_level,
+                    "calendar_automation": user_settings.get('calendar_automation', {}),
+                    "auto_send_rules": user_settings.get('auto_send_rules', {})
+                }
+            }
+            if is_test_run and test_request_id:
+                try:
+                    _now = datetime.now(timezone.utc).isoformat()
+                    settings_table.update_item(
+                        Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
+                        UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
+                        ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
+                        ExpressionAttributeValues={':s': 'completed', ':r': convert_floats_to_decimal(_final_result), ':c': _now, ':u': _now}
+                    )
+                    logger.info("   ✅ Test record updated to completed (action_taken=%s)", action_taken)
+                except Exception as _te:
+                    logger.warning("   ⚠️ Failed to update test record: %s", _te)
+
             # return must contain result
             return {
-                "result": {
-                    "request_id": request_id,
-                    "draft_id": draft_id,
-                    "intent": intent,
-                    "confidence": confidence,
-                    "action_taken": action_taken,
-                    "draft_created": True,
-                    "auto_sent": action_taken == 'auto_sent',
-                    "outlook_draft_created": action_taken == 'draft_created',
-                    "outlook_draft_id": outlook_draft_id,
-                    "outlook_message_id": outlook_message_id,
-                    "requires_review": requires_review,
-                    "auto_send_blocked_reason": auto_send_blocked_reason,
-                    "calendar_slots_found": len(calendar_slots)
-                }
+                "result": _final_result
             }
 
         except Exception as e:
