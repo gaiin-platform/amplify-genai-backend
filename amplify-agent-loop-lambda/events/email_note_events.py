@@ -1,5 +1,5 @@
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
-from events.ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails
+from events.ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails, _html_to_plain_text
 from pycommon.logger import getLogger
 logger = getLogger("note_email_events")
 
@@ -113,12 +113,12 @@ class SESNotesMessageHandler(MessageHandler):
                     elif content_type == "text/html" and body_html is None:
                         body_html = part.get_payload(decode=True)
 
-                # Decode body
+                # Decode body - prefer plain text; fall back to HTML stripped to plain text
                 email_body = ""
                 if body_plain:
                     email_body = body_plain.decode("utf-8", errors="replace")
                 elif body_html:
-                    email_body = body_html.decode("utf-8", errors="replace")
+                    email_body = _html_to_plain_text(body_html.decode("utf-8", errors="replace"))
 
             except Exception as e:
                 logger.error(f"Failed to download or parse email from S3: {e}", exc_info=True)
@@ -176,12 +176,16 @@ class SESNotesMessageHandler(MessageHandler):
                         logger.error(f"Failed to upload attachment {att['filename']}: {e}")
                         continue
 
+                # Use the plain-text body as the custom prompt (trimmed), or None if empty
+                custom_prompt = email_body.strip() if email_body.strip() else None
+
                 # Prepare message for Notes app
                 notes_message = {
                     "sender": source_email,
                     "username": sender_username,
                     "subject": subject,
                     "body": email_body,
+                    "custom_prompt": custom_prompt,
                     "attachments": attachments_metadata,
                     "timestamp": timestamp
                 }

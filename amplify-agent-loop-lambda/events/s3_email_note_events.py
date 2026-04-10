@@ -1,5 +1,5 @@
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
-from events.ses_message_functions import lookup_username_from_email
+from events.ses_message_functions import lookup_username_from_email, _html_to_plain_text
 from pycommon.logger import getLogger
 logger = getLogger("s3_email_note_events")
 
@@ -139,12 +139,12 @@ class S3EmailNotesMessageHandler(MessageHandler):
                     elif content_type == "text/html" and body_html is None:
                         body_html = part.get_payload(decode=True)
 
-                # Decode body
+                # Decode body - prefer plain text; fall back to HTML stripped to plain text
                 email_body = ""
                 if body_plain:
                     email_body = body_plain.decode("utf-8", errors="replace")
                 elif body_html:
-                    email_body = body_html.decode("utf-8", errors="replace")
+                    email_body = _html_to_plain_text(body_html.decode("utf-8", errors="replace"))
 
             except Exception as e:
                 logger.error(f"Failed to download or parse email from S3: {e}", exc_info=True)
