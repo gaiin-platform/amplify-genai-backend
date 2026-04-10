@@ -9,6 +9,31 @@ from pycommon.logger import getLogger
 from botocore.exceptions import ClientError
 logger = getLogger("agent_email_events")
 
+def _html_to_plain_text(html: str) -> str:
+    """
+    Strip HTML tags and decode common entities to produce a clean plain-text
+    string suitable for use as an AI prompt or email body.
+
+    This avoids passing raw HTML (with <style>, <head>, DOCTYPE, etc.) through
+    the notes pipeline, which would bloat the SQS message, the Bedrock prompt,
+    and the completion email - potentially causing MAILER-DAEMON bounces when
+    the resulting email exceeds recipient size limits.
+    """
+    # Remove <style> and <script> blocks entirely (including their content)
+    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    # Replace block-level tags with newlines so paragraphs survive stripping
+    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
+    # Strip all remaining tags
+    html = re.sub(r'<[^>]+>', '', html)
+    # Decode common HTML entities
+    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
+               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+    # Collapse runs of whitespace / blank lines
+    html = re.sub(r'\n[ \t]+', '\n', html)
+    html = re.sub(r'\n{3,}', '\n\n', html)
+    return html.strip()
+
+
 def extract_email_body_and_attachments(sns_message):
     # The given steps remain the same, except for the part dealing with content disposition
     encoded_content = sns_message["content"]
