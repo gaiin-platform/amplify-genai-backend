@@ -2,9 +2,11 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
+import { logCriticalError } from '../common/criticalLogger.js';
 import {
     withEnvVarsTracking,
-    DynamoDBOperation
+    DynamoDBOperation,
+    SQSOperation
 } from '../common/envVarsTracking.js';
 import { getUsageTracker } from '../common/usageTracking.js';
 
@@ -17,9 +19,10 @@ const historyCostDynamoTableName = process.env.HISTORY_COST_CALCULATIONS_DYNAMO_
 const apiKeysTableName = process.env.API_KEYS_DYNAMODB_TABLE;
 
 const mtdHandler = async (event, context, callback) => {
+    let params = null;
     try {
         logger.debug("Extracting params from event");
-        const params = await extractParams(event);
+        params = await extractParams(event);
 
         if (params.statusCode) {
             return params; // This is an error response from extractParams
@@ -79,6 +82,17 @@ const mtdHandler = async (event, context, callback) => {
         };
     } catch (error) {
         logger.error("Error processing request: " + error.message, error);
+        await logCriticalError({
+            functionName: 'mtdHandler',
+            errorType: 'MtdCostQueryFailure',
+            errorMessage: `MTD cost query failed: ${error.message}`,
+            currentUser: params?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                email: params?.user || 'unknown'
+            }
+        });
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal server error' }),
@@ -203,8 +217,9 @@ const processAccountInfo = async (accountInfo) => {
 };
 
 const internalApiKeyUserCostHandler = async (event, context, callback) => {
+    let params = null;
     try {
-        const params = await extractParams(event);
+        params = await extractParams(event);
         if (params.statusCode) return params;
 
         const { body, user } = params;
@@ -367,6 +382,17 @@ const internalApiKeyUserCostHandler = async (event, context, callback) => {
         };
     } catch (error) {
         logger.error("Error processing request:", error);
+        await logCriticalError({
+            functionName: 'internalApiKeyUserCostHandler',
+            errorType: 'ApiKeyUserCostFailure',
+            errorMessage: `API key user cost query failed: ${error.message}`,
+            currentUser: params?.user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                email: params?.user || 'unknown'
+            }
+        });
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal server error' }),
@@ -726,11 +752,23 @@ const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
         return response;
     } catch (error) {
         const totalDuration = Date.now() - startTime;
-        logger.error("=== LIST ALL USER MTD COSTS REQUEST FAILED ===", { 
-            error: error.message, 
+        logger.error("=== LIST ALL USER MTD COSTS REQUEST FAILED ===", {
+            error: error.message,
             stack: error.stack,
             totalDuration,
             requestedBy: user || 'unknown'
+        });
+        await logCriticalError({
+            functionName: 'internalListAllUserMtdCostsHandler',
+            errorType: 'ListAllUserMtdCostsFailure',
+            errorMessage: `List all user MTD costs failed: ${error.message}`,
+            currentUser: user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestedBy: user || 'unknown',
+                durationMs: totalDuration
+            }
         });
         return {
             statusCode: 500,
@@ -1218,11 +1256,23 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
         
     } catch (error) {
         const totalDuration = Date.now() - startTime;
-        logger.error("=== BILLING GROUPS COSTS REQUEST FAILED ===", { 
-            error: error.message, 
+        logger.error("=== BILLING GROUPS COSTS REQUEST FAILED ===", {
+            error: error.message,
             stack: error.stack,
             totalDuration,
             requestedBy: user || 'unknown'
+        });
+        await logCriticalError({
+            functionName: 'internalBillingGroupsCostsHandler',
+            errorType: 'BillingGroupsCostsFailure',
+            errorMessage: `Billing groups costs query failed: ${error.message}`,
+            currentUser: user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestedBy: user || 'unknown',
+                durationMs: totalDuration
+            }
         });
         return {
             statusCode: 500,
@@ -1417,11 +1467,23 @@ const internalListUserMtdCostsHandler = async (event, context, callback) => {
         
     } catch (error) {
         const totalDuration = Date.now() - startTime;
-        logger.error("=== LIST USER MTD COSTS REQUEST FAILED ===", { 
-            error: error.message, 
+        logger.error("=== LIST USER MTD COSTS REQUEST FAILED ===", {
+            error: error.message,
             stack: error.stack,
             totalDuration,
             requestedBy: user || 'unknown'
+        });
+        await logCriticalError({
+            functionName: 'internalListUserMtdCostsHandler',
+            errorType: 'ListUserMtdCostsFailure',
+            errorMessage: `List user MTD costs failed: ${error.message}`,
+            currentUser: user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestedBy: user || 'unknown',
+                durationMs: totalDuration
+            }
         });
         return {
             statusCode: 500,
@@ -1666,11 +1728,23 @@ const internalGetUserCostHistoryHandler = async (event, context, callback) => {
 
     } catch (error) {
         const totalDuration = Date.now() - startTime;
-        logger.error("=== GET USER COST HISTORY REQUEST FAILED ===", { 
-            error: error.message, 
+        logger.error("=== GET USER COST HISTORY REQUEST FAILED ===", {
+            error: error.message,
             stack: error.stack,
             totalDuration,
             requestedBy: user
+        });
+        await logCriticalError({
+            functionName: 'internalGetUserCostHistoryHandler',
+            errorType: 'UserCostHistoryFailure',
+            errorMessage: `User cost history query failed: ${error.message}`,
+            currentUser: user || 'unknown',
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                requestedBy: user || 'unknown',
+                durationMs: totalDuration
+            }
         });
         return {
             statusCode: 500,
@@ -1692,7 +1766,8 @@ const EnvConfig = {
     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM]  // For Lambda usage tracking
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],  // For Lambda usage tracking
+    "CRITICAL_ERRORS_SQS_QUEUE_NAME": [SQSOperation.SEND_MESSAGE]
 
     // Configuration-only variables (no AWS permissions needed):
     // "SERVICE_NAME": [], // Tracking metadata only
