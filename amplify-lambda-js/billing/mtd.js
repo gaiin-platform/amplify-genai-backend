@@ -1346,21 +1346,29 @@ const internalListUserMtdCostsHandler = async (event, context, callback) => {
         
         let totalDailyCost = 0;
         let totalMonthlyCost = 0;
+        const totalHourlyCost = new Array(24).fill(0); // Aggregate hourly costs across all accounts
         const accountsMap = new Map(); // Use Map for deduplication
         let lastUpdated = null;
-        
+
         // Get systemKey costs for this user from other system users
         const systemKeyCosts = await getSystemKeyCostsForUser(user);
-        
+
         // Process items and resolve amp- keys
         await Promise.all(result.Items.map(async (item) => {
             let accountInfo = item.accountInfo || 'Unknown Account';
             const dailyCost = parseFloat(item.dailyCost) || 0;
             const monthlyCost = parseFloat(item.monthlyCost) || 0;
-            
+
+            // Aggregate hourlyCost array (24 hours) across all account records
+            if (Array.isArray(item.hourlyCost)) {
+                item.hourlyCost.forEach((val, i) => {
+                    totalHourlyCost[i] += parseFloat(val) || 0;
+                });
+            }
+
             // Process accountInfo with purpose-based naming (optimized)
             accountInfo = await processAccountInfo(accountInfo);
-            
+
             totalDailyCost += dailyCost;
             totalMonthlyCost += monthlyCost;
             
@@ -1444,6 +1452,7 @@ const internalListUserMtdCostsHandler = async (event, context, callback) => {
             dailyCost: totalDailyCost,
             monthlyCost: totalMonthlyCost,
             totalCost: totalCost,
+            hourlyCost: totalHourlyCost,
             accounts: accounts,
             lastUpdated,
             timestamp: new Date().toISOString()
