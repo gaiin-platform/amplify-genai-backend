@@ -86,12 +86,15 @@ old_cols = [
     "ModelName",
     "OutputCostPerThousandTokens",
     "Provider",
+    "CachedCostPerThousandTokens"
 ]
 
 # Required columns that indicate a model has the new schema
 required_new_cols = [
     "InputCachedCostPerThousandTokens",
-    "InputWriteCachedCostPerThousandTokens"
+    "InputWriteCachedCostPerThousandTokens",
+    "SupportsImageGeneration",
+    "SupportsVideo",
 ]
 
 def check_old_data_by_col(model_cols):

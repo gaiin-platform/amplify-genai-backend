@@ -9,10 +9,12 @@ import { DynamoDBClient, ScanCommand, UpdateItemCommand, PutItemCommand } from "
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import {
     withEnvVarsTracking,
-    DynamoDBOperation
+    DynamoDBOperation,
+    SQSOperation
 } from '../common/envVarsTracking.js';
 import { trackExecution } from '../common/usageTracking.js';
 import { getLogger } from '../common/logging.js';
+import { logCriticalError } from '../common/criticalLogger.js';
 
 const logger = getLogger("billing-reset");
 
@@ -61,6 +63,19 @@ async function updateItem(item) {
         return await dynamodbClient.send(command);
     } catch (error) {
         logger.error(`Error updating item for ${item.id}:`, error);
+        await logCriticalError({
+            functionName: 'updateItem',
+            errorType: 'BillingResetUpdateFailure',
+            errorMessage: `Failed to update daily/monthly cost for item ${item.id}: ${error.message}`,
+            currentUser: item.id,
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                itemId: item.id,
+                accountInfo: item.accountInfo,
+                dailyCost: item.dailyCost
+            }
+        });
         throw error;
     }
 }
@@ -95,6 +110,20 @@ async function saveDailyCostHistory(item) {
         }
     } catch (error) {
         logger.error(`Error saving daily cost history for ${item.id}:`, error);
+        await logCriticalError({
+            functionName: 'saveDailyCostHistory',
+            errorType: 'BillingHistorySaveFailure',
+            errorMessage: `Failed to save daily cost history for item ${item.id}: ${error.message}`,
+            currentUser: item.id,
+            severity: 'HIGH',
+            stackTrace: error.stack || '',
+            context: {
+                itemId: item.id,
+                accountInfo: item.accountInfo,
+                dailyCost: item.dailyCost,
+                dateString: getYesterdayDate()
+            }
+        });
         throw error;
     }
 }
@@ -128,6 +157,20 @@ async function handleMonthlyReset(item) {
         }
     } catch (error) {
         logger.error(`Error handling monthly reset for ${item.id}:`, error);
+        await logCriticalError({
+            functionName: 'handleMonthlyReset',
+            errorType: 'BillingMonthlyResetFailure',
+            errorMessage: `Failed to handle monthly reset for item ${item.id}: ${error.message}`,
+            currentUser: item.id,
+            severity: 'CRITICAL',
+            stackTrace: error.stack || '',
+            context: {
+                itemId: item.id,
+                accountInfo: item.accountInfo,
+                monthlyCost: item.monthlyCost,
+                isFirstOfMonth: new Date().getUTCDate() === 1
+            }
+        });
         throw error;
     }
 }
@@ -143,6 +186,18 @@ const billingResetHandler = async (event, context) => {
         return { statusCode: 200, body: JSON.stringify({ message: "Billing reset completed successfully" }) };
     } catch (error) {
         logger.error("Error in reset-billing:", error);
+        await logCriticalError({
+            functionName: 'billingResetHandler',
+            errorType: 'BillingResetFailure',
+            errorMessage: `Daily billing reset job failed: ${error.message}`,
+            currentUser: 'system',
+            severity: 'CRITICAL',
+            stackTrace: error.stack || '',
+            context: {
+                jobType: 'daily_billing_reset',
+                isFirstOfMonth: new Date().getUTCDate() === 1
+            }
+        });
         return { statusCode: 500, body: JSON.stringify({ message: "Error occurred during billing reset" }) };
     }
 };
@@ -154,5 +209,6 @@ export const handler = withEnvVarsTracking({
     "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
     "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM]
-}, trackExecution(billingResetHandler));
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "CRITICAL_ERRORS_SQS_QUEUE_NAME": [SQSOperation.SEND_MESSAGE]
+}, trackExecution('billing_reset')(billingResetHandler));

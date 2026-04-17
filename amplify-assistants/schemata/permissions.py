@@ -73,6 +73,18 @@ def can_process_drive_sources(user, data):
     return True
 
 
+def can_create_or_update_layered_assistant(user, data):
+    return True
+
+
+def can_list_layered_assistants(user, data):
+    return True
+
+
+def can_delete_layered_assistant(user, data):
+    return True
+
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -114,4 +126,10 @@ permissions_by_state_type = {
     "/assistant/process_drive_sources": {"process_drive_sources": can_process_drive_sources},
     "/assistant/register_ops": {"register_ops": can_list_assistant},
     "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": can_scrape_website},
+    # ── Layered Assistants ────────────────────────────────────────────────────
+    "/assistant/layered/create_or_update": {
+        "create_or_update_layered_assistant": can_create_or_update_layered_assistant
+    },
+    "/assistant/layered/list":   {"list_layered_assistants":  can_list_layered_assistants},
+    "/assistant/layered/delete": {"delete_layered_assistant": can_delete_layered_assistant},
 }

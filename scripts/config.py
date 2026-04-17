@@ -21,6 +21,7 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "API_KEYS_DYNAMODB_TABLE": f"amplify-{dep_name}-object-access-{stage}-api-keys",
         "ARTIFACTS_DYNAMODB_TABLE": f"amplify-{dep_name}-artifacts-{stage}-user-artifacts",
         "ASSISTANTS_ALIASES_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-assistant-aliases",
+        "LAYERED_ASSISTANTS_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-layered-assistants",
         "ASSISTANTS_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-assistants",
         "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-code-interpreter-assistants",
         "ASSISTANT_GROUPS_DYNAMO_TABLE": f"amplify-{dep_name}-object-access-{stage}-amplify-groups",

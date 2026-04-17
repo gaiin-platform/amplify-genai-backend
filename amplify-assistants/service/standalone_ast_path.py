@@ -39,6 +39,95 @@ from pycommon.encoders import CustomPydanticJSONEncoder
 
 from service.core import check_user_can_update_assistant, get_most_recent_assistant_version, is_group_sys_user, save_assistant, update_assistant_latest_alias
 
+
+# ── Layered assistant lookup helper ───────────────────────────────────────────
+
+def _lookup_layered_assistant_path(public_id, ast_path, lookup_item, access_to, current_user, token):
+    """
+    Build the standalone-page-compatible response for a Layered Assistant path entry.
+    Fetches the LA record from LAYERED_ASSISTANTS_DYNAMODB_TABLE by assistantId (primary key).
+
+    The response shape mirrors what lookup_assistant_path returns for normal assistants,
+    with the addition of a `definition` object shaped for [assistantSlug].tsx:
+      - definition.assistantId  ← CRITICAL: used by isSendDisabled()
+      - definition.name
+      - definition.description
+      - definition.data.groupId  (for group LAs only)
+    """
+    try:
+        la_table = boto3.resource("dynamodb").Table(
+            os.environ["LAYERED_ASSISTANTS_DYNAMODB_TABLE"]
+        )
+        resp = la_table.get_item(Key={"assistantId": public_id})
+        la = resp.get("Item")
+        if not la:
+            logger.warning("Layered assistant not found for assistantId: %s", public_id)
+            return {
+                "statusCode": 404,
+                "body": json.dumps(
+                    {"success": False, "message": "Layered assistant not found", "data": None},
+                    cls=CustomPydanticJSONEncoder,
+                ),
+            }
+
+        # For group LAs: enforce group membership
+        group_id = la.get("groupId")
+        if group_id and group_id != current_user:
+            logger.debug("Checking group membership for group LA: %s", group_id)
+            if not verify_member_of_ast_admin_group(token, group_id):
+                return {
+                    "statusCode": 403,
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "message": "User is not authorized to access the group associated with this assistant",
+                            "data": None,
+                        },
+                        cls=CustomPydanticJSONEncoder,
+                    ),
+                }
+            logger.debug("User is a member of the LA group: %s", group_id)
+
+        # Build the definition shape the standalone page expects
+        # All config fields live in la["data"] (nested map)
+        la_data = dict(la.get("data") or {})
+        if group_id:
+            la_data["groupId"] = group_id
+        definition = {
+            "assistantId": public_id,  # CRITICAL — isSendDisabled() checks this
+            "name":        la.get("name", ""),
+            "description": la.get("description", ""),
+            "data":        la_data,
+        }
+
+        response_data = {
+            "assistantId": public_id,
+            "astPath":     ast_path,
+            "public":      lookup_item.get("public", False),
+            "accessTo":    access_to,
+            "name":        la.get("name", ""),
+            "definition":  definition,
+        }
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {"success": True, "message": "Assistant found", "data": response_data},
+                cls=CustomPydanticJSONEncoder,
+            ),
+        }
+
+    except Exception as e:
+        logger.error("Error looking up layered assistant path: %s", str(e))
+        return {
+            "statusCode": 500,
+            "body": json.dumps(
+                {"success": False, "message": f"Error looking up layered assistant: {str(e)}", "data": None},
+                cls=CustomPydanticJSONEncoder,
+            ),
+        }
+
+
 @api_tool(
     path="/assistant/lookup",
     name="lookupAssistant",
@@ -241,8 +330,15 @@ def lookup_assistant_path(event, context, current_user, name, data):
                     ),
                 }
 
-        # Get the assistant definition to include the astPath
-        assistant_id = item.get("assistantId")
+        # ── Layered assistant branch ──────────────────────────────────
+        # If the stored assistantId carries an "astr/" or "astgr/" prefix
+        # it points to a Layered Assistant record, not the ASSISTANTS table.
+        if assistant_id.startswith("astr/") or assistant_id.startswith("astgr/"):
+            return _lookup_layered_assistant_path(
+                assistant_id, ast_path, item, accessTo, current_user, token
+            )
+
+        # ── Normal assistant branch (existing logic) ──────────────────
         assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
         assistant_definition = get_most_recent_assistant_version(
             assistants_table, assistant_id
@@ -397,6 +493,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
     "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "LAYERED_ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
 })
 @validated(op="add_assistant_path")
 def add_assistant_path(event, context, current_user, name, data):
@@ -406,12 +503,19 @@ def add_assistant_path(event, context, current_user, name, data):
 
     # Extract the assistant ID and path from the data
     data = data["data"]
-    ast_path = data["astPath"]
-    assistant_id = data["assistantId"]
+    ast_path = (data.get("astPath") or "").strip().lower()
+    assistant_id = (data.get("assistantId") or "").strip()
     is_public = data["isPublic"]
     access_to = data.get("accessTo", {})
     amplify_groups = access_to.get("amplifyGroups", [])
     users, _ = are_valid_amplify_users(access_token, access_to.get("users", []))
+
+    # ── Layered assistant branch ──────────────────────────────────────────────
+    # Layered assistant IDs carry an "astr/" or "astgr/" prefix.
+    # They arrive in the assistantId field — detect by prefix and skip
+    # the normal version-bump / alias logic.
+    if assistant_id.startswith("astr/") or assistant_id.startswith("astgr/"):
+        return _add_layered_ast_path(assistant_id, ast_path, is_public, access_to, current_user, access_token)
 
     logger.info("Adding path '%s' to assistant '%s'", ast_path, assistant_id)
 
@@ -649,6 +753,91 @@ def add_assistant_path(event, context, current_user, name, data):
             "message": f"Failed to add path to assistant: {str(e)}",
         }
 
+
+
+def _add_layered_ast_path(public_id, ast_path, is_public, access_to, current_user, access_token):
+    """
+    Private helper: write a standalone path lookup entry for a Layered Assistant.
+    Called from add_assistant_path when an astr/ or astgr/ assistantId is present.
+    Skips the version-bump / alias logic used for normal assistants.
+    Only the owner of the layered assistant may call this.
+    """
+    dynamodb_res = boto3.resource("dynamodb")
+
+    # 1. Verify the caller owns the LA
+    la_table = dynamodb_res.Table(os.environ["LAYERED_ASSISTANTS_DYNAMODB_TABLE"])
+    resp = la_table.get_item(Key={"assistantId": public_id})
+    la = resp.get("Item")
+    if not la:
+        return {"success": False, "message": f"Layered assistant not found: {public_id}"}
+
+    if la.get("createdBy") != current_user:
+        logger.warning(
+            "User %s attempted to publish layered assistant %s (owner: %s)",
+            current_user, public_id, la.get("createdBy"),
+        )
+        return {"success": False, "message": "You are not authorized to publish this layered assistant."}
+
+    lookup_table = dynamodb_res.Table(os.environ["ASSISTANT_LOOKUP_DYNAMODB_TABLE"])
+
+    # 2. Check if the desired path already belongs to a DIFFERENT assistant
+    try:
+        existing_resp = lookup_table.get_item(Key={"astPath": ast_path})
+        if "Item" in existing_resp:
+            existing_item = existing_resp["Item"]
+            existing_ast_id = existing_item.get("assistantId")
+            if existing_ast_id and existing_ast_id != public_id:
+                return {
+                    "success": False,
+                    "message": f"Path '{ast_path}' is already in use by another assistant.",
+                }
+    except Exception as e:
+        logger.error("Error checking for existing path: %s", str(e))
+
+    # 3. Release any OLD path this LA already had (one path per LA)
+    try:
+        old_paths_resp = lookup_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(public_id),
+        )
+        for old_item in old_paths_resp.get("Items", []):
+            old_path = old_item["astPath"]
+            if old_path != ast_path:
+                release_assistant_path(old_path, public_id, current_user)
+                logger.info("Released old path '%s' for layered assistant %s", old_path, public_id)
+    except Exception as e:
+        logger.error("Error releasing old paths for layered assistant: %s", str(e))
+
+    # 4. Write the new lookup entry
+    created_at = datetime.now().isoformat()
+    lookup_item = {
+        "astPath":      ast_path,
+        "assistantId":  public_id,
+        "public":       is_public,
+        "createdBy":    current_user,
+        "createdAt":    created_at,
+        "lastAccessed": created_at,
+        "accessTo": {
+            "amplifyGroups": access_to.get("amplifyGroups", []),
+            "users":         access_to.get("users", []),
+        },
+        "pathHistory": [
+            {
+                "path":         ast_path,
+                "assistant_id": public_id,
+                "changedAt":    created_at,
+                "changedBy":    current_user,
+            }
+        ],
+    }
+    lookup_table.put_item(Item=lookup_item)
+    logger.info("Published layered assistant %s at path '%s' by %s", public_id, ast_path, current_user)
+
+    return {
+        "success": True,
+        "message": "Layered assistant path published successfully.",
+        "data": {"assistantId": public_id, "astPath": ast_path},
+    }
 
 
 def release_assistant_path(ast_path, assistant_id, current_user):
