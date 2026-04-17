@@ -79,6 +79,7 @@ provider:
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files #Marked for future deletion
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-layered-assistants
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content #Marked for future deletion
 
@@ -174,7 +175,35 @@ functions:
           path: assistant/delete
           method: post
           cors: true
-    
+
+  # ── Layered Assistants ────────────────────────────────────────────────────
+  create_layered_ast:
+    handler: service/layered_assistants.create_or_update_layered_assistant
+    timeout: 30
+    events:
+      - http:
+          path: assistant/layered/create_or_update
+          method: post
+          cors: true
+
+  list_layered_asts:
+    handler: service/layered_assistants.list_layered_assistants
+    timeout: 30
+    events:
+      - http:
+          path: assistant/layered/list
+          method: get
+          cors: true
+
+  delete_layered_ast:
+    handler: service/layered_assistants.delete_layered_assistant
+    timeout: 30
+    events:
+      - http:
+          path: assistant/layered/delete
+          method: post
+          cors: true
+
   download_code_int_file:
     handler: openaiazure/assistant.get_presigned_url_code_interpreter
     events:
@@ -334,9 +363,32 @@ functions:
           method: post
           cors: true
 
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  ast_param_populator:
+    handler: populate_env_vars.lambda_handler
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
+
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local parameter_store_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
+      Properties:
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt AstUnderscoreparamUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
+
 
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
@@ -487,6 +539,36 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}
+
+    # ── Layered Assistants Table ──────────────────────────────────────────────
+    # Primary key:  assistantId  ("astr/<uuid>" personal | "astgr/<uuid>" group)
+    # GSI CreatedByIndex:  createdBy → enables list-by-user
+    LayeredAssistantsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: assistantId
+            AttributeType: S
+          - AttributeName: createdBy
+            AttributeType: S
+          - AttributeName: updatedAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: assistantId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: CreatedByIndex
+            KeySchema:
+              - AttributeName: createdBy
+                KeyType: HASH
+              - AttributeName: updatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}
 
     AssistantThreadsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -708,6 +790,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}/*"
 
 
             - Effect: Allow
@@ -739,7 +823,14 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*  # Imported vars (with hyphen)
+
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!   
 
             - Effect: Allow
               Action:

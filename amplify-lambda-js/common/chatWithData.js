@@ -1,17 +1,18 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {extractProtocol, getContexts, isDocument, processContextsSeparately} from "../datasource/datasources.js";
-import {getSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
-import {addContextMessage} from "./chat/controllers/common.js";
+import { extractProtocol, getContexts, isDocument, processContextsSeparately } from "../datasource/datasources.js";
+import { getSourceMetadata, aliasContexts } from "./chat/controllers/meta.js";
+import { addContextMessage } from "./chat/controllers/common.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
-import {defaultSource} from "./sources.js";
-import {getLogger} from "./logging.js";
-import {createTokenCounter, countChatTokens} from "../azure/tokens.js";
-import {getContextMessages} from "./chat/rag/rag.js";
-import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
-import {newStatus} from "./status.js";
-import {isKilled} from "../requests/requestState.js";
+import { defaultSource } from "./sources.js";
+import { getLogger } from "./logging.js";
+import { createTokenCounter } from "../azure/tokens.js";
+import { countChatTokens } from "../azure/tokens.js";
+import { getContextMessages } from "./chat/rag/rag.js";
+import { forceFlush, sendStateEventToStream, sendStatusEventToStream } from "./streams.js";
+import { newStatus } from "./status.js";
+import { isKilled } from "../requests/requestState.js";
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 
 const logger = getLogger("chatWithData");
@@ -133,7 +134,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     // =====================================================
 
     // Build safe messages and insert RAG context (no pre-truncation)
-    const safeMessages = chatRequestOrig.messages.map(m => ({role: m.role, content: m.content}));
+    const safeMessages = chatRequestOrig.messages.map(m => ({ role: m.role, content: m.content }));
     const chatRequest = {
         ...chatRequestOrig,
         messages: [
@@ -158,7 +159,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
     let contexts = [];
-    if(!params.options.ragOnly && (categorizedDataSources.length > 0 || conversationDataSources.length > 0)) {
+    if (!params.options.ragOnly && (categorizedDataSources.length > 0 || conversationDataSources.length > 0)) {
         const contextResolverEnv = {
             tokenCounter: tokenCounter.countTokens,
             params,
@@ -173,7 +174,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             message: `Processing: ${ds.name}...`,
             icon: "aperture",
         }));
-        
+
         if (responseStream && !responseStream.destroyed) {
             statuses.forEach(status => {
                 sendStatusEventToStream(responseStream, status);
@@ -323,25 +324,16 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }).filter(source => source);
 
             if (sources.length > 0) {
-                // Send document sources with proper categorization
-                const contextSources = {};
-                let hasAttachedDocuments = false;
-                let hasDocumentCache = false;
-
-                sources.forEach(source => {
-                    const categoryKey = source.type === "documentCacheContext" ? "documentCacheContext" : "documentContext";
-                    
-                    if (source.type === "documentCacheContext") {
-                        hasDocumentCache = true;
-                    } else {
-                        hasAttachedDocuments = true;
+                // Group sources by their actual type (matching original main branch behavior)
+                // This preserves distinct categories: documentContext, documentCacheContext, website, etc.
+                const contextSources = sources.reduce((acc, source) => {
+                    const categoryKey = source.type;
+                    if (!acc[categoryKey]) {
+                        acc[categoryKey] = { sources: [] };
                     }
-                    
-                    if (!contextSources[categoryKey]) {
-                        contextSources[categoryKey] = { sources: [] };
-                    }
-                    contextSources[categoryKey].sources.push(source);
-                });
+                    acc[categoryKey].sources.push(source);
+                    return acc;
+                }, {});
 
                 if (responseStream && !responseStream.destroyed) {
                     sendStateEventToStream(responseStream, {
@@ -355,6 +347,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     // ✅ Convert contexts to messages
     const contextMessages = contexts.map(ctx => addContextMessage(ctx, tokenCounter.countTokens));
+
 
     // 🔍 DEBUG: Log context organization for multi-document scenarios
     // Note: Use contextMessages (after conversion) to get accurate content lengths
@@ -505,6 +498,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             {
                 max_tokens: requestWithContext.max_tokens || 2000,
                 imageSources: chatRequestOrig.imageSources,
+                videoSources: chatRequestOrig.videoSources,
                 // Pass document data source metadata so MCP tools can reference attached files
                 dataSources: categorizedDataSources,
                 mcpClientSide: mcpEnabled,
@@ -524,6 +518,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         {
             max_tokens: requestWithContext.max_tokens || 2000,
             imageSources: chatRequestOrig.imageSources,
+            videoSources: chatRequestOrig.videoSources,
             // Only pass contexts if we DIDN'T split them (for fail-first recovery on edge cases)
             _contexts: (!shouldSplitContexts && contexts.length > 0) ? contexts : null,
             // Pass smart messages filter flag for safe caching

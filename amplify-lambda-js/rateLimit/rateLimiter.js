@@ -6,7 +6,7 @@ import axios from "axios";
 const logger = getLogger("rateLimiter");
 
 // 💰 SMART CACHING: Multiple cache layers for performance
-let adminRateLimitCache = null; // Admin limits (rarely change)
+let adminRateLimitCache = null; // Admin limits array (rarely change)
 let adminRateLimitCacheTime = 0;
 let groupRateLimitsCache = new Map(); // Group limits by user
 let historyCostCache = new Map(); // Cache ONLY historical costs (never changes)
@@ -25,6 +25,16 @@ const ERROR_LIMIT_THRESHOLD = 20; // 20 consecutive errors = ban
 const ERROR_WINDOW_MS = 5 * 60 * 1000; // 5 minute window
 const ERROR_TIMEOUT_MS = 10 * 60 * 1000; // 10 minute timeout for errors
 
+
+/**
+ * Normalize a single RateLimit object or an array of RateLimits into always-an-array.
+ * Handles backward compatibility with old single-object format.
+ */
+const normalizeRateLimits = (limitOrList) => {
+    if (!limitOrList) return [];
+    if (Array.isArray(limitOrList)) return limitOrList.filter(l => l && l.period);
+    return [limitOrList];
+};
 
 async function calculateTotalLifetimeCost(userEmail, accountInfo) {
     const now = new Date();
@@ -234,15 +244,15 @@ async function getUserGroupRateLimits(accessToken) {
         const groupRateLimits = [];
         const allGroups = response.data.all_groups || {};
         const affiliatedGroups = response.data.data || [];
-        
-        // Extract rate limits from all affiliated groups
+
+        // Extract rate limits from all affiliated groups — each group is a pool entry with limits[]
         for (const groupName of affiliatedGroups) {
             const groupData = allGroups[groupName];
-            if (groupData && groupData.rateLimit) {
+            if (groupData) {
                 groupRateLimits.push({
-                    ...groupData.rateLimit,
                     groupName,
-                    isGroupLimit: true
+                    isGroupLimit: true,
+                    limits: normalizeRateLimits(groupData.rateLimit)
                 });
             }
         }
@@ -395,14 +405,30 @@ function cleanupOldViolations() {
     }
 }
 
+/**
+ * Check all limits in a pool entry. Returns { passed: true } if ALL limits pass,
+ * or { passed: false, failedLimit, spent } on the first failing limit.
+ * Skips Unlimited limits.
+ */
+async function checkPoolEntry(limits, rateData, params, precomputedLifetimeCost) {
+    for (const limit of limits) {
+        if (!limit || limit.period?.toLowerCase() === 'unlimited') continue;
+        const { isRateLimited, spent } = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
+        if (isRateLimited) {
+            return { passed: false, failedLimit: limit, spent };
+        }
+    }
+    return { passed: true };
+}
+
 export async function isRateLimited(params) {
     // 🧹 CLEANUP: Periodically clean old records
     if (Math.random() < 0.01) cleanupOldViolations(); // 1% chance
-    
-    
+
     // 🛡️ EARLY EXIT: Check if user is in progressive timeout
     const timeoutStatus = isUserInTimeout(params.user);
     if (timeoutStatus.inTimeout) {
+        logger.warn(`🛡️ [RATE-LIMIT-CHECK] BLOCKED — user is in progressive timeout (${Math.ceil(timeoutStatus.remainingMs / 1000)}s remaining)`);
         params.body.options.rateLimit = {
             period: 'Progressive',
             rate: 0,
@@ -417,6 +443,7 @@ export async function isRateLimited(params) {
     // 🚨 EARLY EXIT: Check if user is in error timeout
     const errorTimeoutStatus = isUserInErrorTimeout(params.user);
     if (errorTimeoutStatus.inTimeout) {
+        logger.warn(`🚨 [RATE-LIMIT-CHECK] BLOCKED — user is in error timeout (${Math.ceil(errorTimeoutStatus.remainingMs / 1000)}s remaining)`);
         params.body.options.rateLimit = {
             period: 'Error',
             rate: 0,
@@ -466,7 +493,7 @@ export async function isRateLimited(params) {
         let precomputedLifetimeCost = null;
 
         if (!response.Items || response.Items.length === 0) {
-            logger.warn(`No cost record found for accountInfo="${accountInfo}". User may not have any usage yet.`);
+            logger.warn(`⚠️  [RATE-LIMIT-CHECK] No cost record found for accountInfo="${accountInfo}" — treating all costs as $0.00`);
             rateData = {
                 monthlyCost: 0,
                 dailyCost: 0,
@@ -479,119 +506,188 @@ export async function isRateLimited(params) {
             rateData = unmarshall(item);
         }
 
+        // ── Log current spend snapshot ────────────────────────────────────────
+        const currentHour = new Date().getUTCHours();
+        const hourlyCostArr = rateData.hourlyCost || [];
+        const hourlyCostNow = parseFloat(hourlyCostArr[currentHour]?.N || hourlyCostArr[currentHour] || 0);
+        const dailyCostNow  = parseFloat(rateData.dailyCost)  || 0;
+        const monthlyNow    = (parseFloat(rateData.dailyCost) || 0) + (parseFloat(rateData.monthlyCost) || 0);
+        logger.debug(`💰 [RATE-LIMIT-CHECK] Current spend snapshot:`);
+        logger.debug(`   Hourly  (UTC hour ${currentHour}): $${hourlyCostNow.toFixed(4)}`);
+        logger.debug(`   Daily:                            $${dailyCostNow.toFixed(4)}`);
+        logger.debug(`   Monthly (daily + prior days):     $${monthlyNow.toFixed(4)}`);
+
+        // ── Step 1: Personal user rate limit ─────────────────────────────────
         if (!noLimit(userRateLimit)) {
+            logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 1 — Checking personal user limit: $${userRateLimit.rate} / ${userRateLimit.period}`);
             if (userRateLimit.period === 'Total') {
                 logger.debug("Pre-calculating lifetime cost for user personal limit check");
                 precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
-                logger.debug(`Total lifetime cost for ${params.user}: ${precomputedLifetimeCost}`);
+                logger.debug(`   Lifetime cost: $${precomputedLifetimeCost.toFixed(4)}`);
             }
 
             const userLimited = await checkAndSetLimit(userRateLimit, rateData, params, 'user', false, null, precomputedLifetimeCost);
 
             if (userLimited) {
+                const spent = params.body.options.rateLimit.currentSpent;
+                logger.warn(`🚫 [RATE-LIMIT-CHECK] BLOCKED by personal limit — spent $${spent?.toFixed(4)} / limit $${userRateLimit.rate} (${userRateLimit.period})`);
                 recordRateLimitViolation(params.user);
                 return true;
             }
+            logger.debug(`   ✅ Personal limit OK — $${userRateLimit.rate} / ${userRateLimit.period} not exceeded`);
+        } else {
+            logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 1 — No personal user limit set (Unlimited)`);
         }
-        const adminRateLimit = await getAdminRateLimit();
-        const groupRateLimits = params.accessToken ?
-            await getUserGroupRateLimits(params.accessToken) : [];
 
+        // ── Step 2: Fetch admin + group limits in parallel ───────────────────
+        logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 2 — Fetching admin & group limits (parallel)...`);
+        const [adminRateLimits, groupRateLimits] = await Promise.all([
+            getAdminRateLimits(),
+            params.accessToken ? getUserGroupRateLimits(params.accessToken) : Promise.resolve([])
+        ]);
+
+        const activeAdminLimits = Array.isArray(adminRateLimits)
+            ? adminRateLimits.filter(l => l && l.period?.toLowerCase() !== 'unlimited')
+            : [];
+
+        logger.debug(`   Admin limits fetched: ${activeAdminLimits.length} active limit(s)`);
+        activeAdminLimits.forEach((l, i) => {
+            logger.debug(`     [admin ${i+1}] $${l.rate} / ${l.period}`);
+        });
+
+        logger.debug(`   Group limits fetched: ${groupRateLimits.length} group(s)`);
+        groupRateLimits.forEach(g => {
+            const activeLimits = g.limits.filter(l => l && l.period?.toLowerCase() !== 'unlimited');
+            logger.debug(`     Group "${g.groupName}": ${activeLimits.length} limit(s) — ${activeLimits.map(l => `$${l.rate}/${l.period}`).join(', ') || 'none'}`);
+        });
+
+        // ── Pre-compute lifetime cost if any Total limits exist ───────────────
         if (precomputedLifetimeCost === null) {
             const needsLifetimeCost =
-                (!noLimit(adminRateLimit) && adminRateLimit.period === 'Total') ||
-                groupRateLimits.some(g => !noLimit(g) && g.period === 'Total');
+                activeAdminLimits.some(l => l.period === 'Total') ||
+                groupRateLimits.some(g => g.limits.some(l => !noLimit(l) && l.period === 'Total'));
 
             if (needsLifetimeCost) {
-                logger.debug("Pre-calculating lifetime cost for pool checks");
+                logger.debug(`   🔢 Pre-calculating lifetime cost (needed for Total limits)...`);
                 precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+                logger.debug(`   Total (lifetime): $${precomputedLifetimeCost.toFixed(4)}`);
             }
         }
+
+        // ── Step 3: Build pool and check ─────────────────────────────────────
         const limitPool = [];
 
-        // Add all group limits to the pool
-        for (const groupLimit of groupRateLimits) {
-            if (!noLimit(groupLimit)) {
-                limitPool.push({
-                    limit: groupLimit,
-                    limitType: 'group',
-                    groupName: groupLimit.groupName
-                });
+        for (const groupEntry of groupRateLimits) {
+            const activeLimits = groupEntry.limits.filter(l => l && l.period?.toLowerCase() !== 'unlimited' && l.rate !== null);
+            if (activeLimits.length === 0) {
+                logger.info(`   ⏭️  Skipping group "${groupEntry.groupName}" — no active limits configured`);
+                continue;
             }
+            limitPool.push({
+                limits: groupEntry.limits,
+                limitType: 'group',
+                groupName: groupEntry.groupName
+            });
         }
 
-        // Add admin limit to the pool
-        if (!noLimit(adminRateLimit)) {
+        if (activeAdminLimits.length > 0) {
             limitPool.push({
-                limit: adminRateLimit,
+                limits: adminRateLimits,
                 limitType: 'admin',
                 isAdminSet: true
             });
         }
 
+        // Fast-track: move last passing entry to front
         const lastPassed = lastPassedLimitCache.get(params.user);
-        if (lastPassed) {
+        if (lastPassed && limitPool.length > 0) {
             const lastPassedIndex = limitPool.findIndex(entry =>
                 entry.limitType === lastPassed.limitType &&
-                entry.limit.period === lastPassed.period &&
                 (entry.limitType !== 'group' || entry.groupName === lastPassed.groupName)
             );
-
             if (lastPassedIndex !== -1) {
                 const [fastTrack] = limitPool.splice(lastPassedIndex, 1);
                 limitPool.unshift(fastTrack);
+                logger.debug(`   ⚡ Fast-track: moved "${fastTrack.limitType}${fastTrack.groupName ? ` (${fastTrack.groupName})` : ''}" to front of pool`);
             }
         }
-        const periodPriority = { 'Hourly': 1, 'Daily': 2, 'Monthly': 3, 'Total': 4 };
-        const firstItem = lastPassed && limitPool.length > 0 ? limitPool.shift() : null;
-        limitPool.sort((a, b) =>
-            (periodPriority[a.limit.period] || 3) - (periodPriority[b.limit.period] || 3)
-        );
-        if (firstItem) limitPool.unshift(firstItem);
+
         if (limitPool.length > 0) {
+            logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 3 — Checking pool (${limitPool.length} entr${limitPool.length === 1 ? 'y' : 'ies'}). Need ANY ONE to pass.`);
             let passedAny = false;
-            let failedLimits = [];
+            let failedEntries = [];
 
-            for (const entry of limitPool) {
-                const { isRateLimited, spent } = await calcIsRateLimited(entry.limit, rateData, params, precomputedLifetimeCost);
+            for (let poolIdx = 0; poolIdx < limitPool.length; poolIdx++) {
+                const entry = limitPool[poolIdx];
+                const entryLabel = entry.limitType === 'group' ? `group "${entry.groupName}"` : 'admin';
+                const entryLimits = entry.limits.filter(l => l && l.period?.toLowerCase() !== 'unlimited');
 
-                if (!isRateLimited) {
+                logger.debug(`\n   [pool ${poolIdx + 1}/${limitPool.length}] Checking ${entryLabel} — ${entryLimits.length} limit(s), ALL must pass:`);
+                entryLimits.forEach(l => logger.debug(`     → $${l.rate} / ${l.period}`));
+
+                // Check each limit individually and log result
+                let entryFailed = false;
+                for (const limit of entry.limits) {
+                    if (!limit || limit.period?.toLowerCase() === 'unlimited') continue;
+                    const { isRateLimited, spent } = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
+                    const status = isRateLimited ? '❌ EXCEEDED' : '✅ OK      ';
+                    logger.debug(`     ${status} — ${limit.period}: spent $${spent.toFixed(4)} vs limit $${limit.rate} (${((spent / limit.rate) * 100).toFixed(1)}% used)`);
+                    if (isRateLimited) {
+                        entryFailed = true;
+                    }
+                }
+
+                const result = await checkPoolEntry(entry.limits, rateData, params, precomputedLifetimeCost);
+
+                if (result.passed) {
                     passedAny = true;
                     lastPassedLimitCache.set(params.user, {
                         limitType: entry.limitType,
-                        period: entry.limit.period,
                         groupName: entry.groupName
                     });
+                    logger.debug(`   ✅ [pool ${poolIdx + 1}] ${entryLabel} PASSED — request will be ALLOWED`);
                     break;
                 } else {
-                    failedLimits.push({
+                    failedEntries.push({
                         ...entry,
-                        currentSpent: spent
+                        failedLimit: result.failedLimit,
+                        currentSpent: result.spent
                     });
+                    logger.info(`   ❌ [pool ${poolIdx + 1}] ${entryLabel} FAILED — ${result.failedLimit.period} limit exceeded ($${result.spent.toFixed(4)} / $${result.failedLimit.rate})`);
                 }
             }
 
-            if (!passedAny && failedLimits.length > 0) {
-                const mostGenerous = failedLimits.reduce((max, curr) =>
-                    curr.limit.rate > max.limit.rate ? curr : max
+            if (!passedAny && failedEntries.length > 0) {
+                // Report the most generous failed limit (highest rate) as the blocking limit
+                const mostGenerous = failedEntries.reduce((max, curr) =>
+                    (curr.failedLimit.rate || 0) > (max.failedLimit.rate || 0) ? curr : max
                 );
 
                 params.body.options.rateLimit = {
-                    ...mostGenerous.limit,
+                    ...mostGenerous.failedLimit,
                     limitType: mostGenerous.limitType,
                     adminSet: mostGenerous.isAdminSet || false,
                     currentSpent: mostGenerous.currentSpent,
                     ...(mostGenerous.groupName && { groupName: mostGenerous.groupName })
                 };
                 recordRateLimitViolation(params.user);
+                logger.warn(`\n🚫 [RATE-LIMIT-CHECK] RESULT: BLOCKED`);
+                logger.warn(`   All ${failedEntries.length} pool entr${failedEntries.length === 1 ? 'y' : 'ies'} failed.`);
+                logger.warn(`   Reporting most generous limit: $${mostGenerous.failedLimit.rate} / ${mostGenerous.failedLimit.period} (${mostGenerous.limitType})`);
+                logger.warn(`   User spent: $${mostGenerous.currentSpent?.toFixed(4)}`);
                 return true;
             }
+
+            logger.debug(`\n✅ [RATE-LIMIT-CHECK] RESULT: ALLOWED — passed pool check`);
+        } else {
+            logger.debug(`\n⚠️  [RATE-LIMIT-CHECK] No admin or group limits configured — ALLOWED by default`);
         }
 
         return false;
         
     } catch (error) {
         logger.error("Error during rate limit DynamoDB operation:", error);
+        logger.warn(`⚠️  [RATE-LIMIT-CHECK] Error during check — ALLOWING request (fail-open)`);
         // let it slide for now
         return false;
     }
@@ -600,14 +696,14 @@ export async function isRateLimited(params) {
 
 
 /**
- * 💰 CACHED: Get admin rate limit configuration 
+ * 💰 CACHED: Get admin rate limits configuration (array of RateLimit)
  * Caches for 10 minutes since admin settings rarely change
  */
-async function getAdminRateLimit() {
+async function getAdminRateLimits() {
     // Check cache first
     const cacheAge = Date.now() - adminRateLimitCacheTime;
     if (adminRateLimitCache && cacheAge < 10 * 60 * 1000) {
-        logger.debug('Using cached admin rate limit');
+        logger.debug('Using cached admin rate limits');
         return adminRateLimitCache;
     }
     
@@ -624,7 +720,7 @@ async function getAdminRateLimit() {
             TableName: adminTable,
             KeyConditionExpression: "config_id = :rateLimit",
             ExpressionAttributeValues: {
-                ":rateLimit": { S: "rateLimit" }, 
+                ":rateLimit": { S: "rateLimit" },
             },
         });
         
@@ -639,21 +735,23 @@ async function getAdminRateLimit() {
             return false;
         }
         const rateData = unmarshall(item);
-        
-        // 💰 CACHE: Store admin rate limit for 10 minutes
-        adminRateLimitCache = rateData.data;
+
+        // 💰 CACHE: Store admin rate limits array for 10 minutes
+        adminRateLimitCache = normalizeRateLimits(rateData.data);
         adminRateLimitCacheTime = Date.now();
-        
-        return rateData.data;
-        
+
+        logger.debug(`🔄 [RATE-LIMIT-CACHE] Admin limits refreshed: ${adminRateLimitCache.length} limit(s) — ${adminRateLimitCache.map(l => `$${l.rate}/${l.period}`).join(', ')}`);
+
+        return adminRateLimitCache;
+
     } catch (error) {
         logger.error("Error during rate limit DynamoDB operation:", error);
         // Return cached data if available, even if stale
         if (adminRateLimitCache) {
-            logger.debug('Using stale cached admin rate limit due to error');
+            logger.debug('Using stale cached admin rate limits due to error');
             return adminRateLimitCache;
         }
-        return false;
+        return [];
     }
 }
 
@@ -668,8 +766,8 @@ export const formatCurrentSpent = (limit) =>  {
         const minutes = Math.ceil(limit.timeoutRemaining / 60);
         return `You have been temporarily banned for ${minutes > 1 ? `${minutes} minutes` : `${limit.timeoutRemaining} seconds`} due to repeated rate limit violations. Please try again later.`;
     }
-    
-    // 🚨 ERROR-BASED PUNISHMENT: Handle error timeout messages  
+
+    // 🚨 ERROR-BASED PUNISHMENT: Handle error timeout messages
     if (limit.limitType === 'error_timeout') {
         const minutes = Math.ceil(limit.timeoutRemaining / 60);
         return `You have been temporarily banned for ${minutes > 1 ? `${minutes} minutes` : `${limit.timeoutRemaining} seconds`} due to repeated system errors. Please try again later.`;

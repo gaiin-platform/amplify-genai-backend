@@ -9,7 +9,7 @@ from pycommon.api.ops import api_tool
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
+from pycommon.const import APIAccessType, IMAGE_FILE_TYPES, VIDEO_FILE_TYPES
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SQSOperation
@@ -17,6 +17,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
 
+from pycommon.db_utils import convert_floats_to_decimal
 from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH, SEVERITY_CRITICAL
 import traceback
@@ -114,16 +115,17 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return access_result
 
     download_filename = item["name"]
-    is_file_type = item["type"] in IMAGE_FILE_TYPES
+    
+    is_media_file = item["type"] in IMAGE_FILE_TYPES or item["type"] in VIDEO_FILE_TYPES
     response_headers = (
         {"ResponseContentDisposition": f'attachment; filename="{download_filename}"'}
-        if download_filename and not is_file_type
+        if download_filename and not is_media_file
         else {}
     )
 
     bucket_name = (
         os.environ["S3_IMAGE_INPUT_BUCKET_NAME"]
-        if is_file_type
+        if is_media_file
         else os.environ["S3_RAG_INPUT_BUCKET_NAME"]
     )
     # If the user matches, generate a presigned URL for downloading the file from S3
@@ -157,6 +159,25 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return {"success": True, "downloadUrl": presigned_url}
     else:
         return {"success": False, "message": "File not found"}
+
+
+def is_group_admin(group_id, user):
+    if user == group_id: return True 
+    """Check directly if a user has admin role in a group."""
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    try:
+        response = groups_table.get_item(Key={"group_id": group_id})
+        item = response.get("Item")
+        if not item:
+            logger.warning("Group %s not found when checking admin access for %s", group_id, user)
+            return False
+        members = item.get("members", {})
+        can_continue = members.get(user) == "admin"
+        logger.info("User %s has admin access to group %s: %s", user, group_id, can_continue)
+        return can_continue
+    except ClientError as e:
+        logger.error("Error checking group admin status for %s in %s: %s", user, group_id, e)
+        return False
 
 
 def can_access_file(table_item, current_user, key, group_id, access_token):
@@ -250,6 +271,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 # due to lambda layer requirements in rag.core, we have to define this function here
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
 })
@@ -261,18 +283,31 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     will handle all cleanup and determine what needs to be reprocessed.
     """
     s3 = boto3.client("s3")
+
+    # Extract values from the top-level data object BEFORE reassigning
     access_token = data["access_token"]
+    account = data["account"]
+    rate_limit = data["rate_limit"]
 
-    account_data = {
-        "user": current_user,
-        "account": data["account"],
-        "rate_limit": data["rate_limit"],
-        "access_token": access_token,
-    }
-
+    # Now extract the nested data object
     data = data["data"]
     key = data["key"]
     group_id = data.get("groupId")
+
+    if group_id and not is_group_admin(group_id, current_user):
+        logger.warning("User %s attempted to reprocess group %s file without admin rights", current_user, group_id)
+        return {"success": False, "message": f"User does not have admin access to group: {group_id}"}
+
+    if group_id:
+        current_user = group_id
+
+    account_data = {
+        "user": current_user,
+        "account": account,
+        "rate_limit": rate_limit,
+        "access_token": access_token,
+    }
+
     bucket = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
 
     if not bucket or not key:
@@ -292,11 +327,13 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         
         item = response["Item"]
         file_type = item.get("type")
-        if file_type and file_type in IMAGE_FILE_TYPES:
-            logger.warning("File %s is an image file, not supported for reprocessing", key)
+      
+        if file_type and (file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES):
+            media_type = "image" if file_type in IMAGE_FILE_TYPES else "video"
+            logger.warning("File %s is a %s file, not supported for reprocessing", key, media_type)
             return {
                 "success": False,
-                "message": "Image files are not supported for reprocessing",
+                "message": f"{media_type.capitalize()} files are not supported for reprocessing",
             }
         
         access_result = can_access_file(item, current_user, key, group_id, access_token)
@@ -350,10 +387,13 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
 def create_file_metadata_entry(
     current_user, name, file_type, tags, data_props, knowledge_base
 ):
+    
+    # Route video files and images to the consolidation bucket (S3_IMAGE_INPUT_BUCKET_NAME)
+    # but regular files to RAG bucket
     bucket_name = os.environ[
         (
             "S3_IMAGE_INPUT_BUCKET_NAME"
-            if (file_type in IMAGE_FILE_TYPES)
+            if (file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES)
             else "S3_RAG_INPUT_BUCKET_NAME"
         )
     ]
@@ -367,7 +407,7 @@ def create_file_metadata_entry(
             "name": name,
             "type": file_type,
             "tags": tags,
-            "data": data_props,
+            "data": convert_floats_to_decimal(data_props),
             "knowledgeBase": knowledge_base,
             "createdAt": datetime.now().isoformat(),
             "updatedAt": datetime.now().isoformat(),
@@ -579,6 +619,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
 )
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
     "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
@@ -598,11 +639,14 @@ def get_presigned_url(event, context, current_user, name, data):
     groupId = data["data"].get("groupId", None)
 
     # Extract ragOn parameter, default to True if not provided
-    rag_on = data["data"].get("ragOn", False)
+    rag_on = data["data"].get("ragOn", True)
     logger.info("RAG processing is %s for this upload", 'enabled' if rag_on else 'disabled')
 
     if groupId:
         logger.debug("GroupId ds upload: %s", groupId)
+        if not is_group_admin(groupId, current_user):
+            logger.warning("User %s attempted to upload to group %s without admin rights", current_user, groupId)
+            return {"success": False, "error": f"User does not have admin access to group: {groupId}"}
         current_user = groupId
 
     account_data = {
@@ -644,6 +688,27 @@ def get_presigned_url(event, context, current_user, name, data):
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
 
+    # Validate astp claim — user must have owner/write access to the assistant they're claiming.
+    # Without this check, anyone could write a permission row linking an arbitrary assistant
+    # to their uploaded file's global hash key during RAG processing.
+    astp_id = props.get("astp") if isinstance(props, dict) else None
+    if astp_id:
+        try:
+            oa_table = dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"])
+            response = oa_table.query(
+                KeyConditionExpression=Key("object_id").eq(astp_id) & Key("principal_id").eq(current_user)
+            )
+            has_ast_access = any(
+                item.get("permission_level") in ("owner", "write")
+                for item in response.get("Items", [])
+            )
+            if not has_ast_access:
+                logger.warning("User %s claimed astp %s in upload props but has no write access — stripping claim", current_user, astp_id)
+                props = {k: v for k, v in props.items() if k != "astp"}
+        except Exception as e:
+            logger.error("Error validating astp claim %s for user %s: %s — stripping claim", astp_id, current_user, e)
+            props = {k: v for k, v in props.items() if k != "astp"}
+
     logger.info(
         "Getting presigned URL for %s of type %s with tags %s and data %s and knowledge base %s", name, file_type, tags, data, knowledge_base
     )
@@ -670,9 +735,36 @@ def get_presigned_url(event, context, current_user, name, data):
         ExpiresIn=3600,  # Set the expiration time for the presigned URL, in seconds
     )
 
-    if file_type in IMAGE_FILE_TYPES:
-        logger.debug("Generating presigned urls for Image file")
+    if file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES:
+        logger.debug("Generating presigned urls for media file (image/video)")
         metadata_key = key + ".metadata.json"
+
+        # For video files, create the metadata immediately so that
+        # local dev (serverless offline) works without S3 event triggers.
+        # In production, the S3 trigger (process_images_for_chat) will
+        # overwrite this with updated metadata (e.g. content length).
+        if file_type in VIDEO_FILE_TYPES:
+            logger.info("Creating immediate video metadata for local compatibility")
+            duration_seconds = float(props.get("durationSeconds", 0) or 0)
+            video_metadata = {
+                "name": name,
+                "contentKey": key,
+                "createdAt": datetime.now().isoformat(),
+                "totalTokens": 0,
+                "durationSeconds": duration_seconds,
+                "tags": tags,
+                "isImage": False,
+                "isVideo": True,
+                "contentType": file_type,
+                "contentLength": 0,
+            }
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=metadata_key,
+                Body=json.dumps(video_metadata)
+            )
+            logger.info("Uploaded video metadata to %s/%s", bucket_name, metadata_key)
+
         presigned_metadata_url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket_name, "Key": metadata_key},
@@ -1804,11 +1896,13 @@ def delete_file(event, context, current_user, name, data):
         item = response["Item"]
         file_type = item.get("type")
         logger.debug("File type: %s", file_type)
-        is_image = file_type and file_type in IMAGE_FILE_TYPES
+        
+        
+        is_media_file = file_type and (file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES)
 
         file_contents_hash = None
         global_key = key
-        if not is_image:
+        if not is_media_file:
             # Read the hash files table to get global key
             hash_table = os.environ["HASH_FILES_DYNAMO_TABLE"]
             hash_files_table = dynamodb.Table(hash_table)
@@ -1874,7 +1968,7 @@ def delete_file(event, context, current_user, name, data):
         # Handle deletion paths
         if current_user_permission.lower() == "read":
             logger.info("Current user has read access only")
-            route_personal_file_deletion(global_key, key, current_user, is_image)
+            route_personal_file_deletion(global_key, key, current_user, is_media_file)
 
             # Delete from object access table
             try:
@@ -1888,7 +1982,7 @@ def delete_file(event, context, current_user, name, data):
         elif current_user_permission.lower() in ["write", "owner"]:
             if high_access_count > 1:
                 # Multiple users have write access
-                route_personal_file_deletion(global_key, key, current_user, is_image)
+                route_personal_file_deletion(global_key, key, current_user, is_media_file)
 
                 # Delete from object access table
                 try:
@@ -1911,7 +2005,7 @@ def delete_file(event, context, current_user, name, data):
                     file_contents_hash,
                     current_user,
                     access_token,
-                    is_image,
+                    is_media_file,
                 )
             else:
                 # Current user is the only one with access
@@ -1922,7 +2016,7 @@ def delete_file(event, context, current_user, name, data):
                     file_contents_hash,
                     current_user,
                     access_token,
-                    is_image,
+                    is_media_file,
                 )
 
         return {"success": True, "message": f"File deleted successfully"}
@@ -1932,21 +2026,21 @@ def delete_file(event, context, current_user, name, data):
         return {"success": False, "message": str(e)}
 
 
-def route_personal_file_deletion(global_key, key, current_user, is_image):
-    logger.debug("Route personal file deletion - is_image: %s", is_image)
-    if is_image:
+def route_personal_file_deletion(global_key, key, current_user, is_media_file):
+    logger.debug("Route personal file deletion - is_media_file: %s", is_media_file)
+    if is_media_file:
         delete_file_from_table(key)
     else:
         delete_text_file_personally(global_key, key, current_user)
 
 
 def route_full_file_deletion(
-    global_key, key, file_contents_hash, current_user, access_token, is_image
+    global_key, key, file_contents_hash, current_user, access_token, is_media_file
 ):
-    logger.debug("Route full file deletion - is_image: %s", is_image)
-    if is_image:
+    logger.debug("Route full file deletion - is_media_file: %s", is_media_file)
+    if is_media_file:
         delete_file_from_table(key)
-        delete_image_file(key)
+        delete_media_file(key)  # This will handle both images and videos
     else:
         delete_text_file_fully(
             global_key, key, file_contents_hash, current_user, access_token
@@ -2095,12 +2189,16 @@ def delete_file_from_table(key):
         logger.error("Error deleting file text from the user file table: %s", e)
 
 
-def delete_image_file(key):
+def delete_media_file(key):
     bucket_name = os.environ["S3_IMAGE_INPUT_BUCKET_NAME"]
     s3 = boto3.client("s3")
     try:
-        logger.info("Deleting image file from S3: %s", key)
+        logger.info("Deleting media file from S3: %s", key)
         s3.delete_object(Bucket=bucket_name, Key=key)
         logger.info("Deleted from S3")
     except ClientError as e:
         logger.error("Error deleting file from S3: %s", e)
+
+def delete_image_file(key):
+    # Legacy function - redirects to delete_media_file
+    delete_media_file(key)

@@ -120,6 +120,11 @@ export const chatBedrock = async (chatBody, writable) => {
             }
         } else if (currentModel.supportsReasoning && disableReasoning) {
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
+            input.additionalModelRequestFields = {
+                "reasoning_config": {
+                    "type": "disabled"
+                }
+            };
         }
 
         if (currentModel.supportsSystemPrompts) {

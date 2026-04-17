@@ -30,7 +30,7 @@ add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value]
 from service.core import get_most_recent_assistant_version
 
 
-def process_assistant_drive_sources(assistant_data, access_token):
+def process_assistant_drive_sources(assistant_data, access_token, assistant_public_id=None):
     """Process integration drive data for an assistant and update data sources."""
     try:
         drive_data = assistant_data.get("integrationDriveData", {})
@@ -39,9 +39,9 @@ def process_assistant_drive_sources(assistant_data, access_token):
             return {
                 "success": True,
                 "message": "No integration drive data to process for this assistant",
-            }   
+            }
         # print("Processing integration drive data for this assistant: ", drive_data)
-        response = upload_integration_files_to_datasources(drive_data, access_token)
+        response = upload_integration_files_to_datasources(drive_data, access_token, assistant_public_id)
         if not response.get("success", False):
             return response
         updated_drive_data = response.get("data", {})
@@ -51,7 +51,7 @@ def process_assistant_drive_sources(assistant_data, access_token):
                         "integrationDriveData": updated_drive_data,
                   },
                 }
-    
+
     except Exception as e:
         logger.error("Error processing assistant drive data: %s", e)
         return {"success": False, "message": f"Failed to process assistant integration drive data: {str(e)}"}
@@ -85,7 +85,7 @@ def extract_drive_datasources(data):
     return datasources
 
 
-def upload_integration_files_to_datasources(drive_files_data: dict, access_token: str) -> dict:
+def upload_integration_files_to_datasources(drive_files_data: dict, access_token: str, assistant_public_id: str = None) -> dict:
     """
     Upload selected drive integration files to data sources.
 
@@ -96,6 +96,7 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         access_token: Bearer token for authentication
         drive_files_data: Dictionary containing the drive files payload structure
                          following DriveFilesDataSourcesPayload format
+        assistant_public_id: Optional assistant public ID to associate files with
 
     Returns:
         dict: Response containing success status and updated payload data,
@@ -138,11 +139,17 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
     )
     lambda_client = boto3.client('lambda', config=config)
 
+    # Construct the payload data with optional assistantId
+    payload_data = {**drive_files_data}
+    if assistant_public_id:
+        payload_data["assistantId"] = assistant_public_id
+        logger.info("Including assistantId in upload payload: %s", assistant_public_id)
+
     # Construct the event payload matching API Gateway format
     event_payload = {
         "path": "/integrations/user/files/upload",
         "httpMethod": "POST",
-        "body": json.dumps({"data": drive_files_data}),
+        "body": json.dumps({"data": payload_data}),
         "headers": {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
@@ -373,9 +380,13 @@ def process_drive_sources(event, context, current_user, name, data=None):
         if not latest_assistant:
             return {"success": False, "message": "Could not retrieve latest assistant version"}
         
-        # Process the assistant drive sources
-        result = process_assistant_drive_sources(latest_assistant.get("data", {}), access_token)
-        
+        # Process the assistant drive sources with assistant public ID
+        result = process_assistant_drive_sources(
+            latest_assistant.get("data", {}),
+            access_token,
+            assistant_public_id
+        )
+
         if not result.get("success", False):
             return {
                 "success": False,

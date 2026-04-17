@@ -1,7 +1,7 @@
 add_assistant_path_schema = {
     "type": "object",
     "properties": {
-        "assistantId": {"type": "string", "description": "The ID of the assistant"},
+        "assistantId": {"type": "string", "description": "The ID of the assistant. For layered assistants, pass the assistantId (astr/ or astgr/ prefix) here."},
         "astPath": {
             "type": "string",
             "description": "The path to add to the assistant",
@@ -19,5 +19,5 @@ add_assistant_path_schema = {
             },
         },
     },
-    "required": ["assistantId", "astPath", "isPublic"],
+    "required": ["astPath", "isPublic"],
 }
