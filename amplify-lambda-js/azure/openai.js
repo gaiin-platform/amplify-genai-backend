@@ -174,6 +174,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (tool_choice) data.tool_choice = tool_choice;
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
+    if (data.hasOwnProperty('videoSources')) delete data.videoSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
     if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     
@@ -248,6 +249,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         // Note: stream_options and reasoning_effort are NOT included for O-models with tools
         // as they may cause 400 errors
     }
+    // Azure and newer OpenAI API versions require max_completion_tokens instead of max_tokens
+    // Apply to all completion endpoints — max_tokens is deprecated in newer API versions
+    if (isCompletionEndpoint && data.max_tokens !== undefined) {
+        data.max_completion_tokens = data.max_completion_tokens || data.max_tokens;
+        delete data.max_tokens;
+    }
+
     // Only add reasoning for non-tool requests (reasoning can conflict with tool calling)
     const disableReasoning = options.disableReasoning;
     if (model.supportsReasoning && !hasTools && !disableReasoning) {

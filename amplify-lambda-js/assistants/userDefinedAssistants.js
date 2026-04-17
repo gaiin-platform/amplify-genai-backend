@@ -14,6 +14,8 @@ import {newStatus} from "../common/status.js";
 import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 import {getLogger} from "../common/logging.js";
+// Skills integration
+import * as skillsService from "../skills/skillsService.js";
 // import AWSXRay from "aws-xray-sdk";
 
 const logger = getLogger("user-defined-assistants");
@@ -177,7 +179,7 @@ export const getAstgGroupId = async (assistantPublicId) => {
     return ast?.data?.groupId;
 }
 
-const getLatestAssistant = async (assistantPublicId) => {
+export const getLatestAssistant = async (assistantPublicId) => {
     /**
      * Retrieves the most recent version of an assistant from the DynamoDB table.
      *
@@ -222,37 +224,55 @@ const getLatestAssistant = async (assistantPublicId) => {
 
 }
 
-export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
+export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token, layeredAstId = null) => {
     // ⚡ CACHE OPTIMIZATION: Check cache first
     const { CacheManager } = await import('../common/cache.js');
     const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
     if (cached) {
         logger.debug(`Using cached assistant: ${assistantPublicId}`);
-        return fillInAssistant(cached, assistantBase);
+        return fillInAssistant(cached, assistantBase, layeredAstId);
     }
     
+    // ── Layered assistant fast path ───────────────────────────────────────────
+    // Gate 1 (layeredAssistantRouter) already verified the user can access the
+    // Layered Assistant.  The leaf assistantId belongs to the LA creator, not
+    // current_user, so alias/standalone lookups keyed on current_user will
+    // always fail.  Fetch the leaf record directly by assistantId instead —
+    // no extra permission check needed here because Gate 1 already cleared it.
+    if (layeredAstId) {
+        const leafData = await getLatestAssistant(assistantPublicId);
+        if (!leafData) {
+            logger.warn(`Layered assistant leaf not found: ${assistantPublicId}`);
+            return null;
+        }
+        logger.debug(`Leaf assistant loaded directly for layered context: ${assistantPublicId}`);
+        CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, leafData);
+        return fillInAssistant(leafData, assistantBase, layeredAstId);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const ast_owner = assistantPublicId.startsWith("astgp") ? await getAstgGroupId(assistantPublicId) : current_user;
-    
+
     if (!ast_owner) return null;
 
     // ⚡ CACHE OPTIMIZATION: Check cached group membership
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
         logger.debug(`Checking if ${current_user} is a member of group: ${ast_owner}`);
-        
+
         // Check cache first
         const cachedMembership = await CacheManager.getCachedGroupMembership(current_user, ast_owner, token);
         let isMember = cachedMembership;
-        
+
         if (cachedMembership === null) {
             // Not in cache, check actual membership
             isMember = await isMemberOfGroup(current_user, ast_owner, token);
             // Cache the result
             CacheManager.setCachedGroupMembership(current_user, ast_owner, token, isMember);
         }
-        
+
         if (!isMember) return null;
     }
-    
+
     let assistantData = null;
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
@@ -271,7 +291,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
         // ⚡ CACHE: Store assistant data for future requests
         CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, assistantData);
         
-        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
+        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase, layeredAstId)
         logger.info(`Client Selected Assistant: ${userDefinedAssistant.displayName}`);
         return userDefinedAssistant;
     }
@@ -280,7 +300,10 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
 };
 
 
-export const fillInAssistant = (assistant, assistantBase) => {
+export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) => {
+    // Attach the layeredAstId to the assistant object so it is available
+    // inside the handler closure (extractAssistantDatasources reads it there).
+    if (layeredAstId) assistant._layeredAstId = layeredAstId;
     return {
         name: assistant.name,
         displayName: assistant.name,
@@ -339,6 +362,103 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
+            // 🎯 SKILLS INTEGRATION: Inject skills into assistant context
+            let activeSkills = [];
+            try {
+                const user = params.account?.user;
+                const skillsEnabled = process.env.SKILLS_DYNAMODB_TABLE; // Feature flag via env var existence
+
+                if (skillsEnabled && user) {
+                    const injectedSkills = [];
+
+                    // 1. Get required skills from assistant config
+                    if (assistant.data?.skills && assistant.data.skills.length > 0) {
+                        logger.debug(`Loading ${assistant.data.skills.length} assistant-configured skills`);
+
+                        for (const skillRef of assistant.data.skills) {
+                            if (skillRef.isRequired || assistant.data.skillSelectionMode === 'manual') {
+                                const skill = skillRef.overrideContent
+                                    ? { content: skillRef.overrideContent, name: skillRef.name || 'Custom Skill', id: skillRef.skillId }
+                                    : await skillsService.getSkillById(skillRef.skillId, user);
+
+                                if (skill && !injectedSkills.find(s => s.id === skill.id)) {
+                                    injectedSkills.push(skill);
+                                    // Track usage
+                                    skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Get manually selected skills from request body
+                    const manualSkills = body.skills || body.options?.skills || [];
+                    logger.info(`Skills check: body.skills=${JSON.stringify(body.skills)}, body.options?.skills=${JSON.stringify(body.options?.skills)}, manualSkills=${JSON.stringify(manualSkills)}`);
+                    if (manualSkills.length > 0) {
+                        logger.info(`Loading ${manualSkills.length} manually selected skills: ${manualSkills.join(', ')}`);
+
+                        for (const skillId of manualSkills) {
+                            const skill = await skillsService.getSkillById(skillId, user);
+                            logger.debug(`Loaded skill ${skillId}: ${skill ? skill.name : 'NOT FOUND'}`);
+                            if (skill && !injectedSkills.find(s => s.id === skill.id)) {
+                                injectedSkills.push(skill);
+                                skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                            }
+                        }
+                    }
+
+                    // 3. Auto-select skills based on user message (if enabled)
+                    const skillSelectionMode = body.skillSelectionMode || body.options?.skillSelectionMode || assistant.data?.skillSelectionMode || 'auto';
+
+                    if (skillSelectionMode !== 'manual' && injectedSkills.length < 3) {
+                        const userMessage = body.messages[body.messages.length - 1]?.content || "";
+                        const autoSkills = await skillsService.autoSelectSkills(
+                            user,
+                            userMessage,
+                            {
+                                tags: assistant.tags || [],
+                                assistantTags: assistant.data?.tags || [],
+                                category: assistant.data?.category
+                            }
+                        );
+
+                        // Add auto-selected skills that aren't already included (up to 3 total)
+                        for (const skill of autoSkills) {
+                            if (!injectedSkills.find(s => s.id === skill.id) && injectedSkills.length < 3) {
+                                injectedSkills.push(skill);
+                                skillsService.incrementSkillUsage(skill.id).catch(() => {});
+                            }
+                        }
+                    }
+
+                    // 4. Inject skills into system context
+                    if (injectedSkills.length > 0) {
+                        const skillsContextMessage = skillsService.buildSkillContextMessage(injectedSkills);
+
+                        if (skillsContextMessage) {
+                            extraMessages.push({
+                                role: "system",
+                                content: skillsContextMessage
+                            });
+
+                            activeSkills = injectedSkills.map(s => ({
+                                id: s.id,
+                                name: s.name,
+                                description: s.description
+                            }));
+
+                            logger.info(`Injected ${injectedSkills.length} skills: ${injectedSkills.map(s => s.name).join(', ')}`);
+                        }
+                    }
+                }
+            } catch (skillsError) {
+                logger.debug("Skills processing skipped or failed:", skillsError.message);
+                // Continue without skills - they're optional
+            }
+
+            // Send active skills state event to frontend
+            if (activeSkills.length > 0) {
+                sendStateEventToStream(responseStream, { activeSkills });
+            }
 
             if (assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
@@ -523,13 +643,32 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         }
                     }
 
+                    // Build agent metadata with skills for Goal conversion in agent loop
+                    const agentMetadata = {
+                        assistant,
+                        model: params.model.id,
+                        ...workflowTemplateId,
+                        builtInOperations,
+                        operations
+                    };
+
+                    // Pass active skills to agent loop for Goal conversion
+                    if (activeSkills.length > 0) {
+                        // Include full skill content for Goal description
+                        agentMetadata.skills = injectedSkills.map(s => ({
+                            id: s.id,
+                            name: s.name,
+                            content: s.content
+                        }));
+                        logger.info(`Passing ${activeSkills.length} skills to agent loop: ${activeSkills.map(s => s.name).join(', ')}`);
+                    }
+
                     invokeAgent(
                         params.account.accessToken,
                         sessionId,
                         params.options.requestId,
                         body.messages,
-                        {assistant, model: params.model.id, ...workflowTemplateId, 
-                        builtInOperations, operations}
+                        agentMetadata
                     );
 
                     sendStatusEventToStream(responseStream, statusInfo);
@@ -588,14 +727,20 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
-            if (assistant.data && assistant.data.supportConvAnalysis) {
-                body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
-            }
+            // Only set tracking/analysis config if a layered-assistant router hasn't already configured it.
+            // When routerManagedTracking is true, the router owns assistantName, analysisCategories, etc.
+            if (!body.options.routerManagedTracking) {
+                if (assistant.data && assistant.data.supportConvAnalysis) {
+                    body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
+                }
 
-            if (assistant.data && assistant.data.trackConversations) {
-                body.options.trackConversations = true;
-                body.options.assistantName = assistant.name;
-                logger.info('✅ [User Defined Assistant] Set trackConversations=true for assistant:', assistant.name);
+                if (assistant.data && assistant.data.trackConversations) {
+                    body.options.trackConversations = true;
+                    body.options.assistantName = assistant.name;
+                    logger.info('✅ [User Defined Assistant] Set trackConversations=true for assistant:', assistant.name);
+                }
+            } else {
+                logger.info('ℹ️ [User Defined Assistant] Skipping tracking config override — router-managed tracking is active for:', body.options.assistantName);
             }
 
             const instructions = await fillInTemplate(
@@ -635,7 +780,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
                                 "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: extractAssistantDatasources(assistant)}
+                            data: {dataSources: extractAssistantDatasources(assistant, assistant._layeredAstId || null)}
                         },
                         {
                             role: 'system',
@@ -773,17 +918,37 @@ function extractDriveDatasources(data) {
         .filter(datasource => datasource && datasource.id);
 }
 
-function extractAssistantDatasources(assistant) {
+function extractAssistantDatasources(assistant, layeredAstId = null) {
     if (!assistant) return [];
 
-    if (assistant.data?.integrationDriveData) {
+    const groupId = assistant.data?.groupId;
+
+    if (!groupId && assistant.data?.integrationDriveData) {
         const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
         // logger.debug("Drive datasources:", driveDatasources);
         assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
     }
 
-    // update ds with astp for dual embedding object access check 
-    if (assistant.data?.astPath) {
+    // For group assistants, tag all datasources with groupId so dual retrieval
+    // routes them through the group permission path. This covers existing assistants
+    // whose datasources were uploaded before group id was added in the metadata.
+    if (groupId) {
+        assistant.dataSources.forEach(ds => {
+            if (!ds.groupId) ds.groupId = groupId;
+        });
+    // If this assistant was reached via a Layered Assistant, tag datasources with
+    // both the LA publicId and the leaf assistantId. Dual retrieval will:
+    //   1. Check if the user has access to the *layered* assistant path
+    //   2. Check if the *leaf* assistant has access to the datasources
+    // This covers personal-leaf-without-astPath (Bug #7) and wrong-path-checked (Bug #6).
+    } else if (layeredAstId) {
+        assistant.dataSources.forEach(ds => {
+            ds.ast = { layeredAstId, astId: assistant.assistantId };
+        });
+    // update ds with ast for dual embedding object access check
+    // Only applies to non-group standalone assistants that have their own published path.
+    // Group assistants do group permission check on data sources.
+    } else if (assistant.data?.astPath) {
         assistant.dataSources.forEach(ds => {
             ds.ast = assistant.assistantId;
         });

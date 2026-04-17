@@ -72,6 +72,8 @@ provider:
     HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-lambda-${sls:stage}-history-cost-calculations
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
+    SKILLS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-skills
+    SKILL_SHARES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-skill-shares
     TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
     CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
   
@@ -83,6 +85,7 @@ provider:
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
     ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/LAYERED_ASSISTANTS_DYNAMODB_TABLE}
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
@@ -244,7 +247,9 @@ resources:
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
@@ -274,6 +279,10 @@ resources:
                 - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -286,6 +295,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -296,6 +307,8 @@ resources:
                 - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILLS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -378,6 +391,69 @@ resources:
             AttributeName: type
             KeyType: HASH
         TableName: ${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}
+    SkillsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: isPublic
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: user-index
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: public-skills-index
+            KeySchema:
+              - AttributeName: isPublic
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.SKILLS_DYNAMODB_TABLE}
+    SkillSharesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: shareId
+            AttributeType: S
+          - AttributeName: sharedWith
+            AttributeType: S
+          - AttributeName: skillId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: shareId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: sharedWith-index
+            KeySchema:
+              - AttributeName: sharedWith
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: skillId-index
+            KeySchema:
+              - AttributeName: skillId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        TableName: ${self:provider.environment.SKILL_SHARES_DYNAMODB_TABLE}
     CostCalculationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:

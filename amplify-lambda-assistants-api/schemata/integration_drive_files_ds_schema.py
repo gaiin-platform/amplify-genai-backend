@@ -1,8 +1,11 @@
 integration_drive_files_ds_schema = {
     "upload_files": {
         "type": "object",
+        "properties": {
+            "assistantId": {"type": "string"}
+        },
         "patternProperties": {
-            "^(google|microsoft|.*?)$": {
+            "^(?!assistantId$)(google|microsoft|.*?)$": {
                 "type": "object",
                 "properties": {
                     "folders": {
