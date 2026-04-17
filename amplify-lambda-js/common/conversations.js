@@ -831,6 +831,23 @@ export const processSmartMessages = async ({
         };
     }
 
+    // Extract cross-conversation context injection messages so they are never
+    // filtered out by smart messages range analysis.  They are re-inserted
+    // at the front of filteredMessages after all processing is complete.
+    const ctxInjectedMessages = messages.filter(
+        m => m.type === 'context' || (typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
+    );
+    const workingMessages = messages.filter(
+        m => m.type !== 'context' && !(typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
+    );
+
+    if (ctxInjectedMessages.length > 0) {
+        logger.info(`🔒 [Context Injection] Preserving ${ctxInjectedMessages.length} ctx-inject message(s) outside smart filtering`);
+    }
+
+    // Use workingMessages (without ctx-inject) for all smart processing
+    messages = workingMessages.length > 0 ? workingMessages : messages;
+
     try {
         // PHASE 1: Gather data
         const gatherStart = Date.now();
@@ -919,9 +936,12 @@ export const processSmartMessages = async ({
                 updatedMessages = injectArtifactContent(messages, relevantArtifactIds, artifacts);
             }
 
+            // Re-insert ctx-inject messages at the front
+            const finalMessagesArtOnly = [...ctxInjectedMessages, ...updatedMessages];
+
             // Return artifact instructions for router to append (don't modify options here)
             return {
-                filteredMessages: updatedMessages,
+                filteredMessages: finalMessagesArtOnly,
                 metadata: { processed: true },
                 includeArtifactInstructions: includeArtifactInstr,
                 // artifactInstructions: includeArtifactInstr ? ARTIFACTS_PROMPT : null,
@@ -1091,6 +1111,9 @@ export const processSmartMessages = async ({
 
         logger.info(`📋 [Artifact Instructions] ${includeArtifactInstr ? 'INCLUDED' : 'EXCLUDED'}`);
 
+        // Re-insert ctx-inject messages at the front so they always reach the model
+        filteredMessages = [...ctxInjectedMessages, ...filteredMessages];
+
         // Return results with artifact instructions for router to append
         const result = {
             filteredMessages,
@@ -1126,7 +1149,7 @@ export const processSmartMessages = async ({
             source: "CONVERSATIONS"
         });
         const errorResult = {
-            filteredMessages: messages,
+            filteredMessages: [...ctxInjectedMessages, ...messages],
             metadata: {
                 processed: false,
                 reason: "error",

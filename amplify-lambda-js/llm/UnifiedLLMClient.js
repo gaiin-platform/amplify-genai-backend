@@ -23,7 +23,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
-import {ARTIFACTS_PROMPT} from "../common/conversations.js";
+import { ARTIFACTS_PROMPT } from "../common/conversations.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
@@ -47,11 +47,11 @@ const activeRequests = new Map();
 const getProviderConfig = (model) => {
     const provider = model?.provider;
     const modelId = model?.id || model;
-    
+
     if (!provider) {
         throw new Error(`Model provider not specified for model: ${modelId}`);
     }
-    
+
     // OpenAI and Azure use the same configuration (OpenAI-compatible API)
     const openAIConfig = () => ({
         chatFn: openaiChat,
@@ -59,7 +59,7 @@ const getProviderConfig = (model) => {
         transform: openAiTransform,
         usageTransform: openaiUsageTransform
     });
-    
+
     const providerConfigs = {
         'OpenAI': openAIConfig,
         'Azure': openAIConfig,  // Same as OpenAI (OpenAI-compatible)
@@ -76,16 +76,16 @@ const getProviderConfig = (model) => {
             usageTransform: bedrockTokenUsageTransform
         })
     };
-    
+
     // Get config by provider name, with case-insensitive fallback
-    const config = providerConfigs[provider] || 
-                  providerConfigs[Object.keys(providerConfigs).find(key => 
-                      key.toLowerCase() === provider.toLowerCase())];
-    
+    const config = providerConfigs[provider] ||
+        providerConfigs[Object.keys(providerConfigs).find(key =>
+            key.toLowerCase() === provider.toLowerCase())];
+
     if (!config) {
         throw new Error(`Unsupported provider: ${provider} for model: ${modelId}`);
     }
-    
+
     return config();
 };
 
@@ -145,27 +145,27 @@ async function queueConversationAnalysisWithFallback(params, messages, result, o
  */
 function createStreamInterceptor(responseStream, transform, usageTransform, requestState, capturedContent = null) {
     let buffer = ''; // Buffer for incomplete SSE data
-    
+
     const interceptor = new Writable({
         write(chunk, _encoding, callback) {
             try {
                 // Append chunk to buffer
                 buffer += chunk.toString();
-                
+
                 // Process complete lines
                 const lines = buffer.split('\n');
-                
+
                 // Keep the last incomplete line in the buffer
                 buffer = lines.pop() || '';
-                
+
                 for (const line of lines) {
                     if (line.trim() && line.startsWith('data: ')) {
                         const data = line.slice(6).trim();
                         if (data === '[DONE]') continue;
-                        
+
                         try {
                             const event = JSON.parse(data);
-                            
+
                             // ✅ SMART ROUTING: Detect our events vs LLM events
                             if (event.s === "meta") {
                                 // This is our internal event (status/state/mode) - send directly, bypass transformer
@@ -180,7 +180,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                                         capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
                                     }
                                 }
-                                
+
                                 // Extract usage from LLM events only
                                 const usage = usageTransform(event);
                                 if (usage) {
@@ -208,7 +208,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                 if (data !== '[DONE]') {
                     try {
                         const event = JSON.parse(data);
-                        
+
                         // ✅ SMART ROUTING: Detect our events vs LLM events (buffered data)
                         if (event.s === "meta") {
                             // This is our internal event (status/state/mode) - send directly, bypass transformer
@@ -223,7 +223,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                                     capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
                                 }
                             }
-                            
+
                             // Extract usage from LLM events only
                             const usage = usageTransform(event);
                             if (usage) {
@@ -235,12 +235,12 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                     }
                 }
             }
-            
+
             // Clear thinking timer when stream ends
             if (requestState.statusTimer) {
                 clearTimeout(requestState.statusTimer);
                 requestState.statusTimer = null;
-                
+
                 // Send thinking complete status
                 sendStatusEventToStream(responseStream, newStatus({
                     id: "thinking",
@@ -250,7 +250,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
             callback();
         }
     });
-    
+
     return interceptor;
 }
 
@@ -260,6 +260,7 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
     const model = params.options?.model || params.model;
+
 
     if (!model) {
         throw new Error('Model not specified');
@@ -413,7 +414,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 
     try {
         // Starting UnifiedLLM call
-        
+
         // // Start thinking status timer if streaming (reduced to 1 second for faster UX)
         // if (responseStream) {
         //     requestState.statusTimer = setTimeout(() => {
@@ -452,13 +453,17 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 model,
                 requestId,
                 user: params?.account?.user || params.user || "unknown",
-                disableReasoning
+                disableReasoning: disableReasoning ?? params.options?.disableReasoning
             }
         };
 
-        // ✅ FIX: Pass imageSources from options to chatBody for provider compatibility
+        // Pass imageSources from options to chatBody for provider compatibility
         if (options.imageSources) {
             chatBody.imageSources = options.imageSources;
+        }
+        // Pass videoSources from options to chatBody for provider compatibility
+        if (options.videoSources) {
+            chatBody.videoSources = options.videoSources;
         }
 
         // Handle tools/functions
@@ -611,7 +616,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         const completionTokens = requestState.totalUsage.completion_tokens || 0;
         const inputCachedTokens = requestState.totalUsage?.inputCachedTokens || 0;
         const inputWriteCachedTokens = requestState.totalUsage?.inputWriteCachedTokens || 0;
-        
+
         if (promptTokens > 0 || completionTokens > 0 || inputCachedTokens > 0 || inputWriteCachedTokens > 0) {
             await recordUsage(
                 params.account,

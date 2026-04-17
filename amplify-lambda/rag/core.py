@@ -689,20 +689,21 @@ def update_object_permissions(current_user, data):
             )
             items = query_response.get("Items")
 
-            # If there are no permissions, create the initial item with the current_user as the owner
+            # If there are no permissions, create entries for all principals in email_list
             if not items:
-                table.put_item(
-                    Item={
-                        "object_id": object_id,
-                        "principal_id": current_user,
-                        "principal_type": principal_type,
-                        "object_type": object_type,
-                        "permission_level": "write",  # The current_user becomes the owner
-                        "policy": policy,
-                    }
-                )
+                for principal_id in email_list:
+                    table.put_item(
+                        Item={
+                            "object_id": object_id,
+                            "principal_id": principal_id,
+                            "principal_type": principal_type,
+                            "object_type": object_type,
+                            "permission_level": "write" if principal_id == current_user else provided_permission_level,
+                            "policy": policy,
+                        }
+                    )
                 logger.info(
-                    "Created initial item for %s with %s as owner", object_id, current_user
+                    "Created initial items for %s with principals %s", object_id, email_list
                 )
 
             else:
@@ -851,6 +852,7 @@ def process_document_for_rag(event, context):
 
                     if not user:
                         user = key.split("/")[0]
+
                     permissions_update = {
                         "dataSources": [text_content_key],
                         "emailList": [user],
@@ -859,6 +861,17 @@ def process_document_for_rag(event, context):
                         "principalType": "user",
                         "objectType": "fileEmbedding",
                     }
+
+                     # If this file was uploaded on behalf of an assistant (e.g. scraped web
+                    # content or drive integration), grant that assistant principal read access
+                    # to the global hash key so dual-retrieval can authorize it.
+                    astp_id = props.get("astp") if isinstance(props, dict) else None
+                    if astp_id:
+                        permissions_update["emailList"].append(astp_id)
+                        logger.info(
+                            "Also granting assistant %s access to global hash key %s", astp_id, text_content_key
+                        )
+
                     update_object_permissions(user, permissions_update)
 
                     text = None
