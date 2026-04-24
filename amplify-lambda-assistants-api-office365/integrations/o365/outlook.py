@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
@@ -6,6 +7,28 @@ from integrations.oauth import get_ms_graph_session
 
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
+
+
+def _html_to_plain_text(html: str) -> str:
+    """
+    Strip HTML tags and decode common entities to produce clean plain text.
+    Removes <style>/<script> blocks, preserves paragraph structure via newlines,
+    and collapses excessive whitespace — so agents get readable content instead
+    of raw HTML markup.
+    """
+    # Remove <style> and <script> blocks entirely (including their content)
+    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    # Replace block-level tags with newlines so paragraphs survive stripping
+    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
+    # Strip all remaining tags
+    html = re.sub(r'<[^>]+>', '', html)
+    # Decode common HTML entities
+    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
+               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+    # Collapse runs of whitespace / blank lines
+    html = re.sub(r'\n[ \t]+', '\n', html)
+    html = re.sub(r'\n{3,}', '\n\n', html)
+    return html.strip()
 
 from pycommon.logger import getLogger
 logger = getLogger(integration_name)
@@ -658,8 +681,15 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
                 detailed_fields["body"] = "Non-viewable sensitive content"
                 detailed_fields["bodyType"] = "text"
             else:
-                detailed_fields["body"] = message.get("body", {}).get("content", "")
-                detailed_fields["bodyType"] = message.get("body", {}).get("contentType", "text")
+                raw_content = message.get("body", {}).get("content", "")
+                content_type = message.get("body", {}).get("contentType", "text")
+                # Strip HTML markup so agents receive readable plain text
+                if content_type.lower() == "html":
+                    detailed_fields["body"] = _html_to_plain_text(raw_content)
+                    detailed_fields["bodyType"] = "text"
+                else:
+                    detailed_fields["body"] = raw_content
+                    detailed_fields["bodyType"] = content_type
         elif include_body:
             # Body was requested but not available in response
             detailed_fields["body"] = ""
@@ -1099,6 +1129,7 @@ def search_messages(
     search_query: str,
     top: int = 10,
     folder_id: str = None,
+    include_body: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -1125,18 +1156,87 @@ def search_messages(
             url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
         else:
             url = f"{GRAPH_ENDPOINT}/me/messages"
-        params = {
-            "$top": top, 
-            "$search": f'"{search_query}"',
-            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
-            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
-        }
-        # The Graph API requires the ConsistencyLevel header set to eventual when using $search
-        session.headers.update({"ConsistencyLevel": "eventual"})
+
+        # Strip outer quotes the LLM may have wrapped the entire query in.
+        # e.g. '"from:foo subject:"bar""' -> 'from:foo subject:"bar"'
+        stripped_query = search_query.strip()
+        if stripped_query.startswith('"') and stripped_query.endswith('"'):
+            inner = stripped_query[1:-1]
+            kql_operators = ("from:", "to:", "subject:", "body:", "hasAttachments:", "received:", "AND", "OR", "NOT")
+            if any(op in inner for op in kql_operators) or '"' in inner:
+                stripped_query = inner
+
+        # Check if the query uses KQL field operators (from:, subject:, etc.).
+        # The /me/messages $search endpoint does NOT support KQL field operators —
+        # it only accepts simple keyword strings. KQL operators must be converted
+        # to OData $filter expressions instead.
+        kql_operators = ("from:", "to:", "subject:", "body:", "hasAttachments:", "received:")
+        has_kql = any(op in stripped_query for op in kql_operators)
+
+        if has_kql:
+            # Parse KQL-style tokens into OData $filter clauses.
+            import re
+            filter_parts = []
+            remainder_tokens = []
+
+            # Match: field:"quoted value" or field:unquoted_value
+            for m in re.finditer(r'(\w+):"([^"]+)"|(\w+):(\S+)', stripped_query):
+                if m.group(1):
+                    field, value = m.group(1).lower(), m.group(2)
+                else:
+                    field, value = m.group(3).lower(), m.group(4)
+
+                if field == "from":
+                    filter_parts.append(f"from/emailAddress/address eq '{value}'")
+                elif field == "subject":
+                    filter_parts.append(f"contains(subject, '{value}')")
+                elif field == "to":
+                    filter_parts.append(f"toRecipients/any(r: r/emailAddress/address eq '{value}')")
+                else:
+                    # Unknown field — treat as keyword
+                    remainder_tokens.append(value)
+
+            # Any leftover plain tokens become a $search keyword
+            leftover = " ".join(remainder_tokens).strip()
+
+            base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+            select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
+            if filter_parts:
+                # Avoid $orderby and $expand with $filter — Graph API rejects
+                # the combination as "too complex" (InefficientFilter error).
+                params = {
+                    "$top": top,
+                    "$filter": " and ".join(filter_parts),
+                    "$select": select_fields,
+                }
+            else:
+                # Fell through — just do a plain keyword search
+                leftover = stripped_query
+                params = {
+                    "$top": top,
+                    "$search": f'"{leftover}"',
+                    "$select": select_fields,
+                    "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+                }
+                session.headers.update({"ConsistencyLevel": "eventual"})
+        else:
+            # Simple keyword search — wrap in quotes for exact phrase matching
+            formatted_search = f'"{stripped_query}"'
+            base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+            select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
+            params = {
+                "$top": top,
+                "$search": formatted_search,
+                "$select": select_fields,
+                "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+            }
+            # The Graph API requires the ConsistencyLevel header set to eventual when using $search
+            session.headers.update({"ConsistencyLevel": "eventual"})
+
         response = session.get(url, params=params)
         if not response.ok:
             handle_graph_error(response)
         messages = response.json().get("value", [])
-        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
+        return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
     except requests.RequestException as e:
         raise OutlookError(f"Network error while searching messages: {str(e)}")

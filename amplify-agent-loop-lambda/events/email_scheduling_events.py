@@ -96,6 +96,10 @@ class SESSchedulingMessageHandler(MessageHandler):
             logger.info("📧 Starting SES scheduling flow for user: %s", sender_username)
             logger.info("   From: %s <%s>", sender_name, source_email)
             logger.info("   Subject: %s", common_headers.get('subject', 'No subject'))
+            logger.info("   API base URL (amplify): %s", amp_base_url)
+            logger.info("   API base URL (scheduling): %s", api_base_url)
+            logger.info("   Email body: plain=%d chars, html=%d chars",
+                       len(parsed_email.get('body_plain') or ''), len(email_body_html or ''))
 
             # ===========================================
             # STEP 0: GET SQS API KEY FOR USER
@@ -340,7 +344,34 @@ class SESSchedulingMessageHandler(MessageHandler):
                     {'purpose': 'email_classification'}
                 )
 
-                _classify_system = """You are an AI assistant that classifies emails as meeting/scheduling requests or not.
+                # Build current date/TIME context for the LLM so it can resolve relative dates
+                # Note: user_settings is loaded in Step 2 — not available here yet, use UTC default
+                from datetime import datetime as _dt_now_cls, timezone as _tz_cls
+                import pytz as _pytz_cls
+                _user_tz = 'America/Chicago'  # default; Step 2 loads the real value
+                try:
+                    _tz_obj = _pytz_cls.timezone(_user_tz)
+                    _now_local = _dt_now_cls.now(_tz_obj)
+                except Exception:
+                    _now_local = _dt_now_cls.utcnow()
+                _today_str = _now_local.strftime('%Y-%m-%d')  # e.g. "2026-04-23"
+                _today_weekday = _now_local.strftime('%A')     # e.g. "Wednesday"
+                _now_time_str = _now_local.strftime('%I:%M %p') # e.g. "04:33 PM"
+
+                _classify_system = f"""You are an AI assistant that classifies emails as meeting/scheduling requests and extracts meeting details.
+
+TODAY'S DATE: {_today_str} ({_today_weekday})
+CURRENT TIME: {_now_time_str} ({_user_tz})
+USER TIMEZONE: {_user_tz}
+
+Use today's date AND current time to resolve ALL relative dates/times in the email. Examples:
+- "this Friday" → find the next Friday from {_today_str}
+- "next Monday" → find the Monday of next week
+- "tomorrow" → {(_dt_now_cls.now() + __import__('datetime').timedelta(days=1)).strftime('%Y-%m-%d')}
+- "move to 5:30" → means {_today_str}T17:30:00 (today, unless context says otherwise)
+- "push back an hour" → add 1 hour to the original meeting time; output the NEW time
+Always output proposed_times in ISO 8601 format WITH the user's UTC offset (e.g. "2026-04-24T14:00:00-05:00").
+IMPORTANT: When the sender mentions a SPECIFIC time ("at 5:30", "to 3pm", "an hour later"), you MUST resolve it to a concrete ISO 8601 datetime and include it in proposed_times. Never leave proposed_times empty if a specific time is stated or can be inferred.
 
 A MEETING REQUEST email (respond YES):
 - Explicitly asks to schedule, meet, call, or set up a meeting
@@ -359,11 +390,37 @@ NOT a meeting request (respond NO):
 - Feedback or survey requests
 
 Respond with JSON only:
-{
+{{
   "is_meeting_request": true/false,
+  "intent": "new_request|confirm|reschedule|cancel|calendar_invite|no_action",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
-}"""
+  "reasoning": "brief explanation",
+  "duration_minutes": 30,
+  "preferred_time": "afternoon",
+  "preferred_days": ["tuesday", "wednesday"],
+  "proposed_times": []
+}}
+
+INTENT values — pick exactly one:
+- "new_request": someone is asking to schedule a NEW meeting, proposing times or asking for availability
+- "confirm": someone is CONFIRMING a meeting that was ALREADY agreed upon and scheduled — both parties previously agreed (e.g. "confirmed for Thursday 2pm", "see you then!", "that works, talk Thursday", "just confirming our meeting tomorrow"). NOT for emails that are asking/checking if a time works for the first time — those are "new_request".
+- "reschedule": someone wants to MOVE an existing meeting to a different time
+- "cancel": someone wants to CANCEL an existing meeting
+- "calendar_invite": a formal calendar invite or event invitation (You're invited to X on DATE)
+- "no_action": not a scheduling email at all
+
+For meeting requests, extract:
+- duration_minutes: integer (look for "30-minute", "1 hour", etc; default 30)
+- preferred_time: one of "morning", "afternoon", "evening", or null
+- preferred_days: list of lowercase day names mentioned; empty list if no specific days mentioned
+- proposed_times: CRITICAL — if the sender states or implies SPECIFIC times, resolve them to ISO 8601 datetimes and output them here. Examples:
+  * "Friday at 2pm" → resolve Friday's date + 14:00
+  * "move to 5:30" → {_today_str}T17:30:00 with UTC offset (today unless context says otherwise)
+  * "push back an hour" → if original meeting is at 4:30, output {_today_str}T17:30:00 with offset
+  * "an hour later" → compute original time + 1 hour
+  Empty list ONLY if truly vague ("sometime this week", "whenever you're free").
+
+For non-meeting emails, set duration_minutes=30, preferred_time=null, preferred_days=[], proposed_times=[]"""
 
                 _classify_user = f"""Classify this email:
 
@@ -397,11 +454,26 @@ Is this a meeting/scheduling request?"""
                 reasoning = analysis_data.get('reasoning', '')
 
                 # Map classify response to intent/meeting_details shape the rest of the pipeline expects
-                intent = 'new_request' if is_meeting_request else 'no_action'
-                meeting_details = {}
-                requires_review = confidence < 0.8
+                # Use AI-returned intent if present, otherwise fall back to is_meeting_request flag
+                ai_intent = analysis_data.get('intent', '')
+                valid_intents = ['new_request', 'confirm', 'reschedule', 'cancel', 'calendar_invite', 'no_action']
+                if ai_intent in valid_intents:
+                    intent = ai_intent
+                else:
+                    intent = 'new_request' if is_meeting_request else 'no_action'
+                meeting_details = {
+                    'duration_minutes': int(analysis_data.get('duration_minutes') or 30),
+                    'preferred_time': analysis_data.get('preferred_time'),
+                    'preferred_days': analysis_data.get('preferred_days') or [],
+                    'proposed_times': analysis_data.get('proposed_times') or [],
+                }
+                requires_review = confidence < 0.8  # temporary — recalculated after user_settings loads below
 
                 logger.info("✅ Analysis complete: intent=%s, confidence=%.2f, is_meeting_request=%s", intent, confidence, is_meeting_request)
+                logger.info("   Classification reasoning: %s", reasoning)
+                logger.info("   requires_review (preliminary, confidence<0.8): %s", requires_review)
+                logger.info("   meeting_details from AI: %s", meeting_details)
+                logger.info("   AI-proposed times from email text: %s", meeting_details.get('proposed_times', []))
 
                 # ===========================================
                 # STEP 1.5: EARLY-RETURN ON NON-SCHEDULING INTENTS
@@ -417,7 +489,7 @@ Is this a meeting/scheduling request?"""
                                 Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
                                 UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
                                 ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
-                                ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': confidence, 'reasoning': f'Non-scheduling intent: {intent}'}, ':c': _now, ':u': _now}
+                                ExpressionAttributeValues={':s': 'completed', ':r': convert_floats_to_decimal({'action_taken': 'declined', 'confidence': confidence, 'reasoning': f'Non-scheduling intent: {intent}'}), ':c': _now, ':u': _now}
                             )
                             logger.info("   ✅ Test record updated to completed (non_scheduling_intent)")
                         except Exception as _te:
@@ -453,14 +525,36 @@ Is this a meeting/scheduling request?"""
                 sig_doc = sig_response.get('Item', {})
                 signatures = sig_doc.get('data', [])
 
-                # Find primary signature
+                # Find AI email signature (preferred) or fall back to primary
+                # ai_email_signature_id in user_settings controls which sig AI-generated emails use.
+                # Key absent  → not yet configured → use primary signature
+                # Key = None  → user explicitly set "no signature" → primary_signature stays None
+                # Key = "sig_..." → use that specific signature; fall back to primary if not found
+                _KEY_NOT_SET = object()
+                _ai_sig_id = user_settings.get('ai_email_signature_id', _KEY_NOT_SET)
                 primary_signature = None
-                for sig in signatures:
-                    if sig.get('is_primary'):
-                        primary_signature = sig
-                        break
-                if not primary_signature and signatures:
-                    primary_signature = signatures[0]
+
+                def _find_primary(sigs):
+                    for s in sigs:
+                        if s.get('is_primary'):
+                            return s
+                    return sigs[0] if sigs else None
+
+                if _ai_sig_id is _KEY_NOT_SET:
+                    # Setting not yet configured — default to primary
+                    primary_signature = _find_primary(signatures)
+                elif _ai_sig_id is None:
+                    # Explicitly "no signature" — leave primary_signature as None
+                    primary_signature = None
+                else:
+                    # Specific signature ID chosen for AI emails
+                    for sig in signatures:
+                        if sig.get('signature_id') == _ai_sig_id:
+                            primary_signature = sig
+                            break
+                    if not primary_signature:
+                        # Chosen sig was deleted — fall back to primary
+                        primary_signature = _find_primary(signatures)
 
                 # Default settings if user hasn't configured yet
                 if not user_settings:
@@ -483,6 +577,11 @@ Is this a meeting/scheduling request?"""
                             'include_ccd_recipients': False
                         }
                     }
+
+                # Recalculate requires_review using the user's real confidence threshold now that user_settings is loaded
+                _review_threshold = user_settings.get('auto_send_rules', {}).get('confidence_threshold', 0.8)
+                requires_review = confidence < _review_threshold
+                logger.info("   requires_review (final, confidence=%.2f < threshold=%.2f): %s", confidence, _review_threshold, requires_review)
 
                 # ===========================================
                 # STEP 2.0: DETECT TEST TAG — override settings if this is a test email
@@ -556,9 +655,16 @@ Is this a meeting/scheduling request?"""
 
                 automation_level = user_settings.get('automation_level', 'draft_only')
                 logger.info("✅ User settings loaded: automation_level=%s%s", automation_level, " [TEST]" if is_test_run else "")
-                logger.info("   Signatures found: %d (primary: %s)",
+                logger.info("   Full settings: automation_level=%s, calendar_mode=%s, auto_send_enabled=%s, confidence_threshold=%s",
+                           user_settings.get('automation_level'),
+                           user_settings.get('calendar_automation', {}).get('mode'),
+                           user_settings.get('auto_send_rules', {}).get('enabled'),
+                           user_settings.get('auto_send_rules', {}).get('confidence_threshold'))
+                _sig_source = 'ai_email_sig' if (_ai_sig_id is not _KEY_NOT_SET and _ai_sig_id is not None) else ('none (explicitly)' if _ai_sig_id is None else 'primary (default)')
+                logger.info("   Signatures found: %d (AI email sig: %s [%s])",
                            len(signatures),
-                           primary_signature.get('name') if primary_signature else 'None')
+                           primary_signature.get('name') if primary_signature else 'None',
+                           _sig_source)
 
                 # ===========================================
                 # STEP 2.1: BLOCKED SENDER CHECK
@@ -580,7 +686,7 @@ Is this a meeting/scheduling request?"""
                                     Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
                                     UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
                                     ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
-                                    ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': 0.0, 'reasoning': f'Sender blocked: {reply_to_email}'}, ':c': _now, ':u': _now}
+                                    ExpressionAttributeValues={':s': 'completed', ':r': convert_floats_to_decimal({'action_taken': 'declined', 'confidence': 0.0, 'reasoning': f'Sender blocked: {reply_to_email}'}), ':c': _now, ':u': _now}
                                 )
                                 logger.info("   ✅ Test record updated to completed (blocked_sender)")
                             except Exception as _te:
@@ -617,40 +723,202 @@ Is this a meeting/scheduling request?"""
             logger.info("📅 Step 2.5: Checking calendar availability...")
 
             calendar_slots = []
+            _offering_alternatives = False  # Outer-scope default — True only when explicit requested time was unavailable and we fell back to alternatives
+            _polite_declining = False  # Outer-scope default — True only when requested time unavailable and auto_decline_mode=polite_decline
             try:
                 # Only check calendar if intent requires scheduling
                 if intent in ['schedule_new', 'propose_times', 'check_availability', 'new_request', 'reschedule', 'calendar_invite']:
                     duration_minutes = meeting_details.get('duration_minutes', 30)
+                    preferred_time = meeting_details.get('preferred_time')  # e.g. "afternoon"
+                    preferred_days = [d.lower() for d in (meeting_details.get('preferred_days') or [])]  # e.g. ["tuesday", "wednesday"]
+                    # Request enough candidates to cover preferred days even when they are several
+                    # days out. Each weekday has ~16-20 slots, so preferred days 6 days away require
+                    # ~100+ raw slots before they appear. Request 250 when preferred days exist so
+                    # the post-filter always has Friday/Monday (etc.) slots to choose from.
+                    _max_slots_req = 250 if preferred_days else 5
+                    logger.info("   📅 Calling check-availability: %s/scheduling/check-availability, duration=%dm, days_ahead=14, preferred_time=%s, preferred_days=%s",
+                               api_base_url, duration_minutes, preferred_time, preferred_days)
+
+                    # Extract actual business hours start/end from user settings (per-day map: {tuesday: {start_time, end_time}})
+                    _biz_hours_cfg = user_settings.get('business_hours', {})
+                    _biz_start_hr, _biz_end_hr = 9, 17  # safe defaults
+                    if isinstance(_biz_hours_cfg, dict):
+                        for _wd in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']:
+                            _wd_cfg = _biz_hours_cfg.get(_wd, {})
+                            if isinstance(_wd_cfg, dict) and _wd_cfg.get('enabled'):
+                                try:
+                                    _biz_start_hr = int(_wd_cfg.get('start_time', '09:00').split(':')[0])
+                                    _biz_end_hr   = int(_wd_cfg.get('end_time',   '17:00').split(':')[0])
+                                except (ValueError, AttributeError):
+                                    pass
+                                break
+                    logger.info("   📅 Business hours from settings: %02d:00 - %02d:00", _biz_start_hr, _biz_end_hr)
 
                     # Call scheduling app's availability endpoint (uses Microsoft Graph + sophisticated algorithms)
+                    _avail_payload = {
+                        'user_id': sender_username,
+                        'duration_minutes': duration_minutes,
+                        'days_ahead': 14,  # Check next 2 weeks
+                        'business_hours': [_biz_start_hr, _biz_end_hr],
+                        'business_hours_only': True,
+                        'max_slots': _max_slots_req,
+                    }
+                    if preferred_time:
+                        _avail_payload['preferred_time'] = preferred_time
                     availability_response = requests.post(
                         f'{api_base_url}/scheduling/check-availability',
                         headers={
                             'Authorization': f'Bearer {access_token}',
                             'Content-Type': 'application/json'
                         },
-                        json={
-                            'data': {
-                                'user_id': sender_username,
-                                'duration_minutes': duration_minutes,
-                                'days_ahead': 14,  # Check next 2 weeks
-                                'business_hours_only': user_settings.get('business_hours', {}).get('enabled', True)
-                            }
-                        },
+                        json={'data': _avail_payload},
                         timeout=30
                     )
 
                     if availability_response.status_code == 200:
                         availability_result = availability_response.json()
                         if availability_result.get('success'):
-                            calendar_slots = availability_result['data'].get('available_slots', [])
-                            logger.info("✅ Found %d available time slots", len(calendar_slots))
-                    else:
-                        logger.warning("⚠️ Calendar check returned %d, continuing without availability",
-                                     availability_response.status_code)
+                            _raw_slots = availability_result['data'].get('available_slots', [])
+                            from datetime import datetime as _dt_parse, timedelta as _td_parse
 
+                            # ── Branch A: sender stated EXPLICIT times ─────────────────────────
+                            # e.g. "Friday at 2pm or Monday at 10am"
+                            # Only show those exact requested times; do NOT generate random alternatives.
+                            _explicit_times = meeting_details.get('proposed_times') or []
+                            _offering_alternatives = False  # True when requested time was unavailable and we fell back to alternatives
+                            if _explicit_times:
+                                # Build a set of available slot starts (minute-precision) for fast lookup
+                                _avail_minutes = set()
+                                for _sl in _raw_slots:
+                                    try:
+                                        _s = _dt_parse.fromisoformat(_sl.get('start', '').replace('Z', '+00:00'))
+                                        _avail_minutes.add((_s.year, _s.month, _s.day, _s.hour, _s.minute))
+                                    except Exception:
+                                        pass
+
+                                _available_explicit, _unavailable_explicit = [], []
+                                _check_duration = meeting_details.get('duration_minutes', 30)
+                                for _et in _explicit_times:
+                                    try:
+                                        _et_dt = _dt_parse.fromisoformat(str(_et).replace('Z', '+00:00'))
+                                        # Check that ALL 15-min intervals within the requested duration are free.
+                                        # Snap start to nearest 15-min boundary for the check.
+                                        _rounded_start_min = (_et_dt.minute // 15) * 15
+                                        _et_snapped = _et_dt.replace(minute=_rounded_start_min, second=0, microsecond=0)
+                                        _all_free = all(
+                                            (
+                                                (_et_snapped + _td_parse(minutes=_i)).year,
+                                                (_et_snapped + _td_parse(minutes=_i)).month,
+                                                (_et_snapped + _td_parse(minutes=_i)).day,
+                                                (_et_snapped + _td_parse(minutes=_i)).hour,
+                                                (_et_snapped + _td_parse(minutes=_i)).minute,
+                                            ) in _avail_minutes
+                                            for _i in range(0, _check_duration, 15)
+                                        )
+                                        if _all_free:
+                                            _available_explicit.append(_et)
+                                        else:
+                                            _unavailable_explicit.append(_et)
+                                            logger.info("   🚫 Requested time %s conflicts — not all %d min free", _et, _check_duration)
+                                    except Exception:
+                                        _unavailable_explicit.append(_et)
+
+                                logger.info("   📅 Explicit times check: available=%s, unavailable=%s",
+                                           _available_explicit, _unavailable_explicit)
+
+                                if _available_explicit:
+                                    # At least one requested time is free — use those
+                                    calendar_slots = [{'start': t} for t in _available_explicit]
+                                    logger.info("   ✅ Using %d available explicitly-requested time(s)", len(calendar_slots))
+                                else:
+                                    # ALL requested times are unavailable — apply auto_decline_mode
+                                    _cal_auto = user_settings.get('calendar_automation', {})
+                                    _decline_mode = _cal_auto.get('auto_decline_mode', 'never')
+                                    logger.info("   ⚠️ All explicitly requested times unavailable — auto_decline_mode=%s", _decline_mode)
+
+                                    if _decline_mode == 'offer_alternatives':
+                                        # Fall back to suggesting available times on those preferred days.
+                                        # Do NOT book any of these yet — they will be proposed in a draft email.
+                                        # A calendar hold is only created after the requester agrees to one.
+                                        calendar_slots = _raw_slots[:5]
+                                        _offering_alternatives = True
+                                        logger.info("   📅 Offering alternative times (offer_alternatives mode) — no calendar hold until requester agrees")
+                                    elif _decline_mode == 'polite_decline':
+                                        # Polite decline — keep calendar_slots empty so no event is created.
+                                        # The draft will be framed as a polite decline with no alternatives.
+                                        calendar_slots = []
+                                        _polite_declining = True
+                                        logger.info("   📅 Polite decline mode — clearing slots, will draft polite decline")
+                                    else:
+                                        # 'never' — put in Action Needed with the requested (unavailable) times shown
+                                        # so the dashboard user can see what was asked for and decide manually.
+                                        calendar_slots = [{'start': t} for t in _explicit_times]
+                                        logger.info("   📋 All times unavailable — queuing for manual review with requested times shown")
+
+                            # ── Branch B: vague request — generate slots on preferred days ────
+                            elif preferred_days and _raw_slots:
+                                _day_map = {
+                                    'monday': 0, 'tuesday': 1, 'wednesday': 2,
+                                    'thursday': 3, 'friday': 4, 'saturday': 5, 'sunday': 6
+                                }
+                                _preferred_dow = [_day_map[d] for d in preferred_days if d in _day_map]
+                                def _slot_sort_key(s):
+                                    try:
+                                        _st = _dt_parse.fromisoformat(s.get('start', ''))
+                                        _on_pref_day = 0 if _st.weekday() in _preferred_dow else 1
+                                        _in_pref_time = 1
+                                        if preferred_time:
+                                            _hr = _st.hour
+                                            _pt = preferred_time.lower()
+                                            if 'morning' in _pt and 5 <= _hr < 12:
+                                                _in_pref_time = 0
+                                            elif 'afternoon' in _pt and 12 <= _hr < 17:
+                                                _in_pref_time = 0
+                                            elif 'evening' in _pt and 17 <= _hr < 21:
+                                                _in_pref_time = 0
+                                        return (_on_pref_day, _in_pref_time, _st)
+                                    except Exception:
+                                        return (1, 1, _dt_parse.min)
+                                _raw_slots_sorted = sorted(_raw_slots, key=_slot_sort_key)
+                                # Only keep slots that actually fall on the preferred days (no fill from other days)
+                                _balanced, _day_counts = [], {}
+                                for _sl in _raw_slots_sorted:
+                                    try:
+                                        _sl_dt = _dt_parse.fromisoformat(_sl.get('start', ''))
+                                        if _sl_dt.weekday() not in _preferred_dow:
+                                            continue  # strict — skip non-preferred days
+                                        _sl_date = _sl_dt.date()
+                                        _per_day_limit = max(2, 5 // max(len(preferred_days), 1)) + 1
+                                        if _day_counts.get(_sl_date, 0) < _per_day_limit:
+                                            _balanced.append(_sl)
+                                            _day_counts[_sl_date] = _day_counts.get(_sl_date, 0) + 1
+                                        if len(_balanced) >= 5:
+                                            break
+                                    except Exception:
+                                        pass
+                                calendar_slots = _balanced[:5]
+                                logger.info("   📅 Vague request — preferred day filter: preferred_days=%s, raw_count=%d → kept %d on preferred days (days: %s)",
+                                           preferred_days, len(_raw_slots), len(calendar_slots),
+                                           {str(d): c for d, c in _day_counts.items()})
+                            else:
+                                calendar_slots = _raw_slots[:5]
+
+                            logger.info("✅ Calendar availability: found %d slots", len(calendar_slots))
+                            if calendar_slots:
+                                logger.info("   First 5 available slots: %s",
+                                           [s.get('start') for s in calendar_slots[:5]])
+                            else:
+                                logger.warning("   ⚠️ API returned success=true but 0 slots")
+                        else:
+                            logger.error("   ❌ Calendar API success=false: %s", availability_result.get('message', '')[:300])
+                    else:
+                        logger.error("   ❌ Calendar check HTTP %d: %s",
+                                    availability_response.status_code, availability_response.text[:300])
+
+                else:
+                    logger.info("   ⏭️ Skipping calendar check — intent '%s' does not require availability lookup", intent)
             except Exception as e:
-                logger.warning("⚠️ Calendar availability check failed: %s", e)
+                logger.error("❌ Calendar availability check EXCEPTION: %s", e, exc_info=True)
                 # Continue without calendar - draft can still be generated
 
             # ===========================================
@@ -677,8 +945,86 @@ Is this a meeting/scheduling request?"""
                     cal_cancel_check != 'manual',
                     cal_decline_check != 'never'
                 ])
+                logger.info("   automation_off check: calendar_has_active_setting=%s (mode=%s, accept=%s, reschedule=%s, cancel=%s, decline=%s)",
+                           calendar_has_active_setting, cal_mode_check, cal_accept_check,
+                           cal_reschedule_check, cal_cancel_check, cal_decline_check)
                 if not calendar_has_active_setting:
-                    logger.info("⏭️ Automation level is 'off' and no active calendar settings — skipping processing")
+                    logger.info("⏭️ Automation level is 'off' — saving request for manual review in Action Needed")
+
+                    # Generate IDs since we haven't reached the normal flow yet
+                    from datetime import datetime
+                    import uuid as _uuid
+                    _request_id = str(_uuid.uuid4())
+                    _email_id = mail_data.get('messageId', _request_id)
+                    _timestamp = datetime.now(timezone.utc).isoformat()
+                    _original_subject = common_headers.get('subject', 'Meeting Request')
+
+                    _ai_proposed = meeting_details.get('proposed_times', [])
+                    _cal_fallback = [slot.get('start') for slot in (calendar_slots or [])[:5]]
+                    _final_proposed = _ai_proposed or _cal_fallback
+                    logger.info("   📅 proposed_times resolution: ai_extracted=%s, calendar_fallback=%s → using=%s",
+                               _ai_proposed, _cal_fallback, _final_proposed)
+
+                    _ai_decision = {
+                        'intent': intent,
+                        'confidence': confidence,
+                        'requires_review': True,
+                        'review_reason': 'Automation is off — manual review required',
+                        'action_taken': 'none',
+                        'auto_send_eligible': False,
+                        'auto_send_blocked_reason': 'Automation is off',
+                        'calendar_decision': {
+                            'action': None,
+                            'reason': 'Automation is off and no active calendar settings'
+                        }
+                    }
+
+                    # Save request# record so it appears in Action Needed on the dashboard
+                    try:
+                        settings_table.put_item(Item=convert_floats_to_decimal({
+                            'user_id': sender_username,
+                            'storage_type': f'request#{_request_id}',
+                            'created_at': _timestamp,
+                            'updated_at': _timestamp,
+                            'data': {
+                                'request_id': _request_id,
+                                'email_id': _email_id,
+                                'draft_id': None,
+                                'calendar_event_id': None,
+                                'status': 'pending_review',
+                                'sub_status': 'automation_off',
+                                'ai_decision': _ai_decision,
+                                'requester_email': reply_to_email,
+                                'requester_name': reply_to_name,
+                                'meeting': {
+                                    'subject': _original_subject,
+                                    'purpose': meeting_details.get('purpose', 'Meeting request'),
+                                    'duration_minutes': meeting_details.get('duration_minutes', 30),
+                                    'location_preference': meeting_details.get('location_pref', 'unspecified'),
+                                    # Use AI-extracted times if the requester gave specific ones,
+                                    # otherwise fall back to up to 5 slots from the user's own calendar
+                                    # so the dashboard user can pick a time and hit Approve.
+                                    'proposed_times': _final_proposed,
+                                    'confirmed_time': None,
+                                    'event_status': None,
+                                    'attendee_count': 1 + len(common_headers.get('cc', []))
+                                },
+                                'source': 'email_forwarding',
+                                'auto_processed': False,
+                                'scheduled_at': None,
+                                'completed_at': None,
+                                'email_body': (email_body or '')[:500].strip()
+                            }
+                        }))
+                        logger.info("✅ Saved automation_off request for manual review: request_id=%s", _request_id)
+                        logger.info("   📋 Card data: requester=%s (%s), subject=%s, proposed_times_count=%d, times=%s",
+                                   reply_to_name, reply_to_email, _original_subject,
+                                   len(_final_proposed), _final_proposed)
+                    except Exception as _e:
+                        logger.error("❌ Failed to save automation_off request: %s", _e, exc_info=True)
+                        _request_id = None  # Signal that save failed
+
+                    # Update test record if applicable
                     if is_test_run and test_request_id:
                         try:
                             _now = datetime.now(timezone.utc).isoformat()
@@ -686,12 +1032,24 @@ Is this a meeting/scheduling request?"""
                                 Key={'user_id': sender_username, 'storage_type': f'test#{test_request_id}'},
                                 UpdateExpression='SET #data.#status = :s, #data.#result = :r, #data.processing.completed_at = :c, updated_at = :u',
                                 ExpressionAttributeNames={'#data': 'data', '#status': 'status', '#result': 'result'},
-                                ExpressionAttributeValues={':s': 'completed', ':r': {'action_taken': 'declined', 'confidence': confidence, 'reasoning': 'Automation is off and no active calendar settings', 'settings_applied': {'automation_level': automation_level}}, ':c': _now, ':u': _now}
+                                ExpressionAttributeValues={
+                                    ':s': 'completed',
+                                    ':r': convert_floats_to_decimal({
+                                        'action_taken': 'saved_for_review',
+                                        'request_id': _request_id,
+                                        'confidence': confidence,
+                                        'reasoning': 'Automation is off — request saved for manual review in Action Needed',
+                                        'settings_applied': {'automation_level': automation_level}
+                                    }),
+                                    ':c': _now,
+                                    ':u': _now
+                                }
                             )
-                            logger.info("   ✅ Test record updated to completed (automation_off)")
+                            logger.info("   ✅ Test record updated to completed (automation_off → Action Needed)")
                         except Exception as _te:
                             logger.warning("   ⚠️ Failed to update test record: %s", _te)
-                    return {"result": {"skipped": True, "reason": "automation_off"}}
+
+                    return {"result": {"skipped": False, "reason": "automation_off", "request_id": _request_id, "action": "saved_for_manual_review"}}
                 else:
                     logger.info("📅 Automation level is 'off' but calendar automation is active — continuing for calendar only")
 
@@ -768,6 +1126,7 @@ Is this a meeting/scheduling request?"""
 
             logger.info("   Calendar settings: mode=%s, decline=%s, accept=%s, reschedule=%s, cancel=%s",
                        cal_mode, auto_decline_mode, auto_accept_invites, reschedule_mode, cancellation_mode)
+            logger.info("   Auto-send eligible: %s, blocked_reason: %s", should_auto_send, auto_send_blocked_reason or 'none')
 
             # Intent-based calendar automation logic
             if intent == 'decline':
@@ -830,6 +1189,33 @@ Is this a meeting/scheduling request?"""
                     calendar_action = 'auto_reschedule'
                     calendar_action_reason = "Auto-rescheduling to available slot (reschedule_mode=auto_reschedule)"
                     logger.info("   ✅ Calendar action: auto_reschedule")
+                    # Business hours guard — runs immediately so ai_decision/request are saved with correct values
+                    from datetime import datetime as _bh_dt
+                    _bh_violations = []
+                    _bh_ok_slots = []
+                    for _bh_slot in calendar_slots:
+                        try:
+                            _bh_start = _bh_dt.fromisoformat(str(_bh_slot.get('start', '')).replace('Z', '+00:00'))
+                            _bh_end = _bh_start + __import__('datetime').timedelta(minutes=meeting_details.get('duration_minutes', 30))
+                            _bh_start_hr = _bh_start.hour
+                            _bh_end_hr = _bh_end.hour + (_bh_end.minute / 60)
+                            if _bh_start_hr < _biz_start_hr or _bh_end_hr > _biz_end_hr:
+                                _bh_violations.append(_bh_slot)
+                                logger.info("   ⚠️ Slot %s ends at %02d:%02d — outside business hours (%02d:00-%02d:00)",
+                                            _bh_slot.get('start'), _bh_end.hour, _bh_end.minute, _biz_start_hr, _biz_end_hr)
+                            else:
+                                _bh_ok_slots.append(_bh_slot)
+                        except Exception:
+                            _bh_ok_slots.append(_bh_slot)
+                    if _bh_violations and not _bh_ok_slots:
+                        logger.info("   🚫 All slots outside business hours — overriding auto_reschedule → draft_reschedule")
+                        calendar_action = 'draft_reschedule'
+                        calendar_action_reason = "Requested reschedule time is outside business hours — needs manual review"
+                        should_auto_send = False
+                        auto_send_blocked_reason = "Requested reschedule time is outside business hours ({:02d}:00-{:02d}:00)".format(_biz_start_hr, _biz_end_hr)
+                        requires_review = True
+                        calendar_slots = []
+                        logger.info("   ℹ️ auto_send blocked, slots cleared, card goes to Action Needed")
                 elif reschedule_mode == 'draft_only':
                     calendar_action = 'draft_reschedule'
                     calendar_action_reason = "Drafting reschedule proposal (reschedule_mode=draft_only)"
@@ -858,7 +1244,21 @@ Is this a meeting/scheduling request?"""
             elif intent in ['new_request', 'accept', 'confirm']:
                 # New meeting request or acceptance - use cal_mode for event creation
                 logger.info("   📅 Intent: %s - checking calendar mode", intent)
-                if cal_mode == 'always':
+                if _offering_alternatives:
+                    # The requested time was unavailable — we found alternatives to propose.
+                    # Do NOT create a calendar hold: mutual agreement hasn't happened yet.
+                    # The draft email will propose the alternatives and ask the requester to pick one.
+                    # A hold is only created after they reply and agree to a specific time.
+                    calendar_action = 'offer_alternatives'
+                    calendar_action_reason = "Requested time unavailable — proposing alternatives via email (no hold until agreed)"
+                    logger.info("   📅 Calendar action: offer_alternatives (no event created until requester agrees)")
+                elif _polite_declining:
+                    # Requested time was unavailable and user wants a polite decline (no alternatives).
+                    # _polite_declining flag was set in Step 2.5 when auto_decline_mode=polite_decline.
+                    calendar_action = 'polite_decline'
+                    calendar_action_reason = "Requested time unavailable — politely declining (auto_decline_mode=polite_decline)"
+                    logger.info("   📅 Calendar action: polite_decline (requested time unavailable, no alternatives offered)")
+                elif cal_mode == 'always':
                     calendar_action = 'create_tentative'
                     calendar_action_reason = "Creating tentative event (mode=always)"
                 elif cal_mode == 'confirmed_only' and intent in ['accept', 'confirm']:
@@ -918,7 +1318,8 @@ Is this a meeting/scheduling request?"""
                     'meeting_details': meeting_details,
                     'calendar_slots_found': len(calendar_slots),
                     'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
-                    'calendar_decision': calendar_decision
+                    'calendar_decision': calendar_decision,
+                    'calendar_action': calendar_action
                 }
 
                 # Save scheduling request (no draft) to DynamoDB
@@ -935,7 +1336,7 @@ Is this a meeting/scheduling request?"""
                             'draft_id': None,
                             'calendar_event_id': None,
                             'status': 'pending_review',
-                            'sub_status': 'calendar_only_mode',
+                            'sub_status': 'offer_alternatives_pending' if _offering_alternatives else 'polite_decline_pending' if _polite_declining else 'calendar_only_mode',
                             'ai_decision': ai_decision,
                             'requester_email': reply_to_email,
                             'requester_name': reply_to_name,
@@ -946,13 +1347,15 @@ Is this a meeting/scheduling request?"""
                                 'location_preference': meeting_details.get('location_pref', 'Teams'),
                                 'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
                                 'confirmed_time': None,
-                                'event_status': None,
+                                # Pre-set so the frontend approve button shows the correct label
+                                'event_status': 'tentative' if (calendar_decision.get('action') if isinstance(calendar_decision, dict) else calendar_decision) in ('create_tentative', 'accept_tentative') else None,
                                 'attendee_count': 1 + len(common_headers.get('cc', []))
                             },
                             'source': 'email_forwarding',
                             'auto_processed': True,
                             'scheduled_at': None,
-                            'completed_at': None
+                            'completed_at': None,
+                            'email_body': (email_body or '')[:500].strip()
                         }
                     }
                     storage_table.put_item(Item=convert_floats_to_decimal(scheduling_request_item))
@@ -1017,13 +1420,47 @@ Is this a meeting/scheduling request?"""
                                 pass
                         if _slots_formatted:
                             _times_context = "\n\nAVAILABLE TIMES TO PROPOSE:\n" + "\n".join(_slots_formatted) + "\nIMPORTANT: Propose these specific times and ask which works best."
+                            logger.info("   📅 Times injected into draft prompt: %s", _slots_formatted)
+                    else:
+                        logger.warning("   ⚠️ No calendar slots — draft will not propose specific times")
 
                     # Add calendar action context
                     _action_context = ""
-                    if calendar_action and calendar_action != 'manual_review':
+                    if calendar_action == 'offer_alternatives':
+                        _action_context = (
+                            "\n\nSITUATION: The time requested by the sender is NOT available in the calendar. "
+                            "You must:\n"
+                            "1. Politely acknowledge their meeting request\n"
+                            "2. Apologize and explain that the requested time is unfortunately not available\n"
+                            "3. Propose the AVAILABLE TIMES listed above as alternatives\n"
+                            "4. Ask them which of those alternative times works best for them\n"
+                            "Do NOT confirm the meeting or say it is scheduled — it is not yet agreed upon."
+                        )
+                    elif calendar_action == 'draft_reschedule' and auto_send_blocked_reason and 'business hours' in auto_send_blocked_reason.lower():
+                        _action_context = (
+                            f"\n\nSITUATION: The sender is requesting to reschedule to a time that falls outside working hours ({_biz_start_hr:02d}:00–{_biz_end_hr:02d}:00). "
+                            "Do NOT confirm or agree to the requested time. Instead:\n"
+                            "1. Acknowledge their request to reschedule\n"
+                            "2. Gently let them know that the requested time falls outside of your usual working hours\n"
+                            "3. Ask if they would be open to finding a time that works within normal business hours\n"
+                            "Do NOT propose any specific times — this reply is going for human review before it is sent."
+                        )
+                    elif calendar_action and calendar_action != 'manual_review':
                         _action_context = f"\n\nCALENDAR ACTION: {calendar_action}. Reason: {calendar_action_reason or 'N/A'}"
 
+                    # Current date/time so the LLM never proposes times in the past
+                    try:
+                        import pytz as _pytz_draft
+                        _draft_tz = _pytz_draft.timezone(_user_tz if '_user_tz' in dir() else 'America/Chicago')
+                        _draft_now = _dt_now_cls.now(_draft_tz)
+                    except Exception:
+                        _draft_now = _dt_now_cls.utcnow()
+                    _draft_now_str = _draft_now.strftime('%A, %B %-d, %Y at %-I:%M %p')
+
                     _draft_user = f"""Generate a professional email response for the following:
+
+CURRENT DATE/TIME: {_draft_now_str}
+IMPORTANT: Do NOT suggest any times that have already passed. Only propose future times.
 
 FROM: {reply_to_email} ({reply_to_name})
 SUBJECT: {common_headers.get('subject', '')}
@@ -1091,6 +1528,7 @@ Write a natural, warm, professional response that {executive_name} would send.""
                         logger.info("   ℹ️ No signature to append")
 
                     logger.info("✅ Draft generated: %d chars (content_type=%s)", len(draft_text), draft_content_type)
+                    logger.info("   Draft preview (first 200 chars): %s", draft_text[:200].replace('\n', ' '))
 
                 except Exception as e:
                     logger.error("❌ Failed to generate draft: %s", e, exc_info=True)
@@ -1111,6 +1549,10 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 email_id = mail_data.get('messageId', request_id)
                 timestamp = datetime.utcnow().isoformat() + 'Z'
 
+                # Construct draft subject now (needed by ai_decision below)
+                original_subject = common_headers.get('subject', 'Meeting Request')
+                draft_subject = f"Re: {original_subject}" if not original_subject.startswith('Re:') else original_subject
+
                 # Build comprehensive AI decision object for tracking
                 ai_decision = {
                     'intent': intent,
@@ -1124,15 +1566,17 @@ Write a natural, warm, professional response that {executive_name} would send.""
                     'calendar_slots_found': len(calendar_slots),
                     'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
                     # Calendar automation decision
-                    'calendar_decision': calendar_decision
+                    'calendar_decision': calendar_decision,
+                    'calendar_action': calendar_action,
+                    # For draft_reschedule: store draft text so frontend can send directly (no Outlook draft needed)
+                    'draft_text': draft_text if calendar_action == 'draft_reschedule' else None,
+                    'draft_subject': draft_subject if calendar_action == 'draft_reschedule' else None,
+                    'draft_to': reply_to_email if calendar_action == 'draft_reschedule' else None,
+                    'draft_content_type': draft_content_type if calendar_action == 'draft_reschedule' else None,
                 }
 
                 logger.info("   🤖 AI Decision: intent=%s, confidence=%.2f, requires_review=%s, calendar_action=%s",
                            intent, confidence, requires_review, calendar_action or 'none')
-
-                # Construct draft subject
-                original_subject = common_headers.get('subject', 'Meeting Request')
-                draft_subject = f"Re: {original_subject}" if not original_subject.startswith('Re:') else original_subject
 
                 try:
                     settings_table = dynamodb.Table(os.environ.get('AI_SCHEDULER_STORAGE_TABLE'))
@@ -1179,14 +1623,19 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             'calendar_event_id': None,
                             'calendar_event_status': None,
 
+                            # draft_reschedule items belong to Action Needed, not the Drafts pane
+                            'source_flow': 'action_needed' if calendar_action == 'draft_reschedule' else 'drafts_pane',
+                            'to_recipient': reply_to_email,
+
                             # ====== TIMESTAMPS ======
                             'sent_at': None
                         }
                     }
 
-                    settings_table.put_item(Item=draft_item)
+                    settings_table.put_item(Item=convert_floats_to_decimal(draft_item))
                     logger.info("✅ Draft saved to DynamoDB: draft_id=%s, request_id=%s", draft_id, request_id)
                     logger.info("   ↔️ Bidirectional link: draft#%s ←→ request#%s", draft_id[:8], request_id[:8])
+                    logger.info("   Draft → to=%s, subject=%s", reply_to_email, draft_subject)
 
                 except Exception as e:
                     logger.error("❌ Failed to save draft to DynamoDB: %s", e, exc_info=True)
@@ -1237,14 +1686,17 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             'source': 'email_forwarding',
                             'auto_processed': True,
                             'scheduled_at': None,
-                            'completed_at': None
+                            'completed_at': None,
+                            'email_body': (email_body or '')[:500].strip()
                         }
                     }
 
                     storage_table.put_item(Item=convert_floats_to_decimal(scheduling_request_item))
                     logger.info("✅ Scheduling request saved: request_id=%s", request_id)
                     logger.info("   ↔️ Bidirectional link: request#%s ←→ draft#%s", request_id[:8], draft_id[:8])
-                    logger.info("   📊 Status: %s", lifecycle_status)
+                    logger.info("   📊 Status: %s (requires_review=%s, should_auto_send=%s)", lifecycle_status, requires_review, should_auto_send)
+                    logger.info("   📅 Proposed times stored: %s",
+                               [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [])
 
                 except Exception as e:
                     logger.error("❌ Failed to save to DynamoDB storage table: %s", e, exc_info=True)
@@ -1301,7 +1753,7 @@ Write a natural, warm, professional response that {executive_name} would send.""
                                     Key={'user_id': sender_username, 'storage_type': f"request#{request_id}"},
                                     UpdateExpression='SET #data.#status = :status, #data.ai_decision = :ai_dec, updated_at = :updated',
                                     ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
-                                    ExpressionAttributeValues={':status': 'auto_handled', ':ai_dec': ai_decision, ':updated': sent_timestamp}
+                                    ExpressionAttributeValues={':status': 'auto_handled', ':ai_dec': convert_floats_to_decimal(ai_decision), ':updated': sent_timestamp}
                                 )
                                 logger.info("   📊 Request status updated to: auto_handled")
                             else:
@@ -1311,57 +1763,81 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             logger.error("   ❌ Send email API returned %d", send_response.status_code)
                             should_auto_send = False
 
-                    # If NOT auto-sending, create Outlook draft
+                    # If NOT auto-sending, create Outlook draft — UNLESS this is a draft_reschedule item
+                    # (draft_reschedule = Action Needed: draft text stored in ai_decision, sent directly by the user)
                     if not should_auto_send:
-                        logger.info("   📝 Creating Outlook draft for user review...")
-                        try:
-                            # Call scheduler backend to create Outlook draft (proxies to Microsoft backend)
-                            draft_create_response = requests.post(
-                                f'{api_base_url}/scheduling/drafts/create',
-                                headers={
-                                    'Authorization': f'Bearer {access_token}',
-                                    'Content-Type': 'application/json'
-                                },
-                                json={
-                                    'data': {
-                                        'user_id': sender_username,
-                                        'to_recipients': [reply_to_email],
-                                        'subject': draft_subject,
-                                        'body': draft_text,
-                                        'importance': 'normal',
-                                        'content_type': draft_content_type
-                                    }
-                                },
-                                timeout=30
-                            )
-                            if draft_create_response.status_code == 200:
-                                draft_create_result = draft_create_response.json()
-                                if draft_create_result.get('success'):
-                                    outlook_draft_id = draft_create_result.get('data', {}).get('message_id') or draft_create_result.get('data', {}).get('id')
-                                else:
-                                    raise ValueError(f"Draft creation failed: {draft_create_result.get('message', 'unknown error')}")
-                            else:
-                                raise ValueError(f"Draft creation returned {draft_create_response.status_code}: {draft_create_response.text[:200]}")
+                        if calendar_action == 'draft_reschedule':
+                            # Action Needed flow: draft text is already stored in ai_decision.
+                            # No Outlook draft needed — the frontend sends directly on "Send Reply".
                             action_taken = 'draft_created'
                             ai_decision['action_taken'] = 'draft_created'
                             draft_timestamp = datetime.now(timezone.utc).isoformat()
-                            logger.info("   ✅ Outlook draft created! Draft ID: %s", outlook_draft_id)
+                            logger.info("   📋 draft_reschedule: skipping Outlook draft — draft text stored in ai_decision for direct send")
 
                             settings_table.update_item(
                                 Key={'user_id': sender_username, 'storage_type': f"draft#{draft_id}"},
-                                UpdateExpression='SET #data.outlook_draft_id = :outlook_id, #data.#status = :status, updated_at = :updated',
+                                UpdateExpression='SET #data.#status = :status, updated_at = :updated',
                                 ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
-                                ExpressionAttributeValues={':outlook_id': outlook_draft_id, ':status': 'outlook_draft_created', ':updated': draft_timestamp}
+                                ExpressionAttributeValues={':status': 'pending_review', ':updated': draft_timestamp}
                             )
                             storage_table.update_item(
                                 Key={'user_id': sender_username, 'storage_type': f"request#{request_id}"},
                                 UpdateExpression='SET #data.ai_decision = :ai_dec, updated_at = :updated',
                                 ExpressionAttributeNames={'#data': 'data'},
-                                ExpressionAttributeValues={':ai_dec': ai_decision, ':updated': draft_timestamp}
+                                ExpressionAttributeValues={':ai_dec': convert_floats_to_decimal(ai_decision), ':updated': draft_timestamp}
                             )
-                            logger.info("   📊 Request status: pending_review (draft created for user)")
-                        except Exception as draft_err:
-                            logger.error("   ❌ Inline draft creation failed: %s", draft_err)
+                            logger.info("   📊 Request status: pending_review (Action Needed — reply inline in card)")
+                        else:
+                            logger.info("   📝 Creating Outlook draft for user review...")
+                            try:
+                                # Call scheduler backend to create Outlook draft (proxies to Microsoft backend)
+                                draft_create_response = requests.post(
+                                    f'{api_base_url}/scheduling/drafts/create',
+                                    headers={
+                                        'Authorization': f'Bearer {access_token}',
+                                        'Content-Type': 'application/json'
+                                    },
+                                    json={
+                                        'data': {
+                                            'user_id': sender_username,
+                                            'to_recipients': [reply_to_email],
+                                            'subject': draft_subject,
+                                            'body': draft_text,
+                                            'importance': 'normal',
+                                            'content_type': draft_content_type
+                                        }
+                                    },
+                                    timeout=30
+                                )
+                                if draft_create_response.status_code == 200:
+                                    draft_create_result = draft_create_response.json()
+                                    if draft_create_result.get('success'):
+                                        outlook_draft_id = draft_create_result.get('data', {}).get('message_id') or draft_create_result.get('data', {}).get('id')
+                                    else:
+                                        raise ValueError(f"Draft creation failed: {draft_create_result.get('message', 'unknown error')}")
+                                else:
+                                    raise ValueError(f"Draft creation returned {draft_create_response.status_code}: {draft_create_response.text[:200]}")
+                                action_taken = 'draft_created'
+                                ai_decision['action_taken'] = 'draft_created'
+                                ai_decision['outlook_draft_id'] = outlook_draft_id  # carry on request so frontend can send it
+                                draft_timestamp = datetime.now(timezone.utc).isoformat()
+                                logger.info("   ✅ Outlook draft created! Draft ID: %s", outlook_draft_id)
+
+                                settings_table.update_item(
+                                    Key={'user_id': sender_username, 'storage_type': f"draft#{draft_id}"},
+                                    UpdateExpression='SET #data.outlook_draft_id = :outlook_id, #data.#status = :status, updated_at = :updated',
+                                    ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
+                                    ExpressionAttributeValues={':outlook_id': outlook_draft_id, ':status': 'outlook_draft_created', ':updated': draft_timestamp}
+                                )
+                                storage_table.update_item(
+                                    Key={'user_id': sender_username, 'storage_type': f"request#{request_id}"},
+                                    UpdateExpression='SET #data.ai_decision = :ai_dec, updated_at = :updated',
+                                    ExpressionAttributeNames={'#data': 'data'},
+                                    ExpressionAttributeValues={':ai_dec': convert_floats_to_decimal(ai_decision), ':updated': draft_timestamp}
+                                )
+                                logger.info("   📊 Request status: pending_review (draft created for user)")
+                            except Exception as draft_err:
+                                logger.error("   ❌ Inline draft creation failed: %s", draft_err)
 
                 except Exception as e:
                     logger.error("❌ Failed to create Outlook draft/send email: %s", e, exc_info=True)
@@ -1428,7 +1904,7 @@ Write a natural, warm, professional response that {executive_name} would send.""
 
             try:
                 # Use calendar_decision from Step 2.7 instead of re-checking settings
-                should_create_event = calendar_action in ['create_tentative', 'create_confirmed', 'accept', 'auto_reschedule']
+                should_create_event = calendar_action in ['create_tentative', 'create_confirmed', 'accept', 'tentative', 'auto_reschedule']
                 should_delete_event = calendar_action in ['confirm_cancel', 'auto_reschedule']
 
                 # Determine event status based on calendar_action
@@ -1436,26 +1912,32 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 # For confirmed/accepted/rescheduled events, respect the user's 'Mark as Busy' setting.
                 # For tentative proposals (create_tentative), also respect the setting — user explicitly chose.
                 user_event_status = calendar_automation.get('event_status', 'tentative')
-                if calendar_action in ['create_confirmed', 'accept', 'create_tentative', 'auto_reschedule']:
+                if calendar_action == 'create_confirmed':
+                    event_status_type = 'busy'  # confirmed meetings are always busy, not tentative
+                elif calendar_action == 'auto_reschedule':
+                    event_status_type = 'busy'  # rescheduled = both parties agreed → busy/scheduled
+                elif calendar_action == 'accept':
                     event_status_type = user_event_status
-                elif calendar_action == 'tentative':
-                    event_status_type = 'tentative'  # tentative_if_available always creates tentative
+                elif calendar_action in ['create_tentative', 'tentative']:
+                    event_status_type = 'tentative'
                 else:
                     event_status_type = 'tentative'
 
-                logger.info("   📅 Calendar action: %s, should_create_event: %s, status: %s",
-                           calendar_action or 'none', should_create_event, event_status_type)
+                logger.info("   📅 Calendar action=%s, should_create=%s, should_delete=%s, event_status=%s, slots_available=%d",
+                           calendar_action or 'none', should_create_event, should_delete_event,
+                           event_status_type, len(calendar_slots))
 
                 # ===========================================
                 # P2/P3: DELETE OR CANCEL EXISTING CALENDAR EVENT
-                # For auto_reschedule: cancel old event before creating new one
+                # For auto_reschedule: update (or delete+create) old event
                 # For confirm_cancel: delete the existing calendar event
                 # ===========================================
+                existing_event_id = None
+                _update_existing_event = False
                 if should_delete_event:
-                    # Look up existing calendar_event_id from the scheduling request
-                    existing_event_id = None
+                    # Look up existing calendar_event_id from prior scheduling requests
+                    existing_request_storage_type = None
                     try:
-                        # Query for existing requests from this sender about the same subject
                         existing_requests = storage_table.query(
                             KeyConditionExpression='user_id = :uid AND begins_with(storage_type, :prefix)',
                             ExpressionAttributeValues={
@@ -1465,18 +1947,40 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             ScanIndexForward=False,
                             Limit=20
                         )
+                        _new_subj = common_headers.get('subject', '').lower()
+                        # Also pull AI-extracted meeting title for looser matching
+                        _ai_subj = meeting_details.get('subject', '').lower()
                         for req_item in existing_requests.get('Items', []):
-                            req_meeting = req_item.get('meeting', {})
-                            if (req_item.get('calendar_event_id') and
-                                req_item.get('requester_email') == reply_to_email and
-                                req_meeting.get('subject', '').lower() in common_headers.get('subject', '').lower()):
-                                existing_event_id = req_item['calendar_event_id']
-                                logger.info("   🔍 Found existing calendar event: %s", existing_event_id)
+                            req_data = req_item.get('data', {})
+                            req_meeting = req_data.get('meeting', {})
+                            _old_subj = req_meeting.get('subject', '').lower()
+                            # Skip the current request itself
+                            if req_item.get('storage_type', '') == f'request#{request_id}':
+                                continue
+                            # Match if there's any subject overlap (either direction) AND same requester
+                            _subj_match = (
+                                (_old_subj and _old_subj in _new_subj) or
+                                (_old_subj and _new_subj and _new_subj in _old_subj) or
+                                (_ai_subj and _old_subj and _ai_subj in _old_subj) or
+                                (_ai_subj and _old_subj and _old_subj in _ai_subj)
+                            )
+                            if (req_data.get('calendar_event_id') and
+                                req_data.get('requester_email') == reply_to_email and
+                                _subj_match):
+                                existing_event_id = req_data['calendar_event_id']
+                                existing_request_storage_type = req_item.get('storage_type')
+                                logger.info("   🔍 Found existing calendar event: %s (from %s)", existing_event_id, _old_subj)
                                 break
                     except Exception as e:
                         logger.warning("   ⚠️ Could not look up existing event: %s", e)
 
-                    if existing_event_id:
+                    if existing_event_id and calendar_action == 'auto_reschedule':
+                        # For reschedule: prefer UPDATE over delete+create — preserves attendees/invites
+                        # We'll attempt update_event; fall through to create if it fails
+                        logger.info("   🔄 Will UPDATE existing event %s to new time (not delete+create)", existing_event_id)
+                        # Mark for update — actual update happens below after we know the new slot
+                        _update_existing_event = True
+                    elif existing_event_id:
                         try:
                             logger.info("   🗑️ Deleting existing calendar event: %s", existing_event_id)
                             delete_response = requests.post(
@@ -1495,7 +1999,6 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             )
                             if delete_response.status_code == 200 and delete_response.json().get('success'):
                                 logger.info("   ✅ Existing calendar event deleted")
-                                # If this was a confirm_cancel, update the old request status
                                 if calendar_action == 'confirm_cancel':
                                     event_timestamp = datetime.now(timezone.utc).isoformat()
                                     storage_table.update_item(
@@ -1509,12 +2012,28 @@ Write a natural, warm, professional response that {executive_name} would send.""
                         except Exception as e:
                             logger.warning("   ⚠️ Event deletion failed (non-critical): %s", e)
                     else:
-                        logger.info("   📝 No existing calendar event found to delete")
+                        logger.info("   📝 No existing calendar event found to delete/update")
+                else:
+                    _update_existing_event = False
 
-                if should_create_event and calendar_slots:
+                # Business hours guard already ran earlier (at calendar_action decision time) —
+                # if it fired, calendar_action is already 'draft_reschedule' and calendar_slots is [].
+
+                # For 'confirm' intent, calendar availability check is skipped (no need to check free/busy
+                # for a time that's already been agreed upon). Fall back to AI-extracted proposed_times.
+                _effective_slots = calendar_slots
+                if should_create_event and not _effective_slots and intent == 'confirm':
+                    _proposed = meeting_details.get('proposed_times', [])
+                    if _proposed:
+                        _effective_slots = [{'start': t, 'end': None} for t in _proposed]
+                        logger.info("   📅 Using AI-extracted confirmed time(s) for event: %s", _proposed)
+
+                if should_create_event and _effective_slots:
                     # Extract meeting details from calendar slots or AI analysis
                     # For now, use first available slot
-                    first_slot = calendar_slots[0]
+                    first_slot = _effective_slots[0]
+                    logger.info("   📅 Using first slot for event: start=%s, end=%s",
+                               first_slot.get('start'), first_slot.get('end'))
 
                     # Build attendees list: always include original sender;
                     # include CC'd recipients only if include_ccd_recipients is enabled
@@ -1525,58 +2044,121 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             if addr.strip() and addr.strip() != source_email
                         ])
 
-                    # Create calendar event via Microsoft Graph
-                    logger.info("   📅 Creating calendar event via Graph API...")
+                    # Calculate end_time from start + duration (slots only carry 'start')
+                    # duration_minutes may not be set in the calendar-only path — get it from meeting_details
+                    try:
+                        _duration_minutes = int(duration_minutes) if duration_minutes else meeting_details.get('duration_minutes', 30)
+                    except (NameError, TypeError):
+                        _duration_minutes = meeting_details.get('duration_minutes', 30)
+                    _slot_start = first_slot.get('start', '') if isinstance(first_slot, dict) else str(first_slot)
+                    try:
+                        from datetime import datetime as _dt_cls, timedelta as _td_cls
+                        _start_dt = _dt_cls.fromisoformat(_slot_start.replace('Z', '+00:00'))
+                        _end_dt = _start_dt + _td_cls(minutes=_duration_minutes)
+                        _slot_end = _end_dt.isoformat()
+                    except Exception as _te:
+                        logger.warning("   ⚠️ Could not calculate end_time: %s — falling back to start", _te)
+                        _slot_end = _slot_start
 
-                    event_response = requests.post(
-                        f'{amp_base_url}/microsoft/integrations/create_event',
-                        headers={
-                            'Authorization': f'Bearer {access_token}',
-                            'Content-Type': 'application/json'
-                        },
-                        json={
-                            'data': {
-                                'user_id': sender_username,
-                                'subject': common_headers.get('subject', 'Meeting Request'),
-                                'body': f'Meeting scheduled via AI Scheduler\n\nOriginal request from: {sender_name} <{source_email}>',
-                                'start': first_slot.get('start'),
-                                'end': first_slot.get('end'),
-                                'show_as': event_status_type,  # 'busy' or 'tentative'
-                                'attendees': attendees,
-                                'location': '',
-                                'timezone': user_settings.get('timezone', 'America/Chicago')
-                            }
-                        },
-                        timeout=30
-                    )
+                    # Format attendees as objects
+                    _attendees_payload = [{'email': a, 'type': 'required'} for a in attendees if a]
+
+                    # For reschedule: if we found the old event, UPDATE it instead of delete+create.
+                    # This preserves attendees, invite chain, etc. Falls back to create if update fails.
+                    if _update_existing_event and existing_event_id:
+                        logger.info("   📅 Updating existing calendar event %s to new time via Graph API...", existing_event_id)
+                        event_response = requests.post(
+                            f'{amp_base_url}/microsoft/integrations/update_event',
+                            headers={
+                                'Authorization': f'Bearer {access_token}',
+                                'Content-Type': 'application/json'
+                            },
+                            json={
+                                'data': {
+                                    'event_id': existing_event_id,
+                                    'updated_fields': {
+                                        'start': {'dateTime': _slot_start, 'timeZone': user_settings.get('timezone', 'America/Chicago')},
+                                        'end': {'dateTime': _slot_end, 'timeZone': user_settings.get('timezone', 'America/Chicago')},
+                                        'showAs': event_status_type,
+                                    }
+                                }
+                            },
+                            timeout=30
+                        )
+                        # If update succeeded, treat the existing event ID as the result
+                        if event_response.status_code == 200 and event_response.json().get('success'):
+                            logger.info("   ✅ Calendar event updated to new time!")
+                        else:
+                            logger.warning("   ⚠️ update_event failed (%s) — falling back to create_event", event_response.status_code)
+                            _update_existing_event = False  # fall through to create below
+
+                    if not _update_existing_event:
+                        logger.info("   📅 Creating calendar event via Graph API...")
+                        event_response = requests.post(
+                            f'{amp_base_url}/microsoft/integrations/create_event',
+                            headers={
+                                'Authorization': f'Bearer {access_token}',
+                                'Content-Type': 'application/json'
+                            },
+                            json={
+                                'data': {
+                                    'title': ('[TENTATIVE] ' if event_status_type == 'tentative' else '') + common_headers.get('subject', 'Meeting Request'),
+                                    'description': f'Meeting scheduled via AI Scheduler\n\nOriginal request from: {sender_name} <{source_email}>',
+                                    'start_time': _slot_start,
+                                    'end_time': _slot_end,
+                                    'attendees': _attendees_payload,
+                                    'location': '',
+                                    'time_zone': user_settings.get('timezone', 'America/Chicago'),
+                                    'is_online_meeting': False,
+                                    'send_invitations': 'send',
+                                    'show_as': event_status_type,
+                                }
+                            },
+                            timeout=30
+                        )
 
                     if event_response.status_code == 200:
                         event_result = event_response.json()
                         if event_result.get('success'):
-                            calendar_event_id = event_result['data'].get('event_id')
+                            # For update_event the ID is the same existing one; for create_event it's new
+                            calendar_event_id = (existing_event_id if _update_existing_event
+                                                 else (event_result['data'].get('id') or event_result['data'].get('event_id')))
                             event_created = True
-                            logger.info("   ✅ Calendar event created! Event ID: %s", calendar_event_id)
+                            _op_label = "updated" if _update_existing_event else "created"
+                            logger.info("   ✅ Calendar event %s! Event ID: %s", _op_label, calendar_event_id)
                             logger.info("      Status: %s", event_status_type)
 
                             event_timestamp = datetime.now(timezone.utc).isoformat()
 
-                            # Update draft record with calendar event ID
-                            settings_table.update_item(
-                                Key={
-                                    'user_id': sender_username,
-                                    'storage_type': f"draft#{draft_id}"
-                                },
-                                UpdateExpression='SET #data.calendar_event_id = :event_id, #data.calendar_event_status = :event_status, updated_at = :updated',
-                                ExpressionAttributeNames={'#data': 'data'},
-                                ExpressionAttributeValues={
-                                    ':event_id': calendar_event_id,
-                                    ':event_status': event_status_type,
-                                    ':updated': event_timestamp
-                                }
-                            )
+                            # Update draft record with calendar event ID (only if a draft exists)
+                            if draft_id:
+                                settings_table.update_item(
+                                    Key={
+                                        'user_id': sender_username,
+                                        'storage_type': f"draft#{draft_id}"
+                                    },
+                                    UpdateExpression='SET #data.calendar_event_id = :event_id, #data.calendar_event_status = :event_status, updated_at = :updated',
+                                    ExpressionAttributeNames={'#data': 'data'},
+                                    ExpressionAttributeValues={
+                                        ':event_id': calendar_event_id,
+                                        ':event_status': event_status_type,
+                                        ':updated': event_timestamp
+                                    }
+                                )
 
-                            # Update scheduling request record with calendar event and scheduled status
-                            new_status = 'scheduled' if event_status_type == 'busy' else 'tentative_hold'
+                            # Update scheduling request record with calendar event and status.
+                            # Rules:
+                            # - auto_handled: email was auto-sent → keep auto_handled (don't demote to tentative_hold)
+                            # - draft_created: a draft also exists → keep pending_review (Action Needed), add calendar info
+                            # - calendar_only (no draft, no auto-send) → flip to tentative_hold or scheduled
+                            if action_taken == 'auto_sent':
+                                new_status = 'auto_handled'  # preserve: auto-send already finalised this
+                            elif action_taken == 'draft_created':
+                                new_status = 'pending_review'  # preserve: user still needs to review draft
+                            elif event_status_type == 'busy':
+                                new_status = 'scheduled'
+                            else:
+                                new_status = 'tentative_hold'
                             storage_table.update_item(
                                 Key={
                                     'user_id': sender_username,
@@ -1594,14 +2176,19 @@ Write a natural, warm, professional response that {executive_name} would send.""
                                     ':updated': event_timestamp
                                 }
                             )
-                            logger.info("   📊 Request status updated to: %s (calendar event created)", new_status)
+                            logger.info("   📊 Request status updated to: %s (calendar event created, automation=%s)", new_status, automation_level)
                         else:
                             logger.error("   ❌ Calendar event creation failed: %s", event_result.get('message'))
                     else:
                         logger.error("   ❌ Calendar event API returned %d", event_response.status_code)
+                elif should_create_event and not _effective_slots:
+                    logger.warning("   ⚠️ Wanted to create calendar event (action=%s) but 0 slots available", calendar_action)
                 else:
-                    logger.info("   ⏭️  Skipping calendar event creation")
-                    logger.info("      Mode: %s, Intent: %s", cal_mode, intent)
+                    if calendar_action == 'offer_alternatives':
+                        logger.info("   ⏭️  No calendar hold created (offer_alternatives) — alternatives will be proposed in the draft email; hold is only created after the requester agrees to a specific time")
+                    else:
+                        logger.info("   ⏭️  Skipping calendar event (action=%s does not create event, mode=%s, intent=%s)",
+                                   calendar_action or 'none', cal_mode, intent)
 
             except Exception as e:
                 logger.error("❌ Failed to create calendar event: %s", e, exc_info=True)
@@ -1627,9 +2214,12 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 logger.info("✅ EMAIL SENT AUTOMATICALLY!")
                 logger.info("   Message ID: %s", outlook_message_id)
             elif action_taken == 'draft_created':
-                logger.info("📝 OUTLOOK DRAFT CREATED")
-                logger.info("   Draft ID: %s", outlook_draft_id)
-                logger.info("   User can review and send from Outlook")
+                if outlook_draft_id:
+                    logger.info("📝 OUTLOOK DRAFT CREATED")
+                    logger.info("   Draft ID: %s", outlook_draft_id)
+                    logger.info("   User can review and send from Outlook")
+                else:
+                    logger.info("📋 DRAFT SAVED TO ACTION NEEDED (no Outlook draft — direct send via dashboard)")
             else:
                 logger.info("📋 DRAFT SAVED TO DYNAMODB")
                 logger.info("   Frontend can display for user review")
@@ -1652,7 +2242,10 @@ Write a natural, warm, professional response that {executive_name} would send.""
             logger.info("   Confidence: %.2f", confidence)
             logger.info("   Automation Level: %s", automation_level)
             logger.info("   Action Taken: %s", action_taken)
-            logger.info("   Calendar Slots Checked: %d", len(calendar_slots))
+            logger.info("   Calendar Slots Found: %d", len(calendar_slots))
+            logger.info("   Calendar Event Created: %s (id=%s)", event_created, calendar_event_id or 'none')
+            logger.info("   Proposed times on final record: %s",
+                       [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else 'none')
             logger.info("   Requires Review: %s", requires_review)
             logger.info("=" * 60)
 
@@ -1663,6 +2256,7 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 "intent": intent,
                 "confidence": confidence,
                 "action_taken": action_taken,
+                "calendar_action": calendar_action,
                 "draft_created": True,
                 "auto_sent": action_taken == 'auto_sent',
                 "outlook_draft_created": action_taken == 'draft_created',
