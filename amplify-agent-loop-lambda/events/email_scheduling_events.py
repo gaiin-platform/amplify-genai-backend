@@ -398,8 +398,11 @@ Respond with JSON only:
   "duration_minutes": 30,
   "preferred_time": "afternoon",
   "preferred_days": ["tuesday", "wednesday"],
-  "proposed_times": []
+  "proposed_times": [],
+  "current_event_time": null
 }}
+
+For "reschedule" or "cancel" intent: also extract "current_event_time" — the ISO 8601 datetime of the EXISTING meeting being moved or cancelled (e.g. "push our 3:30 meeting" → "{_today_str}T15:30:00 with UTC offset"). Set to null if not determinable.
 
 INTENT values — pick exactly one:
 - "new_request": someone is asking to schedule a NEW meeting, proposing times or asking for availability
@@ -466,6 +469,7 @@ Is this a meeting/scheduling request?"""
                     'preferred_time': analysis_data.get('preferred_time'),
                     'preferred_days': analysis_data.get('preferred_days') or [],
                     'proposed_times': analysis_data.get('proposed_times') or [],
+                    'current_event_time': analysis_data.get('current_event_time'),  # ISO 8601 time of existing meeting being moved/cancelled
                 }
                 requires_review = confidence < 0.8  # temporary — recalculated after user_settings loads below
 
@@ -922,6 +926,68 @@ Is this a meeting/scheduling request?"""
                 # Continue without calendar - draft can still be generated
 
             # ===========================================
+            # STEP 2.55: LOOK UP EXISTING CALENDAR EVENT (for reschedule/cancel)
+            # ===========================================
+            # If the email is a reschedule or cancel request and the LLM extracted a
+            # current_event_time, query the calendar around that time to find the
+            # actual event being referenced.  The result is stored in ai_decision later.
+            existing_event = None  # outer-scope default
+            _current_event_time = meeting_details.get('current_event_time')
+            if intent in ('reschedule', 'cancel') and _current_event_time:
+                logger.info("🔍 Step 2.55: Looking up existing calendar event at %s...", _current_event_time)
+                try:
+                    from datetime import datetime as _ev_dt_cls, timedelta as _ev_td_cls
+                    _ev_dt = _ev_dt_cls.fromisoformat(str(_current_event_time).replace('Z', '+00:00'))
+                    # Search ±30 min around the stated meeting time
+                    _ev_start = (_ev_dt - _ev_td_cls(minutes=30)).isoformat()
+                    _ev_end   = (_ev_dt + _ev_td_cls(minutes=30)).isoformat()
+
+                    _ev_response = requests.post(
+                        f'{amp_base_url}/microsoft/integrations/get_events_between_dates',
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Content-Type': 'application/json'
+                        },
+                        json={
+                            'data': {
+                                'user_id': sender_username,
+                                'start_date_time': _ev_start,
+                                'end_date_time': _ev_end,
+                            }
+                        },
+                        timeout=15
+                    )
+
+                    if _ev_response.status_code == 200:
+                        _ev_result = _ev_response.json()
+                        if _ev_result.get('success'):
+                            _ev_list = _ev_result.get('data', {}).get('events', [])
+                            if _ev_list:
+                                # Use the first (closest) matching event
+                                _ev = _ev_list[0]
+                                existing_event = {
+                                    'event_id': _ev.get('id') or _ev.get('event_id'),
+                                    'subject':  _ev.get('subject') or _ev.get('title', ''),
+                                    'start':    (_ev.get('start') or {}).get('dateTime') or _ev.get('start_time', ''),
+                                    'end':      (_ev.get('end')   or {}).get('dateTime') or _ev.get('end_time',   ''),
+                                    'location': (_ev.get('location') or {}).get('displayName') or _ev.get('location', ''),
+                                }
+                                logger.info("   ✅ Found existing event: id=%s, subject=%s, start=%s",
+                                            existing_event['event_id'], existing_event['subject'], existing_event['start'])
+                            else:
+                                logger.info("   ℹ️ No events found in ±30 min window around %s", _current_event_time)
+                        else:
+                            logger.warning("   ⚠️ get_events_between_dates returned success=false: %s",
+                                           _ev_result.get('message', '')[:200])
+                    else:
+                        logger.warning("   ⚠️ get_events_between_dates HTTP %d", _ev_response.status_code)
+                except Exception as _ev_err:
+                    logger.warning("   ⚠️ Existing event lookup failed (non-critical): %s", _ev_err)
+            else:
+                logger.info("   ⏭️ Step 2.55: Skipping existing event lookup (intent=%s, current_event_time=%s)",
+                            intent, _current_event_time or 'none')
+
+            # ===========================================
             # STEP 2.6: DETERMINE AUTO-SEND ELIGIBILITY
             # ===========================================
             logger.info("🤖 Step 2.6: Checking automation rules...")
@@ -1318,6 +1384,7 @@ Is this a meeting/scheduling request?"""
                     'meeting_details': meeting_details,
                     'calendar_slots_found': len(calendar_slots),
                     'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
+                    'existing_event': existing_event,
                     'calendar_decision': calendar_decision,
                     'calendar_action': calendar_action
                 }
@@ -1565,6 +1632,10 @@ Write a natural, warm, professional response that {executive_name} would send.""
                     'meeting_details': meeting_details,
                     'calendar_slots_found': len(calendar_slots),
                     'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
+                    # Original times extracted by LLM (preserved even when calendar_slots cleared by business hours guard)
+                    'originally_requested_times': meeting_details.get('proposed_times', []),
+                    # Existing calendar event that is being rescheduled/cancelled (populated by Step 2.55)
+                    'existing_event': existing_event,
                     # Calendar automation decision
                     'calendar_decision': calendar_decision,
                     'calendar_action': calendar_action,
