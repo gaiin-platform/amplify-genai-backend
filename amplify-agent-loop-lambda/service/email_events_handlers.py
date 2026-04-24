@@ -17,6 +17,9 @@ from events.event_templates import (
     add_event_template,
     is_event_template_tag_available,
     list_event_templates_tags_for_user,
+    add_group_shared_exchange_template,
+    remove_group_shared_exchange_template,
+    list_group_shared_exchange_templates,
 )
 from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
@@ -566,4 +569,174 @@ def handle_is_event_template_tag_available(
             "success": False,
             "data": None,
             "message": "Server error: Unable to check tag availability. Please try again later.",
+        }
+
+
+### ==========================
+### 🚀 Group Shared Exchange Template Handlers
+### ==========================
+
+
+@required_env_vars({
+    "AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
+@api_tool(
+    path="/vu-agent/add-group-shared-exchange-template",
+    tags=["events", "groups", "default"],
+    name="addGroupSharedExchangeTemplate",
+    description="Add or update a shared Exchange inbox event template for a group. This allows emails sent to the shared mailbox to be automatically routed to the specified assistant.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "string",
+                "description": "The group ID (e.g. 'SupportTeam_abc-123').",
+            },
+            "shared_mailbox_email": {
+                "type": "string",
+                "description": "The shared mailbox email address (e.g. 'support@vanderbilt.edu').",
+            },
+            "assistant_id": {
+                "type": "string",
+                "description": "The assistant alias ID to use for processing incoming emails.",
+            },
+            "prompt": {
+                "type": "string",
+                "description": "The prompt template to apply when routing emails to the assistant.",
+            },
+        },
+        "required": ["group_id", "shared_mailbox_email", "assistant_id", "prompt"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the operation was successful",
+            },
+            "message": {"type": "string", "description": "Success or error message"},
+        },
+        "required": ["success"],
+    },
+)
+def handle_add_group_shared_exchange_template(
+    current_user, access_token, group_id, shared_mailbox_email, assistant_id, prompt
+):
+    try:
+        return add_group_shared_exchange_template(
+            group_id=group_id,
+            shared_mailbox_email=shared_mailbox_email,
+            assistant_id=assistant_id,
+            prompt=prompt,
+        )
+    except Exception:
+        logger.error("Error adding group shared exchange template", exc_info=True)
+        return {
+            "success": False,
+            "message": "Server error: Unable to add group shared exchange template. Please try again later.",
+        }
+
+
+@required_env_vars({
+    "AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
+@api_tool(
+    path="/vu-agent/remove-group-shared-exchange-template",
+    tags=["events", "groups", "default"],
+    name="removeGroupSharedExchangeTemplate",
+    description="Remove a shared Exchange inbox event template from a group.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "string",
+                "description": "The group ID.",
+            },
+            "shared_mailbox_email": {
+                "type": "string",
+                "description": "The shared mailbox email address to remove.",
+            },
+        },
+        "required": ["group_id", "shared_mailbox_email"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the operation was successful",
+            },
+            "message": {"type": "string", "description": "Success or error message"},
+        },
+        "required": ["success"],
+    },
+)
+def handle_remove_group_shared_exchange_template(
+    current_user, access_token, group_id, shared_mailbox_email
+):
+    try:
+        return remove_group_shared_exchange_template(
+            group_id=group_id,
+            shared_mailbox_email=shared_mailbox_email,
+        )
+    except Exception:
+        logger.error("Error removing group shared exchange template", exc_info=True)
+        return {
+            "success": False,
+            "message": "Server error: Unable to remove group shared exchange template. Please try again later.",
+        }
+
+
+@required_env_vars({
+    "AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
+@api_tool(
+    path="/vu-agent/list-group-shared-exchange-templates",
+    tags=["events", "groups", "default"],
+    name="listGroupSharedExchangeTemplates",
+    description="List all shared Exchange inbox event templates for a group.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "string",
+                "description": "The group ID.",
+            },
+        },
+        "required": ["group_id"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the operation was successful",
+            },
+            "data": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "group_id": {"type": "string"},
+                        "shared_mailbox": {"type": "string"},
+                        "assistant_id": {"type": "string"},
+                        "prompt": {"type": "string"},
+                    },
+                },
+                "description": "List of shared Exchange templates for the group",
+            },
+            "message": {"type": "string", "description": "Success or error message"},
+        },
+        "required": ["success"],
+    },
+)
+def handle_list_group_shared_exchange_templates(current_user, access_token, group_id):
+    try:
+        return list_group_shared_exchange_templates(group_id=group_id)
+    except Exception:
+        logger.error("Error listing group shared exchange templates", exc_info=True)
+        return {
+            "success": False,
+            "data": [],
+            "message": "Server error: Unable to list group shared exchange templates. Please try again later.",
         }
