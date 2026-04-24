@@ -18,7 +18,7 @@ export const ModelTypes = {
 }
                                      // ModelTypes 
 export const getModelByType = (params, identifier) => {
-    return params[identifier] ?? (params.options[identifier] ?? getModel(params));
+    return params[identifier] ?? (params.options?.[identifier] ?? getModel(params));
 }
 
 
