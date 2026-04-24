@@ -52,6 +52,7 @@ def create_event(
     reminder_minutes_before_start: int = None,
     send_invitations: str = "auto",
     time_zone: str = "Central Standard Time",
+    show_as: str = None,
 ) -> Dict:
     """
     Create a calendar event with specified details.
@@ -70,6 +71,7 @@ def create_event(
         reminder_minutes_before_start: Set reminder in minutes before event start
         send_invitations: Whether to send invitations: "auto", "send", "none"
         time_zone: Time zone for the event times (Windows format)
+        show_as: How the event appears on the calendar: "free", "tentative", "busy", "oof", "workingElsewhere", "unknown"
 
     Returns:
         Created event details
@@ -114,6 +116,11 @@ def create_event(
         # Set reminder if provided
         if reminder_minutes_before_start is not None:
             event_body["reminderMinutesBeforeStart"] = reminder_minutes_before_start
+
+        # Set show_as status (how event appears on calendar)
+        valid_show_as = {"free", "tentative", "busy", "oof", "workingElsewhere", "unknown"}
+        if show_as and show_as in valid_show_as:
+            event_body["showAs"] = show_as
 
         # Configure send invitation behavior
         if send_invitations:

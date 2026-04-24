@@ -28,7 +28,7 @@ def register_handler(handler: MessageHandler):
 
 def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Process messages from SQS queue by trying registered handlers."""
-    logger.info("Processing SQS event: %s", json.dumps(event))
+    # logger.info("Processing SQS event: %s", json.dumps(event))
 
     for record in event.get("Records", []):
         receipt_handle = record.get("receiptHandle")

@@ -213,8 +213,17 @@ def fix_data_types(data, func_schema):
                 continue
             elif expected_type == "boolean" and isinstance(field_value, bool):
                 continue
-            elif expected_type in ["array", "object"]:
-                continue  # Don't attempt to fix complex types
+            elif expected_type == "object":
+                continue  # Don't attempt to fix object types
+            elif expected_type == "array":
+                # Coerce a plain string into a single-element list,
+                # and drop empty strings (treat as empty list).
+                if isinstance(field_value, str):
+                    if field_value.strip() == "":
+                        fixed_data["data"][field_name] = []
+                    else:
+                        fixed_data["data"][field_name] = [field_value]
+                continue
                 
             # Attempt type conversion
             if expected_type == "integer":
@@ -2256,6 +2265,11 @@ def delete_contact_handler(current_user, data):
                 "description": "Time zone in Windows format (optional)",
                 "default": "Central Standard Time",
             },
+            "show_as": {
+                "type": "string",
+                "description": "How the event appears on the calendar: free, tentative, busy, oof, workingElsewhere, unknown (optional)",
+                "enum": ["free", "tentative", "busy", "oof", "workingElsewhere", "unknown"],
+            },
         },
         "required": ["title", "start_time", "end_time"],
     },
@@ -2274,6 +2288,7 @@ def create_event_handler(current_user, data):
         reminder_minutes_before_start=None,
         send_invitations="auto",
         time_zone="Central Standard Time",
+        show_as=None,
     )(current_user, data)
 
 
@@ -2682,12 +2697,17 @@ def delete_attachment_handler(current_user, data):
                 "default": 10,
                 "description": "Maximum messages to return",
             },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the email body and bodyPreview in results. Default is false for performance.",
+                "default": False,
+            },
         },
         "required": ["search_query"],
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, folder_id=None, top=10)(
+    return common_handler(search_messages, search_query=None, folder_id=None, top=10, include_body=False)(
         current_user, data
     )
 
