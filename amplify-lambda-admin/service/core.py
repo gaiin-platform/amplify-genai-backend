@@ -1227,6 +1227,7 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.PROMPT_COST_ALERT,
         AdminConfigTypes.WEB_SEARCH_CONFIG,
         AdminConfigTypes.USER_DOCUMENTATION_URL,
+        AdminConfigTypes.RATE_LIMIT
     ]
     configs = {}
     for config_type in app_configs:
@@ -1249,6 +1250,24 @@ def get_user_app_configs(event, context, current_user, name, data):
                 "success": False,
                 "message": f"Error retrieving {config_type.value} Data: {str(e)}",
             }
+
+    # Add group rate limits for the current user (computed, not a stored config type)
+    try:
+        all_groups = get_all_amplify_groups()
+        if all_groups:
+            affiliated_group_names = find_all_user_groups(current_user, all_groups)
+            group_rate_limits = {}
+            for group_name in affiliated_group_names:
+                group_data = all_groups.get(group_name, {})
+                rate_limit = group_data.get("rateLimit")
+                if rate_limit:
+                    group_rate_limits[group_name] = rate_limit
+            configs["groupRateLimits"] = group_rate_limits
+        else:
+            configs["groupRateLimits"] = {}
+    except Exception as e:
+        logger.warning("Failed to fetch group rate limits for user %s: %s", current_user, str(e))
+        configs["groupRateLimits"] = {}
 
     return {"success": True, "data": configs}
 
