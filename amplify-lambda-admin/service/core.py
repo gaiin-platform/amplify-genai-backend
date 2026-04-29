@@ -763,8 +763,12 @@ def transform_integrations_data(update_data):
     """
     Transform frontend integrations data format for DynamoDB storage.
 
-    Extracts provider_settings (if present) as a separate field for storage,
-    keeping the main integration data clean.
+    Extracts provider_settings (if present) as a separate top-level field,
+    and unwraps the redundant "integrations" key that the frontend/schema wraps
+    the provider map in, so DynamoDB always stores the flat provider map:
+        { "microsoft": [...], "google": [...] }
+    rather than the double-nested form:
+        { "integrations": { "microsoft": [...] } }
 
     Args:
         update_data: Dictionary from frontend with integration configuration
@@ -775,8 +779,14 @@ def transform_integrations_data(update_data):
     if not isinstance(update_data, dict):
         return {"data": update_data}
 
-    # Check if provider_settings is embedded in the data
+    # Extract provider_settings as a separate top-level DynamoDB field
     provider_settings = update_data.pop("provider_settings", None)
+
+    # Unwrap the redundant "integrations" wrapper key if present.
+    # The frontend schema sends: { "integrations": { "microsoft": [...] }, "provider_settings": {...} }
+    # but consumers (e.g. oauth.py) and reverse_transform expect the flat: { "microsoft": [...] }
+    if list(update_data.keys()) == ["integrations"] and isinstance(update_data.get("integrations"), dict):
+        update_data = update_data["integrations"]
 
     result = {"data": update_data}
     if provider_settings:
@@ -789,26 +799,36 @@ def reverse_transform_integrations_data(storage_data, provider_settings):
     """
     Transform stored integrations data back to frontend format.
 
-    Combines the separate storage_data and provider_settings back into
-    the format expected by the frontend.
+    DynamoDB stores the provider map flat under 'data' and provider_settings
+    as a separate top-level attribute.  The frontend expects:
+        { integrations: { "microsoft": [...] }, provider_settings: {...} }
+
+    Returning an explicit 'integrations' key means:
+    - provider_settings is never mixed into the provider map
+    - the frontend fallback (integrationsData.integrations || integrationsData)
+      always hits the first branch cleanly
 
     Args:
-        storage_data: The main integrations data from DynamoDB 'data' field
-        provider_settings: The provider_settings from DynamoDB (may be empty)
+        storage_data: The flat provider map from DynamoDB 'data' field
+                      e.g. { "microsoft": [...] }
+        provider_settings: The provider_settings top-level attribute from DynamoDB
 
     Returns:
-        Combined dictionary in frontend format
+        { "integrations": { "microsoft": [...] }, "provider_settings": {...} }
     """
     if not isinstance(storage_data, dict):
         return storage_data
 
-    result = dict(storage_data)
+    # Heal legacy double-nested data: { "integrations": { "microsoft": [...] } }
+    # This can exist in DynamoDB from older deployments before the write-path fix.
+    # Unwrap it so the frontend always gets the flat provider map under "integrations".
+    if list(storage_data.keys()) == ["integrations"] and isinstance(storage_data.get("integrations"), dict):
+        storage_data = storage_data["integrations"]
 
-    # Merge provider_settings back into the data if present
-    if provider_settings:
-        result["provider_settings"] = provider_settings
-
-    return result
+    return {
+        "integrations": storage_data,
+        "provider_settings": provider_settings or {},
+    }
 
 
 def update_integrations_config(config_type, transformed_data):
