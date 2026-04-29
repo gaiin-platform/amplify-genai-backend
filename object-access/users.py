@@ -177,6 +177,15 @@ def _update_payload(payload: dict, data: dict | None) -> dict:
                 # No comma, treat entire name as given_name
                 payload["given_name"] = name.strip()
                 logger.info(f"Name assigned to given_name: {payload['given_name']}")
+    
+    if not payload.get("custom:saml_groups"):
+        profile = data.get("profile", {})
+        saml_groups = profile.get("custom:saml_groups")
+        if saml_groups:
+            payload["custom:saml_groups"] = saml_groups
+            logger.info(f"custom:saml_groups extracted from profile: {saml_groups}")
+        else:
+            logger.info("No custom:saml_groups found in profile")
 
     return payload
 
@@ -285,18 +294,8 @@ def create_or_update_user(event, context):
             _create_user(payload)
             return {"statusCode": 201, "body": json.dumps({"message": "User created"})}
 
-        # we have a user...
-        # this next part will be fleshed out & differentiated when the
-        # upgrade logic is in place
-        if prop_name == "email":
-            # user needs to have attributes updated, potentially and if
-            # the version is old enough, upgraded.
-            _update_attributes(payload, user)
-            _update_admin_groups(user)
-        if prop_name == "immutable_id":
-            # user found by immutable_id, so just update attributes as needed
-            _update_attributes(payload, user)
-            _update_admin_groups(user)
+        _update_attributes(payload, user)
+        _update_admin_groups(user)
 
         return {"statusCode": 200, "body": json.dumps({"message": "User updated"})}
 
