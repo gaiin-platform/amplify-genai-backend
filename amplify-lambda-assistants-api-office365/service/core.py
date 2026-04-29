@@ -2461,6 +2461,12 @@ def update_message_handler(current_user, data):
                 "default": "text",
                 "description": "Content type (text or html) (optional)",
             },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Optional ID of an existing message to reply to. "
+                               "When provided, creates a threaded reply draft in the "
+                               "same conversation instead of a standalone new message.",
+            },
         },
         "required": ["subject", "body"],
     },
@@ -2475,6 +2481,7 @@ def create_draft_handler(current_user, data):
         bcc_recipients=None,
         importance="normal",
         content_type="text",
+        reply_to_message_id=None,
     )(current_user, data)
 
 
