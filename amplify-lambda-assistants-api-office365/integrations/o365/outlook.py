@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
@@ -6,6 +7,28 @@ from integrations.oauth import get_ms_graph_session
 
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
+
+
+def _html_to_plain_text(html: str) -> str:
+    """
+    Strip HTML tags and decode common entities to produce clean plain text.
+    Removes <style>/<script> blocks, preserves paragraph structure via newlines,
+    and collapses excessive whitespace — so agents get readable content instead
+    of raw HTML markup.
+    """
+    # Remove <style> and <script> blocks entirely (including their content)
+    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    # Replace block-level tags with newlines so paragraphs survive stripping
+    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
+    # Strip all remaining tags
+    html = re.sub(r'<[^>]+>', '', html)
+    # Decode common HTML entities
+    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
+               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+    # Collapse runs of whitespace / blank lines
+    html = re.sub(r'\n[ \t]+', '\n', html)
+    html = re.sub(r'\n{3,}', '\n\n', html)
+    return html.strip()
 
 from pycommon.logger import getLogger
 logger = getLogger(integration_name)
@@ -47,8 +70,11 @@ def handle_graph_error(response: requests.Response) -> None:
     try:
         error_data = response.json()
         error_message = error_data.get("error", {}).get("message", "Unknown error")
+        error_details = error_data.get("error", {})
+        logger.error(f"❌ Full Graph API error response: {error_data}")
     except json.JSONDecodeError:
         error_message = response.text
+        logger.error(f"❌ Graph API error (non-JSON): {response.text}")
     raise OutlookError(
         f"Graph API error: {error_message} (Status: {response.status_code})"
     )
@@ -60,6 +86,7 @@ def list_messages(
     top: int = 10,
     skip: int = 0,
     filter_query: Optional[str] = None,
+    include_body: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -71,6 +98,7 @@ def list_messages(
         top: Maximum number of messages to retrieve
         skip: Number of messages to skip
         filter_query: OData filter query
+        include_body: Whether to include message body and bodyPreview (default: False)
 
     Returns:
         List of message details
@@ -83,20 +111,26 @@ def list_messages(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
+        # Build select fields based on include_body parameter
+        # IMPORTANT: Include conversationId, toRecipients, ccRecipients for thread deduplication and recipient display
+        base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+        select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
+
         # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
         if filter_query:
             # When filtering, use minimal parameters to avoid complexity error
             params = {
                 "$filter": filter_query,
-                "$top": top
-                # Skip $skip, $select, $orderby, and $expand to avoid "too complex" error
+                "$top": top,
+                "$select": select_fields
+                # Skip $skip, $orderby, and $expand to avoid "too complex" error
             }
         else:
             # When not filtering, use full parameter set
             params = {
-                "$top": top, 
+                "$top": top,
                 "$skip": skip,
-                "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+                "$select": select_fields,
                 "$orderby": "receivedDateTime desc",
                 "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
             }
@@ -107,7 +141,8 @@ def list_messages(
             handle_graph_error(response)
 
         messages = response.json().get("value", [])
-        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
+        # Use detailed=True and pass include_body parameter to format_message
+        return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
 
     except requests.RequestException as e:
         raise OutlookError(f"Network error while listing messages: {str(e)}")
@@ -602,6 +637,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
     
     formatted = {
         "id": message["id"],
+        "conversationId": message.get("conversationId", ""),  # CRITICAL: Preserve for thread grouping
         "subject": message.get("subject", ""),
         "from": message.get("from", {}).get("emailAddress", {}).get("address", ""),
         "receivedDateTime": message.get("receivedDateTime", ""),
@@ -611,6 +647,9 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
         "isRead": message.get("isRead", False),
         "sensitivity": sensitivity_info["level"],
         "sensitivityLabel": sensitivity_info["label"],
+        # Calendar invite detection: Graph always annotates eventMessage subtypes with
+        # @odata.type = "#microsoft.graph.eventMessage" — no extra $select needed.
+        "isEventMessage": message.get("@odata.type") == "#microsoft.graph.eventMessage",
     }
 
     # Add attention note for level 4 sensitive emails
@@ -634,7 +673,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
             "categories": message.get("categories", []),
             "webLink": message.get("webLink", ""),
         }
-        
+
         # Only include body content if requested and available
         if include_body and "body" in message:
             # For level 4 sensitive emails, redact the body content
@@ -642,15 +681,26 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
                 detailed_fields["body"] = "Non-viewable sensitive content"
                 detailed_fields["bodyType"] = "text"
             else:
-                detailed_fields["body"] = message.get("body", {}).get("content", "")
-                detailed_fields["bodyType"] = message.get("body", {}).get("contentType", "text")
+                raw_content = message.get("body", {}).get("content", "")
+                content_type = message.get("body", {}).get("contentType", "text")
+                # Strip HTML markup so agents receive readable plain text
+                if content_type.lower() == "html":
+                    detailed_fields["body"] = _html_to_plain_text(raw_content)
+                    detailed_fields["bodyType"] = "text"
+                else:
+                    detailed_fields["body"] = raw_content
+                    detailed_fields["bodyType"] = content_type
         elif include_body:
             # Body was requested but not available in response
             detailed_fields["body"] = ""
             detailed_fields["bodyType"] = "text"
         # If include_body is False, don't add body fields at all
-        
+
         formatted.update(detailed_fields)
+
+    # Always include bodyPreview if requested (even when not detailed)
+    if include_body and "bodyPreview" in message:
+        formatted["bodyPreview"] = message.get("bodyPreview", "")
 
     return formatted
 
@@ -704,10 +754,20 @@ def create_draft(
     cc_recipients: Optional[List[str]] = None,
     bcc_recipients: Optional[List[str]] = None,
     importance: str = "normal",
+    content_type: str = "text",
+    reply_to_message_id: str = None,
     access_token: str = None,
 ) -> Dict:
     """
     Creates a draft message.
+
+    When reply_to_message_id is provided, creates a threaded reply draft
+    using Graph createReply (POST /me/messages/{id}/createReply) and then
+    patches the body with the supplied content.  This keeps the draft in
+    the original conversation thread so the user sees it as a reply.
+
+    When reply_to_message_id is absent, creates a standalone draft as
+    before (POST /me/messages).
 
     Args:
         current_user: User identifier
@@ -717,6 +777,9 @@ def create_draft(
         cc_recipients: Optional list of CC recipient email addresses
         bcc_recipients: Optional list of BCC recipient email addresses
         importance: Importance level ('low', 'normal', 'high')
+        content_type: Content type ('text' or 'html')
+        reply_to_message_id: Optional ID of an existing message to reply to
+                             (creates a threaded reply draft instead of a new message)
         access_token: Optional access token
 
     Returns:
@@ -727,33 +790,63 @@ def create_draft(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/messages"
-        payload = {
-            "subject": subject,
-            "body": {"contentType": "text", "content": body},
-            "importance": importance,
-        }
-        if to_recipients:
-            payload["toRecipients"] = [
-                {"emailAddress": {"address": addr}} for addr in to_recipients
-            ]
-        if cc_recipients:
-            payload["ccRecipients"] = [
-                {"emailAddress": {"address": addr}} for addr in cc_recipients
-            ]
-        if bcc_recipients:
-            payload["bccRecipients"] = [
-                {"emailAddress": {"address": addr}} for addr in bcc_recipients
-            ]
 
-        response = session.post(url, json=payload)
-        if not response.ok:
-            handle_graph_error(response)
+        if reply_to_message_id:
+            # ── Threaded reply draft ──
+            # Step 1: createReply — gives us a draft in the same conversation thread
+            create_reply_url = f"{GRAPH_ENDPOINT}/me/messages/{reply_to_message_id}/createReply"
+            reply_response = session.post(create_reply_url, json={})
+            if not reply_response.ok:
+                handle_graph_error(reply_response)
 
-        response_data = response.json()
-        return {
-            "message_id": response_data.get("id"),
-        }
+            reply_data = reply_response.json()
+            draft_id = reply_data.get("id")
+
+            # Step 2: PATCH the draft to set our actual body content
+            if draft_id and body:
+                ct = "HTML" if content_type and content_type.lower() == "html" else "Text"
+                patch_url = f"{GRAPH_ENDPOINT}/me/messages/{draft_id}"
+                patch_payload = {
+                    "body": {"contentType": ct, "content": body},
+                }
+                patch_response = session.patch(patch_url, json=patch_payload)
+                # Non-fatal if patch fails — the draft still exists with the
+                # default quoted reply content from createReply
+                if not patch_response.ok:
+                    pass
+
+            return {
+                "message_id": draft_id,
+            }
+        else:
+            # ── Standalone new draft (original behaviour) ──
+            url = f"{GRAPH_ENDPOINT}/me/messages"
+            payload = {
+                "subject": subject,
+                "body": {"contentType": content_type, "content": body},
+                "importance": importance,
+            }
+            if to_recipients:
+                payload["toRecipients"] = [
+                    {"emailAddress": {"address": addr}} for addr in to_recipients
+                ]
+            if cc_recipients:
+                payload["ccRecipients"] = [
+                    {"emailAddress": {"address": addr}} for addr in cc_recipients
+                ]
+            if bcc_recipients:
+                payload["bccRecipients"] = [
+                    {"emailAddress": {"address": addr}} for addr in bcc_recipients
+                ]
+
+            response = session.post(url, json=payload)
+            if not response.ok:
+                handle_graph_error(response)
+
+            response_data = response.json()
+            return {
+                "message_id": response_data.get("id"),
+            }
     except requests.RequestException as e:
         raise OutlookError(f"Network error while creating draft: {str(e)}")
 
@@ -919,13 +1012,14 @@ def move_message(
         raise OutlookError(f"Network error while moving message: {str(e)}")
 
 
-def list_folders(current_user: str, access_token: str = None) -> List[Dict]:
+def list_folders(current_user: str, access_token: str = None, include_child_folders: bool = True) -> List[Dict]:
     """
-    Lists all mail folders.
+    Lists all mail folders, including child/nested folders.
 
     Args:
         current_user: User identifier
         access_token: Optional access token
+        include_child_folders: Whether to recursively fetch child folders (default: True)
 
     Returns:
         List of mail folder details
@@ -935,11 +1029,36 @@ def list_folders(current_user: str, access_token: str = None) -> List[Dict]:
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/mailFolders"
-        response = session.get(url)
-        if not response.ok:
-            handle_graph_error(response)
-        return response.json().get("value", [])
+
+        def fetch_folders(url: str) -> List[Dict]:
+            """Fetch all folders from a URL, following @odata.nextLink pagination."""
+            folders = []
+            while url:
+                response = session.get(url, params={"$top": 100} if "?" not in url else None)
+                if not response.ok:
+                    handle_graph_error(response)
+                data = response.json()
+                folders.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+            return folders
+
+        def fetch_with_children(parent_url: str) -> List[Dict]:
+            """Fetch folders and recursively fetch their child folders."""
+            folders = fetch_folders(parent_url)
+            if not include_child_folders:
+                return folders
+            result = []
+            for folder in folders:
+                result.append(folder)
+                child_count = folder.get("childFolderCount", 0)
+                if child_count > 0:
+                    child_url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder['id']}/childFolders"
+                    children = fetch_with_children(child_url)
+                    result.extend(children)
+            return result
+
+        return fetch_with_children(f"{GRAPH_ENDPOINT}/me/mailFolders")
+
     except requests.RequestException as e:
         raise OutlookError(f"Network error while listing folders: {str(e)}")
 
@@ -1051,6 +1170,7 @@ def search_messages(
     search_query: str,
     top: int = 10,
     folder_id: str = None,
+    include_body: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -1077,18 +1197,87 @@ def search_messages(
             url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
         else:
             url = f"{GRAPH_ENDPOINT}/me/messages"
-        params = {
-            "$top": top, 
-            "$search": f'"{search_query}"',
-            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
-            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
-        }
-        # The Graph API requires the ConsistencyLevel header set to eventual when using $search
-        session.headers.update({"ConsistencyLevel": "eventual"})
+
+        # Strip outer quotes the LLM may have wrapped the entire query in.
+        # e.g. '"from:foo subject:"bar""' -> 'from:foo subject:"bar"'
+        stripped_query = search_query.strip()
+        if stripped_query.startswith('"') and stripped_query.endswith('"'):
+            inner = stripped_query[1:-1]
+            kql_operators = ("from:", "to:", "subject:", "body:", "hasAttachments:", "received:", "AND", "OR", "NOT")
+            if any(op in inner for op in kql_operators) or '"' in inner:
+                stripped_query = inner
+
+        # Check if the query uses KQL field operators (from:, subject:, etc.).
+        # The /me/messages $search endpoint does NOT support KQL field operators —
+        # it only accepts simple keyword strings. KQL operators must be converted
+        # to OData $filter expressions instead.
+        kql_operators = ("from:", "to:", "subject:", "body:", "hasAttachments:", "received:")
+        has_kql = any(op in stripped_query for op in kql_operators)
+
+        if has_kql:
+            # Parse KQL-style tokens into OData $filter clauses.
+            import re
+            filter_parts = []
+            remainder_tokens = []
+
+            # Match: field:"quoted value" or field:unquoted_value
+            for m in re.finditer(r'(\w+):"([^"]+)"|(\w+):(\S+)', stripped_query):
+                if m.group(1):
+                    field, value = m.group(1).lower(), m.group(2)
+                else:
+                    field, value = m.group(3).lower(), m.group(4)
+
+                if field == "from":
+                    filter_parts.append(f"from/emailAddress/address eq '{value}'")
+                elif field == "subject":
+                    filter_parts.append(f"contains(subject, '{value}')")
+                elif field == "to":
+                    filter_parts.append(f"toRecipients/any(r: r/emailAddress/address eq '{value}')")
+                else:
+                    # Unknown field — treat as keyword
+                    remainder_tokens.append(value)
+
+            # Any leftover plain tokens become a $search keyword
+            leftover = " ".join(remainder_tokens).strip()
+
+            base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+            select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
+            if filter_parts:
+                # Avoid $orderby and $expand with $filter — Graph API rejects
+                # the combination as "too complex" (InefficientFilter error).
+                params = {
+                    "$top": top,
+                    "$filter": " and ".join(filter_parts),
+                    "$select": select_fields,
+                }
+            else:
+                # Fell through — just do a plain keyword search
+                leftover = stripped_query
+                params = {
+                    "$top": top,
+                    "$search": f'"{leftover}"',
+                    "$select": select_fields,
+                    "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+                }
+                session.headers.update({"ConsistencyLevel": "eventual"})
+        else:
+            # Simple keyword search — wrap in quotes for exact phrase matching
+            formatted_search = f'"{stripped_query}"'
+            base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
+            select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
+            params = {
+                "$top": top,
+                "$search": formatted_search,
+                "$select": select_fields,
+                "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+            }
+            # The Graph API requires the ConsistencyLevel header set to eventual when using $search
+            session.headers.update({"ConsistencyLevel": "eventual"})
+
         response = session.get(url, params=params)
         if not response.ok:
             handle_graph_error(response)
         messages = response.json().get("value", [])
-        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
+        return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
     except requests.RequestException as e:
         raise OutlookError(f"Network error while searching messages: {str(e)}")

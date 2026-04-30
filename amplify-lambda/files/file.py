@@ -301,6 +301,17 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     if group_id:
         current_user = group_id
 
+    data = data["data"]
+    key = data["key"]
+    group_id = data.get("groupId")
+
+    if group_id and not is_group_admin(group_id, current_user):
+        logger.warning("User %s attempted to reprocess group %s file without admin rights", current_user, group_id)
+        return {"success": False, "message": f"User does not have admin access to group: {group_id}"}
+
+    if group_id:
+        current_user = group_id
+
     account_data = {
         "user": current_user,
         "account": account,

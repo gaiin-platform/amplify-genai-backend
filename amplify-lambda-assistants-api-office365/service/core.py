@@ -213,8 +213,17 @@ def fix_data_types(data, func_schema):
                 continue
             elif expected_type == "boolean" and isinstance(field_value, bool):
                 continue
-            elif expected_type in ["array", "object"]:
-                continue  # Don't attempt to fix complex types
+            elif expected_type == "object":
+                continue  # Don't attempt to fix object types
+            elif expected_type == "array":
+                # Coerce a plain string into a single-element list,
+                # and drop empty strings (treat as empty list).
+                if isinstance(field_value, str):
+                    if field_value.strip() == "":
+                        fixed_data["data"][field_name] = []
+                    else:
+                        fixed_data["data"][field_name] = [field_value]
+                continue
                 
             # Attempt type conversion
             if expected_type == "integer":
@@ -905,12 +914,17 @@ def update_range_handler(current_user, data):
                 "default": 0,
             },
             "filter_query": {"type": "string", "description": "OData filter query"},
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include message body and bodyPreview",
+                "default": False,
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None
+        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False
     )(current_user, data)
 
 
@@ -2251,6 +2265,11 @@ def delete_contact_handler(current_user, data):
                 "description": "Time zone in Windows format (optional)",
                 "default": "Central Standard Time",
             },
+            "show_as": {
+                "type": "string",
+                "description": "How the event appears on the calendar: free, tentative, busy, oof, workingElsewhere, unknown (optional)",
+                "enum": ["free", "tentative", "busy", "oof", "workingElsewhere", "unknown"],
+            },
         },
         "required": ["title", "start_time", "end_time"],
     },
@@ -2269,6 +2288,7 @@ def create_event_handler(current_user, data):
         reminder_minutes_before_start=None,
         send_invitations="auto",
         time_zone="Central Standard Time",
+        show_as=None,
     )(current_user, data)
 
 
@@ -2435,6 +2455,18 @@ def update_message_handler(current_user, data):
                 "default": "normal",
                 "description": "Email importance (optional)",
             },
+            "content_type": {
+                "type": "string",
+                "enum": ["text", "html"],
+                "default": "text",
+                "description": "Content type (text or html) (optional)",
+            },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Optional ID of an existing message to reply to. "
+                               "When provided, creates a threaded reply draft in the "
+                               "same conversation instead of a standalone new message.",
+            },
         },
         "required": ["subject", "body"],
     },
@@ -2448,6 +2480,8 @@ def create_draft_handler(current_user, data):
         cc_recipients=None,
         bcc_recipients=None,
         importance="normal",
+        content_type="text",
+        reply_to_message_id=None,
     )(current_user, data)
 
 
@@ -2564,11 +2598,20 @@ def move_message_handler(current_user, data):
     path="/microsoft/integrations/list_folders",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftListFolders",
-    description="Lists all mail folders.",
-    parameters={},
+    description="Lists all mail folders, including nested child folders.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "includeChildFolders": {
+                "type": "boolean",
+                "description": "Whether to recursively fetch child/nested folders. Defaults to true.",
+            },
+        },
+        "required": [],
+    },
 )
 def list_folders_handler(current_user, data):
-    return common_handler(list_folders)(current_user, data)
+    return common_handler(list_folders, includeChildFolders=True)(current_user, data)
 
 
 @api_tool(
@@ -2661,12 +2704,17 @@ def delete_attachment_handler(current_user, data):
                 "default": 10,
                 "description": "Maximum messages to return",
             },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the email body and bodyPreview in results. Default is false for performance.",
+                "default": False,
+            },
         },
         "required": ["search_query"],
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, folder_id=None, top=10)(
+    return common_handler(search_messages, search_query=None, folder_id=None, top=10, include_body=False)(
         current_user, data
     )
 
