@@ -1,4 +1,4 @@
-from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
+from events.event_handler import MessageHandler, SPECIALIZED_EMAILS, NOTES_ENABLED
 from events.ses_message_functions import lookup_username_from_email, _html_to_plain_text
 from pycommon.logger import getLogger
 logger = getLogger("s3_email_note_events")
@@ -24,6 +24,10 @@ class S3EmailNotesMessageHandler(MessageHandler):
         """Check if message is an S3 event for the raw emails bucket"""
         try:
             logger.info("Checking if message can be handled by S3EmailNotesMessageHandler")
+
+            if not NOTES_ENABLED:
+                logger.info("Notes email handler is disabled (NOTES_ENABLED=false)")
+                return False
 
             # Check if this is an S3 event notification from SNS
             if message.get("Type") != "Notification":

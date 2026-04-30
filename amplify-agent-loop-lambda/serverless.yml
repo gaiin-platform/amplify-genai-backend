@@ -99,6 +99,8 @@ provider:
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
     # Amplify Notes Configuration
+    NOTES_ENABLED: ${ssm:/amplify/${sls:stage}/NOTES_ENABLED, "false"}
+    NOTES_EMAIL: ${ssm:/amplify/${sls:stage}/NOTES_EMAIL, "notes@dev.vanderbilt.ai"}
     NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
     S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
     # AI Scheduler Configuration (SES Email Forwarding)

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
+import os
 from pycommon.logger import getLogger
 
 logger = getLogger("event_handler")
@@ -93,11 +94,16 @@ Example:
 """
 
 # Registry of specialized email addresses
-# Key: Descriptive constant name (use in handlers)
-# Value: Email address
+# Driven by environment variables so dev and prod can use different addresses
+# without code changes. Defaults fall back to dev addresses.
+#
+# NOTES_ENABLED controls whether the notes@ email handler is active.
+# Default is "false" (off) — must be explicitly set to "true" to enable.
+NOTES_ENABLED = os.getenv("NOTES_ENABLED", "false").lower() == "true"
+
 SPECIALIZED_EMAILS = {
-    "SCHEDULER": "schedule@dev.vanderbilt.ai",
-    "NOTES": "notes@dev.vanderbilt.ai",
+    "SCHEDULER": os.getenv("SCHEDULER_EMAIL", "schedule@dev.vanderbilt.ai"),
+    "NOTES": os.getenv("NOTES_EMAIL", "notes@dev.vanderbilt.ai"),
 }
 
 

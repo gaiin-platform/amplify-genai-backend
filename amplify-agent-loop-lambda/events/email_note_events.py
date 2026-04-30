@@ -1,4 +1,4 @@
-from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
+from events.event_handler import MessageHandler, SPECIALIZED_EMAILS, NOTES_ENABLED
 from events.ses_message_functions import extract_email_body_and_attachments, is_ses_message, lookup_username_from_email, extract_destination_emails, _html_to_plain_text
 from pycommon.logger import getLogger
 logger = getLogger("note_email_events")
@@ -20,6 +20,10 @@ class SESNotesMessageHandler(MessageHandler):
         """Check if message is an SES event sent to the notes email"""
         try:
             logger.info("Checking if message can be handled by SESNotesMessageHandler")
+
+            if not NOTES_ENABLED:
+                logger.info("Notes email handler is disabled (NOTES_ENABLED=false)")
+                return False
 
             # First check if it's a valid SES message
             if not is_ses_message(message):
