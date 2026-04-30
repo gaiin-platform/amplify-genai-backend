@@ -32,7 +32,7 @@ custom:
     - prod
 
   cf-changesets:
-    requireChangeSet: false
+    requireChangeSet: ${file(../var/${self:provider.stage}-var.yml)}
 
 provider:
   name: aws
