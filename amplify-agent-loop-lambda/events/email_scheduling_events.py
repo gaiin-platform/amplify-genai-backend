@@ -202,19 +202,25 @@ class SESSchedulingMessageHandler(MessageHandler):
             # STEP 0.7: SMART REPLY-TO SENDER EXTRACTION
             # ===========================================
             # For forwarded emails the true draft recipient is the ORIGINAL sender
-            # buried in the chain — not source_email (who forwarded to schedule@).
-            # Primary path: ask the agent LLM (smarter, handles complex chains).
-            # Fallback: regex — scan all From: headers and take the deepest one.
+            # buried in the chain. Priority order:
+            #   1. Regex on structured From:/Cc: headers (covers addin format + native Outlook)
+            #   2. LLM extraction — last resort only, receives clean stripped text (no raw HTML)
             logger.info("📨 Step 0.7: Extracting true reply-to sender...")
 
             reply_to_email = source_email  # default: reply to whoever forwarded
             reply_to_name = sender_name    # default: their display name
+            _forwarded_cc = []            # CC recipients parsed from the forwarded header block
+
+            # Build a clean plain-text search body — fall back to stripped HTML when plain is short
+            _body_for_search = email_body or ''
+            if len(_body_for_search) < 500 and email_body_html:
+                _body_for_search = _html_to_plain_text(email_body_html)
 
             _forward_markers = [
                 'forwarded message', 'begin forwarded message',
                 'original message', '-----forwarded', 'fwd:', 'fw:'
             ]
-            _body_lower = (email_body or '').lower()
+            _body_lower = _body_for_search.lower()
             _subject_lower = common_headers.get('subject', '').lower()
             _looks_forwarded = (
                 any(m in _body_lower for m in _forward_markers) or
@@ -223,102 +229,176 @@ class SESSchedulingMessageHandler(MessageHandler):
             )
 
             if _looks_forwarded:
-                logger.info("   📧 Forwarded email detected — attempting smart sender extraction")
+                logger.info("   📧 Forwarded email detected — attempting sender extraction")
+                import re as _re
 
-                # --- Attempt 1: LLM extraction (preferred) ---
+                # --- Attempt 1: Regex on structured From: headers (addin block + native Outlook) ---
+                # Scans the full body for ALL "From: Name <email>" lines, takes the deepest
+                # (last) one that isn't the person who forwarded (source_email).
                 try:
-                    from agent.prompt import create_llm, Prompt
-                    from pycommon.api.models import get_default_models
+                    _from_re = _re.compile(
+                        r'^From:\s*([^<\n]+?)\s*<([^>\n@]+@[^>\n@]+)>',
+                        _re.IGNORECASE | _re.MULTILINE
+                    )
+                    _from_matches = _from_re.findall(_body_for_search)
+                    for _f_name, _f_email in reversed(_from_matches):
+                        _f_email_clean = _f_email.strip().lower()
+                        if _f_email_clean != source_email.lower():
+                            reply_to_email = _f_email_clean
+                            reply_to_name = _f_name.strip() or _f_email_clean.split('@')[0]
+                            logger.info("   ✅ Regex extracted reply-to: %s (%s)", reply_to_email, reply_to_name)
+                            break
 
-                    _default_models = get_default_models(access_token)
-                    _extract_model = _default_models.get('agent_model')
-
-                    if _extract_model:
-                        _extract_llm = create_llm(
-                            access_token,
-                            _extract_model,
-                            sender_username,
-                            {'account_id': 'general_account', 'api_key_id': api_key_id, 'rate_limit': None},
-                            {'purpose': 'sender_extraction'}
-                        )
-                        _extract_prompt = Prompt(
-                            messages=[
-                                {
-                                    'role': 'system',
-                                    'content': (
-                                        'You are an email routing assistant. Given an email body that may be a '
-                                        'forwarded chain, identify the ORIGINAL sender — the person who wrote '
-                                        'the scheduling request at the bottom of the chain (not whoever forwarded '
-                                        'it). Respond ONLY with valid JSON: '
-                                        '{"reply_to_email": "email@example.com", "reply_to_name": "First Last"} '
-                                        'If you cannot determine the original sender, respond with: '
-                                        '{"reply_to_email": null, "reply_to_name": null}'
-                                    )
-                                },
-                                {
-                                    'role': 'user',
-                                    'content': (email_body or '')[:4000]
-                                }
+                    # Also parse Cc: line from the structured header block
+                    if reply_to_email != source_email:
+                        _cc_match = _re.search(r'^Cc:\s*(.+)$', _body_for_search, _re.IGNORECASE | _re.MULTILINE)
+                        if _cc_match:
+                            _forwarded_cc = [
+                                m.strip().lower()
+                                for m in _re.findall(r'<([^>\n@]+@[^>\n@]+)>', _cc_match.group(1))
                             ]
-                        )
-                        _llm_raw = _extract_llm(_extract_prompt)
+                            if _forwarded_cc:
+                                logger.info("   📋 Extracted %d CC(s) from forward header: %s", len(_forwarded_cc), _forwarded_cc)
 
-                        # Parse JSON from LLM response
-                        import re as _re
-                        _json_match = _re.search(r'\{[^{}]+\}', _llm_raw or '')
-                        if _json_match:
-                            _parsed = json.loads(_json_match.group())
-                            _llm_email = _parsed.get('reply_to_email')
-                            _llm_name = _parsed.get('reply_to_name')
-                            _valid_email = (
-                                _llm_email and
-                                '@' in str(_llm_email) and
-                                str(_llm_email).lower() not in ('null', 'none', '')
-                            )
-                            if _valid_email:
-                                reply_to_email = str(_llm_email).strip().lower()
-                                _name_raw = str(_llm_name) if _llm_name else None
-                                reply_to_name = (
-                                    _name_raw.strip()
-                                    if _name_raw and _name_raw.lower() not in ('null', 'none')
-                                    else reply_to_email.split('@')[0]
-                                )
-                                logger.info("   ✅ LLM extracted reply-to: %s (%s)", reply_to_email, reply_to_name)
-                            else:
-                                logger.info("   ℹ️ LLM returned null reply_to — trying regex fallback")
-                    else:
-                        logger.warning("   ⚠️ No agent_model configured — skipping LLM extraction")
+                except Exception as _regex_err:
+                    logger.warning("   ⚠️ Regex sender extraction failed: %s", _regex_err)
 
-                except Exception as _llm_err:
-                    logger.warning("   ⚠️ LLM sender extraction failed: %s — trying regex fallback", _llm_err)
-
-                # --- Attempt 2: Regex fallback (deepest From: in the chain) ---
+                # --- Attempt 2: LLM — last resort only, uses clean stripped text ---
                 if reply_to_email == source_email:
                     try:
-                        import re as _re
-                        _from_pattern = _re.compile(
-                            r'^from:\s*(?:.*?<([^>@\s]+@[^>@\s]+)>|([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}))',
-                            _re.IGNORECASE | _re.MULTILINE
-                        )
-                        _from_emails = [
-                            (m[0] or m[1]).strip().lower()
-                            for m in _from_pattern.findall(email_body or '')
-                            if (m[0] or m[1]).strip()
-                        ]
-                        if _from_emails:
-                            _deepest = _from_emails[-1]
-                            if _deepest != source_email.lower():
-                                reply_to_email = _deepest
-                                reply_to_name = reply_to_email.split('@')[0]
-                                logger.info("   ✅ Regex fallback extracted reply-to: %s", reply_to_email)
-                            else:
-                                logger.info("   ℹ️ Regex: deepest sender matches source_email — keeping as-is")
-                    except Exception as _regex_err:
-                        logger.warning("   ⚠️ Regex fallback also failed: %s", _regex_err)
+                        from agent.prompt import create_llm, Prompt
+                        from pycommon.api.models import get_default_models
+
+                        _default_models = get_default_models(access_token)
+                        _extract_model = _default_models.get('agent_model')
+
+                        if _extract_model:
+                            _extract_llm = create_llm(
+                                access_token,
+                                _extract_model,
+                                sender_username,
+                                {'account_id': 'general_account', 'api_key_id': api_key_id, 'rate_limit': None},
+                                {'purpose': 'sender_extraction'}
+                            )
+                            _extract_prompt = Prompt(
+                                messages=[
+                                    {
+                                        'role': 'system',
+                                        'content': (
+                                            'You are an email routing assistant. Given a forwarded email chain, '
+                                            'identify the ORIGINAL sender — the person who wrote the scheduling '
+                                            'request (not whoever forwarded it). Respond ONLY with valid JSON: '
+                                            '{"reply_to_email": "email@example.com", "reply_to_name": "First Last"} '
+                                            'or {"reply_to_email": null, "reply_to_name": null} if unknown.'
+                                        )
+                                    },
+                                    {
+                                        'role': 'user',
+                                        'content': _body_for_search[:3000]  # clean text, no raw HTML
+                                    }
+                                ]
+                            )
+                            _llm_raw = _extract_llm(_extract_prompt)
+                            _json_match = _re.search(r'\{[^{}]+\}', _llm_raw or '')
+                            if _json_match:
+                                _parsed = json.loads(_json_match.group())
+                                _llm_email = _parsed.get('reply_to_email')
+                                _llm_name = _parsed.get('reply_to_name')
+                                if _llm_email and '@' in str(_llm_email) and str(_llm_email).lower() not in ('null', 'none', ''):
+                                    reply_to_email = str(_llm_email).strip().lower()
+                                    _name_raw = str(_llm_name) if _llm_name else None
+                                    reply_to_name = (
+                                        _name_raw.strip()
+                                        if _name_raw and _name_raw.lower() not in ('null', 'none')
+                                        else reply_to_email.split('@')[0]
+                                    )
+                                    logger.info("   ✅ LLM extracted reply-to: %s (%s)", reply_to_email, reply_to_name)
+                                else:
+                                    logger.info("   ℹ️ LLM returned null reply_to — keeping sender as reply-to")
+                        else:
+                            logger.warning("   ⚠️ No agent_model configured — skipping LLM extraction")
+
+                    except Exception as _llm_err:
+                        logger.warning("   ⚠️ LLM sender extraction failed: %s", _llm_err)
             else:
                 logger.info("   ℹ️ Not a forwarded email — reply-to = envelope sender: %s", source_email)
 
             logger.info("   📨 Final reply-to: %s (%s)", reply_to_email, reply_to_name)
+
+            # ===========================================
+            # STEP 0.75: SEARCH FOR ORIGINAL EMAIL THREAD
+            # ===========================================
+            # Run for BOTH forwarded emails AND direct Re: replies so that
+            # Outlook drafts/replies are placed in the existing conversation thread
+            # instead of going out as a brand-new standalone email.
+            original_message_id = None
+            original_conversation_id = None
+
+            import re as _re_subj075
+            _subj_075 = common_headers.get('subject', '')
+            _has_re_prefix = bool(_re_subj075.match(r'^(Re:|RE:|re:|Fwd?:|FWD?:)\s*', _subj_075))
+
+            if (_looks_forwarded or _has_re_prefix) and reply_to_email != source_email:
+                if _looks_forwarded:
+                    logger.info("🔗 Step 0.75: Searching for original thread (forwarded email)...")
+                else:
+                    logger.info("🔗 Step 0.75: Searching for original thread (Re: reply to existing conversation)...")
+                try:
+                    import re as _re_subj
+                    # Strip Fwd:/Fw:/Re: prefixes to get the clean subject
+                    _original_subject = common_headers.get('subject', '')
+                    _clean_subject = _re_subj.sub(r'^(Re:\s*|Fwd?:\s*)+', '', _original_subject, flags=_re_subj.IGNORECASE).strip()
+
+                    # Build search query: from the reply_to sender + matching subject
+                    _search_query = f'from:{reply_to_email} subject:"{_clean_subject}"' if _clean_subject else f'from:{reply_to_email}'
+                    logger.info("   🔍 Search query: %s", _search_query)
+
+                    _search_response = requests.post(
+                        f'{amp_base_url}/microsoft/integrations/search_messages',
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Content-Type': 'application/json'
+                        },
+                        json={
+                            'data': {
+                                'search_query': _search_query,
+                                'top': 5,
+                                'include_body': False,
+                            }
+                        },
+                        timeout=15
+                    )
+
+                    if _search_response.status_code == 200:
+                        _search_result = _search_response.json()
+                        _messages = _search_result.get('data', _search_result.get('messages', []))
+                        # Handle both response shapes: {data: [...]} and {data: {messages: [...]}}
+                        if isinstance(_messages, dict):
+                            _messages = _messages.get('messages', [])
+                        if not isinstance(_messages, list):
+                            _messages = []
+
+                        if _messages:
+                            # Take the first (most relevant) match
+                            _best_match = _messages[0]
+                            original_message_id = _best_match.get('id')
+                            original_conversation_id = _best_match.get('conversationId')
+                            logger.info("   ✅ Found original thread! message_id=%s, conversationId=%s, subject='%s'",
+                                       original_message_id,
+                                       original_conversation_id,
+                                       _best_match.get('subject', '?')[:80])
+                        else:
+                            logger.info("   ℹ️ No matching messages found — reply will be a new thread")
+                    else:
+                        logger.warning("   ⚠️ search_messages HTTP %d (non-fatal): %s",
+                                      _search_response.status_code, _search_response.text[:200])
+                except Exception as _search_err:
+                    logger.warning("   ⚠️ Thread search failed (non-fatal, reply will be new thread): %s", _search_err)
+            else:
+                if reply_to_email == source_email:
+                    logger.info("🔗 Step 0.75: Skipped — reply-to same as sender (no external thread)")
+                else:
+                    logger.info("🔗 Step 0.75: Skipped — not a forwarded or Re: email")
 
             # ===========================================
             # STEP 1: ANALYZE EMAIL (inline LLM classification)
@@ -790,6 +870,7 @@ Is this a meeting/scheduling request?"""
                             # Only show those exact requested times; do NOT generate random alternatives.
                             _explicit_times = meeting_details.get('proposed_times') or []
                             _offering_alternatives = False  # True when requested time was unavailable and we fell back to alternatives
+                            _all_times_unavailable = False  # True when ALL requested times are conflicted (never/manual_review mode)
                             if _explicit_times:
                                 # Build a set of available slot starts (minute-precision) for fast lookup
                                 _avail_minutes = set()
@@ -856,7 +937,10 @@ Is this a meeting/scheduling request?"""
                                     else:
                                         # 'never' — put in Action Needed with the requested (unavailable) times shown
                                         # so the dashboard user can see what was asked for and decide manually.
+                                        # NOTE: _all_times_unavailable=True tells the draft generator NOT to offer
+                                        # these times as available — they are shown in the card for human context only.
                                         calendar_slots = [{'start': t} for t in _explicit_times]
+                                        _all_times_unavailable = True
                                         logger.info("   📋 All times unavailable — queuing for manual review with requested times shown")
 
                             # ── Branch B: vague request — generate slots on preferred days ────
@@ -951,8 +1035,8 @@ Is this a meeting/scheduling request?"""
                         json={
                             'data': {
                                 'user_id': sender_username,
-                                'start_date_time': _ev_start,
-                                'end_date_time': _ev_end,
+                                'start_dt': _ev_start,
+                                'end_dt': _ev_end,
                             }
                         },
                         timeout=15
@@ -960,25 +1044,37 @@ Is this a meeting/scheduling request?"""
 
                     if _ev_response.status_code == 200:
                         _ev_result = _ev_response.json()
-                        if _ev_result.get('success'):
-                            _ev_list = _ev_result.get('data', {}).get('events', [])
-                            if _ev_list:
-                                # Use the first (closest) matching event
-                                _ev = _ev_list[0]
-                                existing_event = {
-                                    'event_id': _ev.get('id') or _ev.get('event_id'),
-                                    'subject':  _ev.get('subject') or _ev.get('title', ''),
-                                    'start':    (_ev.get('start') or {}).get('dateTime') or _ev.get('start_time', ''),
-                                    'end':      (_ev.get('end')   or {}).get('dateTime') or _ev.get('end_time',   ''),
-                                    'location': (_ev.get('location') or {}).get('displayName') or _ev.get('location', ''),
-                                }
-                                logger.info("   ✅ Found existing event: id=%s, subject=%s, start=%s",
-                                            existing_event['event_id'], existing_event['subject'], existing_event['start'])
+                        # API may return a raw list OR a {success, data: {events: [...]}} wrapper
+                        if isinstance(_ev_result, list):
+                            _ev_list = _ev_result
+                        elif isinstance(_ev_result, dict):
+                            if _ev_result.get('success'):
+                                _data = _ev_result.get('data', {})
+                                if isinstance(_data, list):
+                                    _ev_list = _data
+                                else:
+                                    _ev_list = _data.get('events', [])
                             else:
-                                logger.info("   ℹ️ No events found in ±30 min window around %s", _current_event_time)
+                                _ev_list = []
+                                logger.warning("   ⚠️ get_events_between_dates returned success=false: %s",
+                                               _ev_result.get('message', '')[:200])
                         else:
-                            logger.warning("   ⚠️ get_events_between_dates returned success=false: %s",
-                                           _ev_result.get('message', '')[:200])
+                            _ev_list = []
+
+                        if _ev_list:
+                            # Use the first (closest) matching event
+                            _ev = _ev_list[0]
+                            existing_event = {
+                                'event_id': _ev.get('id') or _ev.get('event_id'),
+                                'subject':  _ev.get('subject') or _ev.get('title', ''),
+                                'start':    (_ev.get('start') or {}).get('dateTime') or _ev.get('start_time', ''),
+                                'end':      (_ev.get('end')   or {}).get('dateTime') or _ev.get('end_time',   ''),
+                                'location': (_ev.get('location') or {}).get('displayName') or _ev.get('location', ''),
+                            }
+                            logger.info("   ✅ Found existing event: id=%s, subject=%s, start=%s",
+                                        existing_event['event_id'], existing_event['subject'], existing_event['start'])
+                        else:
+                            logger.info("   ℹ️ No events found in ±30 min window around %s", _current_event_time)
                     else:
                         logger.warning("   ⚠️ get_events_between_dates HTTP %d", _ev_response.status_code)
                 except Exception as _ev_err:
@@ -1183,10 +1279,13 @@ Is this a meeting/scheduling request?"""
             cal_mode = calendar_automation.get('mode', 'never')  # never | confirmed_only | always
             auto_decline_mode = calendar_automation.get('auto_decline_mode', 'never')  # never | offer_alternatives | polite_decline
             auto_accept_invites = calendar_automation.get('auto_accept_invites', 'never')  # never | if_available | tentative_if_available | known_senders
-            # Extract CC recipients for later use in calendar event attendees
+            # Extract CC recipients for later use in calendar event attendees.
+            # Merge envelope CCs with any CCs parsed from the forwarded header block.
             cc_recipients = common_headers.get('cc', [])
             if isinstance(cc_recipients, str):
                 cc_recipients = [cc_recipients]
+            if _forwarded_cc:
+                cc_recipients = list({*[c.lower() for c in cc_recipients], *_forwarded_cc})
             reschedule_mode = calendar_automation.get('reschedule_mode', 'never')  # never | draft_only | auto_reschedule
             cancellation_mode = calendar_automation.get('cancellation_mode', 'manual')  # manual | auto_confirm | auto_decline
 
@@ -1287,9 +1386,12 @@ Is this a meeting/scheduling request?"""
                     calendar_action_reason = "Drafting reschedule proposal (reschedule_mode=draft_only)"
                     logger.info("   ✅ Calendar action: draft_reschedule")
                 else:
-                    calendar_action = None
-                    calendar_action_reason = "Reschedule requires manual review (reschedule_mode=never)"
-                    logger.info("   📝 Calendar action: manual review required")
+                    # reschedule_mode=never: still prepare a draft for review but show it
+                    # inline in the Action Needed card (same as draft_only), just without
+                    # automatic calendar operations.
+                    calendar_action = 'draft_reschedule'
+                    calendar_action_reason = "Drafting reschedule reply for manual review (reschedule_mode=never)"
+                    logger.info("   📝 Calendar action: draft_reschedule (manual review mode)")
 
             elif intent == 'cancel':
                 # Cancellation request
@@ -1303,9 +1405,10 @@ Is this a meeting/scheduling request?"""
                     calendar_action_reason = "Auto-declining cancellation, proposing to keep meeting (cancellation_mode=auto_decline)"
                     logger.info("   ✅ Calendar action: decline_cancel")
                 else:
-                    calendar_action = None
-                    calendar_action_reason = "Cancellation requires manual review (cancellation_mode=manual)"
-                    logger.info("   📝 Calendar action: manual review required")
+                    # cancellation_mode=manual/never: prepare draft for inline review in Action Needed card
+                    calendar_action = 'draft_reschedule'
+                    calendar_action_reason = "Drafting cancellation reply for manual review (cancellation_mode=manual)"
+                    logger.info("   📝 Calendar action: draft_reschedule (manual cancel review mode)")
 
             elif intent in ['new_request', 'accept', 'confirm']:
                 # New meeting request or acceptance - use cal_mode for event creation
@@ -1386,7 +1489,10 @@ Is this a meeting/scheduling request?"""
                     'proposed_times': [slot.get('start') for slot in calendar_slots[:5]] if calendar_slots else [],
                     'existing_event': existing_event,
                     'calendar_decision': calendar_decision,
-                    'calendar_action': calendar_action
+                    'calendar_action': calendar_action,
+                    # Thread linking (populated by Step 0.75 for forwarded emails)
+                    'original_message_id': original_message_id,
+                    'original_conversation_id': original_conversation_id,
                 }
 
                 # Save scheduling request (no draft) to DynamoDB
@@ -1474,9 +1580,12 @@ Is this a meeting/scheduling request?"""
                         "- Return ONLY the email body text, no JSON or extra formatting"
                     )
 
-                    # Build times context from calendar_slots
+                    # Build times context from calendar_slots.
+                    # IMPORTANT: when _all_times_unavailable is True the slots are stored for
+                    # dashboard display only — they must NOT be offered to the requester as free times.
                     _times_context = ""
-                    if calendar_slots:
+                    _all_times_unavailable_flag = locals().get('_all_times_unavailable', False)
+                    if calendar_slots and not _all_times_unavailable_flag:
                         import datetime as _dt
                         _slots_formatted = []
                         for slot in calendar_slots[:5]:
@@ -1488,12 +1597,29 @@ Is this a meeting/scheduling request?"""
                         if _slots_formatted:
                             _times_context = "\n\nAVAILABLE TIMES TO PROPOSE:\n" + "\n".join(_slots_formatted) + "\nIMPORTANT: Propose these specific times and ask which works best."
                             logger.info("   📅 Times injected into draft prompt: %s", _slots_formatted)
+                    elif _all_times_unavailable_flag:
+                        logger.info("   ⚠️ Requested times are UNAVAILABLE — NOT injecting into draft prompt as available times")
                     else:
                         logger.warning("   ⚠️ No calendar slots — draft will not propose specific times")
 
                     # Add calendar action context
                     _action_context = ""
-                    if calendar_action == 'offer_alternatives':
+                    if _all_times_unavailable_flag:
+                        # The sender asked for a specific time that is ALREADY BUSY in the calendar.
+                        # Do NOT offer that time back. Surface for manual review.
+                        _conflict_times_str = ', '.join(
+                            slot.get('start', '') for slot in calendar_slots[:3]
+                        ) if calendar_slots else 'the requested time'
+                        _action_context = (
+                            f"\n\nSITUATION: The time(s) requested by the sender ({_conflict_times_str}) are "
+                            "NOT available — there is already a conflict in the calendar at that time. "
+                            "Do NOT offer or confirm these times. Instead:\n"
+                            "1. Warmly acknowledge their request\n"
+                            "2. Let them know that unfortunately that time doesn't work\n"
+                            "3. Ask if they have other times that could work, OR let them know you will follow up with alternatives\n"
+                            "Do NOT propose any specific new times — this reply goes to human review before sending."
+                        )
+                    elif calendar_action == 'offer_alternatives':
                         _action_context = (
                             "\n\nSITUATION: The time requested by the sender is NOT available in the calendar. "
                             "You must:\n"
@@ -1640,10 +1766,14 @@ Write a natural, warm, professional response that {executive_name} would send.""
                     'calendar_decision': calendar_decision,
                     'calendar_action': calendar_action,
                     # For draft_reschedule: store draft text so frontend can send directly (no Outlook draft needed)
-                    'draft_text': draft_text if calendar_action == 'draft_reschedule' else None,
-                    'draft_subject': draft_subject if calendar_action == 'draft_reschedule' else None,
-                    'draft_to': reply_to_email if calendar_action == 'draft_reschedule' else None,
-                    'draft_content_type': draft_content_type if calendar_action == 'draft_reschedule' else None,
+                    # Always store draft fields — card uses them for inline preview + Send Reply
+                    'draft_text': draft_text,
+                    'draft_subject': draft_subject,
+                    'draft_to': reply_to_email,
+                    'draft_content_type': draft_content_type,
+                    # Thread linking (populated by Step 0.75 for forwarded emails)
+                    'original_message_id': original_message_id,
+                    'original_conversation_id': original_conversation_id,
                 }
 
                 logger.info("   🤖 AI Decision: intent=%s, confidence=%.2f, requires_review=%s, calendar_action=%s",
@@ -1784,31 +1914,48 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 try:
                     if should_auto_send:
                         # AUTO-SEND: Send email directly via Outlook
-                        logger.info("   📧 AUTO-SEND mode: Sending email directly...")
-
-                        send_response = requests.post(
-                            f'{amp_base_url}/microsoft/integrations/send_mail',
-                            headers={
-                                'Authorization': f'Bearer {access_token}',
-                                'Content-Type': 'application/json'
-                            },
-                            json={
-                                'data': {
-                                    'user_id': sender_username,
-                                    'to_recipients': [reply_to_email],
-                                    'subject': draft_subject,
-                                    'body': draft_text,
-                                    'importance': 'normal',
-                                    'save_to_sent_items': True
-                                }
-                            },
-                            timeout=30
-                        )
+                        # If we have the original message ID, reply in-thread; otherwise send new
+                        if original_message_id:
+                            logger.info("   📧 AUTO-SEND mode: Replying in-thread to %s...", original_message_id[:40])
+                            send_response = requests.post(
+                                f'{amp_base_url}/microsoft/integrations/reply_to_message',
+                                headers={
+                                    'Authorization': f'Bearer {access_token}',
+                                    'Content-Type': 'application/json'
+                                },
+                                json={
+                                    'data': {
+                                        'message_id': original_message_id,
+                                        'comment': draft_text,
+                                    }
+                                },
+                                timeout=30
+                            )
+                        else:
+                            logger.info("   📧 AUTO-SEND mode: Sending new email...")
+                            send_response = requests.post(
+                                f'{amp_base_url}/microsoft/integrations/send_mail',
+                                headers={
+                                    'Authorization': f'Bearer {access_token}',
+                                    'Content-Type': 'application/json'
+                                },
+                                json={
+                                    'data': {
+                                        'user_id': sender_username,
+                                        'to_recipients': [reply_to_email],
+                                        'subject': draft_subject,
+                                        'body': draft_text,
+                                        'importance': 'normal',
+                                        'save_to_sent_items': True
+                                    }
+                                },
+                                timeout=30
+                            )
 
                         if send_response.status_code == 200:
                             send_result = send_response.json()
                             if send_result.get('success'):
-                                outlook_message_id = send_result['data'].get('message_id')
+                                outlook_message_id = send_result.get('data', {}).get('message_id') or send_result.get('data', {}).get('id')
                                 action_taken = 'auto_sent'
                                 ai_decision['action_taken'] = 'auto_sent'
                                 sent_timestamp = datetime.now(timezone.utc).isoformat()
@@ -1834,33 +1981,84 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             logger.error("   ❌ Send email API returned %d", send_response.status_code)
                             should_auto_send = False
 
-                    # If NOT auto-sending, create Outlook draft — UNLESS this is a draft_reschedule item
-                    # (draft_reschedule = Action Needed: draft text stored in ai_decision, sent directly by the user)
+                    # If NOT auto-sending, create Outlook draft for user review.
+                    # draft_reschedule items also get a real draft so users who don't use the
+                    # dashboard can still review / edit / send from Outlook directly.
                     if not should_auto_send:
                         if calendar_action == 'draft_reschedule':
-                            # Action Needed flow: draft text is already stored in ai_decision.
-                            # No Outlook draft needed — the frontend sends directly on "Send Reply".
+                            # Create the Outlook draft just like the normal path, but keep
+                            # the draft text in ai_decision too so the dashboard card can
+                            # show it inline and offer "Edit before sending".
+                            logger.info("   📝 draft_reschedule: creating Outlook draft for user review...")
+                            try:
+                                _draft_payload = {
+                                    'user_id': sender_username,
+                                    'to_recipients': [reply_to_email],
+                                    'subject': draft_subject,
+                                    'body': draft_text,
+                                    'importance': 'normal',
+                                    'content_type': draft_content_type,
+                                }
+                                if original_message_id:
+                                    _draft_payload['reply_to_message_id'] = original_message_id
+                                    logger.info("   🔗 Threaded reply draft (reply to %s)", original_message_id[:50])
+                                draft_create_response = requests.post(
+                                    f'{api_base_url}/scheduling/drafts/create',
+                                    headers={
+                                        'Authorization': f'Bearer {access_token}',
+                                        'Content-Type': 'application/json'
+                                    },
+                                    json={'data': _draft_payload},
+                                    timeout=30
+                                )
+                                if draft_create_response.status_code == 200:
+                                    draft_create_result = draft_create_response.json()
+                                    if draft_create_result.get('success'):
+                                        outlook_draft_id = draft_create_result.get('data', {}).get('message_id') or draft_create_result.get('data', {}).get('id')
+                                        logger.info("   ✅ Outlook draft created for draft_reschedule! Draft ID: %s", outlook_draft_id)
+                                    else:
+                                        logger.warning("   ⚠️ Draft creation returned success=false (non-fatal): %s",
+                                                       draft_create_result.get('message', '')[:200])
+                                else:
+                                    logger.warning("   ⚠️ Draft creation HTTP %d (non-fatal): %s",
+                                                   draft_create_response.status_code, draft_create_response.text[:200])
+                            except Exception as _dr_err:
+                                logger.warning("   ⚠️ Draft creation failed for draft_reschedule (non-fatal, card still works): %s", _dr_err)
+
                             action_taken = 'draft_created'
                             ai_decision['action_taken'] = 'draft_created'
+                            ai_decision['outlook_draft_id'] = outlook_draft_id  # may be None if draft creation failed — card still works via ai_decision.draft_text
                             draft_timestamp = datetime.now(timezone.utc).isoformat()
-                            logger.info("   📋 draft_reschedule: skipping Outlook draft — draft text stored in ai_decision for direct send")
 
                             settings_table.update_item(
                                 Key={'user_id': sender_username, 'storage_type': f"draft#{draft_id}"},
-                                UpdateExpression='SET #data.#status = :status, updated_at = :updated',
+                                UpdateExpression='SET #data.outlook_draft_id = :outlook_id, #data.#status = :status, updated_at = :updated',
                                 ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
-                                ExpressionAttributeValues={':status': 'pending_review', ':updated': draft_timestamp}
+                                ExpressionAttributeValues={':outlook_id': outlook_draft_id or 'none', ':status': 'outlook_draft_created' if outlook_draft_id else 'pending_review', ':updated': draft_timestamp}
                             )
                             storage_table.update_item(
                                 Key={'user_id': sender_username, 'storage_type': f"request#{request_id}"},
-                                UpdateExpression='SET #data.ai_decision = :ai_dec, updated_at = :updated',
+                                UpdateExpression='SET #data.ai_decision = :ai_dec, #data.draft_id = :did, updated_at = :updated',
                                 ExpressionAttributeNames={'#data': 'data'},
-                                ExpressionAttributeValues={':ai_dec': convert_floats_to_decimal(ai_decision), ':updated': draft_timestamp}
+                                ExpressionAttributeValues={':ai_dec': convert_floats_to_decimal(ai_decision), ':did': draft_id, ':updated': draft_timestamp}
                             )
-                            logger.info("   📊 Request status: pending_review (Action Needed — reply inline in card)")
+                            logger.info("   📊 Request status: pending_review (Action Needed — draft in Outlook + inline in card)")
                         else:
                             logger.info("   📝 Creating Outlook draft for user review...")
                             try:
+                                # Build draft payload — conditionally thread if we found the original message
+                                _norm_draft_payload = {
+                                    'user_id': sender_username,
+                                    'to_recipients': [reply_to_email],
+                                    'subject': draft_subject,
+                                    'body': draft_text,
+                                    'importance': 'normal',
+                                    'content_type': draft_content_type,
+                                }
+                                if original_message_id:
+                                    _norm_draft_payload['reply_to_message_id'] = original_message_id
+                                    logger.info("   🔗 Threaded reply draft (reply to %s)", original_message_id[:50])
+
                                 # Call scheduler backend to create Outlook draft (proxies to Microsoft backend)
                                 draft_create_response = requests.post(
                                     f'{api_base_url}/scheduling/drafts/create',
@@ -1868,16 +2066,7 @@ Write a natural, warm, professional response that {executive_name} would send.""
                                         'Authorization': f'Bearer {access_token}',
                                         'Content-Type': 'application/json'
                                     },
-                                    json={
-                                        'data': {
-                                            'user_id': sender_username,
-                                            'to_recipients': [reply_to_email],
-                                            'subject': draft_subject,
-                                            'body': draft_text,
-                                            'importance': 'normal',
-                                            'content_type': draft_content_type
-                                        }
-                                    },
+                                    json={'data': _norm_draft_payload},
                                     timeout=30
                                 )
                                 if draft_create_response.status_code == 200:
@@ -1923,7 +2112,9 @@ Write a natural, warm, professional response that {executive_name} would send.""
                     notification_subject = None
                     notification_body = None
 
-                    if action_taken == 'draft_created' and notification_prefs.get('email_on_draft'):
+                    # email_on_draft defaults to False — only notify if user has explicitly enabled it.
+                    # For reschedule/cancel drafts the inline card already surfaces them; email noise is unwanted.
+                    if action_taken == 'draft_created' and notification_prefs.get('email_on_draft', False):
                         should_notify = True
                         notification_subject = f'📝 AI Scheduler: Draft created for "{original_subject}"'
                         notification_body = (
