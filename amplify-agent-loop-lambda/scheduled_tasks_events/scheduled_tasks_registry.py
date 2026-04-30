@@ -67,7 +67,6 @@ def create_scheduled_task(
 
     api_key_response = create_agent_event_api_key(
         user=current_user,
-        token=access_token,
         agent_event_name=task_name,
         account=account,
         description=f"Scheduled task: {task_name} - {description}",
