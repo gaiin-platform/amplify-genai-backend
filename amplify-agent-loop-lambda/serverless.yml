@@ -32,7 +32,7 @@ custom:
     - prod
 
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    requireChangeSet: false
 
 provider:
   name: aws
@@ -76,6 +76,7 @@ provider:
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
     WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
+    RAW_EMAILS_BUCKET: ${self:service}-${sls:stage}-raw-emails
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -97,11 +98,20 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
+    # Amplify Notes Configuration
+    NOTES_ENABLED: ${ssm:/amplify/${sls:stage}/NOTES_ENABLED, "false"}
+    NOTES_EMAIL: ${ssm:/amplify/${sls:stage}/NOTES_EMAIL, "notes@dev.vanderbilt.ai"}
+    NOTES_INGEST_QUEUE_URL: ${ssm:/amplify/${sls:stage}/NOTES_INGEST_QUEUE_URL}
+    S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET}
+    # AI Scheduler Configuration (SES Email Forwarding)
+    AI_SCHEDULER_STORAGE_TABLE: ${ssm:/amplify/${sls:stage}/AI_SCHEDULER_STORAGE_TABLE, ""}
+
 
   iam:
     role:
       managedPolicies:
         - !Ref LambdaAgentLoopIAMPolicy
+        - !Ref LambdaEmailProcessingPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
 functions:
@@ -225,9 +235,36 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"  #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
+                # Amplify Notes S3 bucket access
+                - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}
+                - arn:aws:s3:::${self:provider.environment.S3_NOTES_RAW_FILES_BUCKET}/*
+            # S3 permissions for raw emails bucket
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
+            # DynamoDB permissions for Cognito users
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}/index/*"
-           
+                # AI Scheduler storage table (for SES email forwarding workflow)
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AI_SCHEDULER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -245,6 +282,7 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt AgentQueue.Arn
+                - arn:aws:sqs:${self:provider.region}:${aws:accountId}:amplify-notes-ingest-queue-${sls:stage}
 
             - Effect: Allow
               Action:
@@ -509,3 +547,60 @@ resources:
               AllowedOrigins:
                 - '*'
               MaxAge: 3000
+
+    # S3 Bucket for storing raw emails (fixes SNS 256KB limit for notes@)
+    RawEmailsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.RAW_EMAILS_BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: DeleteOldEmails
+              Status: Enabled
+              ExpirationInDays: 7
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
+    # Bucket policy to allow SES to write emails
+    RawEmailsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref RawEmailsBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ses.amazonaws.com
+              Action: s3:PutObject
+              Resource: !Sub "${RawEmailsBucket.Arn}/*"
+              Condition:
+                StringEquals:
+                  AWS:SourceAccount: !Ref AWS::AccountId
+
+    # Separate IAM policy for email processing (keeps main policy under 6KB limit)
+    LambdaEmailProcessingPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-${sls:stage}-email-processing-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::${self:provider.environment.RAW_EMAILS_BUCKET}
