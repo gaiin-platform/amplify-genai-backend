@@ -1220,12 +1220,11 @@ def search_messages(
             filter_parts = []
             remainder_tokens = []
 
-            # Match: field:"quoted value" or field:unquoted_value
-            for m in re.finditer(r'(\w+):"([^"]+)"|(\w+):(\S+)', stripped_query):
-                if m.group(1):
-                    field, value = m.group(1).lower(), m.group(2)
-                else:
-                    field, value = m.group(3).lower(), m.group(4)
+            # Match: field:>=value, field:<=value, field:"quoted value", or field:unquoted_value
+            for m in re.finditer(r'(\w+):(>=|<=|>|<)?"?([^"\s><=]+)"?', stripped_query):
+                field = m.group(1).lower()
+                operator = m.group(2) or ":"
+                value = m.group(3)
 
                 if field == "from":
                     filter_parts.append(f"from/emailAddress/address eq '{value}'")
@@ -1233,6 +1232,17 @@ def search_messages(
                     filter_parts.append(f"contains(subject, '{value}')")
                 elif field == "to":
                     filter_parts.append(f"toRecipients/any(r: r/emailAddress/address eq '{value}')")
+                elif field == "received":
+                    if operator == ">=":
+                        filter_parts.append(f"receivedDateTime ge {value}")
+                    elif operator == "<=":
+                        filter_parts.append(f"receivedDateTime le {value}")
+                    elif operator == ">":
+                        filter_parts.append(f"receivedDateTime gt {value}")
+                    elif operator == "<":
+                        filter_parts.append(f"receivedDateTime lt {value}")
+                    else:
+                        filter_parts.append(f"receivedDateTime ge {value}")
                 else:
                     # Unknown field — treat as keyword
                     remainder_tokens.append(value)
