@@ -759,7 +759,7 @@ async function getAdminRateLimits() {
         }
         const rateData = unmarshall(item);
 
-        // 💰 CACHE: Store admin rate limit config for 10 minutes
+        // 💰 CACHE: Store admin rate limit config for 3 minutes
         // Support both legacy flat shape and new { limits, honorPersonalRateLimit } shape
         const rawData = rateData.data;
         const limits = normalizeRateLimits(
