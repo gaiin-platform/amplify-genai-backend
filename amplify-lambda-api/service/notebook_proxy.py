@@ -16,10 +16,14 @@ Environment variables required:
   OPEN_NOTEBOOK_INTERNAL_URL  — e.g. http://<private-ip>  (no trailing slash)
 """
 
-import base64
-import os
+from __future__ import annotations
 
-import httpx
+import base64
+import json
+import os
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from pycommon.authz import validated
 from pycommon.decorators import required_env_vars
@@ -29,14 +33,16 @@ logger = getLogger("notebook_proxy")
 
 OPEN_NOTEBOOK_INTERNAL_URL = os.environ.get("OPEN_NOTEBOOK_INTERNAL_URL", "")
 
-# httpx client — reused across warm invocations
-_client = httpx.Client(timeout=28.0)
+_REQUEST_TIMEOUT = 28.0
 
 
-def _notebook_url(path: str) -> str:
+def _notebook_url(path: str, query_params: dict | None = None) -> str:
     """Build the full internal URL for an Open Notebook API path."""
     normalised = path if path.startswith("/") else f"/{path}"
-    return f"{OPEN_NOTEBOOK_INTERNAL_URL}/api{normalised}"
+    url = f"{OPEN_NOTEBOOK_INTERNAL_URL}/api{normalised}"
+    if query_params:
+        url = f"{url}?{urlencode(query_params, doseq=True)}"
+    return url
 
 
 def _forward_headers(access_token: str) -> dict:
@@ -44,6 +50,18 @@ def _forward_headers(access_token: str) -> dict:
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
+
+
+def _do_request(method: str, url: str, headers: dict, body_bytes: bytes | None):
+    """Perform an HTTP request and return (status, content_bytes, content_type).
+
+    Raises HTTPError on non-2xx responses (caller decides handling).
+    """
+    req = Request(url, data=body_bytes, headers=headers, method=method)
+    with urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+        content = resp.read()
+        content_type = resp.headers.get("Content-Type", "application/octet-stream")
+        return resp.status, content, content_type
 
 
 # ---------------------------------------------------------------------------
@@ -64,22 +82,21 @@ def notebook_proxy(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
-    url = _notebook_url(path)
+    url = _notebook_url(path, query_params)
     logger.info("notebook_proxy: %s %s user=%s", method, url, current_user)
 
+    body_bytes = json.dumps(body).encode("utf-8") if body is not None else None
+
     try:
-        resp = _client.request(
-            method=method,
-            url=url,
-            params=query_params or None,
-            json=body if body is not None else None,
-            headers=_forward_headers(access_token),
-        )
-        resp.raise_for_status()
-        return {"success": True, "data": resp.json()}
-    except httpx.HTTPStatusError as e:
-        logger.error("notebook_proxy upstream error: %s %s", e.response.status_code, e.response.text[:500])
-        return {"success": False, "message": f"Upstream error {e.response.status_code}", "data": None}
+        _, content, _ = _do_request(method, url, _forward_headers(access_token), body_bytes)
+        return {"success": True, "data": json.loads(content) if content else None}
+    except HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")[:500] if e.fp else ""
+        logger.error("notebook_proxy upstream error: %s %s", e.code, err_body)
+        return {"success": False, "message": f"Upstream error {e.code}", "data": None}
+    except URLError as e:
+        logger.exception("notebook_proxy network error")
+        return {"success": False, "message": str(e.reason), "data": None}
     except Exception as e:
         logger.exception("notebook_proxy unexpected error")
         return {"success": False, "message": str(e), "data": None}
@@ -107,20 +124,14 @@ def notebook_proxy_raw(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
-    url = _notebook_url(path)
+    url = _notebook_url(path, query_params)
     logger.info("notebook_proxy_raw: %s %s user=%s", method, url, current_user)
 
+    body_bytes = json.dumps(body).encode("utf-8") if body is not None else None
+
     try:
-        resp = _client.request(
-            method=method,
-            url=url,
-            params=query_params or None,
-            json=body if body is not None else None,
-            headers=_forward_headers(access_token),
-        )
-        resp.raise_for_status()
-        content_type = resp.headers.get("content-type", "application/octet-stream")
-        data_b64 = base64.b64encode(resp.content).decode("utf-8")
+        _, content, content_type = _do_request(method, url, _forward_headers(access_token), body_bytes)
+        data_b64 = base64.b64encode(content).decode("utf-8")
         return {
             "success": True,
             "data": {
@@ -128,9 +139,12 @@ def notebook_proxy_raw(event, context, current_user, name, data):
                 "data_b64": data_b64,
             },
         }
-    except httpx.HTTPStatusError as e:
-        logger.error("notebook_proxy_raw upstream error: %s", e.response.status_code)
-        return {"success": False, "message": f"Upstream error {e.response.status_code}", "data": None}
+    except HTTPError as e:
+        logger.error("notebook_proxy_raw upstream error: %s", e.code)
+        return {"success": False, "message": f"Upstream error {e.code}", "data": None}
+    except URLError as e:
+        logger.exception("notebook_proxy_raw network error")
+        return {"success": False, "message": str(e.reason), "data": None}
     except Exception as e:
         logger.exception("notebook_proxy_raw unexpected error")
         return {"success": False, "message": str(e), "data": None}
@@ -167,20 +181,21 @@ def notebook_upload(event, context, current_user, name, data):
     logger.info("notebook_upload: POST %s user=%s content_type=%s bytes=%d",
                 url, current_user, content_type, len(raw_body))
 
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": content_type,
+    }
+
     try:
-        resp = _client.post(
-            url=url,
-            content=raw_body,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": content_type,
-            },
-        )
-        resp.raise_for_status()
-        return {"success": True, "data": resp.json()}
-    except httpx.HTTPStatusError as e:
-        logger.error("notebook_upload upstream error: %s %s", e.response.status_code, e.response.text[:500])
-        return {"success": False, "message": f"Upstream error {e.response.status_code}", "data": None}
+        _, content, _ = _do_request("POST", url, headers, raw_body)
+        return {"success": True, "data": json.loads(content) if content else None}
+    except HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")[:500] if e.fp else ""
+        logger.error("notebook_upload upstream error: %s %s", e.code, err_body)
+        return {"success": False, "message": f"Upstream error {e.code}", "data": None}
+    except URLError as e:
+        logger.exception("notebook_upload network error")
+        return {"success": False, "message": str(e.reason), "data": None}
     except Exception as e:
         logger.exception("notebook_upload unexpected error")
         return {"success": False, "message": str(e), "data": None}
