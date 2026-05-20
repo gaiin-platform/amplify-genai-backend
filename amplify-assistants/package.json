@@ -1,0 +1,9 @@
+{
+  "name": "amplify-assistants",
+  "version": "1.0.0",
+  "devDependencies": {
+    "serverless": "^3.40.0",
+    "serverless-offline": "^13.6.0",
+    "serverless-python-requirements": "^6.1.2"
+  }
+}
