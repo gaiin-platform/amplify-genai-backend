@@ -1593,32 +1593,38 @@ const internalGetUserCostHistoryHandler = async (event, context, callback) => {
             tableName: historyCostDynamoTableName 
         });
 
-        // Query history table using Scan with filter (since we need to match userDate prefix)
-        const scanParams = {
-            TableName: historyCostDynamoTableName,
-            FilterExpression: 'begins_with(userDate, :emailPrefix)',
-            ExpressionAttributeValues: {
-                ':emailPrefix': `${requestedEmail}#`
-            }
-        };
+        // The userDate key may be stored as either `email#date` (old records) or `userId#date` (new records).
+        // Scan for both prefixes and merge to ensure all history is captured.
+        const prefixesToScan = [...new Set([`${requestedEmail}#`, `${user}#`])];
+        logger.info("Scanning history with prefixes", { prefixesToScan });
 
         let allHistoryItems = [];
-        let lastEvaluatedKey = null;
 
-        do {
-            if (lastEvaluatedKey) {
-                scanParams.ExclusiveStartKey = lastEvaluatedKey;
-            }
+        for (const prefix of prefixesToScan) {
+            const scanParams = {
+                TableName: historyCostDynamoTableName,
+                FilterExpression: 'begins_with(userDate, :prefix)',
+                ExpressionAttributeValues: {
+                    ':prefix': prefix
+                }
+            };
 
-            const scanCommand = new ScanCommand(scanParams);
-            const result = await dynamoDB.send(scanCommand);
-            
-            if (result.Items && result.Items.length > 0) {
-                allHistoryItems = allHistoryItems.concat(result.Items);
-            }
-            
-            lastEvaluatedKey = result.LastEvaluatedKey;
-        } while (lastEvaluatedKey);
+            let lastEvaluatedKey = null;
+            do {
+                if (lastEvaluatedKey) {
+                    scanParams.ExclusiveStartKey = lastEvaluatedKey;
+                }
+
+                const scanCommand = new ScanCommand(scanParams);
+                const result = await dynamoDB.send(scanCommand);
+
+                if (result.Items && result.Items.length > 0) {
+                    allHistoryItems = allHistoryItems.concat(result.Items);
+                }
+
+                lastEvaluatedKey = result.LastEvaluatedKey;
+            } while (lastEvaluatedKey);
+        }
 
         logger.info("History records retrieved", { count: allHistoryItems.length });
 
