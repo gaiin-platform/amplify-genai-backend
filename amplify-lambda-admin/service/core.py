@@ -1006,6 +1006,8 @@ def get_configs(event, context, current_user, name, data):
                             logger.info(
                                 "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
+                    elif config_type == AdminConfigTypes.RATE_LIMIT:
+                        new_data = _normalize_rate_limit_config(new_data)
                     elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
                         # Check real-time SNS subscription status
                         logger.info("🔍 Checking critical errors config - isActive: %s, email: %s", 
@@ -1192,7 +1194,7 @@ def initialize_config(config_type):
         )  # no groups means none have been added through cognito now the admin interface
 
     elif config_type == AdminConfigTypes.RATE_LIMIT:
-        item["data"] = NO_RATE_LIMIT
+        item["data"] = {"limits": NO_RATE_LIMIT, "honorPersonalRateLimit": {"enabled": False}}
 
     elif config_type == AdminConfigTypes.PROMPT_COST_ALERT:
         item["data"] = {
@@ -1234,6 +1236,45 @@ def initialize_config(config_type):
     return item["data"]
 
 
+def _normalize_rate_limit_config(data):
+    """Normalize legacy flat rateLimit data to the new { limits, honorPersonalRateLimit } shape.
+
+    Legacy shapes:
+      - a single { period, rate } object
+      - an array of such objects
+      - new shape but with a plain boolean for honorPersonalRateLimit (intermediate migration)
+
+    New shape: {
+        "limits": <rate_limits>,
+        "honorPersonalRateLimit": { "enabled": bool, "scope": "both"|"apiKey"|"amplifyAccount" }
+    }
+    Missing or falsy honorPersonalRateLimit defaults to { "enabled": False } (preserve existing behavior).
+    """
+    DEFAULT_HONOR = {"enabled": False}
+
+    def _normalize_honor(raw):
+        if isinstance(raw, dict) and "enabled" in raw:
+            result = {"enabled": raw.get("enabled", False)}
+            if "scope" in raw:
+                result["scope"] = raw["scope"]
+            return result
+        if isinstance(raw, bool):
+            # Intermediate migration: plain boolean from previous implementation
+            return {"enabled": raw}
+        return DEFAULT_HONOR
+
+    if isinstance(data, dict) and "limits" in data:
+        return {
+            "limits": data["limits"],
+            "honorPersonalRateLimit": _normalize_honor(data.get("honorPersonalRateLimit"))
+        }
+    # Legacy: flat single object or array — wrap it
+    return {
+        "limits": data,
+        "honorPersonalRateLimit": DEFAULT_HONOR
+    }
+
+
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
@@ -1261,6 +1302,8 @@ def get_user_app_configs(event, context, current_user, name, data):
                         "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False),
                         "webSearchUserMessage": config_data.get("webSearchUserMessage")
                     }
+                elif config_type == AdminConfigTypes.RATE_LIMIT:
+                    configs[config_type.value] = _normalize_rate_limit_config(config_data)
                 else:
                     configs[config_type.value] = config_data
             else:
