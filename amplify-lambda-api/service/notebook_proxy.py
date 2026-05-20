@@ -25,21 +25,27 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from pycommon.authz import validated
+from pycommon.authz import validated, setup_validated, add_api_access_types
+from pycommon.const import APIAccessType
 from pycommon.decorators import required_env_vars
 from pycommon.logger import getLogger
 
-logger = getLogger("notebook_proxy")
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
 
-OPEN_NOTEBOOK_INTERNAL_URL = os.environ.get("OPEN_NOTEBOOK_INTERNAL_URL", "")
+setup_validated(rules, get_permission_checker)
+add_api_access_types([APIAccessType.API_KEY.value])
+
+logger = getLogger("notebook_proxy")
 
 _REQUEST_TIMEOUT = 28.0
 
 
 def _notebook_url(path: str, query_params: dict | None = None) -> str:
     """Build the full internal URL for an Open Notebook API path."""
+    base = os.environ.get("OPEN_NOTEBOOK_INTERNAL_URL", "").rstrip("/")
     normalised = path if path.startswith("/") else f"/{path}"
-    url = f"{OPEN_NOTEBOOK_INTERNAL_URL}/api{normalised}"
+    url = f"{base}/api{normalised}"
     if query_params:
         url = f"{url}?{urlencode(query_params, doseq=True)}"
     return url
