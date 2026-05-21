@@ -1480,7 +1480,24 @@ def refresh_credentials(current_user, integration, credentials):
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    logger.info("Refreshing token for integration: %s", integration)
+
+    # Include the integration's scopes so the refreshed token retains them.
+    # This is critical for integrations like microsoft_exchange that require
+    # elevated scopes (e.g. Mail.Read.Shared) — without passing the scope here,
+    # Azure AD would issue a token that only has the default consented scopes,
+    # causing 403 errors on shared-mailbox Graph API calls after the first
+    # token expiry.
+    integration_provider = provider_case(integration).value
+    integration_scopes = scopes.get(integration_provider, {}).get(integration, [])
+    if integration_scopes:
+        data["scope"] = " ".join(integration_scopes) + " offline_access"
+        logger.info(
+            "Refreshing token for integration %s with scopes: %s",
+            integration, integration_scopes,
+        )
+    else:
+        logger.info("Refreshing token for integration: %s", integration)
+
     response = requests.post(token_uri, data=data)
     if response.status_code != 200:
         logger.error("Failed to refresh token: %s", response.text)

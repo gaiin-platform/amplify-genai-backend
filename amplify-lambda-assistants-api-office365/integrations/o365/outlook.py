@@ -1,34 +1,12 @@
 import json
-import re
 import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.html_utils import html_to_plain_text
 
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
-
-
-def _html_to_plain_text(html: str) -> str:
-    """
-    Strip HTML tags and decode common entities to produce clean plain text.
-    Removes <style>/<script> blocks, preserves paragraph structure via newlines,
-    and collapses excessive whitespace — so agents get readable content instead
-    of raw HTML markup.
-    """
-    # Remove <style> and <script> blocks entirely (including their content)
-    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    # Replace block-level tags with newlines so paragraphs survive stripping
-    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
-    # Strip all remaining tags
-    html = re.sub(r'<[^>]+>', '', html)
-    # Decode common HTML entities
-    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
-               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
-    # Collapse runs of whitespace / blank lines
-    html = re.sub(r'\n[ \t]+', '\n', html)
-    html = re.sub(r'\n{3,}', '\n\n', html)
-    return html.strip()
 
 from pycommon.logger import getLogger
 logger = getLogger(integration_name)
@@ -685,7 +663,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
                 content_type = message.get("body", {}).get("contentType", "text")
                 # Strip HTML markup so agents receive readable plain text
                 if content_type.lower() == "html":
-                    detailed_fields["body"] = _html_to_plain_text(raw_content)
+                    detailed_fields["body"] = html_to_plain_text(raw_content)
                     detailed_fields["bodyType"] = "text"
                 else:
                     detailed_fields["body"] = raw_content
