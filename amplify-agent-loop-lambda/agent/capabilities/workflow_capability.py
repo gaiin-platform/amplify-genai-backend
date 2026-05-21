@@ -175,10 +175,38 @@ class WorkflowCapability(Capability):
     ) -> dict:
         if action_def.metadata and action_def.metadata.get("values", None):
             values = action_def.metadata.get("values")
+
+            # Get the parameter schema from the action definition so we can
+            # coerce each value to the correct type before injecting it.
+            schema_properties = {}
+            if action_def.parameters and "properties" in action_def.parameters:
+                schema_properties = action_def.parameters["properties"]
+
+            args = action.get("args", {})
             for key, value in values.items():
-                args = action.get("args", {})
-                if isinstance(value, str) and value.lower() in ["true", "false"]:
-                    value = value.lower() == "true"
+                expected_type = schema_properties.get(key, {}).get("type")
+
+                if isinstance(value, str):
+                    if value.lower() in ["true", "false"]:
+                        # Always coerce bool strings regardless of schema
+                        value = value.lower() == "true"
+                    elif expected_type == "integer":
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif expected_type == "number":
+                        try:
+                            value = float(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif expected_type == "array":
+                        # A plain string becomes a single-element list.
+                        # An empty string becomes an empty list (omit it).
+                        if value.strip() == "":
+                            continue  # Skip empty array values entirely
+                        else:
+                            value = [value]
 
                 args[key] = value
 
