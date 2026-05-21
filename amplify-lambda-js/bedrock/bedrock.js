@@ -192,17 +192,14 @@ export const chatBedrock = async (chatBody, writable) => {
         });
 
         const response = await client.send( new ConverseStreamCommand(input) );
-        const { messageStream } = response.stream.options;
-        const decoder = new TextDecoder();
 
-        // Process stream with minimal overhead
-        for await (const chunk of messageStream) {
-            const jsonString = decoder.decode(chunk.body);
+        // Process stream events (SDK v3.1000+ returns parsed event objects directly)
+        for await (const event of response.stream) {
+            const jsonString = JSON.stringify(event);
             // Debug: Log chunks that contain tool-related events
             if (jsonString.includes('toolUse') || jsonString.includes('contentBlockStart') || jsonString.includes('contentBlockStop')) {
                 logger.debug(`🔧 Bedrock tool-related chunk: ${jsonString.substring(0, 500)}`);
             }
-            // Write directly as SSE format without re-parsing (already valid JSON)
             writable.write(`data: ${jsonString}\n\n`);
         }
         writable.end();
