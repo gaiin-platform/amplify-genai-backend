@@ -1,24 +1,11 @@
 import json
-import re
 import requests
 from typing import Dict, List, Optional
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.html_utils import html_to_plain_text
 
 integration_name = "microsoft_exchange"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
-
-
-def _html_to_plain_text(html: str) -> str:
-    """Strip HTML tags and decode common entities to produce clean plain text."""
-    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
-    html = re.sub(r'<[^>]+>', '', html)
-    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
-               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
-    html = re.sub(r'\n[ \t]+', '\n', html)
-    html = re.sub(r'\n{3,}', '\n\n', html)
-    return html.strip()
-
 
 from pycommon.logger import getLogger
 logger = getLogger(integration_name)
@@ -69,7 +56,7 @@ def _format_message(msg: Dict, include_body: bool = False) -> Dict:
         raw_body = msg.get("body", {})
         content_type = raw_body.get("contentType", "text")
         content = raw_body.get("content", "")
-        body_content = _html_to_plain_text(content) if content_type == "html" else content
+        body_content = html_to_plain_text(content) if content_type == "html" else content
 
     return {
         "id": msg.get("id"),
@@ -279,6 +266,17 @@ def search_shared_mailbox_messages(
         raise SharedInboxError(f"Network error searching shared mailbox: {str(e)}")
 
 
+def _extract_folder(f: Dict) -> Dict:
+    """Return the standard folder dict from a Graph API folder object."""
+    return {
+        "id": f.get("id"),
+        "displayName": f.get("displayName"),
+        "totalItemCount": f.get("totalItemCount"),
+        "unreadItemCount": f.get("unreadItemCount"),
+        "parentFolderId": f.get("parentFolderId"),
+    }
+
+
 def list_shared_mailbox_folders(
     current_user: str,
     mailbox_email: str,
@@ -288,56 +286,44 @@ def list_shared_mailbox_folders(
     """
     Lists mail folders in a shared Exchange mailbox.
 
+    When include_child_folders is True, child folders are fetched in a single
+    request per top-level folder using Graph API's $expand=childFolders, avoiding
+    the N+1 request pattern of fetching children individually.
+
     Args:
         current_user: Amplify user identifier
         mailbox_email: Email address of the shared mailbox
-        include_child_folders: Whether to recursively include child folders (default: True)
+        include_child_folders: Whether to include child folders (default: True)
         access_token: Amplify API access token
 
     Returns:
-        List of folder dicts (id, displayName, totalItemCount, unreadItemCount, parentFolderId)
+        Flat list of folder dicts (id, displayName, totalItemCount, unreadItemCount, parentFolderId)
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/mailFolders"
-        params = {
-            "$select": "id,displayName,totalItemCount,unreadItemCount,parentFolderId",
+
+        folder_select = "id,displayName,totalItemCount,unreadItemCount,parentFolderId"
+        params: Dict = {
+            "$select": folder_select,
             "$top": 100,
         }
         if include_child_folders:
-            params["includeHiddenFolders"] = "false"
+            # $expand=childFolders fetches one level of children in the same
+            # request, eliminating a separate HTTP call per top-level folder.
+            params["$expand"] = f"childFolders($select={folder_select})"
 
         response = session.get(url, params=params)
         if not response.ok:
             _handle_graph_error(response)
 
         folders = response.json().get("value", [])
-        result = [
-            {
-                "id": f.get("id"),
-                "displayName": f.get("displayName"),
-                "totalItemCount": f.get("totalItemCount"),
-                "unreadItemCount": f.get("unreadItemCount"),
-                "parentFolderId": f.get("parentFolderId"),
-            }
-            for f in folders
-        ]
-
-        if include_child_folders:
-            child_results = []
-            for folder in folders:
-                child_url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/mailFolders/{folder['id']}/childFolders"
-                child_response = session.get(child_url, params={"$select": "id,displayName,totalItemCount,unreadItemCount,parentFolderId", "$top": 100})
-                if child_response.ok:
-                    for child in child_response.json().get("value", []):
-                        child_results.append({
-                            "id": child.get("id"),
-                            "displayName": child.get("displayName"),
-                            "totalItemCount": child.get("totalItemCount"),
-                            "unreadItemCount": child.get("unreadItemCount"),
-                            "parentFolderId": child.get("parentFolderId"),
-                        })
-            result.extend(child_results)
+        result = []
+        for f in folders:
+            result.append(_extract_folder(f))
+            if include_child_folders:
+                for child in f.get("childFolders", []):
+                    result.append(_extract_folder(child))
 
         return result
 

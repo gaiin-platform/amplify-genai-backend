@@ -57,6 +57,6 @@ integrations_list = [
     {
         "name": "Shared Email",
         "id": "microsoft_exchange",
-        "description": "This integration enables access to shared Exchange mailboxes via the Amplify API. Connect this if you have been granted access to a shared mailbox (e.g. support@example.com).",
+        "description": "This integration enables assistants to read, search, and draft emails in shared Exchange mailboxes through Microsoft Graph API.",
     },
 ]
