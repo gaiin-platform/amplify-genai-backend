@@ -99,6 +99,13 @@ def create_oauth_client(integration, client_config, scopes, origin=None):
     raise ValueError(f"Unsupported integration type: {integration}")
 
 
+
+# Integrations that always require prompt=consent regardless of admin consent
+# settings.  These request scopes that the user has not yet individually
+# consented to (e.g. .Shared scopes for shared mailbox access).
+FORCE_CONSENT_INTEGRATIONS = set()
+
+
 def get_authorization_url_and_state(integration, client, scopes=None, admin_consent_provided=False):
     """
     Gets authorization URL and state for either Google or Microsoft clients.
@@ -116,7 +123,11 @@ def get_authorization_url_and_state(integration, client, scopes=None, admin_cons
             auth_params = {"scopes": scopes, "state": state}
 
             # Determine if we should prompt for consent
-            if admin_consent_provided:
+            if integration in FORCE_CONSENT_INTEGRATIONS:
+                # This integration requires explicit user consent for its scopes
+                auth_params["prompt"] = "consent"
+                print(f"Forcing consent prompt for integration: {integration}")
+            elif admin_consent_provided:
                 # Admin has pre-consented, so we don't need to prompt users for consent
                 print("Admin consent provided - skipping user consent prompt")
                 # Don't add prompt parameter - let user sign in without consent
@@ -129,7 +140,7 @@ def get_authorization_url_and_state(integration, client, scopes=None, admin_cons
             # The redirect_uri should be determined from the current environment
             redirect_uri = build_redirect_uri()
             auth_params["redirect_uri"] = redirect_uri
-            
+
             logger.debug("Microsoft OAuth authorization URL params: %s", auth_params)
             authorization_url = client.get_authorization_request_url(**auth_params)
 
@@ -345,7 +356,7 @@ def get_oauth_client_credentials(integration):
     """
     config, _ = get_oauth_integration_parameter(integration)
     client_config = config["web"]
-    client_id = (client_config["client_id"],)
+    client_id = client_config["client_id"]
     client_secret = client_config["client_secret"]
     tenant_id = client_config.get("tenant_id", client_config.get("project_id", ""))
     token_uri = client_config.get("token_uri", None)
@@ -368,16 +379,29 @@ def get_oauth_integration_parameter(integration):
         config = json.loads(response["Parameter"]["Value"])
 
         client_config = config["client_config"]
-        scopes = config["scopes"][integration]
-        return client_config, scopes
+
+        # Try to get scopes from the stored SSM config first; fall back to
+        # the canonical scopes.py definition so that newly-added integrations
+        # work without requiring the admin to re-save OAuth credentials.
+        stored_scopes = config.get("scopes", {})
+        integration_scopes = stored_scopes.get(integration)
+        if integration_scopes is None:
+            integration_scopes = scopes.get(integration_provider, {}).get(integration)
+            if integration_scopes is None:
+                raise KeyError(f"No scopes defined for integration '{integration}'")
+            logger.info(
+                "Scopes for %s not in SSM parameter; using scopes.py definition", integration
+            )
+
+        return client_config, integration_scopes
 
     except ssm.exceptions.ParameterNotFound:
         raise ValueError(
             f"No configuration found for integration '{integration}' in stage '{stage}'"
         )
-    except KeyError:
+    except KeyError as e:
         raise ValueError(
-            f"Invalid configuration format for integration '{integration}' in stage '{stage}'"
+            f"Invalid configuration format for integration '{integration}' in stage '{stage}': {str(e)}"
         )
 
 
@@ -430,6 +454,153 @@ def detect_request_origin(event):
     return origin
 
 
+def _share_token(current_user, target_integration, source_integration):
+    """
+    Share OAuth credentials from source_integration to target_integration.
+
+    Strategy:
+    1. Copy the source credentials to the target slot (guaranteed to work if
+       source exists).
+    2. Attempt to refresh the token with the target integration's broader
+       scopes (e.g. .Shared scopes). If Azure AD admin consent is in place,
+       this yields a properly-scoped token. If not, the copied token still
+       works for the "connect" step (API calls may 403 until admin consent
+       is granted).
+
+    Returns a success response dict, or None only if the source credentials
+    are genuinely missing (user hasn't connected the source integration).
+    """
+    try:
+        oauth_user_table = get_oauth_user_table()
+        integration_provider = provider_case(source_integration).value
+        item_key = f"{current_user}/{integration_provider}"
+
+        response = oauth_user_table.get_item(Key={"user_integration": item_key})
+        record = response.get("Item")
+        if not record or "integrations" not in record:
+            logger.info("No existing record for %s; cannot share token", item_key)
+            return None
+
+        integration_map = record["integrations"]
+        source_creds_encrypted = integration_map.get(source_integration)
+        if not source_creds_encrypted:
+            logger.info("Source integration %s has no credentials stored", source_integration)
+            return None
+
+        # --- Step 1: Copy the encrypted credentials directly ---
+        # This ensures the target integration is always "connected" regardless
+        # of whether the scope-enhanced refresh succeeds.
+        integration_map[target_integration] = source_creds_encrypted
+        timestamp = datetime.now(timezone.utc).isoformat()
+        oauth_user_table.put_item(
+            Item={
+                "user_integration": item_key,
+                "integrations": integration_map,
+                "last_updated": timestamp,
+            }
+        )
+        logger.info(
+            "Copied token from %s to %s for user %s",
+            source_integration, target_integration, current_user,
+        )
+
+        # --- Step 2: Attempt scope-enhanced refresh ---
+        # If this succeeds, we overwrite with a properly-scoped token.
+        # If it fails, the copied token remains (user is still "connected").
+        try:
+            source_creds = decrypt_oauth_data(source_creds_encrypted)
+            if not source_creds:
+                logger.warning("Could not decrypt source creds for scope refresh; using copied token")
+                return {"statusCode": 200, "body": {"token_shared": True, "integration": target_integration}}
+
+            refresh_token = source_creds.get("refresh_token")
+            if not refresh_token:
+                logger.warning("No refresh token in source; using copied token")
+                return {"statusCode": 200, "body": {"token_shared": True, "integration": target_integration}}
+
+            # Get OAuth client credentials and target scopes
+            client_id, client_secret, tenant_id, token_uri = get_oauth_client_credentials(target_integration)
+            target_scopes = scopes.get(integration_provider, {}).get(target_integration, [])
+
+            if not target_scopes or not token_uri:
+                logger.warning("Missing scopes or token_uri for %s; using copied token", target_integration)
+                return {"statusCode": 200, "body": {"token_shared": True, "integration": target_integration}}
+
+            # Refresh with the target integration's scopes
+            refresh_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": " ".join(target_scopes) + " offline_access",
+            }
+            logger.info(
+                "Attempting scope-enhanced refresh for %s with scopes: %s (token_uri=%s, client_id=%s)",
+                target_integration, target_scopes, token_uri, client_id,
+            )
+            token_response = requests.post(token_uri, data=refresh_data)
+
+            if token_response.status_code != 200:
+                logger.warning(
+                    "Scope-enhanced refresh failed (status %s): %s — using copied token",
+                    token_response.status_code, token_response.text,
+                )
+                return {"statusCode": 200, "body": {"token_shared": True, "integration": target_integration}}
+
+            # Success! Store the refreshed token with broader scopes
+            response_data = token_response.json()
+            refreshed_creds = {
+                "token": response_data["access_token"],
+                "refresh_token": response_data.get("refresh_token", refresh_token),
+                "expires_at": get_expiration_time(response_data.get("expires_in", 3600)),
+            }
+
+            encrypted_creds = encrypt_oauth_data(refreshed_creds)
+            integration_map[target_integration] = encrypted_creds
+
+            # Update source refresh token if a new one was issued
+            if response_data.get("refresh_token") and response_data["refresh_token"] != refresh_token:
+                source_creds["refresh_token"] = response_data["refresh_token"]
+                integration_map[source_integration] = encrypt_oauth_data(source_creds)
+                logger.info("Updated source integration %s with new refresh token", source_integration)
+
+            timestamp = datetime.now(timezone.utc).isoformat()
+            oauth_user_table.put_item(
+                Item={
+                    "user_integration": item_key,
+                    "integrations": integration_map,
+                    "last_updated": timestamp,
+                }
+            )
+            logger.info(
+                "Successfully refreshed token with target scopes from %s to %s for user %s",
+                source_integration, target_integration, current_user,
+            )
+
+        except Exception as refresh_err:
+            # Scope-enhanced refresh failed, but the copy already succeeded
+            logger.warning(
+                "Scope-enhanced refresh failed for %s: %s — copied token remains",
+                target_integration, refresh_err,
+            )
+
+        return {
+            "statusCode": 200,
+            "body": {"token_shared": True, "integration": target_integration},
+        }
+
+    except Exception as e:
+        logger.error("Error sharing token from %s to %s: %s", source_integration, target_integration, e)
+        return None
+
+
+# Integrations that share credentials from another integration instead of
+# performing their own OAuth flow.  Maps target → source integration.
+TOKEN_SHARING_INTEGRATIONS = {
+    "microsoft_exchange": "microsoft_outlook",
+}
+
+
 @required_env_vars({
     "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
     "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
@@ -440,6 +611,33 @@ def start_auth(event, context, current_user, name, data):
 
     integration = data["data"]["integration"]
     logger.info("Starting OAuth flow for integration: %s", integration)
+
+    # --- Token sharing shortcut ---
+    # Some integrations reuse credentials from another already-connected
+    # integration rather than requiring a separate OAuth consent flow.
+    # If sharing fails, we return an error rather than falling through to a
+    # normal OAuth flow (which would trigger an "Approval required" popup on
+    # tenants with admin consent workflow policies).
+    source_integration = TOKEN_SHARING_INTEGRATIONS.get(integration)
+    if source_integration:
+        result = _share_token(current_user, integration, source_integration)
+        if result:
+            return result
+        # Token sharing failed — do NOT fall through to OAuth.
+        # Tell the user to connect the source integration first.
+        logger.warning(
+            "Token sharing failed for %s (source %s not connected or refresh failed); "
+            "returning error instead of falling back to OAuth",
+            integration, source_integration,
+        )
+        return {
+            "statusCode": 400,
+            "body": {
+                "error": True,
+                "message": f"Please connect the {source_integration.replace('_', ' ').title()} "
+                           f"integration first, then try connecting {integration.replace('_', ' ').title()} again.",
+            },
+        }
 
     # Detect request origin for dynamic callback URL selection
     origin = detect_request_origin(event)
@@ -1008,19 +1206,52 @@ def delete_integration(current_user, integration):
         "required": ["success"],
     },
 )
+def _user_has_integration(current_user: str, provider: str, integration_id: str) -> bool:
+    """
+    Returns True if current_user has a stored (non-expired) token for integration_id
+    under the given provider key in OAUTH_USER_TABLE.
+    """
+    try:
+        oauth_user_table = get_oauth_user_table()
+        item_key = f"{current_user}/{provider}"
+        response = oauth_user_table.get_item(Key={"user_integration": item_key})
+        record = response.get("Item")
+        if record and "integrations" in record:
+            return integration_id in record["integrations"]
+    except Exception as e:
+        logger.warning("Could not check user integration %s/%s for %s: %s", provider, integration_id, current_user, str(e))
+    return False
+
+
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("list_integrations")
 def get_supported_integrations(event, context, current_user, name, data):
     supported_integrations = get_available_integrations()
-    if supported_integrations:
-        return {"success": True, "data": supported_integrations}
-    else:
+    if not supported_integrations:
         return {
             "success": False,
             "message": f"Error retrieving user integrations from Admin Table",
         }
+
+    # microsoft_exchange (Shared Email) is only relevant for users who have already
+    # connected their personal Outlook — it requires a Microsoft account to be linked
+    # and the user to have been granted access to at least one shared mailbox.
+    # Hide it from the list until the user has microsoft_outlook connected.
+    microsoft_integrations = supported_integrations.get("microsoft", [])
+    if microsoft_integrations:
+        has_outlook = _user_has_integration(current_user, "microsoft", "microsoft_outlook")
+        if not has_outlook:
+            supported_integrations["microsoft"] = [
+                i for i in microsoft_integrations if i.get("id") != "microsoft_exchange"
+            ]
+            # If filtering emptied the list, clean up the key
+            if not supported_integrations["microsoft"]:
+                del supported_integrations["microsoft"]
+
+    return {"success": True, "data": supported_integrations}
 
 
 def get_available_integrations():
@@ -1050,48 +1281,6 @@ def get_available_integrations():
     except Exception as e:
         logger.error("Error retrieving user integrations: %s", str(e))
         return None
-
-
-def get_provider_settings(integration):
-    """
-    Retrieve provider settings for a given integration from the admin config.
-
-    Args:
-        integration: Integration identifier (e.g., 'microsoft_calendar', 'google_drive')
-
-    Returns:
-        dict: Provider settings for the integration's provider, or empty dict if not found
-
-    Example return for Microsoft:
-        {"azure_admin_consent_provided": false}
-    """
-    INTEGRATIONS = "integrations"
-
-    try:
-        # Determine the provider from the integration
-        integration_provider = provider_case(integration).value
-        # Use lowercase to match storage format (microsoft, google, etc.)
-        provider_key = integration_provider.lower()
-
-        dynamodb = boto3.resource("dynamodb")
-        admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
-
-        response = admin_table.get_item(Key={"config_id": INTEGRATIONS})
-
-        if "Item" in response:
-            # Provider settings are stored at the top level, not inside data
-            all_provider_settings = response["Item"].get("provider_settings", {})
-            # Get settings for this specific provider (lowercase key)
-            provider_settings = all_provider_settings.get(provider_key, {})
-            print(f"Provider settings for {provider_key}: {provider_settings}")
-            return provider_settings
-
-        print(f"No integrations config found in DynamoDB")
-        return {}
-
-    except Exception as e:
-        print(f"Error retrieving provider settings for {integration}: {str(e)}")
-        return {}
 
 
 def get_provider_settings(integration):
