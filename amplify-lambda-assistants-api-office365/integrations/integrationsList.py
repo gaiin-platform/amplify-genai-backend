@@ -54,4 +54,9 @@ integrations_list = [
         "id": "microsoft_user_groups",
         "description": "This integration enables assistants to manage and query Microsoft user groups via the Microsoft Graph API.",
     },
+    {
+        "name": "Shared Email",
+        "id": "microsoft_exchange",
+        "description": "This integration enables access to shared Exchange mailboxes via the Amplify API. Connect this if you have been granted access to a shared mailbox (e.g. support@example.com).",
+    },
 ]
