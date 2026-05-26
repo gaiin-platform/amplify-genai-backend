@@ -110,6 +110,7 @@ class TasksMessageHandler(MessageHandler):
                     "timestamp": runtime.isoformat(),
                     "requestContent": {**task_data},
                     "files": [],
+                    **({"model": task_data["model"]} if task_data.get("model") else {}),
                     **self._resolved_object_info(
                         user_id, task_data.get("objectInfo", {}), task_type, api_key
                     ),
@@ -151,10 +152,14 @@ class TasksMessageHandler(MessageHandler):
             logger.error("Error in onFailure: event is None, cannot extract task data")
             return
         
-        # Extract task info from event metadata  
+        # Extract task info — event may be the original SQS message body
+        # (has taskData.user / taskData.taskId) OR the processed agent event_payload
+        # (has currentUser / metadata.requestContent with user + taskId).
         task_data = event.get("taskData", {})
+        if not task_data:
+            task_data = event.get("metadata", {}).get("requestContent", {})
         logger.debug(f"Task data: {task_data}")
-        user_id = task_data.get("user")
+        user_id = task_data.get("user") or event.get("currentUser")
         task_id = task_data.get("taskId")
 
         # Try to extract sessionId - it might be available in task_data or we can reconstruct it

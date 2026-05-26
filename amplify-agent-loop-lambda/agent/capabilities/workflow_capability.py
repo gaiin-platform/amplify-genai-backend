@@ -47,9 +47,7 @@ class ParameterizedActionRegistry(ActionRegistry):
 
         for param_name, param_value in args.items():
             if param_name in updated_parameters.get("properties", {}):
-                updated_parameters["properties"][param_name][
-                    "description"
-                ] = param_value
+                updated_parameters["properties"][param_name]["description"] = param_value
 
         return Action(
             name=action.name,
@@ -173,14 +171,12 @@ class WorkflowCapability(Capability):
     def process_action(
         self, agent, action_context: ActionContext, action_def: Action, action: dict
     ) -> dict:
+        schema_properties = {}
+        if action_def.parameters and "properties" in action_def.parameters:
+            schema_properties = action_def.parameters["properties"]
+
         if action_def.metadata and action_def.metadata.get("values", None):
             values = action_def.metadata.get("values")
-
-            # Get the parameter schema from the action definition so we can
-            # coerce each value to the correct type before injecting it.
-            schema_properties = {}
-            if action_def.parameters and "properties" in action_def.parameters:
-                schema_properties = action_def.parameters["properties"]
 
             args = action.get("args", {})
             for key, value in values.items():
@@ -210,7 +206,113 @@ class WorkflowCapability(Capability):
 
                 args[key] = value
 
+        # After values are injected, check if any required params are still missing.
+        # Rather than bouncing back through the retry loop, make a single focused LLM
+        # call to synthesize each missing value from the conversation context right now.
+        required_params = action_def.parameters.get("required", []) if action_def.parameters else []
+        logger.info("Required params for %s: %s", action_def.name, required_params)
+        if required_params:
+            args = action.get("args", {})
+            missing = [p for p in required_params if p not in args or args[p] is None or args[p] == ""]
+            if missing:
+                logger.info(
+                    "Auto-filling missing required param(s) %s for %s via focused LLM call",
+                    missing, action_def.name
+                )
+                memory = action_context.get("memory")
+                history = memory.get_memories() if memory else []
+                # Only keep non-system messages so the LLM sees the work done so far
+                context_messages = [m for m in history if m.get("type") not in ("system", "prompt")]
+
+                for param_name in missing:
+                    param_schema = schema_properties.get(param_name, {})
+                    param_desc = param_schema.get("description", f"Value for '{param_name}'")
+                    param_type = param_schema.get("type", "string")
+
+                    fill_prompt = [
+                        {
+                            "role": "system",
+                            "content": (
+                                f"You are filling in a single missing required parameter for the tool '{action_def.name}'.\n\n"
+                                f"Parameter name: {param_name}\n"
+                                f"Parameter type: {param_type}\n"
+                                f"Parameter description: {param_desc}\n\n"
+                                f"Review the conversation history below and produce the value for this parameter. "
+                                f"Return ONLY the raw value — no labels, no explanation, no markdown fences."
+                            ),
+                        },
+                        *[
+                            {"role": "assistant" if m.get("type") == "assistant" else "user", "content": (
+                                json.dumps(m["content"]) if isinstance(m.get("content"), dict) else str(m.get("content", ""))
+                            )}
+                            for m in context_messages
+                            if m.get("content")
+                        ],
+                    ]
+
+                    value = prompt_llm_with_messages(
+                        action_context=action_context, prompt=fill_prompt
+                    )
+
+                    if value and str(value).strip():
+                        args[param_name] = value.strip()
+                        logger.info(
+                            "Auto-filled '%s' for %s (%d chars)",
+                            param_name, action_def.name, len(str(value))
+                        )
+                    else:
+                        logger.warning(
+                            "Auto-fill returned empty value for '%s' in %s — will proceed and let pre_execute_action handle it",
+                            param_name, action_def.name
+                        )
+
+                action["args"] = args
+
         return action
+
+    def pre_execute_action(
+        self, agent, action_context: ActionContext, action_def: Action, action: dict
+    ) -> dict | None:
+        """Validate required parameters are present before hitting the API.
+        Returns a synthetic error result if any required params are missing so the
+        retry logic can immediately give the LLM clear, targeted feedback."""
+
+        # Check wrong-tool FIRST — if the model called the wrong tool entirely,
+        # report that directly instead of confusing param-validation noise.
+        called_tool = action.get("tool", "") if isinstance(action, dict) else ""
+        expected_tool = self.current_step.tool if self.current_step else None
+        if expected_tool and called_tool and called_tool != expected_tool and called_tool != "terminate":
+            error_msg = (
+                f"Wrong tool: you called '{called_tool}' but the current step requires "
+                f"'{expected_tool}'. You MUST call '{expected_tool}' — do not call '{called_tool}'."
+            )
+            logger.warning("Wrong tool called: expected '%s', got '%s'", expected_tool, called_tool)
+            return {
+                "tool": called_tool,
+                "tool_executed": False,
+                "result": {"success": False, "message": error_msg},
+            }
+
+        # process_action already auto-fills missing required params via LLM.
+        # This is a last-resort safety check only — if auto-fill produced nothing,
+        # surface a clear error rather than silently calling the API with missing args.
+        required_params = action_def.parameters.get("required", []) if action_def.parameters else []
+        if required_params:
+            args = action.get("args", {})
+            missing = [p for p in required_params if p not in args or args[p] is None or args[p] == ""]
+            if missing:
+                missing_str = ", ".join(f"'{p}'" for p in missing)
+                error_msg = (
+                    f"Missing required parameter(s): {missing_str}. "
+                    f"You MUST generate and include {missing_str} with actual content in your tool call. "
+                    f"Do NOT omit or defer these parameters — provide the full value inline now."
+                )
+                logger.warning("Pre-execution safety check failed for %s: %s", action_def.name, error_msg)
+                return {
+                    "tool": action_def.name,
+                    "tool_executed": False,
+                    "result": {"success": False, "message": error_msg},
+                }
 
     def process_response(
         self, agent, action_context: ActionContext, response: str
@@ -268,19 +370,48 @@ class WorkflowCapability(Capability):
                 self.retry_count[step_id] += 1
                 self.remaining_steps.append(self.current_step)
 
-                # Log retry information in memory
+                # Extract the clearest error message available
                 memory = action_context.get("memory")
-                if memory:
-
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            error_message = result["error"]
+                if isinstance(result, dict):
+                    if "error" in result:
+                        error_message = result["error"]
+                    elif (
+                        "result" in result
+                        and isinstance(result["result"], dict)
+                    ):
+                        inner = result["result"]
+                        # Handle nested data.result pattern from custom API wrapper
+                        if "message" in inner:
+                            error_message = inner["message"]
                         elif (
-                            "result" in result
-                            and isinstance(result["result"], dict)
-                            and "message" in result["result"]
+                            "data" in inner
+                            and isinstance(inner["data"], dict)
+                            and "result" in inner["data"]
+                            and isinstance(inner["data"]["result"], dict)
+                            and "message" in inner["data"]["result"]
                         ):
-                            error_message = result["result"]["message"]
+                            error_message = inner["data"]["result"]["message"]
+
+                # Inject a retry instruction into memory so the LLM gets clear feedback.
+                if memory:
+                    called_tool = action.get("tool", "") if isinstance(action, dict) else ""
+                    expected_tool = self.current_step.tool
+                    wrong_tool = bool(called_tool and called_tool != expected_tool and called_tool != "terminate")
+
+                    if wrong_tool:
+                        retry_instruction = (
+                            f"⚠️ WRONG TOOL — You called '{called_tool}' but the current step requires "
+                            f"'{expected_tool}'. You MUST call '{expected_tool}' in your next response. "
+                            f"Do NOT call '{called_tool}' again until it is the active step."
+                        )
+                    else:
+                        retry_instruction = (
+                            f"⚠️ RETRY REQUIRED — '{self.current_step.tool}' failed with error: {error_message}\n\n"
+                            f"Please fix the issue and try again, making sure all required parameters have correct values."
+                        )
+
+                    memory.add_memory({"type": "user", "content": retry_instruction})
+                    logger.info("Injected retry instruction into memory for step %s", self.current_step.tool)
 
                 send_event = action_context.incremental_event()
                 # Send an event about the retry
