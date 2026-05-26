@@ -379,6 +379,7 @@ def format_event(event: Dict, times_already_local: bool = False) -> Dict:
             if event.get("onlineMeeting")
             else ""
         ),
+        "categories": event.get("categories", []),
     }
 
 
