@@ -556,6 +556,7 @@ def get_presigned_urls(current_user, conversations, chunk_size=400):
 
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.DELETE_ITEM],
     # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
 })
 @validated("delete")
@@ -569,11 +570,14 @@ def delete_conversation(event, context, current_user, name, data):
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
 
+    deleted_from_s3 = False
+
     # Try to delete from consolidation bucket first (new format)
     consolidation_key = f"conversations/{current_user}/{conversation_id}"
     try:
         s3.delete_object(Bucket=consolidation_bucket, Key=consolidation_key)
-        return {"success": True, "message": "Successfully deleted conversation from consolidation bucket"}
+        logger.info("Deleted from consolidation bucket")
+        deleted_from_s3 = True
     except (BotoCoreError, ClientError) as e:
         if e.response["Error"]["Code"] != "NoSuchKey":
             logger.error("Unexpected error deleting from consolidation bucket: %s", str(e))
@@ -584,11 +588,12 @@ def delete_conversation(event, context, current_user, name, data):
             }
 
     # Fallback to legacy bucket if not found in consolidation bucket
-    if conversations_bucket:
+    if not deleted_from_s3 and conversations_bucket:
         legacy_key = f"{current_user}/{conversation_id}"
         try:
             s3.delete_object(Bucket=conversations_bucket, Key=legacy_key)
-            return {"success": True, "message": "Successfully deleted conversation from legacy bucket"}
+            logger.info("Deleted from legacy bucket")
+            deleted_from_s3 = True
         except (BotoCoreError, ClientError) as e:
             logger.error("Failed to delete from legacy bucket: %s", str(e))
             return {
@@ -596,16 +601,34 @@ def delete_conversation(event, context, current_user, name, data):
                 "message": "Failed to delete conversation from legacy bucket",
                 "error": str(e),
             }
-    
+
+    if deleted_from_s3:
+        # Also remove from the metadata cache so the conversation no longer appears in listings
+        try:
+            dynamodb = boto3.resource("dynamodb")
+            table = dynamodb.Table(os.environ["CONVERSATION_METADATA_TABLE"])
+            table.delete_item(
+                Key={
+                    "user_id": current_user,
+                    "conversation_id": conversation_id,
+                }
+            )
+            logger.info("Deleted from metadata cache table")
+        except Exception as e:
+            logger.warning("Failed to delete from metadata cache (non-blocking): %s", str(e))
+
+        return {"success": True, "message": "Successfully deleted conversation"}
+
     # Conversation not found in either bucket
     return {
         "success": False,
         "message": "Conversation not found in either bucket",
-        "error": "NoSuchKey"
+        "error": "NoSuchKey",
     }
 
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.DELETE_ITEM],
     # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
 })
 @validated("delete_multiple_conversations")
@@ -614,6 +637,8 @@ def delete_multiple_conversations(event, context, current_user, name, data):
     conversation_ids = data["conversationIds"]
 
     s3 = boto3.client("s3")
+    dynamodb = boto3.resource("dynamodb")
+    metadata_table = dynamodb.Table(os.environ["CONVERSATION_METADATA_TABLE"])
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
 
@@ -623,12 +648,11 @@ def delete_multiple_conversations(event, context, current_user, name, data):
 
         for conv_id in conversation_ids:
             deleted = False
-            
+
             # Try to delete from consolidation bucket first (new format)
             consolidation_key = f"conversations/{current_user}/{conv_id}"
             try:
                 s3.delete_object(Bucket=consolidation_bucket, Key=consolidation_key)
-                successful_deletions.append(conv_id)
                 deleted = True
             except (BotoCoreError, ClientError) as e:
                 if e.response["Error"]["Code"] != "NoSuchKey":
@@ -641,12 +665,26 @@ def delete_multiple_conversations(event, context, current_user, name, data):
                 legacy_key = f"{current_user}/{conv_id}"
                 try:
                     s3.delete_object(Bucket=conversations_bucket, Key=legacy_key)
-                    successful_deletions.append(conv_id)
                     deleted = True
                 except (BotoCoreError, ClientError) as e:
                     logger.error("Failed to delete %s from legacy bucket: %s", conv_id, str(e))
                     failed_deletions.append(conv_id)
-            elif not deleted:
+                    continue
+
+            if deleted:
+                successful_deletions.append(conv_id)
+                # Also remove from the metadata cache so the conversation no longer appears in listings
+                try:
+                    metadata_table.delete_item(
+                        Key={
+                            "user_id": current_user,
+                            "conversation_id": conv_id,
+                        }
+                    )
+                    logger.info("Deleted %s from metadata cache table", conv_id)
+                except Exception as e:
+                    logger.warning("Failed to delete %s from metadata cache (non-blocking): %s", conv_id, str(e))
+            else:
                 # Not found in either bucket
                 logger.warning("Conversation %s not found in either bucket", conv_id)
                 failed_deletions.append(conv_id)
