@@ -1,3 +1,4 @@
+import base64
 import json
 import requests
 from typing import Dict, List, Optional
@@ -218,6 +219,130 @@ def get_shared_mailbox_attachments(
 
     except requests.RequestException as e:
         raise SharedInboxError(f"Network error fetching shared mailbox attachments: {str(e)}")
+
+
+def download_shared_mailbox_attachment(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    attachment_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Downloads a specific attachment from a message in a shared Exchange mailbox.
+
+    For files under 7MB, returns base64-encoded content directly in the response.
+    For larger files, returns a temporary download URL to avoid API Gateway limits
+    (API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
+    so 7MB is the safe threshold).
+
+    Handles three Graph API attachment types:
+    - fileAttachment: Returns base64 contentBytes or a download URL
+    - itemAttachment: Returns guidance (embedded Outlook items require special handling)
+    - referenceAttachment: Returns the sourceUrl to the cloud-stored file
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox
+        message_id: Graph API message ID
+        attachment_id: Graph API attachment ID (from list_shared_mailbox_attachments)
+        access_token: Amplify API access token
+
+    Returns:
+        Dict with attachment content or download URL and metadata
+
+    Raises:
+        SharedInboxError: If the attachment cannot be fetched
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+
+        metadata_url = (
+            f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments/{attachment_id}"
+        )
+        metadata_response = session.get(metadata_url)
+
+        if not metadata_response.ok:
+            if metadata_response.status_code == 404:
+                raise SharedInboxError("Attachment not found")
+            _handle_graph_error(metadata_response)
+
+        attachment_metadata = metadata_response.json()
+        attachment_type = attachment_metadata.get("@odata.type")
+        file_size = attachment_metadata.get("size", 0)
+
+        # API Gateway has a 10MB response limit; base64 adds ~33% overhead,
+        # so anything over 7MB is returned as a download URL instead.
+        SIZE_LIMIT_BYTES = 7 * 1024 * 1024  # 7MB
+
+        if attachment_type == "#microsoft.graph.fileAttachment":
+            result = {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": attachment_metadata.get("contentType"),
+                "size": file_size,
+                "isInline": attachment_metadata.get("isInline", False),
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime"),
+            }
+
+            if file_size <= SIZE_LIMIT_BYTES:
+                # Small file — fetch raw bytes and return as base64
+                content_url = (
+                    f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
+                    f"/attachments/{attachment_id}/$value"
+                )
+                content_response = session.get(content_url)
+
+                if content_response.ok:
+                    result["contentBytes"] = base64.b64encode(content_response.content).decode("utf-8")
+                    result["deliveryMethod"] = "direct_content"
+                else:
+                    # Fallback: contentBytes is included in the metadata response for small attachments
+                    result["contentBytes"] = attachment_metadata.get("contentBytes")
+                    result["deliveryMethod"] = "metadata_content"
+            else:
+                # Large file — caller must fetch using the download URL with auth headers
+                result["downloadUrl"] = (
+                    f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
+                    f"/attachments/{attachment_id}/$value"
+                )
+                result["deliveryMethod"] = "download_url"
+                result["note"] = (
+                    f"File too large ({file_size:,} bytes) for direct API response. "
+                    f"Use downloadUrl with an Authorization: Bearer header."
+                )
+
+            return result
+
+        elif attachment_type == "#microsoft.graph.itemAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "application/outlook-item",
+                "size": file_size,
+                "isInline": False,
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime"),
+                "deliveryMethod": "unsupported",
+                "error": "Item attachments (embedded Outlook items) require special handling",
+            }
+
+        elif attachment_type == "#microsoft.graph.referenceAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "reference/link",
+                "isInline": False,
+                "sourceUrl": attachment_metadata.get("sourceUrl"),
+                "providerType": attachment_metadata.get("providerType"),
+                "deliveryMethod": "external_link",
+                "note": "Reference attachment — use sourceUrl to access the cloud-stored file",
+            }
+
+        else:
+            raise SharedInboxError(f"Unsupported attachment type: {attachment_type}")
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error downloading shared mailbox attachment: {str(e)}")
 
 
 def search_shared_mailbox_messages(
