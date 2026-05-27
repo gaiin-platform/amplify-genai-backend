@@ -161,6 +161,7 @@ from integrations.o365.shared_inbox import (
     list_shared_mailbox_messages,
     get_shared_mailbox_message,
     get_shared_mailbox_attachments,
+    download_shared_mailbox_attachment,
     search_shared_mailbox_messages,
     list_shared_mailbox_folders,
     create_shared_mailbox_draft,
@@ -4031,6 +4032,39 @@ def get_shared_mailbox_attachments_handler(current_user, data):
         get_shared_mailbox_attachments,
         mailbox_email=None,
         message_id=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/download_shared_mailbox_attachment",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftDownloadSharedMailboxAttachment",
+    description="Downloads a specific attachment from a message in a shared Exchange mailbox. Files under 7MB return base64-encoded content directly. Larger files return a download URL to avoid API Gateway limits.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID",
+            },
+            "attachment_id": {
+                "type": "string",
+                "description": "Graph API attachment ID (obtained from get_shared_mailbox_attachments)",
+            },
+        },
+        "required": ["mailbox_email", "message_id", "attachment_id"],
+    },
+)
+def download_shared_mailbox_attachment_handler(current_user, data):
+    return common_handler(
+        download_shared_mailbox_attachment,
+        mailbox_email=None,
+        message_id=None,
+        attachment_id=None,
     )(current_user, data)
 
 
