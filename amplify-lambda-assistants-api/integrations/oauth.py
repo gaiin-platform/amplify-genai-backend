@@ -1093,7 +1093,34 @@ def list_user_integrations(supported_integrations, current_user):
                             refresh_result = refresh_credentials(current_user, integration_id, credentials)
 
                             if not refresh_result.get("success"):
-                                logger.warning("Failed to refresh token for %s, marking as disconnected", integration_id)
+                                # For token-sharing integrations (e.g. microsoft_exchange shares
+                                # credentials from microsoft_outlook), a failed refresh can be
+                                # recovered by re-sharing from the source integration.  This handles
+                                # the common case where the copied token expired but the source
+                                # integration is still active — rather than marking the integration
+                                # as disconnected, we transparently re-share and keep it connected.
+                                source_integration = TOKEN_SHARING_INTEGRATIONS.get(integration_id)
+                                if source_integration:
+                                    logger.info(
+                                        "Refresh failed for token-sharing integration %s; "
+                                        "attempting re-share from %s",
+                                        integration_id, source_integration,
+                                    )
+                                    reshare_result = _share_token(current_user, integration_id, source_integration)
+                                    if reshare_result:
+                                        logger.info(
+                                            "Re-share succeeded for %s; keeping as connected",
+                                            integration_id,
+                                        )
+                                        connected_list.append(integration_id)
+                                        continue
+                                    logger.warning(
+                                        "Re-share also failed for %s (source %s unavailable); "
+                                        "marking as disconnected",
+                                        integration_id, source_integration,
+                                    )
+                                else:
+                                    logger.warning("Failed to refresh token for %s, marking as disconnected", integration_id)
                                 continue  # Skip this integration (show as disconnected)
 
                             logger.info("Successfully refreshed token for %s", integration_id)
