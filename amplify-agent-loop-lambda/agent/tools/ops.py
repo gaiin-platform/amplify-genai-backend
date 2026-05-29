@@ -295,7 +295,7 @@ def execute_api_call(
 def send_post_request(path, payload, token):
     try:
         logger.info(
-            "Sending POST request to %s with payload: %s and token: %s", path, payload, token
+            "Sending POST request to %s with payload: %s", path, payload
         )
 
         url_base = os.environ.get("API_BASE_URL")

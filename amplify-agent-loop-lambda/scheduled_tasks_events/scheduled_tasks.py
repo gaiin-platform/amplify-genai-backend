@@ -162,10 +162,15 @@ class TasksMessageHandler(MessageHandler):
         user_id = task_data.get("user") or event.get("currentUser")
         task_id = task_data.get("taskId")
 
-        # Try to extract sessionId - it might be available in task_data or we can reconstruct it
-        session_id = task_data.get("sessionId")
+        # Try to extract sessionId - check all possible locations in the event before falling back
+        session_id = (
+            task_data.get("sessionId")
+            or event.get("sessionId")
+            or event.get("metadata", {}).get("eventId")
+        )
         if not session_id and task_id:
-            # Try to reconstruct sessionId using short UUID format (best effort)
+            # Last resort: generate a new ID (will create a new entry instead of updating existing)
+            logger.warning("Could not find sessionId for task %s — failure will create a new record", task_id)
             session_id = f"execution-{str(uuid.uuid4())}"
         
         # Add sessionId to task_data for consistency
