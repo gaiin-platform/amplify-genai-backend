@@ -105,8 +105,6 @@ provider:
     role:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        # Lets VPC-attached functions (notebook_chat_stream) manage ENIs.
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - !Ref LambdaJSIAMPolicy
         - !Ref BedrockIAMPolicy
         #- arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_JS_IAM_POLICY_NAME}
@@ -130,30 +128,6 @@ functions:
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
-
-  # Streaming SSE proxy for Notebook chat. Function URL + RESPONSE_STREAM (like
-  # `chat` above) so tokens stream to the browser, but VPC-attached so it can
-  # reach the internal Open Notebook service. The browser hits this URL directly
-  # (frontend NOTEBOOK_CHAT_STREAM_ENDPOINT); it forwards the Bearer token and
-  # pipes /api/chat/execute/stream back unmodified.
-  notebook_chat_stream:
-    handler: notebookChatStream.handler
-    memorySize: 1024
-    timeout: 900
-    tracing: Active
-    url:
-      cors: true
-      invokeMode: RESPONSE_STREAM
-    environment:
-      OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}
-      OPEN_NOTEBOOK_HOST: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_HOST, ''}
-      DISABLE_SSL_VERIFY: ${ssm:/amplify/${sls:stage}/DISABLE_SSL_VERIFY, ''}
-    vpc:
-      securityGroupIds:
-        - !Ref NotebookChatStreamSG
-      subnetIds:
-        - ${self:custom.stageVars.NOTEBOOK_VPC_SUBNET_ONE, ''}
-        - ${self:custom.stageVars.NOTEBOOK_VPC_SUBNET_TWO, ''}
 
   # UNCOMMENT ONLY FOR DEPLOYMENTS THAT DO NOT SUPPORT STREAMING TO THE CLIENT
   # api_g_chat:
@@ -248,28 +222,6 @@ functions:
 
 resources:
   Resources:
-
-    # Security group for the notebook chat streaming Lambda — egress to the Open
-    # Notebook VPC. Mirrors NotebookProxyLambdaSG in amplify-lambda-api. NOTE:
-    # Open Notebook's ingress security group must allow traffic from this SG (or
-    # from the notebook VPC CIDR) on 80/443.
-    NotebookChatStreamSG:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Notebook chat stream Lambda - egress to Open Notebook VPC
-        VpcId: ${self:custom.stageVars.NOTEBOOK_VPC_ID, ''}
-        SecurityGroupEgress:
-          - IpProtocol: tcp
-            FromPort: 80
-            ToPort: 80
-            CidrIp: 0.0.0.0/0
-          - IpProtocol: tcp
-            FromPort: 443
-            ToPort: 443
-            CidrIp: 0.0.0.0/0
-        Tags:
-          - Key: Name
-            Value: ${self:service}-${sls:stage}-notebook-chat-stream-sg
 
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
