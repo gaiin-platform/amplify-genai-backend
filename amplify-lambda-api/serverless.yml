@@ -71,6 +71,10 @@ provider:
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+
+    # Open Notebook proxy (dev only — SSM param not present in staging/prod)
+    OPEN_NOTEBOOK_HOST: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_HOST, ''}
+    DISABLE_SSL_VERIFY: ${ssm:/amplify/${sls:stage}/DISABLE_SSL_VERIFY, ''}
     
   iam:
     role:
