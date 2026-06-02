@@ -151,6 +151,7 @@ functions:
   # provides real-time usage information via API gateway
   mtd_cost_reporter:
     handler: billing/mtd.handler
+    timeout: 30
     memorySize: 128
     events:
       - http:
@@ -160,6 +161,7 @@ functions:
 
   api_key_user_cost:
     handler: billing/mtd.apiKeyUserCostHandler
+    timeout: 30
     memorySize: 128
     events:
       - http:
@@ -179,6 +181,7 @@ functions:
 
   list_all_user_mtd_costs:
     handler: billing/mtd.listAllUserMtdCostsHandler
+    timeout: 30
     memorySize: 128
     events:
       - http:
@@ -188,6 +191,7 @@ functions:
         
   list_user_mtd_costs:
     handler: billing/mtd.listUserMtdCostsHandler
+    timeout: 30
     memorySize: 128
     events:
       - http:
