@@ -118,8 +118,10 @@ def register_workflow_template(
                     logger.debug("Cleaned Step %d type: %s, content: %s", i, type(step), str(step)[:100])
         
         # Save the cleaned template to USER_STORAGE_TABLE (new approach - no more S3)
+        # Only store {steps} to avoid accumulating wrapper metadata on re-save cycles
         app_id = get_app_id()
-        result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
+        template_to_save = {"steps": cleaned_template["steps"]} if "steps" in cleaned_template else cleaned_template
+        result = save_user_data(access_token, app_id, "workflow-templates", template_id, template_to_save)
         
         if result is None:
             raise RuntimeError("Failed to save workflow template to USER_STORAGE_TABLE")
@@ -203,7 +205,7 @@ def get_workflow_template(
                     template_data = _fix_python_dict_strings_in_data(template_data)
                     
                     # Flatten steps for consistency
-                    if "data" in template_data and "steps" in template_data["data"]:
+                    if "steps" not in template_data and "data" in template_data and "steps" in template_data["data"]:
                         template_data["steps"] = template_data["data"]["steps"]
                         logger.info(f"Fallback flattened {len(template_data['steps']) if isinstance(template_data['steps'], list) else 'non-list'} workflow steps")
                     
@@ -258,7 +260,7 @@ def get_workflow_template(
             template = _fix_python_dict_strings_in_data(template)
             
             # Extract steps from nested structure for USER_STORAGE_TABLE workflows
-            if "data" in template and "steps" in template["data"]:
+            if "steps" not in template and "data" in template and "steps" in template["data"]:
                 # Flatten the structure - move steps to root level
                 template["steps"] = template["data"]["steps"]
                 logger.info(f"Flattened {len(template['steps']) if isinstance(template['steps'], list) else 'non-list'} workflow steps to root level")
@@ -500,9 +502,11 @@ def update_workflow_template(
             #  Clean any Python dict strings from the template before updating
             logger.info("Applying Python dict string safety fix to updated template: %s", template_id)
             cleaned_template = _fix_python_dict_strings_in_data(template)
-            
+
+            # Only store {steps} to avoid accumulating wrapper metadata on re-save cycles
             app_id = get_app_id()
-            result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
+            template_to_save = {"steps": cleaned_template["steps"]} if "steps" in cleaned_template else cleaned_template
+            result = save_user_data(access_token, app_id, "workflow-templates", template_id, template_to_save)
             
             if result is None:
                 return {

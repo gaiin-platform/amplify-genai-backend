@@ -45,7 +45,7 @@ def generate_response(
             response = completion(
                 model=model,
                 messages=messages,
-                max_completion_tokens=1024,
+                max_completion_tokens=32768,
             )
             result = response.choices[0].message.content
         else:
@@ -54,7 +54,7 @@ def generate_response(
                 model=model,
                 messages=messages,
                 tools=tools,
-                max_completion_tokens=1024,
+                max_completion_tokens=4096,
             )
 
             if response.choices[0].message.tool_calls:

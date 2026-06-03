@@ -52,6 +52,11 @@ provider:
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
+    OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}
+    NOTEBOOK_VPC_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_SUBNET_ONE}
+    NOTEBOOK_VPC_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_SUBNET_TWO}
+    NOTEBOOK_VPC_ID: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_ID}
+
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket #Marked for future deletion
@@ -66,6 +71,11 @@ provider:
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    POLL_STATUS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/POLL_STATUS_TABLE}
+
+    # Open Notebook proxy (dev only — SSM param not present in staging/prod)
+    OPEN_NOTEBOOK_HOST: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_HOST, ''}
+    DISABLE_SSL_VERIFY: ${ssm:/amplify/${sls:stage}/DISABLE_SSL_VERIFY, ''}
     
   iam:
     role:
@@ -165,7 +175,55 @@ functions:
           path: apiKeys/register_ops
           method: post
           cors: true
-        
+
+  # ---------------------------------------------------------------------------
+  # Open Notebook proxy (dev only)
+  # ---------------------------------------------------------------------------
+  notebook_proxy:
+    handler: service/notebook_proxy.notebook_proxy
+    timeout: 900
+    vpc:
+      securityGroupIds:
+        - !Ref NotebookProxyLambdaSG
+      subnetIds:
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+    events:
+      - http:
+          path: notebook/proxy
+          method: post
+          cors: true
+
+  notebook_proxy_raw:
+    handler: service/notebook_proxy.notebook_proxy_raw
+    timeout: 29
+    vpc:
+      securityGroupIds:
+        - !Ref NotebookProxyLambdaSG
+      subnetIds:
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+    events:
+      - http:
+          path: notebook/proxy/raw
+          method: post
+          cors: true
+
+  notebook_upload:
+    handler: service/notebook_proxy.notebook_upload
+    timeout: 29
+    vpc:
+      securityGroupIds:
+        - !Ref NotebookProxyLambdaSG
+      subnetIds:
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
+        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+    events:
+      - http:
+          path: notebook/upload
+          method: post
+          cors: true
+
 
 resources:
   Resources:
@@ -194,6 +252,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*" 
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -232,6 +292,25 @@ resources:
                 - dynamodb:PutItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+
+    # Security group for notebook proxy Lambdas — allows egress to Open Notebook VPC
+    NotebookProxyLambdaSG:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Notebook proxy Lambda - egress to Open Notebook VPC
+        VpcId: ${self:provider.environment.NOTEBOOK_VPC_ID}
+        SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: ${self:service}-${sls:stage}-notebook-proxy-sg
 
     APIDocumentBucket: #Marked for future deletion
         Type: 'AWS::S3::Bucket'

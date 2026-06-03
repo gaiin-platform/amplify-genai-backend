@@ -542,7 +542,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 responseStream.end();
             }
             logger.debug('Streaming LLM call completed: ', requestId);
-            logger.debug('LLM contenet: ', capturedContent.fullResponse);
+            logger.debug('LLM content: ', capturedContent.fullResponse);
             // Create result object with captured content for conversation analysis
             result = {
                 content: capturedContent.fullResponse,

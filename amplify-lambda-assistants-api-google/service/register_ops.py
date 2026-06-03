@@ -18,6 +18,15 @@ def integration_config_trigger(event, context):
     """
     logger.info("Admin Config Trigger invoked")
     PROVIDER = "google"
+
+    # Allow manual re-trigger via Lambda Test event: {"force_register": true}
+    if event.get("force_register", False):
+        logger.info("force_register flag set — triggering %s op registration unconditionally", PROVIDER)
+        result = register_ops()
+        if not result.get("success"):
+            logger.error("Failed to register %s ops (force_register)", PROVIDER)
+        return
+
     for record in event.get("Records", []):
         if record.get("eventName") != "MODIFY":
             continue

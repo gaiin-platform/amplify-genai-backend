@@ -61,5 +61,13 @@ scopes = {
             "Sites.Read.All",
             "Sites.ReadWrite.All",
         ],
+        "microsoft_exchange": [
+            "Mail.Read",
+            "Mail.ReadWrite",
+            "Mail.Send",
+            "Mail.Read.Shared",
+            "Mail.ReadWrite.Shared",
+            "Mail.Send.Shared",
+        ],
     },
 }

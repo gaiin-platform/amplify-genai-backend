@@ -157,6 +157,15 @@ from integrations.o365.word_doc import (
     update_table_cell,
 )
 from integrations.o365.word_doc import create_table as create_table_word
+from integrations.o365.shared_inbox import (
+    list_shared_mailbox_messages,
+    get_shared_mailbox_message,
+    get_shared_mailbox_attachments,
+    download_shared_mailbox_attachment,
+    search_shared_mailbox_messages,
+    list_shared_mailbox_folders,
+    create_shared_mailbox_draft,
+)
 from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
@@ -213,8 +222,17 @@ def fix_data_types(data, func_schema):
                 continue
             elif expected_type == "boolean" and isinstance(field_value, bool):
                 continue
-            elif expected_type in ["array", "object"]:
-                continue  # Don't attempt to fix complex types
+            elif expected_type == "object":
+                continue  # Don't attempt to fix object types
+            elif expected_type == "array":
+                # Coerce a plain string into a single-element list,
+                # and drop empty strings (treat as empty list).
+                if isinstance(field_value, str):
+                    if field_value.strip() == "":
+                        fixed_data["data"][field_name] = []
+                    else:
+                        fixed_data["data"][field_name] = [field_value]
+                continue
                 
             # Attempt type conversion
             if expected_type == "integer":
@@ -905,12 +923,17 @@ def update_range_handler(current_user, data):
                 "default": 0,
             },
             "filter_query": {"type": "string", "description": "OData filter query"},
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include message body and bodyPreview",
+                "default": False,
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None
+        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False
     )(current_user, data)
 
 
@@ -2251,6 +2274,11 @@ def delete_contact_handler(current_user, data):
                 "description": "Time zone in Windows format (optional)",
                 "default": "Central Standard Time",
             },
+            "show_as": {
+                "type": "string",
+                "description": "How the event appears on the calendar: free, tentative, busy, oof, workingElsewhere, unknown (optional)",
+                "enum": ["free", "tentative", "busy", "oof", "workingElsewhere", "unknown"],
+            },
         },
         "required": ["title", "start_time", "end_time"],
     },
@@ -2269,6 +2297,7 @@ def create_event_handler(current_user, data):
         reminder_minutes_before_start=None,
         send_invitations="auto",
         time_zone="Central Standard Time",
+        show_as=None,
     )(current_user, data)
 
 
@@ -2435,6 +2464,18 @@ def update_message_handler(current_user, data):
                 "default": "normal",
                 "description": "Email importance (optional)",
             },
+            "content_type": {
+                "type": "string",
+                "enum": ["text", "html"],
+                "default": "text",
+                "description": "Content type (text or html) (optional)",
+            },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Optional ID of an existing message to reply to. "
+                               "When provided, creates a threaded reply draft in the "
+                               "same conversation instead of a standalone new message.",
+            },
         },
         "required": ["subject", "body"],
     },
@@ -2448,6 +2489,8 @@ def create_draft_handler(current_user, data):
         cc_recipients=None,
         bcc_recipients=None,
         importance="normal",
+        content_type="text",
+        reply_to_message_id=None,
     )(current_user, data)
 
 
@@ -2564,11 +2607,20 @@ def move_message_handler(current_user, data):
     path="/microsoft/integrations/list_folders",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftListFolders",
-    description="Lists all mail folders.",
-    parameters={},
+    description="Lists all mail folders, including nested child folders.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "includeChildFolders": {
+                "type": "boolean",
+                "description": "Whether to recursively fetch child/nested folders. Defaults to true.",
+            },
+        },
+        "required": [],
+    },
 )
 def list_folders_handler(current_user, data):
-    return common_handler(list_folders)(current_user, data)
+    return common_handler(list_folders, includeChildFolders=True)(current_user, data)
 
 
 @api_tool(
@@ -2661,12 +2713,17 @@ def delete_attachment_handler(current_user, data):
                 "default": 10,
                 "description": "Maximum messages to return",
             },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the email body and bodyPreview in results. Default is false for performance.",
+                "default": False,
+            },
         },
         "required": ["search_query"],
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, folder_id=None, top=10)(
+    return common_handler(search_messages, search_query=None, folder_id=None, top=10, include_body=False)(
         current_user, data
     )
 
@@ -3856,3 +3913,290 @@ def create_document_handler(current_user, data):
     return common_handler(create_document, name=None, content=None, folder_path=None)(
         current_user, data
     )
+
+
+### shared mailbox ###
+
+
+@api_tool(
+    path="/microsoft/integrations/list_shared_mailbox_messages",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftListSharedMailboxMessages",
+    description="Lists messages in a folder of a shared Exchange mailbox. Requires the microsoft_exchange integration to be connected. Uses /users/{mailbox_email}/ Graph endpoints so the signed-in user must have been granted access to the shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "folder_id": {
+                "type": "string",
+                "description": "Folder ID or well-known name (default: Inbox)",
+                "default": "Inbox",
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum number of messages to retrieve",
+                "default": 10,
+            },
+            "skip": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of messages to skip for pagination",
+                "default": 0,
+            },
+            "filter_query": {
+                "type": "string",
+                "description": "Optional OData filter query",
+            },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the full message body",
+                "default": False,
+            },
+        },
+        "required": ["mailbox_email"],
+    },
+)
+def list_shared_mailbox_messages_handler(current_user, data):
+    return common_handler(
+        list_shared_mailbox_messages,
+        mailbox_email=None,
+        folder_id="Inbox",
+        top=10,
+        skip=0,
+        filter_query=None,
+        include_body=False,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_shared_mailbox_message",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftGetSharedMailboxMessage",
+    description="Gets detailed information about a specific message in a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID",
+            },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the full message body",
+                "default": True,
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def get_shared_mailbox_message_handler(current_user, data):
+    return common_handler(
+        get_shared_mailbox_message,
+        mailbox_email=None,
+        message_id=None,
+        include_body=True,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_shared_mailbox_attachments",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftGetSharedMailboxAttachments",
+    description="Lists attachments for a specific message in a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID",
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def get_shared_mailbox_attachments_handler(current_user, data):
+    return common_handler(
+        get_shared_mailbox_attachments,
+        mailbox_email=None,
+        message_id=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/download_shared_mailbox_attachment",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftDownloadSharedMailboxAttachment",
+    description="Downloads a specific attachment from a message in a shared Exchange mailbox. Files under 7MB return base64-encoded content directly. Larger files return a download URL to avoid API Gateway limits.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID",
+            },
+            "attachment_id": {
+                "type": "string",
+                "description": "Graph API attachment ID (obtained from get_shared_mailbox_attachments)",
+            },
+        },
+        "required": ["mailbox_email", "message_id", "attachment_id"],
+    },
+)
+def download_shared_mailbox_attachment_handler(current_user, data):
+    return common_handler(
+        download_shared_mailbox_attachment,
+        mailbox_email=None,
+        message_id=None,
+        attachment_id=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/search_shared_mailbox_messages",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftSearchSharedMailboxMessages",
+    description="Searches messages in a shared Exchange mailbox using a query string.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "search_query": {
+                "type": "string",
+                "description": "Search query string (KQL or simple text)",
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum number of results to return",
+                "default": 10,
+            },
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include the message body in results",
+                "default": False,
+            },
+        },
+        "required": ["mailbox_email", "search_query"],
+    },
+)
+def search_shared_mailbox_messages_handler(current_user, data):
+    return common_handler(
+        search_shared_mailbox_messages,
+        mailbox_email=None,
+        search_query=None,
+        top=10,
+        include_body=False,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/list_shared_mailbox_folders",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftListSharedMailboxFolders",
+    description="Lists mail folders in a shared Exchange mailbox, optionally including child folders.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "include_child_folders": {
+                "type": "boolean",
+                "description": "Whether to include child/nested folders",
+                "default": True,
+            },
+        },
+        "required": ["mailbox_email"],
+    },
+)
+def list_shared_mailbox_folders_handler(current_user, data):
+    return common_handler(
+        list_shared_mailbox_folders,
+        mailbox_email=None,
+        include_child_folders=True,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/create_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftCreateSharedMailboxDraft",
+    description="Creates a draft message in a shared Exchange mailbox. The draft will appear in the Drafts folder of the shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "subject": {
+                "type": "string",
+                "description": "Subject line of the draft email",
+            },
+            "body": {
+                "type": "string",
+                "description": "Body content of the draft email",
+            },
+            "to_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of primary recipient email addresses",
+            },
+            "cc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of CC recipient email addresses",
+            },
+            "bcc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of BCC recipient email addresses",
+            },
+            "importance": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "Importance level of the draft",
+            },
+            "content_type": {
+                "type": "string",
+                "enum": ["text", "html"],
+                "description": "Content type of the body (text or html)",
+            },
+        },
+        "required": ["mailbox_email", "subject", "body"],
+    },
+)
+def create_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        create_shared_mailbox_draft,
+        mailbox_email=None,
+        subject=None,
+        body=None,
+        to_recipients=None,
+        cc_recipients=None,
+        bcc_recipients=None,
+        importance="normal",
+        content_type="text",
+    )(current_user, data)
