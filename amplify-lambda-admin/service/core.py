@@ -763,8 +763,12 @@ def transform_integrations_data(update_data):
     """
     Transform frontend integrations data format for DynamoDB storage.
 
-    Extracts provider_settings (if present) as a separate field for storage,
-    keeping the main integration data clean.
+    Extracts provider_settings (if present) as a separate top-level field,
+    and unwraps the redundant "integrations" key that the frontend/schema wraps
+    the provider map in, so DynamoDB always stores the flat provider map:
+        { "microsoft": [...], "google": [...] }
+    rather than the double-nested form:
+        { "integrations": { "microsoft": [...] } }
 
     Args:
         update_data: Dictionary from frontend with integration configuration
@@ -775,8 +779,14 @@ def transform_integrations_data(update_data):
     if not isinstance(update_data, dict):
         return {"data": update_data}
 
-    # Check if provider_settings is embedded in the data
+    # Extract provider_settings as a separate top-level DynamoDB field
     provider_settings = update_data.pop("provider_settings", None)
+
+    # Unwrap the redundant "integrations" wrapper key if present.
+    # The frontend schema sends: { "integrations": { "microsoft": [...] }, "provider_settings": {...} }
+    # but consumers (e.g. oauth.py) and reverse_transform expect the flat: { "microsoft": [...] }
+    if list(update_data.keys()) == ["integrations"] and isinstance(update_data.get("integrations"), dict):
+        update_data = update_data["integrations"]
 
     result = {"data": update_data}
     if provider_settings:
@@ -789,26 +799,36 @@ def reverse_transform_integrations_data(storage_data, provider_settings):
     """
     Transform stored integrations data back to frontend format.
 
-    Combines the separate storage_data and provider_settings back into
-    the format expected by the frontend.
+    DynamoDB stores the provider map flat under 'data' and provider_settings
+    as a separate top-level attribute.  The frontend expects:
+        { integrations: { "microsoft": [...] }, provider_settings: {...} }
+
+    Returning an explicit 'integrations' key means:
+    - provider_settings is never mixed into the provider map
+    - the frontend fallback (integrationsData.integrations || integrationsData)
+      always hits the first branch cleanly
 
     Args:
-        storage_data: The main integrations data from DynamoDB 'data' field
-        provider_settings: The provider_settings from DynamoDB (may be empty)
+        storage_data: The flat provider map from DynamoDB 'data' field
+                      e.g. { "microsoft": [...] }
+        provider_settings: The provider_settings top-level attribute from DynamoDB
 
     Returns:
-        Combined dictionary in frontend format
+        { "integrations": { "microsoft": [...] }, "provider_settings": {...} }
     """
     if not isinstance(storage_data, dict):
         return storage_data
 
-    result = dict(storage_data)
+    # Heal legacy double-nested data: { "integrations": { "microsoft": [...] } }
+    # This can exist in DynamoDB from older deployments before the write-path fix.
+    # Unwrap it so the frontend always gets the flat provider map under "integrations".
+    if list(storage_data.keys()) == ["integrations"] and isinstance(storage_data.get("integrations"), dict):
+        storage_data = storage_data["integrations"]
 
-    # Merge provider_settings back into the data if present
-    if provider_settings:
-        result["provider_settings"] = provider_settings
-
-    return result
+    return {
+        "integrations": storage_data,
+        "provider_settings": provider_settings or {},
+    }
 
 
 def update_integrations_config(config_type, transformed_data):
@@ -986,6 +1006,8 @@ def get_configs(event, context, current_user, name, data):
                             logger.info(
                                 "Added missing base feature flags: %s", list(missing_base_flags.keys())
                             )
+                    elif config_type == AdminConfigTypes.RATE_LIMIT:
+                        new_data = _normalize_rate_limit_config(new_data)
                     elif config_type == AdminConfigTypes.CRITICAL_ERRORS:
                         # Check real-time SNS subscription status
                         logger.info("🔍 Checking critical errors config - isActive: %s, email: %s", 
@@ -1172,7 +1194,7 @@ def initialize_config(config_type):
         )  # no groups means none have been added through cognito now the admin interface
 
     elif config_type == AdminConfigTypes.RATE_LIMIT:
-        item["data"] = NO_RATE_LIMIT
+        item["data"] = {"limits": NO_RATE_LIMIT, "honorPersonalRateLimit": {"enabled": False}}
 
     elif config_type == AdminConfigTypes.PROMPT_COST_ALERT:
         item["data"] = {
@@ -1214,6 +1236,45 @@ def initialize_config(config_type):
     return item["data"]
 
 
+def _normalize_rate_limit_config(data):
+    """Normalize legacy flat rateLimit data to the new { limits, honorPersonalRateLimit } shape.
+
+    Legacy shapes:
+      - a single { period, rate } object
+      - an array of such objects
+      - new shape but with a plain boolean for honorPersonalRateLimit (intermediate migration)
+
+    New shape: {
+        "limits": <rate_limits>,
+        "honorPersonalRateLimit": { "enabled": bool, "scope": "both"|"apiKey"|"amplifyAccount" }
+    }
+    Missing or falsy honorPersonalRateLimit defaults to { "enabled": False } (preserve existing behavior).
+    """
+    DEFAULT_HONOR = {"enabled": False}
+
+    def _normalize_honor(raw):
+        if isinstance(raw, dict) and "enabled" in raw:
+            result = {"enabled": raw.get("enabled", False)}
+            if "scope" in raw:
+                result["scope"] = raw["scope"]
+            return result
+        if isinstance(raw, bool):
+            # Intermediate migration: plain boolean from previous implementation
+            return {"enabled": raw}
+        return DEFAULT_HONOR
+
+    if isinstance(data, dict) and "limits" in data:
+        return {
+            "limits": data["limits"],
+            "honorPersonalRateLimit": _normalize_honor(data.get("honorPersonalRateLimit"))
+        }
+    # Legacy: flat single object or array — wrap it
+    return {
+        "limits": data,
+        "honorPersonalRateLimit": DEFAULT_HONOR
+    }
+
+
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
@@ -1227,6 +1288,7 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.PROMPT_COST_ALERT,
         AdminConfigTypes.WEB_SEARCH_CONFIG,
         AdminConfigTypes.USER_DOCUMENTATION_URL,
+        AdminConfigTypes.RATE_LIMIT
     ]
     configs = {}
     for config_type in app_configs:
@@ -1240,6 +1302,8 @@ def get_user_app_configs(event, context, current_user, name, data):
                         "allowUserWebSearchKeys": config_data.get("allowUserWebSearchKeys", False),
                         "webSearchUserMessage": config_data.get("webSearchUserMessage")
                     }
+                elif config_type == AdminConfigTypes.RATE_LIMIT:
+                    configs[config_type.value] = _normalize_rate_limit_config(config_data)
                 else:
                     configs[config_type.value] = config_data
             else:
@@ -1249,6 +1313,24 @@ def get_user_app_configs(event, context, current_user, name, data):
                 "success": False,
                 "message": f"Error retrieving {config_type.value} Data: {str(e)}",
             }
+
+    # Add group rate limits for the current user (computed, not a stored config type)
+    try:
+        all_groups = get_all_amplify_groups()
+        if all_groups:
+            affiliated_group_names = find_all_user_groups(current_user, all_groups)
+            group_rate_limits = {}
+            for group_name in affiliated_group_names:
+                group_data = all_groups.get(group_name, {})
+                rate_limit = group_data.get("rateLimit")
+                if rate_limit:
+                    group_rate_limits[group_name] = rate_limit
+            configs["groupRateLimits"] = group_rate_limits
+        else:
+            configs["groupRateLimits"] = {}
+    except Exception as e:
+        logger.warning("Failed to fetch group rate limits for user %s: %s", current_user, str(e))
+        configs["groupRateLimits"] = {}
 
     return {"success": True, "data": configs}
 

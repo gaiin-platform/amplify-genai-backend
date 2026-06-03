@@ -52,6 +52,9 @@ def safe_json_dumps(obj):
 
 
 class TasksMessageHandler(MessageHandler):
+    def is_agent_loop_event(self) -> bool:
+        return True
+
     def can_handle(self, message: Dict[str, Any]) -> bool:
         try:
             # Check if this is a scheduled task message
@@ -107,6 +110,7 @@ class TasksMessageHandler(MessageHandler):
                     "timestamp": runtime.isoformat(),
                     "requestContent": {**task_data},
                     "files": [],
+                    **({"model": task_data["model"]} if task_data.get("model") else {}),
                     **self._resolved_object_info(
                         user_id, task_data.get("objectInfo", {}), task_type, api_key
                     ),
@@ -148,16 +152,25 @@ class TasksMessageHandler(MessageHandler):
             logger.error("Error in onFailure: event is None, cannot extract task data")
             return
         
-        # Extract task info from event metadata  
+        # Extract task info — event may be the original SQS message body
+        # (has taskData.user / taskData.taskId) OR the processed agent event_payload
+        # (has currentUser / metadata.requestContent with user + taskId).
         task_data = event.get("taskData", {})
+        if not task_data:
+            task_data = event.get("metadata", {}).get("requestContent", {})
         logger.debug(f"Task data: {task_data}")
-        user_id = task_data.get("user")
+        user_id = task_data.get("user") or event.get("currentUser")
         task_id = task_data.get("taskId")
 
-        # Try to extract sessionId - it might be available in task_data or we can reconstruct it
-        session_id = task_data.get("sessionId")
+        # Try to extract sessionId - check all possible locations in the event before falling back
+        session_id = (
+            task_data.get("sessionId")
+            or event.get("sessionId")
+            or event.get("metadata", {}).get("eventId")
+        )
         if not session_id and task_id:
-            # Try to reconstruct sessionId using short UUID format (best effort)
+            # Last resort: generate a new ID (will create a new entry instead of updating existing)
+            logger.warning("Could not find sessionId for task %s — failure will create a new record", task_id)
             session_id = f"execution-{str(uuid.uuid4())}"
         
         # Add sessionId to task_data for consistency

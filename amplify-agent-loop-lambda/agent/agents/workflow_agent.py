@@ -11,6 +11,9 @@ from agent.capabilities.workflow_model import Workflow
 from agent.components.common_goals import (
     CAREFUL_ARGUMENT_SELECTION,
     ALLOW_EARLY_EXIT_AGENT_LOOP,
+    COMPLETE_ALL_REQUIRED_PARAMS,
+    WORKFLOW_STRUCTURED_OUTPUT,
+    FOLLOW_WORKFLOW_STEP_INSTRUCTIONS,
 )
 from agent.components.agent_languages import (
     AgentFunctionCallingActionLanguage,
@@ -181,7 +184,10 @@ def build_clean(
         Goal(
             name="REQUIRED", description="YOU ARE REQUIRED TO CALL A TOOL EVERY TIME!"
         ),
+        FOLLOW_WORKFLOW_STEP_INSTRUCTIONS,
+        COMPLETE_ALL_REQUIRED_PARAMS,
         CAREFUL_ARGUMENT_SELECTION,
+        WORKFLOW_STRUCTURED_OUTPUT,
         ALLOW_EARLY_EXIT_AGENT_LOOP,
         *additional_goals,
     ]

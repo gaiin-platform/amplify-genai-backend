@@ -54,7 +54,6 @@ def pascalCase(input_str):
 
 
 def create_api_key(
-    token: str,
     user: str,
     selected_account: dict,
     delegate_input: str | None,
@@ -72,7 +71,6 @@ def create_api_key(
     Calls the apiKeys/keys/create endpoint to generate a new API key.
 
     Args:
-        token (str): Authorization token.
         user (str): Owner of the API key.
         selected_account (str): Account associated with the key.
         delegate_input (str): Delegate input (if any).
@@ -139,7 +137,6 @@ def create_api_key(
 
 def create_agent_event_api_key(
     user: str,
-    token: str,
     agent_event_name: str,
     account: str,
     description: str,
@@ -170,7 +167,6 @@ def create_agent_event_api_key(
     options = {}  # Not used since full_access is True
 
     return create_api_key(
-        token=token,
         user=user,
         selected_account={"id": account, "name": "agent_" + agent_event_name},
         delegate_input=delegate_input,
@@ -185,74 +181,6 @@ def create_agent_event_api_key(
         purpose=purpose,
     )
 
-
-# Requires a valid user token
-def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
-    """
-    Fetches a specific API key by its ID.
-
-    Args:
-        token (str): Authorization token.
-        api_key_id (str): The unique ID of the API key.
-
-    Returns:
-        dict or None: API response containing the API key details, or None if an error occurs.
-    """
-
-    api_base = os.environ.get("API_BASE_URL", None)
-    if not api_base:
-        logger.error("API_BASE_URL is not set")
-        return None
-
-    if not api_key_id:
-        logger.error("API Key ID is required")
-        return None
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    # Ensure API Key ID is correctly passed as a query parameter
-    url = f"{api_base}/apiKeys/key/get?apiKeyId={api_key_id}"
-
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-
-        logger.info("Retrieved API Key: %s", result)
-        return result["data"]
-    except Exception as e:
-        logger.error("Failed to retrieve API key: %s", str(e))
-        return None
-
-
-def get_api_keys(token: str) -> Union[Dict, None]:
-    """
-    Retrieves all API keys for the authenticated user.
-
-    Args:
-        token (str): Authorization token.
-
-    Returns:
-        dict or None: API response containing API keys, or None if an error occurs.
-    """
-
-    api_base = os.environ.get("API_BASE_URL", None)
-    if not api_base:
-        logger.error("API_BASE_URL is not set")
-        return None
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        response = requests.get(f"{api_base}/apiKeys/keys/get", headers=headers)
-        response.raise_for_status()
-        result = response.json()
-
-        logger.info("Retrieved API Keys: %s", result)
-        return result
-    except Exception as e:
-        logger.error("Failed to retrieve API keys: %s", str(e))
-        return None
 
 
 # direct access to the api key table

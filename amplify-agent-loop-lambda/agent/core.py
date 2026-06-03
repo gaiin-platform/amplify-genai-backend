@@ -220,6 +220,12 @@ class Capability:
     ) -> dict:
         return action
 
+    def pre_execute_action(
+        self, agent, action_context: ActionContext, action_def: Action, action: dict
+    ) -> dict | None:
+        """Optional pre-execution hook. Return a result dict to short-circuit execute_action, or None to proceed normally."""
+        return None
+
     def process_response(
         self, agent, action_context: ActionContext, response: str
     ) -> str:
@@ -334,9 +340,19 @@ class Agent:
             action,
         )
 
-        result = self.environment.execute_action(
-            self, action_context, action_def, action["args"]
-        )
+        # Allow capabilities to short-circuit execution (e.g. pre-execution validation)
+        early_result = None
+        for capability in self.capabilities:
+            early_result = capability.pre_execute_action(self, action_context, action_def, action)
+            if early_result is not None:
+                break
+
+        if early_result is not None:
+            result = early_result
+        else:
+            result = self.environment.execute_action(
+                self, action_context, action_def, action["args"]
+            )
 
         result = reduce(
             lambda r, c: c.process_result(

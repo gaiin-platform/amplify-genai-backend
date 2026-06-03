@@ -360,6 +360,9 @@ export const sendErrorMessage = (writable, statusCode, code=null) => {
 
     if (code === 'content_filter') {
         errorMessage = "Content Filter: The response was blocked due to the content of the request.";
+    } else if (code === 'insufficient_quota') {
+        logger.warn('Insufficient quota error received. This may indicate that the model provider has temporarily blocked requests due to high traffic or other issues.');  
+        errorMessage = "Error retrieving response from this model." + waitMessage;
     } else if (statusCode === 429) {
         errorMessage = "Too Many Requests: You have sent too many requests in a given amount of time to this model." + waitMessage;
     } else if ([408, 503, 504].includes(statusCode)) {

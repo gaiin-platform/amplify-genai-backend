@@ -131,6 +131,57 @@ CAREFUL_ARGUMENT_SELECTION = Goal(
 )
 
 
+COMPLETE_ALL_REQUIRED_PARAMS = Goal(
+    name="Complete All Required Parameters",
+    description="""
+CRITICAL: You MUST provide a value for EVERY required parameter in every tool call. NEVER leave required
+parameters empty, null, or as placeholder text like "<fill in>" or "TBD".
+
+Rules:
+- If a parameter value was pre-filled via a workflow value (e.g. {{stepName.field}}), it will be resolved
+  automatically — you do not need to re-derive it.
+- If a parameter cannot be determined from context, synthesize the most reasonable value you can.
+  Making a best-effort attempt is always better than leaving the parameter blank.
+- If you are completely unable to determine a value and leaving it blank would cause total failure,
+  explain the problem and exit the loop using EXIT_AGENT_LOOP.
+""",
+)
+
+
+WORKFLOW_STRUCTURED_OUTPUT = Goal(
+    name="Workflow Structured Output",
+    description="""
+When a workflow step declares output attributes (fields that subsequent steps will reference via
+{{stepName.fieldName}}), the tool MUST return a dict/JSON object containing those exact field names as keys.
+
+Example: If step "get_email" declares output attribute "Email_Body", the tool must return:
+  {"Email_Body": "...actual html content..."}
+so the next step can reference it as {{get_email.Email_Body}}.
+
+If you are executing a "think" step that declares outputs, format your response as a JSON object
+with the declared field names as keys and the synthesized content as values.
+
+CRITICAL: If a declared output field is missing from the tool's result, any downstream step that
+references {{stepName.missingField}} will receive an unresolved token — causing incorrect behavior.
+Always verify your tool returns the declared fields.
+""",
+)
+
+
+FOLLOW_WORKFLOW_STEP_INSTRUCTIONS = Goal(
+    name="Follow Workflow Step Instructions",
+    description="""
+When executing a workflow step:
+1. The step INSTRUCTIONS are the primary directive — follow them exactly as written.
+2. Use the EXACT tool specified in the step — never substitute a different tool.
+3. Pre-filled VALUES (locked parameters) must be used exactly as provided — do not modify them.
+4. Argument HINTS (args) are guidance — adapt them to the current context if needed, but always fill them in.
+5. The step instructions override any general reasoning you might have about what to do.
+6. Complete the step as specified even if you think a different approach would be better.
+""",
+)
+
+
 ALLOW_EARLY_EXIT_AGENT_LOOP = Goal(
     name="Exit Agent Loop Early",
     description="""

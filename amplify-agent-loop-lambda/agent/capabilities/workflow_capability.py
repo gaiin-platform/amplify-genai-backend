@@ -1,4 +1,5 @@
 import json
+import re
 from copy import deepcopy
 from importlib.metadata import metadata
 from typing import List, Optional, Dict, Any
@@ -47,9 +48,7 @@ class ParameterizedActionRegistry(ActionRegistry):
 
         for param_name, param_value in args.items():
             if param_name in updated_parameters.get("properties", {}):
-                updated_parameters["properties"][param_name][
-                    "description"
-                ] = param_value
+                updated_parameters["properties"][param_name]["description"] = param_value
 
         return Action(
             name=action.name,
@@ -64,11 +63,12 @@ class ParameterizedActionRegistry(ActionRegistry):
 
     def get_action(self, name: str) -> Optional[Action]:
         original_action = self.wrapped_registry.get_action(name)
-        if not original_action:
-            return None
 
+        # Check if the requested tool matches the current parameterized step
         for param_dict in self.parameterized_args:
             if param_dict.get("tool") == name:
+                if not original_action:
+                    return None
                 args = param_dict.get("args", {})
                 instructions = param_dict.get("instructions")
                 metadata = param_dict
@@ -76,7 +76,28 @@ class ParameterizedActionRegistry(ActionRegistry):
                     original_action, args, instructions, metadata
                 )
 
-        return original_action
+        # Model called a tool that is NOT the current parameterized step.
+        # Since workflows expose only one tool at a time, the model's intent
+        # is always "do the current step" — return the parameterized action
+        # instead so action_def is correct for auto-fill and execution.
+        # Exception: never intercept 'terminate' — that's always a valid call.
+        if self.parameterized_args and name != "terminate":
+            current_tool_name = self.parameterized_args[0].get("tool")
+            current_original = self.wrapped_registry.get_action(current_tool_name)
+            if current_original:
+                param_dict = self.parameterized_args[0]
+                args = param_dict.get("args", {})
+                instructions = param_dict.get("instructions")
+                metadata = param_dict
+                logger.info(
+                    "get_action: model requested '%s' but current step is '%s' — returning current step action_def",
+                    name, current_tool_name,
+                )
+                return self._update_action_parameters(
+                    current_original, args, instructions, metadata
+                )
+
+        return original_action if original_action else None
 
     def get_actions(self) -> List[Action]:
         actions = []
@@ -131,6 +152,10 @@ class WorkflowCapability(Capability):
         self.retry_count = {}  # Track retries for each step
         self.max_retries = 2  # Maximum number of retries per step
         self.terminate_early = False
+        # Step output storage: stepName -> raw result (for {{stepName.field}} references)
+        self.step_outputs: Dict[str, Any] = {}
+        # Repeat counts: step_id -> how many extra times this step has been repeated
+        self.repeat_counts: Dict[str, int] = {}
 
     def init(self, agent, action_context: ActionContext) -> dict:
         self.action_registry = ParameterizedActionRegistry(agent.actions)
@@ -141,6 +166,9 @@ class WorkflowCapability(Capability):
         if self.remaining_steps:
             next_step: Optional[Step] = self.remaining_steps.pop()
             if next_step:
+                # Resolve any {{stepName.field}} references in args/values before checking skip
+                next_step = self._resolve_step_references(next_step)
+
                 step_id = self._construct_step_id(next_step)
                 step_attempted_before = step_id in self.retry_count
                 # skip logic - dont skip failed steps
@@ -173,16 +201,149 @@ class WorkflowCapability(Capability):
     def process_action(
         self, agent, action_context: ActionContext, action_def: Action, action: dict
     ) -> dict:
+        # If the model called the wrong tool, silently rewrite to the expected tool.
+        # The model often gets confused by tool names in conversation history — since
+        # the workflow only exposes one tool at a time, the intent is unambiguous.
+        called_tool = action.get("tool", "") if isinstance(action, dict) else ""
+        expected_tool = self.current_step.tool if self.current_step else None
+        if expected_tool and called_tool and called_tool != expected_tool and called_tool != "terminate":
+            logger.warning(
+                "process_action: model called '%s' but expected '%s' — rewriting tool name and clearing irrelevant args",
+                called_tool, expected_tool,
+            )
+            action["tool"] = expected_tool
+            # Clear args from the wrong tool — they don't apply to the expected tool.
+            # Auto-fill below will populate the correct required params from memory.
+            action["args"] = {}
+
+        schema_properties = {}
+        if action_def.parameters and "properties" in action_def.parameters:
+            schema_properties = action_def.parameters["properties"]
+
         if action_def.metadata and action_def.metadata.get("values", None):
             values = action_def.metadata.get("values")
+
+            args = action.get("args") or {}
+            action["args"] = args  # ensure action always has a valid dict
             for key, value in values.items():
-                args = action.get("args", {})
-                if isinstance(value, str) and value.lower() in ["true", "false"]:
-                    value = value.lower() == "true"
+                expected_type = schema_properties.get(key, {}).get("type")
+
+                if isinstance(value, str):
+                    if value.lower() in ["true", "false"]:
+                        # Always coerce bool strings regardless of schema
+                        value = value.lower() == "true"
+                    elif expected_type == "integer":
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif expected_type == "number":
+                        try:
+                            value = float(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif expected_type == "array":
+                        # A plain string becomes a single-element list.
+                        # An empty string becomes an empty list (omit it).
+                        if value.strip() == "":
+                            continue  # Skip empty array values entirely
+                        else:
+                            value = [value]
 
                 args[key] = value
 
+        # After values are injected, check if any required params are still missing.
+        # Rather than bouncing back through the retry loop, make a single focused LLM
+        # call to synthesize each missing value from the conversation context right now.
+        required_params = action_def.parameters.get("required", []) if action_def.parameters else []
+        logger.info("Required params for %s: %s", action_def.name, required_params)
+        if required_params:
+            args = action.get("args") or {}
+            missing = [p for p in required_params if p not in args or args[p] is None or args[p] == ""]
+            if missing:
+                logger.info(
+                    "Auto-filling missing required param(s) %s for %s via focused LLM call",
+                    missing, action_def.name
+                )
+                memory = action_context.get("memory")
+                history = memory.get_memories() if memory else []
+                # Only keep non-system messages so the LLM sees the work done so far
+                context_messages = [m for m in history if m.get("type") not in ("system", "prompt")]
+
+                for param_name in missing:
+                    param_schema = schema_properties.get(param_name, {})
+                    param_desc = param_schema.get("description", f"Value for '{param_name}'")
+                    param_type = param_schema.get("type", "string")
+
+                    fill_prompt = [
+                        {
+                            "role": "system",
+                            "content": (
+                                f"You are filling in a single missing required parameter for the tool '{action_def.name}'.\n\n"
+                                f"Parameter name: {param_name}\n"
+                                f"Parameter type: {param_type}\n"
+                                f"Parameter description: {param_desc}\n\n"
+                                f"Review the conversation history below and produce the value for this parameter. "
+                                f"Return ONLY the raw value — no labels, no explanation, no markdown fences."
+                            ),
+                        },
+                        *[
+                            {"role": "assistant" if m.get("type") == "assistant" else "user", "content": (
+                                json.dumps(m["content"]) if isinstance(m.get("content"), dict) else str(m.get("content", ""))
+                            )}
+                            for m in context_messages
+                            if m.get("content")
+                        ],
+                    ]
+
+                    value = prompt_llm_with_messages(
+                        action_context=action_context, prompt=fill_prompt
+                    )
+
+                    if value and str(value).strip():
+                        args[param_name] = value.strip()
+                        logger.info(
+                            "Auto-filled '%s' for %s (%d chars)",
+                            param_name, action_def.name, len(str(value))
+                        )
+                    else:
+                        logger.warning(
+                            "Auto-fill returned empty value for '%s' in %s — will proceed and let pre_execute_action handle it",
+                            param_name, action_def.name
+                        )
+
+                action["args"] = args
+
         return action
+
+    def pre_execute_action(
+        self, agent, action_context: ActionContext, action_def: Action, action: dict
+    ) -> dict | None:
+        """Validate required parameters are present before hitting the API.
+        Returns a synthetic error result if any required params are missing so the
+        retry logic can immediately give the LLM clear, targeted feedback.
+"""
+
+        # process_action already auto-fills missing required params via LLM.
+        # This is a last-resort safety check only — if auto-fill produced nothing,
+        # surface a clear error rather than silently calling the API with missing args.
+        required_params = action_def.parameters.get("required", []) if action_def.parameters else []
+        if required_params:
+            args = action.get("args") or {}
+            missing = [p for p in required_params if p not in args or args[p] is None or args[p] == ""]
+            if missing:
+                missing_str = ", ".join(f"'{p}'" for p in missing)
+                error_msg = (
+                    f"Missing required parameter(s): {missing_str}. "
+                    f"You MUST generate and include {missing_str} with actual content in your tool call. "
+                    f"Do NOT omit or defer these parameters — provide the full value inline now."
+                )
+                logger.warning("Pre-execution safety check failed for %s: %s", action_def.name, error_msg)
+                return {
+                    "tool": action_def.name,
+                    "tool_executed": False,
+                    "result": {"success": False, "message": error_msg},
+                }
 
     def process_response(
         self, agent, action_context: ActionContext, response: str
@@ -202,6 +363,7 @@ class WorkflowCapability(Capability):
             logger.warning("Terminating Workflow: %s", action.get("error"))
             self.terminate_early = True
             return result
+
         # Enhanced error detection covering multiple error scenarios
         is_error = (
             isinstance(result, dict)
@@ -229,30 +391,175 @@ class WorkflowCapability(Capability):
             )
         )
 
+        # --- Store successful step output for {{stepName.field}} references ---
+        if not is_error and self.current_step:
+            step_name = self.current_step.stepName or self.current_step.tool
+
+            # Unwrap one level: most tools return {"tool": ..., "result": {...actual data...}}
+            # Store the inner result so {{stepName.field}} navigates directly into the data.
+            if isinstance(result, dict) and "result" in result:
+                stored = result["result"]
+            else:
+                stored = result
+            # If still not a dict, wrap it so navigation works
+            if not isinstance(stored, dict):
+                stored = {"value": stored}
+
+            # --- Attempt to parse string output into declared field names ---
+            # Some tools (e.g. "think") return a plain string.  When the step has declared
+            # outputs the LLM is instructed to return a JSON object with those field names,
+            # but it often wraps the output in markdown fences (```json / ```html / etc.).
+            # If stored is {"value": "<string>"} and the step declares outputs, try to:
+            #   1. Strip markdown fences
+            #   2. JSON-parse the cleaned string
+            #   3. If it produces a dict, use it directly so {{step.field}} refs resolve.
+            if (
+                self.current_step
+                and self.current_step.outputs
+                and isinstance(stored, dict)
+                and list(stored.keys()) == ["value"]
+                and isinstance(stored.get("value"), str)
+            ):
+                raw_str = stored["value"]
+                # Strip leading/trailing whitespace then remove markdown fences
+                cleaned = raw_str.strip()
+                cleaned = re.sub(r'^```[a-zA-Z]*\s*', '', cleaned)
+                cleaned = re.sub(r'\s*```$', '', cleaned).strip()
+                try:
+                    parsed = json.loads(cleaned)
+                    if isinstance(parsed, dict):
+                        # LLM returned {"FieldName": ...} — use directly.
+                        stored = parsed
+                        logger.info(
+                            "Parsed string output for step '%s' into dict with keys=%s",
+                            step_name, list(stored.keys()),
+                        )
+                    elif (
+                        isinstance(parsed, list)
+                        and len(self.current_step.outputs) == 1
+                        and self.current_step.outputs[0].name
+                    ):
+                        # LLM returned a bare JSON array (e.g. []) instead of
+                        # {"FieldName": [...]} — wrap it under the declared output name.
+                        single_name = self.current_step.outputs[0].name
+                        stored = {single_name: parsed}
+                        logger.info(
+                            "Bare JSON array output for step '%s' — assigned list to declared output '%s'",
+                            step_name, single_name,
+                        )
+                except (json.JSONDecodeError, ValueError):
+                    # Not valid JSON — if the step declares exactly ONE output,
+                    # assign the cleaned string directly to that field name so
+                    # {{stepName.field}} can still resolve (e.g. raw HTML output).
+                    if len(self.current_step.outputs) == 1 and self.current_step.outputs[0].name:
+                        single_name = self.current_step.outputs[0].name
+                        stored = {single_name: cleaned}
+                        logger.info(
+                            "Non-JSON output for step '%s' — assigned raw string to declared output '%s'",
+                            step_name, single_name,
+                        )
+                    # else: keep the {"value": ...} wrapper
+
+            self.step_outputs[step_name] = stored
+            logger.info("Stored output for step '%s': keys=%s", step_name, list(stored.keys()) if isinstance(stored, dict) else type(stored).__name__)
+
+            # Validate declared outputs are actually present in the result
+            if self.current_step.outputs:
+                for output_attr in self.current_step.outputs:
+                    fname = output_attr.name
+                    if fname and fname not in stored:
+                        logger.warning(
+                            "Step '%s' declared output '%s' but field not found in result. "
+                            "Available keys: %s — {{%s.%s}} references will not resolve.",
+                            step_name, fname,
+                            list(stored.keys()) if isinstance(stored, dict) else "non-dict",
+                            step_name, fname,
+                        )
+
+            # --- Repeat logic ---
+            # If allowRepeat is True the step can be pushed back up to maxRepeats extra times.
+            # A step signals it is finished repeating by returning {"done": true},
+            # {"has_more": false}, or {"repeat_done": true} anywhere in its result.
+            if self.current_step.allowRepeat:
+                step_id = self._construct_step_id(self.current_step)
+                current_repeats = self.repeat_counts.get(step_id, 0)
+                max_r = self.current_step.maxRepeats if self.current_step.maxRepeats is not None else 1
+
+                # Check for explicit "done" signal from the tool result
+                result_data = result.get("result", result) if isinstance(result, dict) else {}
+                repeat_done = (
+                    result_data.get("done") is True
+                    or result_data.get("has_more") is False
+                    or result_data.get("repeat_done") is True
+                )
+
+                if repeat_done:
+                    logger.info(
+                        "-- Step '%s' signalled done — stopping repeat --",
+                        self.current_step.tool,
+                    )
+                elif current_repeats < max_r:
+                    self.repeat_counts[step_id] = current_repeats + 1
+                    logger.info(
+                        "-- Repeating step '%s' (%d/%d) --",
+                        self.current_step.tool, current_repeats + 1, max_r
+                    )
+                    self.remaining_steps.append(self.current_step)
+                    send_event = action_context.incremental_event()
+                    send_event(
+                        "workflow/step/repeat",
+                        {
+                            "workflow": self.workflow,
+                            "step": self.current_step.tool,
+                            "repeat_count": current_repeats + 1,
+                            "max_repeats": max_r,
+                        },
+                    )
+
         if is_error and self.current_step:
             step_id = self._construct_step_id(self.current_step)
             error_message = "Unknown error"
 
-            if self.retry_count[step_id] < self.max_retries:
+            if self.retry_count.get(step_id, 0) < self.max_retries:
                 logger.info(
-                    "-- Retrying step %s (%s/%s) due to error --", self.current_step.tool, self.retry_count[step_id], self.max_retries
+                    "-- Retrying step %s (%s/%s) due to error --",
+                    self.current_step.tool,
+                    self.retry_count[step_id],
+                    self.max_retries,
                 )
                 self.retry_count[step_id] += 1
                 self.remaining_steps.append(self.current_step)
 
-                # Log retry information in memory
+                # Extract the clearest error message available
                 memory = action_context.get("memory")
-                if memory:
-
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            error_message = result["error"]
+                if isinstance(result, dict):
+                    if "error" in result:
+                        error_message = result["error"]
+                    elif (
+                        "result" in result
+                        and isinstance(result["result"], dict)
+                    ):
+                        inner = result["result"]
+                        # Handle nested data.result pattern from custom API wrapper
+                        if "message" in inner:
+                            error_message = inner["message"]
                         elif (
-                            "result" in result
-                            and isinstance(result["result"], dict)
-                            and "message" in result["result"]
+                            "data" in inner
+                            and isinstance(inner["data"], dict)
+                            and "result" in inner["data"]
+                            and isinstance(inner["data"]["result"], dict)
+                            and "message" in inner["data"]["result"]
                         ):
-                            error_message = result["result"]["message"]
+                            error_message = inner["data"]["result"]["message"]
+
+                # Inject a retry instruction into memory so the LLM gets clear feedback.
+                if memory:
+                    retry_instruction = (
+                        f"⚠️ RETRY REQUIRED — '{self.current_step.tool}' failed with error: {error_message}\n\n"
+                        f"Please fix the issue and try again, making sure all required parameters have correct values."
+                    )
+                    memory.add_memory({"type": "user", "content": retry_instruction})
+                    logger.info("Injected retry instruction into memory for step %s", self.current_step.tool)
 
                 send_event = action_context.incremental_event()
                 # Send an event about the retry
@@ -290,7 +597,7 @@ class WorkflowCapability(Capability):
                 }
             ]
 
-        if self.current_step.useAdvancedReasoning:
+        if self.current_step and self.current_step.useAdvancedReasoning:
             for m in memories:
                 if m.get("type") == "assistant":
                     content = m.get("content")
@@ -329,7 +636,72 @@ class WorkflowCapability(Capability):
     def _format_step(self, step: Step) -> str:
         return f"{step.instructions}\nTool: {step.tool}\nArgs: {step.args}"
 
+    def _resolve_references(self, value: Any) -> Any:
+        """Replace {{stepName.path.to.field}} tokens in string values with stored step outputs.
+
+        Supports:
+        - {{stepName}}               → JSON-serialised full result of that step
+        - {{stepName.field}}          → specific top-level key of the result dict
+        - {{stepName.a.b.c}}          → nested dot-path navigation
+
+        Non-string values are returned unchanged.
+        """
+        if not isinstance(value, str):
+            return value
+
+        pattern = re.compile(r"\{\{([^}]+)\}\}")
+
+        def replace_token(match: re.Match) -> str:
+            token = match.group(1).strip()
+            parts = token.split(".")
+            step_name = parts[0]
+
+            if step_name not in self.step_outputs:
+                logger.warning("Reference {{%s}} — step '%s' has no stored output yet", token, step_name)
+                return match.group(0)  # Leave unchanged if not found
+
+            node = self.step_outputs[step_name]
+
+            # Navigate dot-path if more parts exist
+            for part in parts[1:]:
+                if isinstance(node, dict) and part in node:
+                    node = node[part]
+                else:
+                    logger.warning(
+                        "Reference {{%s}} — could not navigate to '%s' in stored output", token, part
+                    )
+                    return match.group(0)  # Leave unchanged
+
+            if isinstance(node, (dict, list)):
+                return json.dumps(node)
+            return str(node)
+
+        return pattern.sub(replace_token, value)
+
+    def _resolve_step_references(self, step: Step) -> Step:
+        """Return a shallow copy of the step with all {{ref}} tokens resolved in args and values."""
+        if not self.step_outputs:
+            return step  # Nothing to resolve yet
+
+        resolved = deepcopy(step)
+
+        if resolved.args:
+            resolved.args = {k: self._resolve_references(v) for k, v in resolved.args.items()}
+
+        if resolved.values:
+            resolved.values = {k: self._resolve_references(v) for k, v in resolved.values.items()}
+
+        if resolved.instructions:
+            resolved.instructions = self._resolve_references(resolved.instructions)
+
+        return resolved
+
     def _should_skip_step(self, step: Step, action_context: ActionContext) -> bool:
+        # allowSkip=False → never skip, regardless of LLM heuristic
+        if step.allowSkip is False:
+            logger.info("-- step '%s' has allowSkip=False, skipping heuristic check --", step.tool)
+            return False
+
         if step.tool in ["terminate", "think"]:
             return False
 
@@ -365,14 +737,13 @@ Conversation history and current context:
 Respond with either YES or NO in all caps. Then write a short explanation (1-2 sentences) for your reasoning on the next line."""
 
         # llm call to determine if the step should be skipped
-        sys_prompt = """You're task is to determine if the step {step.tool} should be skipped.  
+        sys_prompt = f"""You're task is to determine if the step '{step.tool}' should be skipped.
         Use the following threshold to determine if the step should be skipped:
         CONFIDENCE THRESHOLD:
         - If you have ANY doubt (even 5%) about whether skipping is safe, respond with "NO"
-        - Only respond with "YES" if you are 100 confident this step can be safely skipped without affecting the workflow outcome
+        - Only respond with "YES" if you are 100% confident this step can be safely skipped without affecting the workflow outcome
 
-        YOUR RESPONSE MUST BE EXACTLY ONLY  YES   or   NO  in all caps. Followed by a new line and short explanation explaing your decision"""
-        f"Should we skip the step {step.tool}? {step.instructions}"
+        YOUR RESPONSE MUST BE EXACTLY ONLY  YES   or   NO  in all caps. Followed by a new line and short explanation explaining your decision."""
         response = prompt_llm_with_messages(
             action_context=action_context,
             prompt=[

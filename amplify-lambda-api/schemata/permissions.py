@@ -41,5 +41,9 @@ permissions_by_state_type = {
     "/apiKeys/api_documentation/get": {"read": can_read},
     "/apiKeys/api_documentation/upload": {"upload": can_save},
     "/apiKeys/api_documentation/get_templates": {"read": can_read},
-    "/apiKeys/register_ops": {"register_ops": can_save}, 
+    "/apiKeys/register_ops": {"register_ops": can_save},
+    # Notebook proxy endpoints — any authenticated user may call
+    "/notebook/proxy": {"proxy": can_read},
+    "/notebook/proxy/raw": {"proxy": can_read},
+    "/notebook/upload": {"upload": can_save},
 }
