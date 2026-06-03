@@ -49,7 +49,7 @@ add_api_access_types([APIAccessType.API_KEY.value])
 
 logger = getLogger("notebook_proxy")
 
-_REQUEST_TIMEOUT = 28.0
+_REQUEST_TIMEOUT = 890.0
 
 
 def _notebook_url(path: str, query_params: dict | None = None) -> str:
@@ -129,9 +129,10 @@ def _do_request(method: str, url: str, headers: dict, body_bytes: bytes | None):
 # ---------------------------------------------------------------------------
 
 @required_env_vars({"OPEN_NOTEBOOK_INTERNAL_URL": []})
-@validated("proxy")
+@validated("proxy", support_polling=True)
 def notebook_proxy(event, context, current_user, name, data):
-    """Forward a JSON request to Open Notebook and return the JSON response."""
+    """Forward a JSON request to Open Notebook and return the JSON response.
+    """
     payload = data.get("data", {})
     method = (payload.get("method") or "GET").upper()
     path = payload.get("path", "")
