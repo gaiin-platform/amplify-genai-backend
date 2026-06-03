@@ -40,5 +40,7 @@ FEATURE_FLAGS = {
     "criticalErrorTracking": False,
     "webSearch": True,
     "userDocumentation": False,  # Controls the documentation button in settings sidebar
+    "bedrockKnowledgeBase": False,
+    "mcp": False,
     "skills": False  # Controls the skills feature in the assistant builder
 }
