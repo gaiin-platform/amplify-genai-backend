@@ -74,7 +74,42 @@ class SESSchedulingMessageHandler(MessageHandler):
 
             ### PROCESSING LOGIC  ###
             # This implements the complete SES → Analysis → Draft → Outlook flow
-        
+
+            # ===========================================
+            # STEP 0.8: DETECT TEST TAG (early — before Step 1)
+            # We parse the tag and extract test_request_id here so that ALL exit
+            # paths (including the Step 1.5 non-scheduling early return) can mark
+            # the test# record as completed.  The settings-override portion still
+            # lives in Step 2.0 (after user_settings is loaded).
+            # ===========================================
+            is_test_run = False
+            test_request_id = None
+            _TEST_TAG_PREFIX = "<!--[AMPLIFY_TEST_TAG]"
+            _TEST_TAG_SUFFIX = "[/AMPLIFY_TEST_TAG]-->"
+            _tag_scan_body = email_body
+            _tag_start = email_body.find(_TEST_TAG_PREFIX)
+            if _tag_start < 0 and email_body_html:
+                _tag_start = email_body_html.find(_TEST_TAG_PREFIX)
+                if _tag_start >= 0:
+                    _tag_scan_body = email_body_html
+            if _tag_start >= 0:
+                _tag_end = _tag_scan_body.find(_TEST_TAG_SUFFIX, _tag_start)
+                if _tag_end >= 0:
+                    try:
+                        _tag_json = _tag_scan_body[_tag_start + len(_TEST_TAG_PREFIX):_tag_end]
+                        _tag_data = json.loads(_tag_json)
+                        test_request_id = _tag_data.get('test_request_id')
+                        if test_request_id:
+                            is_test_run = True
+                            logger.info("🧪 Step 0.8: Test tag detected early — test_request_id=%s", test_request_id)
+                            # Strip the tag from the plain-text body so it doesn't bleed into drafts
+                            _plain_tag_start = email_body.find(_TEST_TAG_PREFIX)
+                            if _plain_tag_start >= 0:
+                                _plain_tag_end = email_body.find(_TEST_TAG_SUFFIX, _plain_tag_start)
+                                if _plain_tag_end >= 0:
+                                    email_body = (email_body[:_plain_tag_start] + email_body[_plain_tag_end + len(_TEST_TAG_SUFFIX):]).strip()
+                    except Exception as _early_tag_err:
+                        logger.warning("   ⚠️ Step 0.8: Failed to parse test tag early: %s", _early_tag_err)
 
             # Get API Gateway base URL from environment
             stage = os.environ.get('STAGE', 'dev')
@@ -566,6 +601,57 @@ Is this a meeting/scheduling request?"""
                 if intent in NON_SCHEDULING_INTENTS:
                     logger.info("⏭️ Non-scheduling intent detected: %s — skipping processing", intent)
                     _result = {"skipped": True, "reason": "non_scheduling_intent", "intent": intent, "confidence": confidence}
+
+                    # Write a minimal request# record so this email appears in the
+                    # Dashboard's "Auto-Handled" section. Without this the email is
+                    # silently discarded and never shows up in the UI at all.
+                    try:
+                        import uuid as _uuid_15
+                        _now_15 = datetime.now(timezone.utc).isoformat()
+                        _req_id_15 = str(_uuid_15.uuid4())
+                        _email_id_15 = mail_data.get('messageId', _req_id_15)
+                        _subj_15 = common_headers.get('subject', 'Email')
+                        settings_table.put_item(Item=convert_floats_to_decimal({
+                            'user_id': sender_username,
+                            'storage_type': f'request#{_req_id_15}',
+                            'created_at': _now_15,
+                            'updated_at': _now_15,
+                            'data': {
+                                'request_id': _req_id_15,
+                                'email_id': _email_id_15,
+                                'draft_id': None,
+                                'calendar_event_id': None,
+                                'status': 'auto_handled',
+                                'sub_status': f'non_scheduling_{intent}',
+                                'requester_email': reply_to_email,
+                                'requester_name': reply_to_name,
+                                'ai_decision': {
+                                    'intent': intent,
+                                    'confidence': confidence,
+                                    'action_taken': 'auto_handled',
+                                    'requires_review': False,
+                                    'review_reason': None,
+                                    'auto_send_eligible': False,
+                                    'auto_send_blocked_reason': f'Non-scheduling intent: {intent}',
+                                },
+                                'meeting': {
+                                    'subject': _subj_15,
+                                    'purpose': f'Non-scheduling email ({intent})',
+                                    'duration_minutes': 0,
+                                    'proposed_times': [],
+                                    'confirmed_time': None,
+                                },
+                                'email_body': (email_body or '')[:500].strip(),
+                                'source': 'email_forwarding',
+                                'auto_processed': True,
+                                'scheduled_at': None,
+                                'completed_at': None,
+                            }
+                        }))
+                        logger.info("   📋 Non-scheduling request# record saved (auto_handled): request_id=%s", _req_id_15)
+                    except Exception as _save_15_err:
+                        logger.warning("   ⚠️ Could not save non-scheduling request record: %s", _save_15_err)
+
                     if is_test_run and test_request_id:
                         try:
                             _now = datetime.now(timezone.utc).isoformat()
@@ -668,74 +754,40 @@ Is this a meeting/scheduling request?"""
                 logger.info("   requires_review (final, confidence=%.2f < threshold=%.2f): %s", confidence, _review_threshold, requires_review)
 
                 # ===========================================
-                # STEP 2.0: DETECT TEST TAG — override settings if this is a test email
+                # STEP 2.0: APPLY TEST SETTINGS (tag was already parsed at Step 0.8)
+                # test_request_id and is_test_run are already set.  Here we just look
+                # up the test_settings from DynamoDB and override user_settings.
                 # ===========================================
-                is_test_run = False
-                test_request_id = None
-                TEST_TAG_PREFIX = "<!--[AMPLIFY_TEST_TAG]"
-                TEST_TAG_SUFFIX = "[/AMPLIFY_TEST_TAG]-->"
-                logger.info("🔎 Step 2.0: Scanning email body for test tag (plain: %d chars, html: %d chars)...", len(email_body), len(email_body_html))
-                tag_start = email_body.find(TEST_TAG_PREFIX)
-                _scan_body = email_body  # which body surface we found the tag in
-                if tag_start < 0 and email_body_html:
-                    # HTML comments are stripped from plain text — fall back to HTML body
-                    tag_start = email_body_html.find(TEST_TAG_PREFIX)
-                    if tag_start >= 0:
-                        _scan_body = email_body_html
-                        logger.info("   ℹ️ Tag not in plain text — found in HTML body at position %d", tag_start)
-                if tag_start < 0:
-                    logger.info("   ℹ️ No test tag found in plain or HTML body — processing as real email with user settings")
-                else:
-                    logger.info("   ✅ Test tag found at position %d", tag_start)
-                    tag_end = _scan_body.find(TEST_TAG_SUFFIX, tag_start)
-                    if tag_end < 0:
-                        logger.warning("   ⚠️ Test tag prefix found but suffix missing — malformed tag, ignoring")
-                    else:
-                        try:
-                            tag_json = _scan_body[tag_start + len(TEST_TAG_PREFIX):tag_end]
-                            logger.info("   📋 Tag JSON: %s", tag_json)
-                            tag_data = json.loads(tag_json)
-                            test_request_id = tag_data.get('test_request_id')
-                            # Strip the tag from the plain-text body so it doesn't appear in drafts.
-                            # (If the tag was only in HTML, plain body is already clean.)
-                            plain_tag_start = email_body.find(TEST_TAG_PREFIX)
-                            if plain_tag_start >= 0:
-                                plain_tag_end = email_body.find(TEST_TAG_SUFFIX, plain_tag_start)
-                                if plain_tag_end >= 0:
-                                    email_body = (email_body[:plain_tag_start] + email_body[plain_tag_end + len(TEST_TAG_SUFFIX):]).strip()
-                            logger.info("   ✂️ Tag stripped from body. New body length: %d chars", len(email_body))
-
-                            if not test_request_id:
-                                logger.warning("   ⚠️ Tag parsed but no test_request_id found in: %s", tag_data)
+                if is_test_run and test_request_id:
+                    logger.info("🔎 Step 2.0: Applying test settings for test_request_id=%s", test_request_id)
+                    try:
+                        test_record_response = settings_table.get_item(Key={
+                            'user_id': sender_username,
+                            'storage_type': f'test#{test_request_id}'
+                        })
+                        test_record = test_record_response.get('Item')
+                        if not test_record:
+                            logger.warning("   ⚠️ No test# record found for user=%s, test_request_id=%s — using real user settings", sender_username, test_request_id)
+                        else:
+                            test_data = test_record.get('data', {})
+                            test_settings = test_data.get('test_settings', {})
+                            if not test_settings:
+                                logger.warning("   ⚠️ Test record found but test_settings is empty — using real user settings")
                             else:
-                                logger.info("   🔑 test_request_id=%s — looking up test record in DynamoDB...", test_request_id)
-                                # Look up the test# record to get test_settings
-                                test_record_response = settings_table.get_item(Key={
-                                    'user_id': sender_username,
-                                    'storage_type': f'test#{test_request_id}'
-                                })
-                                test_record = test_record_response.get('Item')
-                                if not test_record:
-                                    logger.warning("   ⚠️ No test# record found for user=%s, test_request_id=%s — using real user settings", sender_username, test_request_id)
-                                else:
-                                    test_data = test_record.get('data', {})
-                                    test_settings = test_data.get('test_settings', {})
-                                    if not test_settings:
-                                        logger.warning("   ⚠️ Test record found but test_settings is empty — using real user settings")
-                                    else:
-                                        # Override user_settings with test_settings for this run
-                                        user_settings = {
-                                            'automation_level': test_settings.get('automation_level', user_settings.get('automation_level', 'draft_only')),
-                                            'auto_send_rules': test_settings.get('auto_send_rules', user_settings.get('auto_send_rules', {})),
-                                            'calendar_automation': test_settings.get('calendar_automation', user_settings.get('calendar_automation', {})),
-                                        }
-                                        is_test_run = True
-                                        logger.info("   🧪 TEST SETTINGS APPLIED:")
-                                        logger.info("      automation_level=%s", user_settings.get('automation_level'))
-                                        logger.info("      calendar_automation.mode=%s", user_settings.get('calendar_automation', {}).get('mode', 'never'))
-                                        logger.info("      auto_send_rules.enabled=%s", user_settings.get('auto_send_rules', {}).get('enabled', False))
-                        except Exception as _te:
-                            logger.warning("   ⚠️ Failed to parse test tag: %s", _te)
+                                # Override user_settings with test_settings for this run
+                                user_settings = {
+                                    'automation_level': test_settings.get('automation_level', user_settings.get('automation_level', 'draft_only')),
+                                    'auto_send_rules': test_settings.get('auto_send_rules', user_settings.get('auto_send_rules', {})),
+                                    'calendar_automation': test_settings.get('calendar_automation', user_settings.get('calendar_automation', {})),
+                                }
+                                logger.info("   🧪 TEST SETTINGS APPLIED:")
+                                logger.info("      automation_level=%s", user_settings.get('automation_level'))
+                                logger.info("      calendar_automation.mode=%s", user_settings.get('calendar_automation', {}).get('mode', 'never'))
+                                logger.info("      auto_send_rules.enabled=%s", user_settings.get('auto_send_rules', {}).get('enabled', False))
+                    except Exception as _te:
+                        logger.warning("   ⚠️ Failed to apply test settings: %s", _te)
+                else:
+                    logger.info("🔎 Step 2.0: No test tag — processing as real email with user settings")
 
                 automation_level = user_settings.get('automation_level', 'draft_only')
                 logger.info("✅ User settings loaded: automation_level=%s%s", automation_level, " [TEST]" if is_test_run else "")
@@ -1314,8 +1366,26 @@ Is this a meeting/scheduling request?"""
                 # Incoming calendar invite - check auto_accept_invites
                 logger.info("   📅 Intent: calendar_invite - checking auto_accept_invites")
 
-                # Check if user is available for the invite time
-                invite_time_available = len(calendar_slots) > 0  # Simplified check
+                # Check if user is available for the invite time.
+                # IMPORTANT: calendar_slots can be populated with the REQUESTED (busy) time
+                # when _all_times_unavailable is True (never/manual_review mode stores the
+                # conflicted time for dashboard display). It can also hold proposed
+                # ALTERNATIVES when _offering_alternatives is True (the requested time was
+                # busy and we fell back to suggestions). In BOTH cases the time the sender
+                # actually asked for is NOT free, so we must NOT auto-accept/tentative —
+                # doing so would double-book the calendar. Only treat the invite as
+                # available when we have real free slots for the requested time.
+                _invite_all_unavailable = locals().get('_all_times_unavailable', False)
+                _invite_offering_alts = locals().get('_offering_alternatives', False)
+                invite_time_available = (
+                    len(calendar_slots) > 0
+                    and not _invite_all_unavailable
+                    and not _invite_offering_alts
+                )
+                if not invite_time_available and len(calendar_slots) > 0:
+                    logger.info("   ⚠️ Invite slots present but requested time is NOT free "
+                                "(all_unavailable=%s, offering_alts=%s) — will NOT auto-accept",
+                                _invite_all_unavailable, _invite_offering_alts)
 
                 if auto_accept_invites == 'if_available' and invite_time_available:
                     calendar_action = 'accept'
@@ -1458,7 +1528,22 @@ Is this a meeting/scheduling request?"""
             # If automation_level is 'off', skip email draft generation entirely.
             # We only reach here if calendar automation is active (Step 2.6 allowed us through).
             # Jump straight to calendar-only flow.
-            if automation_level == 'off':
+            # P0-2 FIX: Decide up-front whether this calendar-only action still needs a
+            # written reply to the requester. If it does, we DO NOT take the pure
+            # calendar-only path (which would save a record and leave the card blank);
+            # instead we fall through to the normal draft flow (which generates the reply
+            # AND saves its own record), so we never produce a duplicate/empty card.
+            _reply_required_actions = {
+                'offer_alternatives',
+                'polite_decline',
+                'draft_reschedule',
+                'decline_cancel',
+            }
+            _calendar_only_needs_reply = (
+                automation_level == 'off' and calendar_action in _reply_required_actions
+            )
+
+            if automation_level == 'off' and not _calendar_only_needs_reply:
                 logger.info("⏭️ Automation level is 'off' — skipping draft generation (Steps 3-5.5)")
                 logger.info("   Proceeding directly to calendar automation (Step 5.75)...")
 
@@ -1536,10 +1621,17 @@ Is this a meeting/scheduling request?"""
                 except Exception as e:
                     logger.error("❌ Failed to save calendar-only request: %s", e, exc_info=True)
 
-                # Jump to Step 5.75 (calendar event handling) — skip draft steps entirely
-                # We use a flag to skip the normal draft flow below
+                # Pure calendar-only operation (accept/tentative/create/reschedule/cancel
+                # confirmation with no written reply needed) — jump straight to Step 5.75.
                 _skip_draft_flow = True
             else:
+                # Reached when EITHER automation is on, OR automation is 'off' but the
+                # calendar_action requires a written reply (P0-2). In the latter case the
+                # draft flow generates the reply AND saves its own request record, and
+                # auto-send stays off (should_auto_send is forced False below for that mode).
+                if _calendar_only_needs_reply:
+                    logger.info("   ✍️ Calendar-only mode but calendar_action=%s requires a reply "
+                                "— generating draft for review (auto-send remains off)", calendar_action)
                 _skip_draft_flow = False
 
             if not _skip_draft_flow:
@@ -2174,12 +2266,15 @@ Write a natural, warm, professional response that {executive_name} would send.""
                 # For confirmed/accepted/rescheduled events, respect the user's 'Mark as Busy' setting.
                 # For tentative proposals (create_tentative), also respect the setting — user explicitly chose.
                 user_event_status = calendar_automation.get('event_status', 'tentative')
-                if calendar_action == 'create_confirmed':
-                    event_status_type = 'busy'  # confirmed meetings are always busy, not tentative
-                elif calendar_action == 'auto_reschedule':
-                    event_status_type = 'busy'  # rescheduled = both parties agreed → busy/scheduled
-                elif calendar_action == 'accept':
-                    event_status_type = user_event_status
+                # P1-1 FIX: a rescheduled meeting is a mutually-agreed, confirmed meeting —
+                # just like 'accept' and 'create_confirmed'. It should therefore RESPECT the
+                # user's 'event_status' (Mark as Busy) setting rather than being hard-coded to
+                # 'busy'. We treat the confirmed/agreed group uniformly: honor the user's
+                # setting, defaulting to 'busy' for these agreed meetings when unset.
+                if calendar_action in ('create_confirmed', 'auto_reschedule', 'accept'):
+                    # Agreed meetings: respect user's choice. If they explicitly set a value
+                    # (e.g. 'tentative'), honor it; otherwise default to 'busy' for an agreed event.
+                    event_status_type = calendar_automation.get('event_status') or 'busy'
                 elif calendar_action in ['create_tentative', 'tentative']:
                     event_status_type = 'tentative'
                 else:
@@ -2209,30 +2304,76 @@ Write a natural, warm, professional response that {executive_name} would send.""
                             ScanIndexForward=False,
                             Limit=20
                         )
-                        _new_subj = common_headers.get('subject', '').lower()
-                        # Also pull AI-extracted meeting title for looser matching
-                        _ai_subj = meeting_details.get('subject', '').lower()
-                        for req_item in existing_requests.get('Items', []):
+                        # P1-3 FIX: prefer THREAD LINKING over loose subject matching.
+                        # The reschedule/cancel email is (almost always) a reply within the
+                        # same Outlook conversation as the original request, so matching on
+                        # conversationId / in-reply-to message id is far more reliable than
+                        # fuzzy subject substring matching (which could false-match unrelated
+                        # meetings that happen to share words). We do a two-pass search:
+                        #   Pass 1 — thread match (original_conversation_id / original_message_id)
+                        #   Pass 2 — fallback: tightened subject match (normalized, + requester)
+                        def _norm_subj(s):
+                            # Strip common reply/forward prefixes and whitespace for comparison
+                            s = (s or '').lower().strip()
+                            for _p in ('re:', 'fw:', 'fwd:', 'reply:'):
+                                while s.startswith(_p):
+                                    s = s[len(_p):].strip()
+                            return s
+
+                        _new_subj = _norm_subj(common_headers.get('subject', ''))
+                        _ai_subj = _norm_subj(meeting_details.get('subject', ''))
+                        _items = [i for i in existing_requests.get('Items', [])
+                                  if i.get('storage_type', '') != f'request#{request_id}']
+
+                        def _match_request(req_item):
+                            """Return (event_id, storage_type) if this prior request is the
+                            one whose calendar event should be deleted/updated, else None."""
                             req_data = req_item.get('data', {})
-                            req_meeting = req_data.get('meeting', {})
-                            _old_subj = req_meeting.get('subject', '').lower()
-                            # Skip the current request itself
-                            if req_item.get('storage_type', '') == f'request#{request_id}':
-                                continue
-                            # Match if there's any subject overlap (either direction) AND same requester
-                            _subj_match = (
-                                (_old_subj and _old_subj in _new_subj) or
-                                (_old_subj and _new_subj and _new_subj in _old_subj) or
-                                (_ai_subj and _old_subj and _ai_subj in _old_subj) or
-                                (_ai_subj and _old_subj and _old_subj in _ai_subj)
-                            )
-                            if (req_data.get('calendar_event_id') and
-                                req_data.get('requester_email') == reply_to_email and
-                                _subj_match):
-                                existing_event_id = req_data['calendar_event_id']
-                                existing_request_storage_type = req_item.get('storage_type')
-                                logger.info("   🔍 Found existing calendar event: %s (from %s)", existing_event_id, _old_subj)
-                                break
+                            if not req_data.get('calendar_event_id'):
+                                return None
+                            # Requester must match in all cases — never touch another
+                            # contact's meeting.
+                            if req_data.get('requester_email') != reply_to_email:
+                                return None
+                            return (req_data['calendar_event_id'], req_item.get('storage_type'))
+
+                        # ---- Pass 1: thread linking ----
+                        if original_conversation_id or original_message_id:
+                            for req_item in _items:
+                                _rd = req_item.get('data', {})
+                                _ai = _rd.get('ai_decision', {}) or {}
+                                _same_thread = (
+                                    (original_conversation_id and _ai.get('original_conversation_id') == original_conversation_id) or
+                                    (original_message_id and _ai.get('original_message_id') == original_message_id)
+                                )
+                                if _same_thread:
+                                    _m = _match_request(req_item)
+                                    if _m:
+                                        existing_event_id, existing_request_storage_type = _m
+                                        logger.info("   🔗 P1-3: Matched existing event %s via THREAD link (conversation_id/message_id)",
+                                                    existing_event_id)
+                                        break
+
+                        # ---- Pass 2: tightened subject fallback ----
+                        if not existing_event_id:
+                            for req_item in _items:
+                                _old_subj = _norm_subj(req_item.get('data', {}).get('meeting', {}).get('subject', ''))
+                                if not _old_subj:
+                                    continue
+                                # Require an EXACT normalized subject match (either against the
+                                # raw subject or the AI-extracted title). No more loose
+                                # substring-in-either-direction matching.
+                                _subj_match = (
+                                    _old_subj == _new_subj or
+                                    (_ai_subj and _old_subj == _ai_subj)
+                                )
+                                if _subj_match:
+                                    _m = _match_request(req_item)
+                                    if _m:
+                                        existing_event_id, existing_request_storage_type = _m
+                                        logger.info("   🔍 P1-3: Matched existing event %s via exact subject fallback ('%s')",
+                                                    existing_event_id, _old_subj)
+                                        break
                     except Exception as e:
                         logger.warning("   ⚠️ Could not look up existing event: %s", e)
 
@@ -2263,12 +2404,39 @@ Write a natural, warm, professional response that {executive_name} would send.""
                                 logger.info("   ✅ Existing calendar event deleted")
                                 if calendar_action == 'confirm_cancel':
                                     event_timestamp = datetime.now(timezone.utc).isoformat()
+                                    # Mark the CURRENT (cancellation) request as cancelled
                                     storage_table.update_item(
                                         Key={'user_id': sender_username, 'storage_type': f"request#{request_id}"},
                                         UpdateExpression='SET #data.#status = :status, #data.sub_status = :sub, updated_at = :updated',
                                         ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
                                         ExpressionAttributeValues={':status': 'cancelled', ':sub': 'calendar_event_deleted', ':updated': event_timestamp}
                                     )
+                                    # P0-3 FIX: also update the ORIGINAL scheduled request that
+                                    # owned this calendar event. Without this the original card
+                                    # stays 'scheduled' forever (orphan card) even though its
+                                    # event was just deleted. We mark it cancelled and clear its
+                                    # calendar_event_id so no stale event id lingers.
+                                    if existing_request_storage_type and existing_request_storage_type != f"request#{request_id}":
+                                        try:
+                                            storage_table.update_item(
+                                                Key={'user_id': sender_username, 'storage_type': existing_request_storage_type},
+                                                UpdateExpression=(
+                                                    'SET #data.#status = :status, #data.sub_status = :sub, '
+                                                    '#data.calendar_event_id = :nullid, updated_at = :updated'
+                                                ),
+                                                ExpressionAttributeNames={'#data': 'data', '#status': 'status'},
+                                                ExpressionAttributeValues={
+                                                    ':status': 'cancelled',
+                                                    ':sub': 'cancelled_by_requester',
+                                                    ':nullid': None,
+                                                    ':updated': event_timestamp,
+                                                }
+                                            )
+                                            logger.info("   ✅ P0-3: Original scheduled request %s marked cancelled (orphan card cleared)",
+                                                        existing_request_storage_type)
+                                        except Exception as _orphan_err:
+                                            logger.warning("   ⚠️ P0-3: Could not update original request %s: %s",
+                                                           existing_request_storage_type, _orphan_err)
                             else:
                                 logger.warning("   ⚠️ Could not delete existing event (continuing anyway)")
                         except Exception as e:
