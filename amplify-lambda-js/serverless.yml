@@ -29,7 +29,7 @@ custom:
   prune:
     automatic: false
     includeLayers: true
-    number: 20    
+    number: 10    
 
 
 provider:
