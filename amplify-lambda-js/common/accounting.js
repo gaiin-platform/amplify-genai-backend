@@ -5,6 +5,7 @@ import { DynamoDBClient, PutItemCommand, QueryCommand, UpdateItemCommand } from 
 import { marshall } from "@aws-sdk/util-dynamodb";
 import {getLogger} from "./logging.js";
 import {logCriticalError} from "./criticalLogger.js";
+import {buildAccountInfo, resolveApiKeyId, isAmpApiKey} from "./accountInfo.js";
 
 const logger = getLogger("accounting");
 const dynamodbClient = new DynamoDBClient({});
@@ -31,12 +32,31 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         return false;
     }
 
-    // Move apiKeyId declaration to function scope
-    const apiKeyId = getApiKeyId(account);
+    // 🔒 Build the billing identity via the shared single-source-of-truth helper.
+    // This is the SAME helper the rate limiter uses, so the composite key can never diverge.
+    // `billing.apiKeyId` is 'NA' when this is not an API-key request; `billing.accountInfo` is
+    // the exact "<accountId>#<apiKeyId>" key written to the cost-calculations table.
+    const billing = buildAccountInfo(account);
+    const accountId = billing.accountId;
+    // apiKeyId here is the resolved key (or null) used only to attach api_key_id to the usage row.
+    const apiKeyId = resolveApiKeyId(account);
+
+    // 🔍 ACCOUNTING OBSERVABILITY: Log exactly what account context arrived.
+    // Billing integrity depends entirely on this object being populated correctly.
+    logger.info("📊 [ACCOUNTING] recordUsage invoked", {
+        user: account?.user || 'MISSING',
+        accountId: account?.accountId || 'UNDEFINED (will fall back to general_account)',
+        rawApiKeyId: account?.apiKeyId || 'UNDEFINED',
+        resolvedApiKeyId: apiKeyId || 'NA (not an API-key request)',
+        accessTokenPrefix: account?.accessToken ? `${account.accessToken.substring(0, 7)}...` : 'MISSING',
+        isAmpKey: isAmpApiKey(account?.accessToken),
+        requestId: requestId || 'UNDEFINED',
+        modelId: model?.id || 'UNDEFINED',
+        inputTokens,
+        outputTokens
+    });
 
     try {
-        const accountId = account.accountId || 'general_account';
-        
         // Validate that account.user is not undefined
         if (!account.user) {
             logger.error("Missing account.user in recordUsage call");
@@ -147,10 +167,13 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const now = new Date();
         const currentHour = now.getUTCHours();
 
-        // Create the accountInfo (secondary key)
-        const coaString = account.accountId || 'general_account';
-        const apiKeyIdInfo = apiKeyId || 'NA';
-        const accountInfo = `${coaString}#${apiKeyIdInfo}`;
+        // 🔒 Use the composite key from the shared helper (identical to the rate limiter's).
+        const accountInfo = billing.accountInfo;
+
+        // 🔍 ACCOUNTING OBSERVABILITY: Log the exact composite key being written to the
+        // cost-calculations table. The rate limiter builds the identical accountInfo via the
+        // same buildAccountInfo() helper — if they ever diverge, limits never enforce.
+        logger.info(`📊 [ACCOUNTING] Writing cost $${totalCost.toFixed(6)} to accountInfo="${accountInfo}" for user="${account.user}" (requestId=${requestId || 'UNDEFINED'}, model=${model?.id || 'UNDEFINED'})`);
 
         // First update: Ensure dailyCost and hourlyCost are initialized
         const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), record_type = if_not_exists(record_type, :recordType)`;
@@ -221,8 +244,3 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     return true;
 };
-
-const getApiKeyId = (account) => {
-    if (account && account.accessToken?.startsWith("amp-") && account?.apiKeyId) return account.apiKeyId;
-    return null;
-}
