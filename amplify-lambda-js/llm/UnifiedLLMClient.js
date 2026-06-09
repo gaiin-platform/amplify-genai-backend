@@ -711,6 +711,29 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 }
 
 /**
+ * Recursively adds additionalProperties: false to all object-type nodes in a JSON schema.
+ * Required by Bedrock Claude 4+ models when using outputConfig structured output.
+ */
+function addAdditionalPropertiesFalse(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    const result = { ...schema };
+    if (result.type === 'object') {
+        result.additionalProperties = false;
+        if (result.properties) {
+            const updatedProps = {};
+            for (const [key, val] of Object.entries(result.properties)) {
+                updatedProps[key] = addAdditionalPropertiesFalse(val);
+            }
+            result.properties = updatedProps;
+        }
+    }
+    if (result.items) {
+        result.items = addAdditionalPropertiesFalse(result.items);
+    }
+    return result;
+}
+
+/**
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
@@ -750,16 +773,25 @@ RULES:
     let structuredOutputOptions = {};
 
     if (provider === 'Bedrock') {
-        structuredOutputOptions.outputConfig = {
-            textFormat: {
-                type: "json_schema",
-                structure: {
-                    jsonSchema: {
-                        schema: JSON.stringify(outputFormat)
+        // Only Claude models support outputConfig on Bedrock.
+        // Nova, Titan, Llama, Mistral, and other non-Claude models will error if outputConfig is sent.
+        // Claude 4+ models also require additionalProperties: false on all object schemas.
+        const modelId = (model?.id || '').toLowerCase();
+        const isClaudeModel = modelId.includes('claude');
+        if (isClaudeModel) {
+            const schemaWithAdditionalProps = addAdditionalPropertiesFalse(outputFormat);
+            structuredOutputOptions.outputConfig = {
+                textFormat: {
+                    type: "json_schema",
+                    structure: {
+                        jsonSchema: {
+                            schema: JSON.stringify(schemaWithAdditionalProps)
+                        }
                     }
                 }
-            }
-        };
+            };
+        }
+        // else: fall through to JSON-in-prompt only (no outputConfig)
     } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
         structuredOutputOptions.response_format = {
             type: "json_schema",
