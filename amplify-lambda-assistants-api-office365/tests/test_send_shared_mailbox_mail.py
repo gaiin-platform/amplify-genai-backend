@@ -7,7 +7,7 @@ Runs against the local dev server at localhost:3015.
 import requests
 from datetime import datetime
 
-API_KEY = "amp-v1-fdzpP8Ik4LfjZyFPj7Xxd7BmeENXzYuTGxy6SFSPINU"
+API_KEY = "amp-v1-1234567890abcdef"  # Replace with your actual API key
 API_BASE_URL = "http://localhost:3015/dev"
 SHARED_MAILBOX = "amplify@vanderbilt.edu"
 TO = "preston.m.horne@vanderbilt.edu"
