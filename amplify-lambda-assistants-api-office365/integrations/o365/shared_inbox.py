@@ -526,3 +526,216 @@ def create_shared_mailbox_draft(
 
     except requests.RequestException as e:
         raise SharedInboxError(f"Network error creating shared mailbox draft: {str(e)}")
+
+
+def send_shared_mailbox_mail(
+    current_user: str,
+    mailbox_email: str,
+    subject: str,
+    body: str,
+    to_recipients: List[str],
+    cc_recipients: Optional[List[str]] = None,
+    bcc_recipients: Optional[List[str]] = None,
+    importance: str = "normal",
+    content_type: str = "text",
+    access_token: str = None,
+) -> Dict:
+    """
+    Sends an email from a shared Exchange mailbox.
+
+    Uses POST /users/{mailbox_email}/sendMail so the message is sent with the
+    shared mailbox address as the sender (From), rather than the authenticated
+    user's personal address.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox (e.g. support@example.com)
+        subject: Email subject
+        body: Email body content
+        to_recipients: List of primary recipient email addresses
+        cc_recipients: Optional list of CC recipient email addresses
+        bcc_recipients: Optional list of BCC recipient email addresses
+        importance: Importance level ('low', 'normal', 'high')
+        content_type: Content type ('text' or 'html')
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing send status
+
+    Raises:
+        SharedInboxError: If the send operation fails
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/sendMail"
+
+        email_msg: Dict = {
+            "message": {
+                "subject": subject,
+                "body": {"contentType": content_type, "content": body},
+                "toRecipients": [
+                    {"emailAddress": {"address": addr}} for addr in to_recipients
+                ],
+                "importance": importance,
+            },
+            "saveToSentItems": "true",
+        }
+
+        if cc_recipients:
+            email_msg["message"]["ccRecipients"] = [
+                {"emailAddress": {"address": addr}} for addr in cc_recipients
+            ]
+
+        if bcc_recipients:
+            email_msg["message"]["bccRecipients"] = [
+                {"emailAddress": {"address": addr}} for addr in bcc_recipients
+            ]
+
+        response = session.post(url, json=email_msg)
+        if not response.ok:
+            _handle_graph_error(response)
+
+        return {
+            "status": "sent",
+            "subject": subject,
+            "recipients": {
+                "to": to_recipients,
+                "cc": cc_recipients or [],
+                "bcc": bcc_recipients or [],
+            },
+        }
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error sending shared mailbox mail: {str(e)}")
+
+
+def send_shared_mailbox_draft(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Sends an existing draft message from a shared Exchange mailbox.
+
+    Uses POST /users/{mailbox_email}/messages/{message_id}/send to dispatch
+    a draft that was previously created via create_shared_mailbox_draft.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox
+        message_id: Graph API message ID of the draft to send
+        access_token: Amplify API access token
+
+    Returns:
+        Dict confirming the send action
+
+    Raises:
+        SharedInboxError: If sending fails
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/send"
+
+        logger.info("Sending draft %s from shared mailbox %s for user %s", message_id, mailbox_email, current_user)
+        response = session.post(url, json={})
+
+        if response.status_code not in (202, 204):
+            _handle_graph_error(response)
+
+        return {"status": "sent", "message_id": message_id, "from": mailbox_email}
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error sending draft from shared mailbox: {str(e)}")
+
+
+def add_shared_mailbox_attachment(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    name: str,
+    content_type: str,
+    content_bytes: str,
+    is_inline: bool = False,
+    access_token: str = None,
+) -> Dict:
+    """
+    Adds an attachment to a message in a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox
+        message_id: Graph API message ID
+        name: Attachment file name
+        content_type: MIME type of the attachment
+        content_bytes: Base64 encoded content of the attachment
+        is_inline: Whether the attachment is inline (default: False)
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing the added attachment detail
+
+    Raises:
+        SharedInboxError: If the attachment operation fails
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments"
+        payload = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": name,
+            "contentType": content_type,
+            "contentBytes": content_bytes,
+            "isInline": is_inline,
+        }
+        response = session.post(url, json=payload)
+        if not response.ok:
+            _handle_graph_error(response)
+
+        attachment = response.json()
+        return {
+            "id": attachment.get("id"),
+            "name": attachment.get("name"),
+            "contentType": attachment.get("contentType"),
+            "size": attachment.get("size"),
+            "isInline": attachment.get("isInline", False),
+            "lastModifiedDateTime": attachment.get("lastModifiedDateTime"),
+        }
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error adding shared mailbox attachment: {str(e)}")
+
+
+def delete_shared_mailbox_draft(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Deletes a draft message from a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox
+        message_id: Graph API message ID of the draft to delete
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing deletion status
+
+    Raises:
+        SharedInboxError: If deletion fails
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
+        response = session.delete(url)
+
+        if response.status_code == 204:
+            return {"status": "deleted", "id": message_id}
+
+        _handle_graph_error(response)
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error deleting shared mailbox draft: {str(e)}")

@@ -165,6 +165,10 @@ from integrations.o365.shared_inbox import (
     search_shared_mailbox_messages,
     list_shared_mailbox_folders,
     create_shared_mailbox_draft,
+    send_shared_mailbox_mail,
+    send_shared_mailbox_draft,
+    add_shared_mailbox_attachment,
+    delete_shared_mailbox_draft,
 )
 from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
@@ -4199,4 +4203,160 @@ def create_shared_mailbox_draft_handler(current_user, data):
         bcc_recipients=None,
         importance="normal",
         content_type="text",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/send_shared_mailbox_mail",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftSendSharedMailboxMail",
+    description="Sends an email from a shared Exchange mailbox. The message is sent with the shared mailbox address as the From sender, rather than the authenticated user's personal address. Requires Send As or Send on Behalf permission on the shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox to send from (e.g. support@example.com)",
+            },
+            "subject": {
+                "type": "string",
+                "description": "Email subject",
+            },
+            "body": {
+                "type": "string",
+                "description": "Email body content",
+            },
+            "to_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of primary recipient email addresses",
+            },
+            "cc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of CC recipient email addresses",
+            },
+            "bcc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of BCC recipient email addresses",
+            },
+            "importance": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "Importance level of the email",
+            },
+            "content_type": {
+                "type": "string",
+                "enum": ["text", "html"],
+                "description": "Content type of the body (text or html)",
+            },
+        },
+        "required": ["mailbox_email", "subject", "body", "to_recipients"],
+    },
+)
+def send_shared_mailbox_mail_handler(current_user, data):
+    return common_handler(
+        send_shared_mailbox_mail,
+        mailbox_email=None,
+        subject=None,
+        body=None,
+        to_recipients=None,
+        cc_recipients=None,
+        bcc_recipients=None,
+        importance="normal",
+        content_type="text",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/send_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftSendSharedMailboxDraft",
+    description="Sends an existing draft message from a shared Exchange mailbox. The draft must have been previously created via create_shared_mailbox_draft.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID of the draft to send",
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def send_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        send_shared_mailbox_draft,
+        mailbox_email=None,
+        message_id=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/add_shared_mailbox_attachment",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftAddSharedMailboxAttachment",
+    description="Adds an attachment to a message in a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {"type": "string", "description": "Message ID"},
+            "name": {"type": "string", "description": "Attachment name"},
+            "content_type": {"type": "string", "description": "Attachment MIME type"},
+            "content_bytes": {
+                "type": "string",
+                "description": "Base64 encoded content",
+            },
+            "is_inline": {
+                "type": "boolean",
+                "description": "Is the attachment inline",
+                "default": False,
+            },
+        },
+        "required": ["mailbox_email", "message_id", "name", "content_type", "content_bytes"],
+    },
+)
+def add_shared_mailbox_attachment_handler(current_user, data):
+    return common_handler(
+        add_shared_mailbox_attachment,
+        mailbox_email=None,
+        message_id=None,
+        name=None,
+        content_type=None,
+        content_bytes=None,
+        is_inline=False,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/delete_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftDeleteSharedMailboxDraft",
+    description="Deletes a draft message from a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {"type": "string", "description": "Draft message ID to delete"},
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def delete_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        delete_shared_mailbox_draft,
+        mailbox_email=None,
+        message_id=None,
     )(current_user, data)
