@@ -98,8 +98,12 @@ Example:
 # without code changes. Defaults fall back to dev addresses.
 #
 # NOTES_ENABLED controls whether the notes@ email handler is active.
-# Default is "false" (off) — must be explicitly set to "true" to enable.
-NOTES_ENABLED = os.getenv("NOTES_ENABLED", "false").lower() == "true"
+# Automatically true when all required Notes env vars are populated.
+NOTES_ENABLED = all([
+    os.getenv("NOTES_EMAIL", ""),
+    os.getenv("NOTES_INGEST_QUEUE_URL", ""),
+    os.getenv("S3_NOTES_RAW_FILES_BUCKET", ""),
+])
 
 SPECIALIZED_EMAILS = {
     "SCHEDULER": os.getenv("SCHEDULER_EMAIL", "schedule@dev.vanderbilt.ai"),
