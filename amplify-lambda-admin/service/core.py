@@ -80,6 +80,7 @@ class AdminConfigTypes(Enum):
     CRITICAL_ERRORS = "criticalErrors"
     WEB_SEARCH_CONFIG = "webSearchConfig"
     USER_DOCUMENTATION_URL = "userDocumentationUrl"
+    DEFAULT_TIMEZONE = "defaultTimezone"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -982,6 +983,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.CRITICAL_ERRORS,
             AdminConfigTypes.WEB_SEARCH_CONFIG,
             AdminConfigTypes.USER_DOCUMENTATION_URL,
+            AdminConfigTypes.DEFAULT_TIMEZONE,
         ]
 
         for config_type in dynamo_config_types:
@@ -1288,7 +1290,8 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.PROMPT_COST_ALERT,
         AdminConfigTypes.WEB_SEARCH_CONFIG,
         AdminConfigTypes.USER_DOCUMENTATION_URL,
-        AdminConfigTypes.RATE_LIMIT
+        AdminConfigTypes.RATE_LIMIT,
+        AdminConfigTypes.DEFAULT_TIMEZONE,
     ]
     configs = {}
     for config_type in app_configs:

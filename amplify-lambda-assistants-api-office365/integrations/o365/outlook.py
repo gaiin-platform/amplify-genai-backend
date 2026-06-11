@@ -3,7 +3,8 @@ import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 from integrations.oauth import get_ms_graph_session
-from integrations.o365.html_utils import html_to_plain_text
+from integrations.o365.html_utils import html_to_plain_text, markdown_to_html
+from integrations.o365.admin_config import get_default_timezone_windows
 
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
@@ -65,6 +66,7 @@ def list_messages(
     skip: int = 0,
     filter_query: Optional[str] = None,
     include_body: bool = False,
+    user_timezone: str = None,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -77,6 +79,7 @@ def list_messages(
         skip: Number of messages to skip
         filter_query: OData filter query
         include_body: Whether to include message body and bodyPreview (default: False)
+        user_timezone: User's preferred timezone in Windows format (default: "UTC")
 
     Returns:
         List of message details
@@ -113,13 +116,18 @@ def list_messages(
                 "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
             }
 
-        response = session.get(url, params=params)
+        if user_timezone is None:
+            user_timezone = get_default_timezone_windows()
+        headers = {}
+        if user_timezone and user_timezone != "UTC":
+            headers["Prefer"] = f'outlook.timezone="{user_timezone}"'
+
+        response = session.get(url, params=params, headers=headers)
 
         if not response.ok:
             handle_graph_error(response)
 
         messages = response.json().get("value", [])
-        # Use detailed=True and pass include_body parameter to format_message
         return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
 
     except requests.RequestException as e:
@@ -769,6 +777,10 @@ def create_draft(
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
+        use_html = content_type and content_type.lower() == "html"
+        if use_html and body and not body.lstrip().startswith('<'):
+            body = markdown_to_html(body)
+
         if reply_to_message_id:
             # ── Threaded reply draft ──
             # Step 1: createReply — gives us a draft in the same conversation thread
@@ -782,7 +794,7 @@ def create_draft(
 
             # Step 2: PATCH the draft to set our actual body content
             if draft_id and body:
-                ct = "HTML" if content_type and content_type.lower() == "html" else "Text"
+                ct = "HTML" if use_html else "Text"
                 patch_url = f"{GRAPH_ENDPOINT}/me/messages/{draft_id}"
                 patch_payload = {
                     "body": {"contentType": ct, "content": body},
@@ -801,7 +813,7 @@ def create_draft(
             url = f"{GRAPH_ENDPOINT}/me/messages"
             payload = {
                 "subject": subject,
-                "body": {"contentType": content_type, "content": body},
+                "body": {"contentType": "HTML" if use_html else "Text", "content": body},
                 "importance": importance,
             }
             if to_recipients:
