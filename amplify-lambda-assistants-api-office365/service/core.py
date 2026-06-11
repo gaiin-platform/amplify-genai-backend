@@ -6,6 +6,8 @@ from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 import traceback
 logger = getLogger("office365")
 
+from integrations.o365.admin_config import get_default_timezone_windows
+
 from integrations.o365.calendar import (
     add_attachment,
     check_event_conflicts,
@@ -928,12 +930,16 @@ def update_range_handler(current_user, data):
                 "description": "Whether to include message body and bodyPreview",
                 "default": False,
             },
+            "user_timezone": {
+                "type": "string",
+                "description": "User's preferred timezone in Windows format (e.g., 'Central Standard Time', 'Eastern Standard Time') (optional, defaults to system-configured timezone)",
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False
+        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False, user_timezone=None
     )(current_user, data)
 
 
@@ -2296,7 +2302,7 @@ def create_event_handler(current_user, data):
         is_online_meeting=False,
         reminder_minutes_before_start=None,
         send_invitations="auto",
-        time_zone="Central Standard Time",
+        time_zone=None,
         show_as=None,
     )(current_user, data)
 
@@ -2352,15 +2358,14 @@ def delete_event_handler(current_user, data):
             "event_id": {"type": "string", "description": "Event ID to retrieve"},
             "user_timezone": {
                 "type": "string",
-                "description": "User's preferred timezone in Windows format (optional)",
-                "default": "UTC",
+                "description": "User's preferred timezone in Windows format (optional, defaults to system-configured timezone)",
             },
         },
         "required": ["event_id"],
     },
 )
 def get_event_details_handler(current_user, data):
-    return common_handler(get_event_details, event_id=None, user_timezone="UTC")(
+    return common_handler(get_event_details, event_id=None, user_timezone=None)(
         current_user, data
     )
 
@@ -2390,8 +2395,7 @@ def get_event_details_handler(current_user, data):
             },
             "user_timezone": {
                 "type": "string",
-                "description": "User's preferred timezone in Windows format (e.g., 'Pacific Standard Time', 'Eastern Standard Time') (optional)",
-                "default": "UTC",
+                "description": "User's preferred timezone in Windows format (e.g., 'Pacific Standard Time', 'Eastern Standard Time') (optional, defaults to system-configured timezone)",
             },
         },
         "required": ["start_dt", "end_dt"],
@@ -2403,7 +2407,7 @@ def get_events_between_dates_handler(current_user, data):
         start_dt=None,
         end_dt=None,
         page_size=50,
-        user_timezone="UTC",
+        user_timezone=get_default_timezone_windows(),
     )(current_user, data)
 
 
@@ -2467,8 +2471,8 @@ def update_message_handler(current_user, data):
             "content_type": {
                 "type": "string",
                 "enum": ["text", "html"],
-                "default": "text",
-                "description": "Content type (text or html) (optional)",
+                "default": "html",
+                "description": "Content type (text or html) (optional, defaults to html)",
             },
             "reply_to_message_id": {
                 "type": "string",
@@ -2489,7 +2493,7 @@ def create_draft_handler(current_user, data):
         cc_recipients=None,
         bcc_recipients=None,
         importance="normal",
-        content_type="text",
+        content_type="html",
         reply_to_message_id=None,
     )(current_user, data)
 
@@ -2750,7 +2754,7 @@ def search_messages_handler(current_user, data):
     },
 )
 def list_calendar_events_handler(current_user, data):
-    return common_handler(list_calendar_events, calendar_id=None, user_timezone="UTC")(
+    return common_handler(list_calendar_events, calendar_id=None, user_timezone=None)(
         current_user, data
     )
 
@@ -2920,7 +2924,7 @@ def find_meeting_times_handler(current_user, data):
         duration_minutes=30,
         start_time=None,
         end_time=None,
-        time_zone="Central Standard Time",
+        time_zone=None,
         required_attendees=None,
         optional_attendees=None,
         working_hours_start="09:00",
@@ -2969,7 +2973,7 @@ def create_recurring_event_handler(current_user, data):
         end_time=None,
         description=None,
         recurrence_pattern=None,
-        time_zone="Central Standard Time",
+        time_zone=None,
     )(current_user, data)
 
 
@@ -3173,7 +3177,7 @@ def check_event_conflicts_handler(current_user, data):
         return_conflicting_events=False,
         calendar_ids=None,
         check_all_calendars=False,
-        time_zone="Central Standard Time",
+        time_zone=None,
     )(current_user, data)
 
 
