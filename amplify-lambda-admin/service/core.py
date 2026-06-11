@@ -694,7 +694,8 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS
-            | AdminConfigTypes.USER_DOCUMENTATION_URL ):
+            | AdminConfigTypes.USER_DOCUMENTATION_URL
+            | AdminConfigTypes.DEFAULT_TIMEZONE ):
             logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
@@ -1227,6 +1228,8 @@ def initialize_config(config_type):
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
         item["data"] = None
+    elif config_type == AdminConfigTypes.DEFAULT_TIMEZONE:
+        item["data"] = "UTC"
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
