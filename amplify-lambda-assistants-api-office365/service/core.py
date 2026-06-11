@@ -167,6 +167,8 @@ from integrations.o365.shared_inbox import (
     search_shared_mailbox_messages,
     list_shared_mailbox_folders,
     create_shared_mailbox_draft,
+    delete_shared_mailbox_draft,
+    add_shared_mailbox_draft_attachment,
 )
 from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
@@ -4203,4 +4205,81 @@ def create_shared_mailbox_draft_handler(current_user, data):
         bcc_recipients=None,
         importance="normal",
         content_type="text",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/delete_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftDeleteSharedMailboxDraft",
+    description="Deletes a draft message from a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID of the draft to delete",
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def delete_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        delete_shared_mailbox_draft,
+        mailbox_email=None,
+        message_id=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/add_shared_mailbox_draft_attachment",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftAddSharedMailboxDraftAttachment",
+    description="Adds a file attachment to a draft message in a shared Exchange mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID of the draft",
+            },
+            "name": {
+                "type": "string",
+                "description": "Attachment file name (e.g. report.pdf)",
+            },
+            "content_type": {
+                "type": "string",
+                "description": "MIME type of the attachment (e.g. application/pdf)",
+            },
+            "content_bytes": {
+                "type": "string",
+                "description": "Base64-encoded content of the attachment",
+            },
+            "is_inline": {
+                "type": "boolean",
+                "description": "Whether the attachment is inline (default: false)",
+                "default": False,
+            },
+        },
+        "required": ["mailbox_email", "message_id", "name", "content_type", "content_bytes"],
+    },
+)
+def add_shared_mailbox_draft_attachment_handler(current_user, data):
+    return common_handler(
+        add_shared_mailbox_draft_attachment,
+        mailbox_email=None,
+        message_id=None,
+        name=None,
+        content_type=None,
+        content_bytes=None,
+        is_inline=False,
     )(current_user, data)

@@ -526,3 +526,95 @@ def create_shared_mailbox_draft(
 
     except requests.RequestException as e:
         raise SharedInboxError(f"Network error creating shared mailbox draft: {str(e)}")
+
+
+def delete_shared_mailbox_draft(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Deletes a draft message from a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox (e.g. support@example.com)
+        message_id: Graph API message ID of the draft to delete
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing deletion status
+
+    Raises:
+        SharedMessageNotFoundError: If the draft does not exist
+        SharedInboxError: For other failures
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
+        response = session.delete(url)
+
+        if response.status_code == 204:
+            return {"status": "deleted", "id": message_id}
+
+        _handle_graph_error(response)
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error deleting shared mailbox draft: {str(e)}")
+
+
+def add_shared_mailbox_draft_attachment(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    name: str,
+    content_type: str,
+    content_bytes: str,
+    is_inline: bool = False,
+    access_token: str = None,
+) -> Dict:
+    """
+    Adds a file attachment to a draft message in a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox (e.g. support@example.com)
+        message_id: Graph API message ID of the draft
+        name: Attachment file name (e.g. "report.pdf")
+        content_type: MIME type of the attachment (e.g. "application/pdf")
+        content_bytes: Base64-encoded content of the attachment
+        is_inline: Whether the attachment is inline (default: False)
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing the added attachment details (id, name, contentType, size, isInline)
+
+    Raises:
+        SharedInboxError: If the attachment operation fails
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments"
+        payload = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": name,
+            "contentType": content_type,
+            "contentBytes": content_bytes,
+            "isInline": is_inline,
+        }
+        response = session.post(url, json=payload)
+        if not response.ok:
+            _handle_graph_error(response)
+
+        attachment = response.json()
+        return {
+            "id": attachment.get("id"),
+            "name": attachment.get("name"),
+            "contentType": attachment.get("contentType"),
+            "size": attachment.get("size"),
+            "isInline": attachment.get("isInline", False),
+        }
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error adding attachment to shared mailbox draft: {str(e)}")
