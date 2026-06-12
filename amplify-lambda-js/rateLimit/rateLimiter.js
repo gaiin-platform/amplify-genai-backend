@@ -1,6 +1,7 @@
 import {DynamoDBClient, QueryCommand, ScanCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
+import {buildAccountInfo} from "../common/accountInfo.js";
 import axios from "axios";
 
 const logger = getLogger("rateLimiter");
@@ -470,9 +471,15 @@ export async function isRateLimited(params) {
     }
 
     try {
-        const accountId = params.body?.options?.accountId || 'general_account';
-        const apiKeyId = params.apiKeyId || 'NA';
-        const accountInfo = `${accountId}#${apiKeyId}`;
+        // 🔒 Build the composite key via the SAME shared helper accounting.js uses,
+        // so the key we query here can never diverge from the key usage is written under.
+        const billing = buildAccountInfo({
+            accountId: params.body?.options?.accountId,
+            apiKeyId: params.apiKeyId,
+            accessToken: params.accessToken,
+            user: params.user
+        });
+        const accountInfo = billing.accountInfo;
         const dynamodbClient = new DynamoDBClient();
         const command = new QueryCommand({
             TableName: costCalcTable,

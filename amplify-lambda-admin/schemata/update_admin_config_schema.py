@@ -545,6 +545,36 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'defaultTimezone'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultTimezone"
+                            },
+                            "data": {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultSmartMessages'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultSmartMessages"
+                            },
+                            "data": {
+                                "type": "boolean",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'webSearchConfig'
                         "type": "object",
                         "properties": {

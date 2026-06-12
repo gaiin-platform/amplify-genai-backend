@@ -71,6 +71,11 @@ provider:
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    POLL_STATUS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/POLL_STATUS_TABLE}
+
+    # Open Notebook proxy (dev only — SSM param not present in staging/prod)
+    OPEN_NOTEBOOK_HOST: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_HOST, ''}
+    DISABLE_SSL_VERIFY: ${ssm:/amplify/${sls:stage}/DISABLE_SSL_VERIFY, ''}
     
   iam:
     role:
@@ -176,7 +181,7 @@ functions:
   # ---------------------------------------------------------------------------
   notebook_proxy:
     handler: service/notebook_proxy.notebook_proxy
-    timeout: 29
+    timeout: 900
     vpc:
       securityGroupIds:
         - !Ref NotebookProxyLambdaSG
@@ -247,6 +252,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*" 
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - s3:GetObject
