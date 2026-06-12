@@ -15,14 +15,6 @@ as-is; Open Notebook's JWTAuthMiddleware validates it.
 Environment variables required:
   OPEN_NOTEBOOK_INTERNAL_URL  — e.g. http://<private-ip>  (no trailing slash)
 
-Optional environment variables:
-  OPEN_NOTEBOOK_HOST          — Override the Host header sent to the upstream
-                                server. Required when OPEN_NOTEBOOK_INTERNAL_URL
-                                is an IP address and the upstream (e.g. OpenShift
-                                router) uses host-based routing.
-  DISABLE_SSL_VERIFY          — Set to "true" to skip TLS certificate
-                                verification (e.g. when the upstream uses a
-                                self-signed cert).
 """
 
 from __future__ import annotations
@@ -67,7 +59,7 @@ def _forward_headers(access_token: str) -> dict:
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
-    host = os.getenv("OPEN_NOTEBOOK_HOST")
+    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
     if host:
         headers["Host"] = host
     return headers
@@ -75,7 +67,7 @@ def _forward_headers(access_token: str) -> dict:
 
 def _ssl_context() -> ssl.SSLContext | None:
     """Return an unverified SSL context for local dev, else None (default verified)."""
-    if os.getenv("DISABLE_SSL_VERIFY", "").lower() == "true" or os.getenv("STAGE") == "dev":
+    if os.getenv("STAGE") == "dev":
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -246,7 +238,7 @@ def notebook_upload(event, context, current_user, name, data):
         "Authorization": f"Bearer {access_token}",
         "Content-Type": content_type,
     }
-    host = os.getenv("OPEN_NOTEBOOK_HOST")
+    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
     if host:
         headers["Host"] = host
 

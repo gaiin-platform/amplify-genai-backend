@@ -53,7 +53,7 @@ provider:
     STAGE: ${sls:stage}
 
     # Notebook proxy env vars 
-    OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}    
+    OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}
     PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_ONE, ''}
     PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_TWO, ''}
     VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID, ''}
@@ -75,9 +75,6 @@ provider:
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
     POLL_STATUS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/POLL_STATUS_TABLE}
 
-    # Open Notebook proxy (dev only — SSM param not present in staging/prod)
-    OPEN_NOTEBOOK_HOST: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_HOST, ''}
-    DISABLE_SSL_VERIFY: ${ssm:/amplify/${sls:stage}/DISABLE_SSL_VERIFY, ''}
     
   iam:
     role:
