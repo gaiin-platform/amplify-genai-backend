@@ -6,7 +6,8 @@ from events.ses_message_functions import (
     extract_email_body_and_attachments,
     lookup_username_from_email,
     extract_destination_emails,
-    is_ses_message
+    is_ses_message,
+    _html_to_plain_text
 )
 from pycommon.logger import getLogger
 from pycommon.db_utils import convert_floats_to_decimal
