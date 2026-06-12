@@ -52,10 +52,12 @@ provider:
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
-    OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}
-    NOTEBOOK_VPC_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_SUBNET_ONE}
-    NOTEBOOK_VPC_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_SUBNET_TWO}
-    NOTEBOOK_VPC_ID: ${ssm:/amplify/${sls:stage}/NOTEBOOK_VPC_ID}
+    # Notebook proxy env vars 
+    OPEN_NOTEBOOK_INTERNAL_URL: ${ssm:/amplify/${sls:stage}/OPEN_NOTEBOOK_INTERNAL_URL, ''}    
+    PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_ONE, ''}
+    PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_TWO, ''}
+    VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID, ''}
+
 
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
@@ -186,8 +188,8 @@ functions:
       securityGroupIds:
         - !Ref NotebookProxyLambdaSG
       subnetIds:
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     events:
       - http:
           path: notebook/proxy
@@ -201,8 +203,8 @@ functions:
       securityGroupIds:
         - !Ref NotebookProxyLambdaSG
       subnetIds:
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     events:
       - http:
           path: notebook/proxy/raw
@@ -216,8 +218,8 @@ functions:
       securityGroupIds:
         - !Ref NotebookProxyLambdaSG
       subnetIds:
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_ONE}
-        - ${self:provider.environment.NOTEBOOK_VPC_SUBNET_TWO}
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     events:
       - http:
           path: notebook/upload
@@ -298,7 +300,7 @@ resources:
       Type: AWS::EC2::SecurityGroup
       Properties:
         GroupDescription: Notebook proxy Lambda - egress to Open Notebook VPC
-        VpcId: ${self:provider.environment.NOTEBOOK_VPC_ID}
+        VpcId: ${self:provider.environment.VPC_ID}
         SecurityGroupEgress:
           - IpProtocol: tcp
             FromPort: 80
