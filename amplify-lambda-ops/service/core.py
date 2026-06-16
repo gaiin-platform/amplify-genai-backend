@@ -356,6 +356,8 @@ def fetch_user_ops(current_user, tag):
 })
 @validated(op="write")
 def write_ops(event, context, current_user, name, data):
+    if not verify_user_as_admin(data["access_token"], "Register Ops"):
+        return {"success": False, "error": "Unable to authenticate user as admin"}
     data = data["data"]
     system_op = data.get("system_op", True)
     ops = data["ops"]
@@ -439,6 +441,8 @@ def write_ops(event, context, current_user, name, data):
 })
 @validated(op="delete")
 def delete_op(event, context, current_user, name, data):
+    if not verify_user_as_admin(data["access_token"], "Delete Op"):
+        return {"success": False, "error": "Unable to authenticate user as admin"}
     op = data["data"]["op"]
     tags = op.get("tags", ["default"])
     if "all" not in tags:
