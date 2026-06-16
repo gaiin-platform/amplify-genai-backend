@@ -367,6 +367,24 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
             defaultAssistant
         )
 
+    } else if (body.messages.slice(-1)[0]?.data?.workflowTemplateId) {
+        // Workflow attached from chat input with no assistant and no tools —
+        // must use the agent path (opsLanguageVersion v4) so invokeAgent runs
+        // and the workflowTemplateId is picked up in userDefinedAssistants.js
+        logger.info("Workflow template attached — using Amplify Automation agent path");
+
+        selectedAssistant = fillInAssistant(
+            {
+                name: "Amplify Automation",
+                instructions: `A workflow has been attached. Begin executing the workflow steps immediately in order without asking the user for clarification. Do not ask what the user wants — the workflow steps define exactly what to do. Execute each step using the available tools and proceed through all steps until the workflow is complete.`,
+                description: "Amplify Automation",
+                data: {
+                    opsLanguageVersion: "v4",
+                }
+            },
+            defaultAssistant
+        )
+
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
         //codeInterpreterAssistant;
@@ -378,6 +396,40 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
 
     if (selectedAssistant === null) {
         selectedAssistant = defaultAssistant;
+    }
+
+    // Detect workflowTemplateId from the last message data and inject into assistant.data
+    const lastMsg = body.messages.slice(-1)[0];
+    const msgWorkflowTemplateId = lastMsg?.data?.workflowTemplateId;
+    if (msgWorkflowTemplateId && selectedAssistant && !selectedAssistant.data?.workflowTemplateId) {
+        logger.info(`Injecting workflowTemplateId from message data: ${msgWorkflowTemplateId}`);
+        // Force opsLanguageVersion to "v4" so the agent path runs in userDefinedAssistants.js.
+        // This must override any existing opsLanguageVersion on the assistant — without "v4"
+        // the workflow block is never reached and the workflow is silently ignored.
+        selectedAssistant = {
+            ...selectedAssistant,
+            data: {
+                ...(selectedAssistant.data || {}),
+                workflowTemplateId: msgWorkflowTemplateId,
+                opsLanguageVersion: "v4",
+            }
+        };
+    }
+
+    // If the user attached actions (configuredTools) from the chat input alongside a real
+    // assistant, force opsLanguageVersion to "v4" so the agent path runs and the actions
+    // are actually executed. Without this, the assistant's own opsLanguageVersion (e.g. "v1")
+    // is kept and the chat-input actions are silently ignored.
+    const msgConfiguredTools = getTools(body.messages);
+    if (msgConfiguredTools.length > 0 && selectedAssistant && selectedAssistant.data?.opsLanguageVersion !== "v4") {
+        logger.info(`Chat-input actions detected (${msgConfiguredTools.length} tools) — forcing opsLanguageVersion to v4 for assistant: ${selectedAssistant.name}`);
+        selectedAssistant = {
+            ...selectedAssistant,
+            data: {
+                ...(selectedAssistant.data || {}),
+                opsLanguageVersion: "v4",
+            }
+        };
     }
 
     const selected = selectedAssistant || defaultAssistant;
