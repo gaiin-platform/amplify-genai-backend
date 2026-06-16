@@ -1,7 +1,7 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-from . import assistant_api as assistants
+from . import code_interpreter_api as assistants
 import random
 import string
 import re
@@ -12,7 +12,7 @@ from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, S3Operation, SecretsManagerOperation
+    DynamoDBOperation, S3Operation
 )
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value])
@@ -25,13 +25,12 @@ logger = getLogger("code_interpreter")
     name="chatWithCodeInterpreter",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Initiate a conversation with the Code Interpreter. Each request can append new messages to the existing conversation using a unique thread ID.
+    description="""Initiate a conversation with the Code Interpreter. Each request can append new messages to the existing conversation using a unique assistant ID.
     Data source keys for files can be found by calling files/query
     Example request:
-    {   
+    {
       "data": {
-          "assistantId": "yourEmail@vanderbilt.edu/ast/43985037429849290398",
-          "threadId": "yourEmail@vanderbilt.edu/thr/442309eb-0772-42d0-b6ef-34e20ee2355e".
+          "codeInterpreterRecordId": "yourEmail@vanderbilt.edu/ast/43985037429849290398",
           "messages": [
               { "role": "user",
                 "content" : "Can you tell me something about the data analytics and what you are able to do?",
@@ -46,15 +45,15 @@ logger = getLogger("code_interpreter")
       "success": true,
       "message": "Chat completed successfully",
       "data": {
-        "threadId": "yourEmail@vanderbilt.edu/thr/442309eb-0772-42d0-b6ef-34e20ee2355e",
+        "sessionId": "yourEmail@vanderbilt.edu/ast/43985037429849290398",
         "role": "assistant",
-        "textContent": "I've saved the generated pie chart as a PNG file. You can download it using the link below:\n\n[Download Ice Cream Preferences Pie Chart](sandbox:/mnt/data/ice_cream_preferences_pie_chart.png)\n",
+        "textContent": "I've generated the pie chart as a PNG file.\\n",
         "content": [
           {
             "type": "image/png",
             "values": {
-              "file_key": "yourEmail@vanderbilt.edu/msg_P0lpFUEY _pie_chart.png ",
-              "presigned_url": "https://vu-amplify-assistants-dev-code-interpreter-files.s3.amazonaws.com/...",
+              "file_key": "yourEmail@vanderbilt.edu/abc123-FN-generated_image.png",
+              "presigned_url": "https://...",
               "file_size": 149878
             }
           }
@@ -66,17 +65,13 @@ logger = getLogger("code_interpreter")
     parameters={
         "type": "object",
         "properties": {
-            "assistantId": {
+            "codeInterpreterRecordId": {
                 "type": "string",
-                "description": "Unique identifier of the Code Interpreter assistant. Example: 'yourEmail@vanderbilt.edu/ast/43985037429849290398'.",
-            },
-            "threadId": {
-                "type": "string",
-                "description": "For the assistant to have history and memory of a conversation, a user must include the threadId. If no thread id is provided then a new one will be created and will be provided for future use in the response body.",
+                "description": "Unique identifier of the Code Interpreter record. Example: 'yourEmail@vanderbilt.edu/ast/43985037429849290398'.",
             },
             "messages": {
                 "type": "array",
-                "description": "New conversation messages. Each object includes 'role' (user/system/assistant), 'content' as a string, and 'dataSourceIds' a list of strings. These messages should only include the new messages if providing a threadId since the thread already has knowledge of previous messages",
+                "description": "New conversation messages. Each object includes 'role' (user/system/assistant), 'content' as a string, and 'dataSourceIds' a list of strings.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -91,7 +86,7 @@ logger = getLogger("code_interpreter")
                 },
             },
         },
-        "required": ["assistantId", "messages"],
+        "required": ["codeInterpreterRecordId", "messages"],
     },
     output={
         "type": "object",
@@ -107,9 +102,9 @@ logger = getLogger("code_interpreter")
             "data": {
                 "type": "object",
                 "properties": {
-                    "threadId": {
+                    "sessionId": {
                         "type": "string",
-                        "description": "The thread ID for the conversation",
+                        "description": "The assistant/session ID for the conversation",
                     },
                     "role": {
                         "type": "string",
@@ -157,15 +152,9 @@ logger = getLogger("code_interpreter")
 )
 @required_env_vars({
     "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for future deletion
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated(op="chat")
 def chat_with_code_interpreter(event, context, current_user, name, data):
@@ -177,20 +166,16 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
         }
 
     logger.debug("Chat_with_code_interpreter validated")
-    assistant_id = data["data"]["assistantId"]
+    record_id = data["data"]["codeInterpreterRecordId"]
     messages = data["data"]["messages"]
 
     api_accessed = data["api_accessed"]
-    account_id = data["account"] if api_accessed else data["data"]["accountId"]
     request_id = generate_req_id() if api_accessed else data["data"]["requestId"]
-    thread_id = data["data"].get("threadId", None)
 
     return assistants.chat_with_code_interpreter(
         current_user,
-        assistant_id,
-        thread_id,
+        record_id,
         messages,
-        account_id,
         request_id,
         api_accessed,
     )
@@ -205,14 +190,10 @@ def generate_req_id():
     name="createCodeInterpreterAssistant",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Create a new Code Interpreter assistant with specific attributes for analyzing and processing data.
+    description="""Create a new AgentCore Code Interpreter session.
     Example request:
     {
         "data": {
-            "name": "Data Analysis Assistant",
-            "description": "An AI assistant specialized in data analysis and visualization.",
-            "tags": ["data analysis"],
-            "instructions": "Analyze data files, perform statistical operations, and create visualizations as requested by the user.",
             "dataSources": ["yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json"]
         }
     }
@@ -222,44 +203,27 @@ def generate_req_id():
         "success": true,
         "message": "Assistant created successfully.",
         "data": {
-            "assistantId": "yourEmail@vanderbilt.edu/ast/373849029843"
+            "codeInterpreterRecordId": "yourEmail@vanderbilt.edu/ast/373849029843"
         }
     }
     """,
     parameters={
         "type": "object",
         "properties": {
-            "name": {
-                "type": "string",
-                "description": "Name of the Code Interpreter assistant. Example: 'Data Analysis Assistant'.",
-            },
-            "description": {
-                "type": "string",
-                "description": "Description of the assistant's functionality. Example: 'An AI assistant specialized in data analysis and visualization.'.",
-            },
-            "tags": {
-                "type": "array",
-                "description": "Tags to categorize the assistant. Example: ['data analysis', 'visualization'].",
-                "items": {"type": "string"},
-            },
-            "instructions": {
-                "type": "string",
-                "description": "Instructions for how the assistant should handle user queries. Example: 'Analyze data files and generate insights.'.",
-            },
             "dataSources": {
                 "type": "array",
-                "description": "List of data source IDs the assistant will use. Starts with your email. These can be retrieved by calling the /files/query endpoint.",
+                "description": "List of data source IDs to load into the session. Starts with your email.",
                 "items": {"type": "string"},
             },
         },
-        "required": ["name", "description", "tags", "instructions", "dataSources"],
+        "required": [],
     },
     output={
         "type": "object",
         "properties": {
             "success": {
                 "type": "boolean",
-                "description": "Whether the assistant creation was successful",
+                "description": "Whether the session creation was successful",
             },
             "message": {
                 "type": "string",
@@ -268,12 +232,12 @@ def generate_req_id():
             "data": {
                 "type": "object",
                 "properties": {
-                    "assistantId": {
+                    "codeInterpreterRecordId": {
                         "type": "string",
-                        "description": "Unique identifier of the created assistant",
+                        "description": "Unique identifier for this code interpreter record",
                     }
                 },
-                "required": ["assistantId"],
+                "required": ["codeInterpreterRecordId"],
             },
         },
         "required": ["success", "message", "data"],
@@ -281,58 +245,53 @@ def generate_req_id():
 )
 @required_env_vars({
     "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated(op="create")
 def create_code_interpreter_assistant(event, context, current_user, name, data):
     extracted_data = data["data"]
-    assistant_name = extracted_data["name"]
-    description = extracted_data["description"]
-    tags = extracted_data.get("tags", [])
-    instructions = extracted_data["instructions"]
     file_keys = extracted_data.get("dataSources", [])
+    api_accessed = data["api_accessed"]
+    account_id = data["account"] if api_accessed else extracted_data.get("accountId", "")
+    request_id = generate_req_id() if api_accessed else extracted_data.get("requestId", generate_req_id())
 
-    # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return assistants.create_new_assistant(
         user_id=current_user,
-        assistant_name=assistant_name,
-        description=description,
-        instructions=instructions,
-        tags=tags,
         file_keys=file_keys,
+        account_id=account_id,
+        request_id=request_id,
     )
 
 
 @api_tool(
-    path="/assistant/openai/delete",
+    path="/assistant/agentcore/session/delete",
     name="deleteCodeInterpreterAssistant",
     method="DELETE",
     tags=["apiDocumentation"],
-    description="""Delete a Code Interpreter assistant instance, permanently removing it from the platform.
+    description="""Delete a Code Interpreter assistant instance, permanently removing it from the platform and stopping its underlying AgentCore session.
 
     Example request (via query parameter):
-    DELETE /assistant/openai/delete?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823
+    DELETE /assistant/agentcore/session/delete?codeInterpreterRecordId=yourEmail@vanderbilt.edu/ast/38940562397049823
 
     """,
     parameters={
         "type": "object",
         "properties": {
-            "assistantId": {
+            "codeInterpreterRecordId": {
                 "type": "string",
-                "description": "Unique identifier of the assistant to delete. Example: 'yourEmail@vanderbilt.edu/ast/38940562397049823'.",
+                "description": "Unique identifier of the code interpreter record to delete. Example: 'yourEmail@vanderbilt.edu/ast/38940562397049823'.",
             }
         },
-        "required": ["assistantId"],
+        "required": ["codeInterpreterRecordId"],
     },
     output={
         "type": "object",
         "properties": {
             "success": {
                 "type": "boolean",
-                "description": "Whether the assistant deletion was successful",
+                "description": "Whether the code interpreter record deletion was successful",
             },
             "message": {
                 "type": "string",
@@ -344,75 +303,21 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
 )
 @required_env_vars({
     "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
     logger.debug("Query params: %s", query_params)
-    assistant_id = query_params.get("assistantId", "")
-    if not assistant_id or not is_valid_query_param_id(
-        assistant_id, current_user, "ast"
+    record_id = query_params.get("codeInterpreterRecordId", "")
+    if not record_id or not is_valid_query_param_id(
+        record_id, current_user, "ast"
     ):
         return {
             "success": False,
-            "message": "Invalid or missing assistant id parameter",
+            "message": "Invalid or missing codeInterpreterRecordId parameter",
         }
-    logger.info("Deleting assistant: %s", assistant_id)
-    return assistants.delete_assistant_by_id(assistant_id, current_user)
-
-
-@api_tool(
-    path="/assistant/openai/thread/delete",
-    name="deleteCodeInterpreterThread",
-    method="DELETE",
-    tags=["apiDocumentation"],
-    description="""Delete a specific Code Interpreter conversation thread, removing all associated messages.
-
-    Example request (via query parameter):
-    DELETE /assistant/openai/thread/delete?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093
-
-    """,
-    parameters={
-        "type": "object",
-        "properties": {
-            "threadId": {
-                "type": "string",
-                "description": "Unique identifier of the thread to delete. Example: 'yourEmail@vanderbilt.edu/thr/8923047385920349782093'.",
-            }
-        },
-        "required": ["threadId"],
-    },
-    output={
-        "type": "object",
-        "properties": {
-            "success": {
-                "type": "boolean",
-                "description": "Whether the thread deletion was successful",
-            },
-            "message": {
-                "type": "string",
-                "description": "Status message describing the result of the deletion",
-            },
-        },
-        "required": ["success", "message"],
-    },
-)
-@required_env_vars({
-    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-})
-@validated(op="delete")
-def delete_assistant_thread(event, context, current_user, name, data):
-    query_params = event.get("queryStringParameters", {})
-    logger.debug("Query params: %s", query_params)
-    thread_id = query_params.get("threadId", "")
-    if not thread_id or not is_valid_query_param_id(thread_id, current_user, "thr"):
-        return {"success": False, "message": "Invalid or missing thread id parameter"}
-    # Assuming get_openai_client is defined elsewhere and provides an instance of the OpenAI client
-    return assistants.delete_thread_by_id(thread_id, current_user)
+    logger.info("Deleting code interpreter record: %s", record_id)
+    return assistants.delete_record_by_id(record_id, current_user)
 
 
 @api_tool(
@@ -466,9 +371,6 @@ def delete_assistant_thread(event, context, current_user, name, data):
 )
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for future deletion
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated(op="download")
 def get_presigned_url_code_interpreter(event, context, current_user, name, data):

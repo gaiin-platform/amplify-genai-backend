@@ -6,7 +6,7 @@ from .add_assistant_path_schema import add_assistant_path_schema
 from .create_assistant_schema import create_assistant_schema
 from .create_code_interpreter_assistant_schema import create_code_interpreter_assistant_schema
 from .share_assistant_schema import share_assistant_schema
-from .chat_assistant_schema import chat_assistant_schema
+from .chat_code_interpreter_schema import chat_code_interpreter_schema
 from .download_ci_files_schema import download_ci_files_schema
 from .remove_astp_perms_schema import remove_astp_perms_schema
 from .assistant_id_schema import assistant_id_schema
@@ -24,15 +24,14 @@ rules = {
         "/assistant/delete": {"delete": delete_assistant_schema},
         "/assistant/share": {"share_assistant": share_assistant_schema},
         "/assistant/list": {"list": {}},  # Get
-        "/assistant/chat/codeinterpreter": {"chat": chat_assistant_schema},
+        "/assistant/chat/codeinterpreter": {"chat": chat_code_interpreter_schema},
         "/assistant/create/codeinterpreter": {
             "create": create_code_interpreter_assistant_schema
         },
         "/assistant/files/download/codeinterpreter": {
             "download": download_ci_files_schema
         },
-        "/assistant/openai/thread/delete": {"delete": {}},
-        "/assistant/openai/delete": {"delete": {}},
+        "/assistant/agentcore/session/delete": {"delete": {}},
         "/assistant/remove_astp_permissions": {
             "remove_astp_permissions": remove_astp_perms_schema
         },
@@ -67,15 +66,14 @@ rules = {
         "/assistant/delete": {"delete": delete_assistant_schema},
         "/assistant/share": {"share_assistant": share_assistant_schema},
         "/assistant/list": {"list": {}},  # Get
-        "/assistant/chat_with_code_interpreter": {"chat": chat_assistant_schema},
+        "/assistant/chat/codeinterpreter": {"chat": chat_code_interpreter_schema},
         "/assistant/create/codeinterpreter": {
             "create": create_code_interpreter_assistant_schema
         },
         "/assistant/files/download/codeinterpreter": {
             "download": download_ci_files_schema
         },
-        "/assistant/openai/thread/delete": {"delete": {}},
-        "/assistant/openai/delete": {"delete": {}},
+        "/assistant/agentcore/session/delete": {"delete": {}},
         "/assistant/remove_astp_permissions": {
             "remove_astp_permissions": remove_astp_perms_schema
         },

@@ -118,16 +118,16 @@ const sendStatusMessage = (responseStream, message, inProgress=true, summary='',
     forceFlush(responseStream); // 🚨 CRITICAL: Force flush for real-time status updates
 }
 
-const handleUserErrorMessage = (responseStream, responseErrorMessage, account, options, assistantId) => {
+const handleUserErrorMessage = (responseStream, responseErrorMessage, account, options, codeInterpreterRecordId) => {
     if (responseErrorMessage) {
         sendStatusMessage(responseStream, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
         logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
-        const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
+        const error = responseErrorMessage.includes("session_expired") ? 'session' : responseErrorMessage;
         sendStateEventToStream(responseStream, { codeInterpreter: { error: error } });
     } else {
         sendStateEventToStream(responseStream, { codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
     }
-    
+
     // CRITICAL: Code interpreter execution failed - user blocked from executing code (fire-and-forget)
     logCriticalError({
         functionName: 'codeInterpreter_executionFailure',
@@ -138,13 +138,13 @@ const handleUserErrorMessage = (responseStream, responseErrorMessage, account, o
         stackTrace: '',
         context: {
             requestId: options?.requestId || 'unknown',
-            assistantId: assistantId || 'N/A',
-            hasAssistantId: !!assistantId,
+            codeInterpreterRecordId: codeInterpreterRecordId || 'N/A',
+            hasRecordId: !!codeInterpreterRecordId,
             errorDetails: responseErrorMessage || 'No error details',
             accountId: account?.accountId || 'general_account'
         }
     }).catch(err => logger.error('Failed to log critical error:', err));
-    
+
     sendStatusMessage(responseStream, "Amplify Assistant is responding...");
 }
 
@@ -172,64 +172,96 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             const options = body.options;
             const messages = body.messages;
     
-            // if we have a codeInterpreterId then we can chat if we dont then we have to create first 
-            // The conversation currently does have an assistantID in our database (which contains an assistantID with code_interpreter)
-            let assistantId = options.codeInterpreterAssistantId || null;
+            let codeInterpreterRecordId = options.codeInterpreterRecordId || null;
             const userPrompt = messages.at(-1)['content'];
-            // The conversation currently does not have an assistantID in our database 
-            if (assistantId === null) {
-                
+            // The conversation currently does not have a codeInterpreterRecordId in our database
+            if (codeInterpreterRecordId === null) {
+
                 // Check killswitch before long-running assistant creation
                 if (await isKilled(account.user, responseStream, body)) return;
 
                 const createData = {
-                    access_token: token,
-                    name: "CodeInterpreter",
-                    description: description, 
-                    tags: [],
-                    instructions:  options.prompt + additionalPrompt,
-                    dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
+                    dataSources: [],
                 }
-    
-                const responseData = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter'); 
-              
+
+                const responseData = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter');
+
                 if (responseData && responseData.success && responseData.data) {
-                    assistantId = responseData.data.assistantId
-                    //we need to ensure we send the assistant_id back to be saved in the conversation
-                    sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
+                    codeInterpreterRecordId = responseData.data.codeInterpreterRecordId;
+                    // send the record id back to be saved in the conversation options
+                    sendStateEventToStream(responseStream, { codeInterpreterRecordId: codeInterpreterRecordId });
                     sendStatusMessage(responseStream, "Code interpreter is making progress on your request...");
-                    logger.debug("Code Interpreter Assistant Created...");
+                    logger.debug("Code Interpreter record created...");
                 } else {
                     handleUserErrorMessage(responseStream, String(responseData && responseData.error), account, options, null);
                 }
 
             }
-            //ensure that assistant_id is not null (in case assistant creation was necessary and failed)
-            if (assistantId) {
-                
+            // ensure that codeInterpreterRecordId is not null (in case record creation was necessary and failed)
+            if (codeInterpreterRecordId) {
+
                 // Check killswitch before long-running chat execution
                 if (await isKilled(account.user, responseStream, body)) return;
-                
-                // messages.at(-1)['content'];
+
                 const chat_data = {
-                    assistantId: assistantId,
+                    codeInterpreterRecordId: codeInterpreterRecordId,
                     messages: messages.slice(1),
                     accountId: account.accountId || 'general_account',
                     requestId: options.requestId
                 }
 
-                    const responseData = await fetchWithTimeout(responseStream, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
-                    // check for successfull response
-                    if (responseData && responseData.success && responseData.data) {
-                        sendStatusMessage(responseStream, "Finalizing code interpreter results...");
-                        const { textContent, ...messageData } = responseData.data.data;
-                        codeInterpreterResponse = textContent;
-                        sendStateEventToStream(responseStream, { codeInterpreter: messageData });
-                    } else {
-                        handleUserErrorMessage(responseStream, String(responseData && responseData.error), account, options, assistantId);
-                    }
+                const responseData = await fetchWithTimeout(responseStream, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
+                // check for successfull response
+                if (responseData && responseData.success && responseData.data) {
+                    sendStatusMessage(responseStream, "Finalizing code interpreter results...");
+                    const { textContent, ...messageData } = responseData.data.data;
+                    codeInterpreterResponse = textContent;
+                    sendStateEventToStream(responseStream, { codeInterpreter: messageData });
+                } else {
+                    // If the record was not found (e.g. existing conversation from the old OpenAI
+                    // backend, or a DynamoDB record that was manually deleted), treat it the same
+                    // as a missing record — clear the stale ID and create a fresh one.
+                    const errorMsg = String(responseData && responseData.error);
+                    if (errorMsg.includes('not found') || errorMsg.includes('Assistant not found')) {
+                        logger.info('Record not found for codeInterpreterRecordId %s — creating fresh record', codeInterpreterRecordId);
+                        codeInterpreterRecordId = null;
 
-            } 
+                        if (await isKilled(account.user, responseStream, body)) return;
+
+                        const createData = { dataSources: [] };
+                        const createResponse = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter');
+
+                        if (createResponse && createResponse.success && createResponse.data) {
+                            codeInterpreterRecordId = createResponse.data.codeInterpreterRecordId;
+                            sendStateEventToStream(responseStream, { codeInterpreterRecordId: codeInterpreterRecordId });
+                            sendStatusMessage(responseStream, "Code interpreter is making progress on your request...");
+
+                            if (await isKilled(account.user, responseStream, body)) return;
+
+                            const retryData = {
+                                codeInterpreterRecordId: codeInterpreterRecordId,
+                                messages: messages.slice(1),
+                                accountId: account.accountId || 'general_account',
+                                requestId: options.requestId
+                            };
+                            const retryResponse = await fetchWithTimeout(responseStream, token, retryData, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
+                            if (retryResponse && retryResponse.success && retryResponse.data) {
+                                sendStatusMessage(responseStream, "Finalizing code interpreter results...");
+                                const { textContent, ...messageData } = retryResponse.data.data;
+                                codeInterpreterResponse = textContent;
+                                sendStateEventToStream(responseStream, { codeInterpreter: messageData });
+                            } else {
+                                handleUserErrorMessage(responseStream, String(retryResponse && retryResponse.error), account, options, codeInterpreterRecordId);
+                            }
+                        } else {
+                            handleUserErrorMessage(responseStream, String(createResponse && createResponse.error), account, options, null);
+                        }
+                    } else {
+                        handleUserErrorMessage(responseStream, errorMsg, account, options, codeInterpreterRecordId);
+                    }
+                }
+
+            }
             let updatedMessages = messages.slice(0, -1);
             let dataSourceOptions = {disableDataSources: false};
             if (codeInterpreterResponse) {

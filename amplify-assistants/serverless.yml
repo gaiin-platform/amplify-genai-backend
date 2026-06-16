@@ -60,13 +60,12 @@ provider:
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
-    ASSISTANTS_OPENAI_PROVIDER: ${ssm:/amplify/${sls:stage}/ASSISTANTS_OPENAI_PROVIDER}
+    AGENTCORE_CODE_INTERPRETER_ID: ${ssm:/amplify/${sls:stage}/AGENTCORE_CODE_INTERPRETER_ID}
+    AGENTCORE_SESSION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_SESSION_TIMEOUT_SECONDS}
+    AGENTCORE_EXECUTION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_EXECUTION_TIMEOUT_SECONDS, '240'}
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
-    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
@@ -74,14 +73,10 @@ provider:
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
     ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
-    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files #Marked for future deletion
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-layered-assistants
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
-    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content #Marked for future deletion
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -102,8 +97,6 @@ provider:
     REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
-    S3_SHARE_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_SHARE_BUCKET_NAME} #Marked for future deletion
-    SHARES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/SHARES_DYNAMODB_TABLE}  #Marked for future deletion
 
   iam:
     role:
@@ -205,7 +198,8 @@ functions:
           cors: true
 
   download_code_int_file:
-    handler: openaiazure/assistant.get_presigned_url_code_interpreter
+    handler: codeinterpreter/handlers.get_presigned_url_code_interpreter
+    timeout: 30
     events:
       - http:
           path: assistant/files/download/codeinterpreter
@@ -216,7 +210,7 @@ functions:
   # This endpoint is mainly for local testing but doesn't have
   # a long enough timeout for use when running in AWS behind API Gateway
   create_code_int_ast:
-    handler: openaiazure/assistant.create_code_interpreter_assistant 
+    handler: codeinterpreter/handlers.create_code_interpreter_assistant
     timeout: 30
     events:
       - http:
@@ -225,7 +219,7 @@ functions:
           cors: true
   
   chat_code_int_ast:
-    handler: openaiazure/assistant.chat_with_code_interpreter
+    handler: codeinterpreter/handlers.chat_with_code_interpreter
     timeout: 300
 
     events:
@@ -235,24 +229,15 @@ functions:
           cors: true
 
   # chat_code_interpreter_assistant_url: 
-  #   handler: openaiazure/assistant.chat_with_code_interpreter
+  #   handler: codeinterpreter/handlers.chat_with_code_interpreter
   #   timeout: 420 # 7 min
   #   url: true
     
-  delete_ast_thread:
-    handler: openaiazure/assistant.delete_assistant_thread
+  delete_agentcore_session:
+    handler: codeinterpreter/handlers.delete_assistant
     events:
       - http:
-          path: assistant/openai/thread/delete
-          method: delete
-          cors: true
-
-
-  delete_ast_open_ai:
-    handler: openaiazure/assistant.delete_assistant
-    events:
-      - http:
-          path: assistant/openai/delete
+          path: assistant/agentcore/session/delete
           method: delete
           cors: true
 
@@ -570,75 +555,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}
 
-    AssistantThreadsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: name
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: UserNameIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: name
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}
-        
-    AssistantThreadRunsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
-
     AssistantCodeInterpreterDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -666,6 +582,9 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
         TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
 
     GroupAssistantConversationsDynamoDbTable:
@@ -693,37 +612,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
     
-    AssistantsFilesBucket:
-      Type: 'AWS::S3::Bucket'
-      Properties:
-        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME} #Marked for future deletion
-        CorsConfiguration:
-          CorsRules:
-            - AllowedOrigins: ['*']
-              AllowedMethods: ['GET']
-              AllowedHeaders: ['*']
-              MaxAge: 3000     
-        BucketEncryption:
-          ServerSideEncryptionConfiguration:
-            - ServerSideEncryptionByDefault:
-                SSEAlgorithm: AES256
-    
-    GroupAssistantConversationsBucket: #Marked for future deletion
-      Type: 'AWS::S3::Bucket'
-      DeletionPolicy: Retain
-      Properties:
-        BucketName: ${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
-        CorsConfiguration:
-          CorsRules:
-            - AllowedOrigins: ['*']
-              AllowedMethods: ['GET', 'PUT']
-              AllowedHeaders: ['*']
-              MaxAge: 3000     
-        BucketEncryption:
-          ServerSideEncryptionConfiguration:
-            - ServerSideEncryptionByDefault:
-                SSEAlgorithm: AES256
-
     AssistantsLambdaPolicy:
       Type: 'AWS::IAM::ManagedPolicy'
       Properties:
@@ -739,7 +627,6 @@ resources:
 
             - Effect: Allow
               Action:
-                - secretsmanager:GetSecretValue
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:GetItem
@@ -750,32 +637,24 @@ resources:
                 - s3:PutObject
                 - s3:ListBucket
               Resource:
-                - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
-                - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
@@ -801,12 +680,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
-            - Effect: Allow
-              Action:
-                - s3:PutObject
-              Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}" #Marked for future deletion
-            
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -843,3 +716,13 @@ resources:
                 - bedrock:GetKnowledgeBase
               Resource:
                 - "arn:aws:bedrock:${aws:region}:${aws:accountId}:knowledge-base/*"
+
+            - Effect: Allow
+              Action:
+                - bedrock-agentcore:StartCodeInterpreterSession
+                - bedrock-agentcore:StopCodeInterpreterSession
+                - bedrock-agentcore:GetCodeInterpreterSession
+                - bedrock-agentcore:ListCodeInterpreterSessions
+                - bedrock-agentcore:InvokeCodeInterpreter
+              Resource:
+                - "arn:aws:bedrock-agentcore:${aws:region}:${aws:accountId}:code-interpreter/*"
