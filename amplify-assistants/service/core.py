@@ -17,6 +17,7 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.files import delete_file
 from pycommon.api.user_data import save_user_data
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+import requests as _requests
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
@@ -236,7 +237,8 @@ def delete_assistant(event, context, current_user, name, data):
             from service.standalone_ast_path import release_assistant_path
             release_assistant_path(item["astPath"], assistant_public_id, current_user)
 
-        astIconDs = existing_assistant.get("data", {}).get("astIcon")
+        ast_data = existing_assistant.get("data", {})
+        astIconDs = ast_data.get("astIcon")
         if (astIconDs):
             logger.info("Deleting assistant Icon file: %s", astIconDs)
             metadata = astIconDs.get("metadata")
@@ -244,7 +246,7 @@ def delete_assistant(event, context, current_user, name, data):
             logger.debug("Deleting assistant Icon file: %s", key)
             delete_file(access_token, key)
 
-        integration_drive_data = existing_assistant.get("data", {}).get("integrationDriveData", {})
+        integration_drive_data = ast_data.get("integrationDriveData", {})
         if (integration_drive_data):
             from service.drive_datasources import extract_drive_datasources
             drive_data_sources = extract_drive_datasources(integration_drive_data)
@@ -265,6 +267,30 @@ def delete_assistant(event, context, current_user, name, data):
                 key = extract_key(ds.get("key")) if ds.get("key") else ds.get("id")
                 logger.debug("Deleting assistant specific data source: %s", key)
                 delete_file(access_token, key)
+
+        # Delete the assistant's workflowTemplateId if present (NOT baseWorkflowTemplateId)
+        workflow_template_id = ast_data.get("workflowTemplateId")
+        if workflow_template_id:
+            try: 
+                logger.debug("Attempting to delete workflow template %s for assistant %s", workflow_template_id, assistant_public_id)
+                
+                endpoint = os.environ["API_BASE_URL"] + "/vu-agent/delete-workflow-template"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {access_token}",
+                }
+                resp = _requests.post(
+                    endpoint,
+                    headers=headers,
+                    json={"data": {"templateId": workflow_template_id}},
+                    timeout=10,
+                )
+                if resp.status_code == 200 and resp.json().get("success"):
+                    logger.info("Deleted workflow template %s for assistant %s", workflow_template_id, assistant_public_id)
+                else:
+                    logger.warning("Failed to delete workflow template %s: %s", workflow_template_id, resp.text)
+            except Exception as wf_err:
+                logger.warning("Could not delete workflow template %s (non-fatal): %s", workflow_template_id, wf_err)
 
         # Now delete the assistant itself
         delete_assistant_by_public_id(assistants_table, assistant_public_id)

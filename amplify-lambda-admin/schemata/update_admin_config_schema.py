@@ -1,4 +1,4 @@
-from .rate_limit_schema import rate_limit_schema, rate_limits_schema
+from .rate_limit_schema import rate_limits_schema, admin_rate_limit_config_schema
 
 update_admin_config_schema = {
     "type": "object",
@@ -464,7 +464,7 @@ update_admin_config_schema = {
                                 "type": "string",
                                 "const": "rateLimit"
                             },
-                            "data": rate_limits_schema
+                            "data": admin_rate_limit_config_schema
                         },
                         "required": ["type", "data"],
                         "additionalProperties": False
@@ -540,6 +540,36 @@ update_admin_config_schema = {
                                 "required": ["isActive", "email"],
                                 "additionalProperties": False
                             }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultTimezone'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultTimezone"
+                            },
+                            "data": {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultSmartMessages'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultSmartMessages"
+                            },
+                            "data": {
+                                "type": "boolean",
+                            },
                         },
                         "required": ["type", "data"],
                         "additionalProperties": False

@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.admin_config import get_default_timezone_windows, get_default_timezone_iana
 from typing import Dict, List, Optional
 import base64
 
@@ -51,7 +52,7 @@ def create_event(
     is_online_meeting: bool = False,
     reminder_minutes_before_start: int = None,
     send_invitations: str = "auto",
-    time_zone: str = "Central Standard Time",
+    time_zone: str = None,
     show_as: str = None,
 ) -> Dict:
     """
@@ -76,6 +77,8 @@ def create_event(
     Returns:
         Created event details
     """
+    if time_zone is None:
+        time_zone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
@@ -190,7 +193,7 @@ def delete_event(current_user, event_id, access_token):
         raise CalendarError(f"Network error while deleting event: {str(e)}")
 
 
-def get_event_details(current_user, event_id, access_token, user_timezone: str = "UTC"):
+def get_event_details(current_user, event_id, access_token, user_timezone: str = None):
     """
     Get details for a specific calendar event.
 
@@ -200,6 +203,8 @@ def get_event_details(current_user, event_id, access_token, user_timezone: str =
         access_token: Optional access token
         user_timezone: User's preferred timezone (Windows format)
     """
+    if user_timezone is None:
+        user_timezone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/events/{event_id}"
@@ -229,7 +234,7 @@ def get_events_between_dates(
     end_dt,
     page_size: int = 50,
     access_token: str = None,
-    user_timezone: str = "UTC",
+    user_timezone: str = None,
 ):
     """
     Retrieves events between two date/times, e.g. '2025-01-30T00:00:00Z' to '2025-01-31T23:59:59Z'.
@@ -243,6 +248,8 @@ def get_events_between_dates(
         access_token: Optional access token
         user_timezone: User's preferred timezone (Windows format)
     """
+    if user_timezone is None:
+        user_timezone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = (
@@ -297,18 +304,21 @@ def format_event(event: Dict, times_already_local: bool = False) -> Dict:
     start_raw = event.get("start", {}).get("dateTime", "")
     end_raw = event.get("end", {}).get("dateTime", "")
 
+    default_windows_tz = get_default_timezone_windows()
+    default_iana_tz = get_default_timezone_iana()
+
     if times_already_local:
         # Prefer header was sent — Graph already returned local times. Pass through.
         start_str = start_raw
         end_str = end_raw
-        start_timezone = event.get("start", {}).get("timeZone", "Central Standard Time")
-        end_timezone = event.get("end", {}).get("timeZone", "Central Standard Time")
+        start_timezone = event.get("start", {}).get("timeZone", default_windows_tz)
+        end_timezone = event.get("end", {}).get("timeZone", default_windows_tz)
     else:
-        # No Prefer header — Graph returned UTC. Convert to Central Time.
+        # No Prefer header — Graph returned UTC. Convert to configured default timezone.
         start_str = start_raw
-        start_timezone = "Central Standard Time"
+        start_timezone = default_windows_tz
         end_str = end_raw
-        end_timezone = "Central Standard Time"
+        end_timezone = default_windows_tz
 
         if start_raw:
             try:
@@ -323,14 +333,10 @@ def format_event(event: Dict, times_already_local: bool = False) -> Dict:
                 if start_dt_utc.tzinfo is None:
                     start_dt_utc = start_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
 
-                start_dt_ct = start_dt_utc.astimezone(ZoneInfo("America/Chicago"))
-                microseconds = start_dt_ct.strftime("%f")
-                start_str = start_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
-
-                if start_dt_ct.dst() != timedelta(0):
-                    start_timezone = "Central Daylight Time"
-                else:
-                    start_timezone = "Central Standard Time"
+                start_dt_local = start_dt_utc.astimezone(ZoneInfo(default_iana_tz))
+                microseconds = start_dt_local.strftime("%f")
+                start_str = start_dt_local.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
+                start_timezone = default_windows_tz
             except (ValueError, AttributeError):
                 start_str = start_raw
                 start_timezone = event.get("start", {}).get("timeZone", "UTC")
@@ -348,14 +354,10 @@ def format_event(event: Dict, times_already_local: bool = False) -> Dict:
                 if end_dt_utc.tzinfo is None:
                     end_dt_utc = end_dt_utc.replace(tzinfo=ZoneInfo("UTC"))
 
-                end_dt_ct = end_dt_utc.astimezone(ZoneInfo("America/Chicago"))
-                microseconds = end_dt_ct.strftime("%f")
-                end_str = end_dt_ct.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
-
-                if end_dt_ct.dst() != timedelta(0):
-                    end_timezone = "Central Daylight Time"
-                else:
-                    end_timezone = "Central Standard Time"
+                end_dt_local = end_dt_utc.astimezone(ZoneInfo(default_iana_tz))
+                microseconds = end_dt_local.strftime("%f")
+                end_str = end_dt_local.strftime("%Y-%m-%dT%H:%M:%S") + f".{microseconds}0"
+                end_timezone = default_windows_tz
             except (ValueError, AttributeError):
                 end_str = end_raw
                 end_timezone = event.get("end", {}).get("timeZone", "UTC")
@@ -379,6 +381,7 @@ def format_event(event: Dict, times_already_local: bool = False) -> Dict:
             if event.get("onlineMeeting")
             else ""
         ),
+        "categories": event.get("categories", []),
     }
 
 
@@ -621,7 +624,7 @@ def find_meeting_times(
     duration_minutes: int = 30,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
-    time_zone: str = "Central Standard Time",  # Use Windows time zone format
+    time_zone: str = None,  # Use Windows time zone format
     required_attendees: Optional[List[Dict]] = None,
     optional_attendees: Optional[List[Dict]] = None,
     working_hours_start: Optional[str] = "09:00",
@@ -652,6 +655,8 @@ def find_meeting_times(
     Returns:
         Dictionary containing suggested meeting times
     """
+    if time_zone is None:
+        time_zone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{current_user}/findMeetingTimes"
@@ -789,7 +794,7 @@ def create_recurring_event(
     description: str,
     recurrence_pattern: Dict,
     access_token: str = None,
-    time_zone: str = "Central Standard Time",
+    time_zone: str = None,
 ) -> Dict:
     """
     Create a recurring event with specified pattern.
@@ -818,6 +823,8 @@ def create_recurring_event(
     Returns:
         Created recurring event details
     """
+    if time_zone is None:
+        time_zone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
@@ -1082,7 +1089,7 @@ def remove_calendar_sharing(
 
 
 def list_calendar_events(
-    current_user: str, calendar_id: str, access_token: str, user_timezone: str = "UTC"
+    current_user: str, calendar_id: str, access_token: str, user_timezone: str = None
 ) -> List[Dict]:
     """
     List events for a given calendar.
@@ -1099,6 +1106,8 @@ def list_calendar_events(
     Raises:
         CalendarError: If retrieval fails
     """
+    if user_timezone is None:
+        user_timezone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/calendars/{calendar_id}/events"
@@ -1131,7 +1140,7 @@ def check_event_conflicts(
     return_conflicting_events: bool = False,
     calendar_ids: List[str] = None,
     check_all_calendars: bool = False,
-    time_zone: str = "Central Standard Time",
+    time_zone: str = None,
     access_token: str = None,
 ) -> Dict:
     """
@@ -1150,6 +1159,8 @@ def check_event_conflicts(
     Returns:
         Dictionary with conflict status and optional conflicting event details
     """
+    if time_zone is None:
+        time_zone = get_default_timezone_windows()
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 

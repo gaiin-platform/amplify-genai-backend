@@ -1,7 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { sendStatusEventToStream, sendStateEventToStream } from "../../streams.js";
+import { sendStatusEventToStream, sendStateEventToStream, sendErrorMessage } from "../../streams.js";
 import { newStatus } from "../../status.js";
 import { getLogger } from "../../logging.js";
 
@@ -24,6 +24,17 @@ const logger = getLogger("openai-events");
 export const openAiTransform = (event, responseStream = null, capturedContent = null) => {
     // Handle new /responses endpoint format
     if (event && event.type) {
+
+        // Handle error events (e.g. insufficient_quota, rate limits)
+        if (event.type === "error" && event.error) {
+            const code = event.error.code || event.error.type || null;
+            logger.error(`OpenAI stream error: code=${code}, message=${event.error.message}`);
+            if (responseStream) {
+                sendErrorMessage(responseStream, 429, code);
+            }
+            return null;
+        }
+
         // Handle streaming reasoning text deltas
         if ((event.type === "response.reasoning_summary_text.delta" && event.delta)) {
             if (responseStream) {

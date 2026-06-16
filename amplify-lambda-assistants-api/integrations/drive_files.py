@@ -151,7 +151,7 @@ def download_integration_file(event, context, current_user, name, data):
     integration_provider = provider_case(integration)
     file_id = data.get("file_id")
     direct_download = data.get("direct_download", True)
-    return prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download)
+    return asyncio.run(prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download))
 
 async def prepare_download_link(integration, integration_provider, file_id, current_user, token, direct_download=False, return_content=False):
     logger.info(f"Starting download for integration {integration_provider}, file {file_id}")

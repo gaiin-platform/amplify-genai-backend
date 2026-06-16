@@ -39,7 +39,7 @@ custom:
   prune:
     automatic: true
     includeLayers: true
-    number: 20
+    number: 10
 
 
   cf-changesets:
@@ -197,6 +197,7 @@ functions:
     handler: state/conversation.delete_conversation
     layers:
       - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
     events:
       - http:
           path: state/conversation/delete
@@ -207,6 +208,7 @@ functions:
     handler: state/conversation.delete_multiple_conversations
     layers:
       - Ref: PythonRequirementsLambdaLayer
+    timeout: 29
     events:
       - http:
           path: state/conversation/delete_multiple
