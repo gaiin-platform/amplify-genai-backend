@@ -5,7 +5,9 @@ const logger = getLogger("assistants.agent");
 
 
 export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
-    const endpoint = process.env.API_BASE_URL + "/vu-agent/handle-event";
+    // AGENT_ENDPOINT can be set to override the API_BASE_URL for local dev
+    // e.g. AGENT_ENDPOINT=http://localhost:3015/vu-agent/handle-event
+    const endpoint = process.env.AGENT_ENDPOINT || (process.env.API_BASE_URL + "/vu-agent/handle-event");
 
     logger.info("Invoking agent with sessionId:", sessionId, "and Endpoint:", endpoint);
 
