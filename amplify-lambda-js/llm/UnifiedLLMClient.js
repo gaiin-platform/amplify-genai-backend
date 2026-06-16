@@ -13,6 +13,7 @@ import {
 import { newStatus, getThinkingMessage } from '../common/status.js';
 import { getAccountId } from '../common/params.js';
 import { recordUsage } from '../common/accounting.js';
+import { logCriticalError } from '../common/criticalLogger.js';
 
 // Import native provider implementations
 import { chat as openaiChat } from '../azure/openai.js';
@@ -174,6 +175,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                                 // This is LLM response data - apply provider transformer
                                 const transformed = transform(event, responseStream, capturedContent);
                                 if (transformed) {
+                                    // 💰 Mark that the provider stream actually delivered a response.
+                                    requestState.streamReceivedData = true;
                                     sendDeltaToStream(responseStream, 'answer', transformed);
                                     // Capture content for conversation analysis if requested
                                     if (capturedContent) {
@@ -184,6 +187,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                                 // Extract usage from LLM events only
                                 const usage = usageTransform(event);
                                 if (usage) {
+                                    // 💰 Mark that the provider reported token usage at least once.
+                                    requestState.usageMarked = true;
                                     requestState.totalUsage = { ...requestState.totalUsage, ...usage };
                                 }
                             }
@@ -217,6 +222,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                             // This is LLM response data - apply provider transformer
                             const transformed = transform(event, responseStream, capturedContent);
                             if (transformed) {
+                                // 💰 Mark that the provider stream actually delivered a response.
+                                requestState.streamReceivedData = true;
                                 sendDeltaToStream(responseStream, 'answer', transformed);
                                 // Capture content for conversation analysis if requested
                                 if (capturedContent) {
@@ -227,6 +234,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                             // Extract usage from LLM events only
                             const usage = usageTransform(event);
                             if (usage) {
+                                // 💰 Mark that the provider reported token usage at least once.
+                                requestState.usageMarked = true;
                                 requestState.totalUsage = { ...requestState.totalUsage, ...usage };
                             }
                         }
@@ -259,6 +268,13 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
  */
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
+    // 💰 BILLING-CRITICAL: a single user request can trigger MANY LLM calls (e.g. each
+    // tool-loop iteration calls callUnifiedLLM again with the SAME parent requestId).
+    // `llmCallId` uniquely identifies THIS one LLM call so that usage tracking, billing,
+    // and the billing-leak detector can never be confused across calls. It is grouped
+    // under the parent requestId (`<requestId>::<short-uuid>`) so logs still correlate to
+    // the user request, while remaining unique per call.
+    const llmCallId = `${requestId}::${uuidv4().slice(0, 8)}`;
     const model = params.options?.model || params.model;
 
 
@@ -397,10 +413,20 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
     // Track request
     const requestState = {
         requestId,
+        llmCallId,
         cancelled: false,
         startTime: Date.now(),
         responseStream,
         statusTimer: null,
+        // 💰 BILLING-CRITICAL stream tracking (provider-agnostic):
+        //   streamReceivedData -> the transform produced at least one piece of output, i.e.
+        //                         the provider stream actually delivered a response.
+        //   usageMarked        -> usageTransform returned non-null usage at least once, i.e.
+        //                         the provider told us the token counts.
+        // If a stream delivered data but usage was never marked, the provider stopped sending
+        // (or we stopped parsing) usage and the request would be silently unbilled.
+        streamReceivedData: false,
+        usageMarked: false,
         totalUsage: {
             prompt_tokens: 0,
             completion_tokens: 0,
@@ -571,6 +597,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                                 // Apply transform to get content - pass capturedContent for tool call accumulation
                                 const transformed = providerConfig.transform(event, null, nonStreamCapturedContent);
                                 if (transformed) {
+                                    // 💰 Mark that the provider stream actually delivered a response.
+                                    requestState.streamReceivedData = true;
                                     if (typeof transformed === 'string') {
                                         fullContent += transformed;
                                         nonStreamCapturedContent.fullResponse += transformed;
@@ -584,6 +612,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                                 // Extract usage
                                 const usage = providerConfig.usageTransform(event);
                                 if (usage) {
+                                    // 💰 Mark that the provider reported token usage at least once.
+                                    requestState.usageMarked = true;
                                     requestState.totalUsage = { ...requestState.totalUsage, ...usage };
                                 }
                             } catch (err) {
@@ -618,6 +648,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         const inputWriteCachedTokens = requestState.totalUsage?.inputWriteCachedTokens || 0;
 
         if (promptTokens > 0 || completionTokens > 0 || inputCachedTokens > 0 || inputWriteCachedTokens > 0) {
+            // recordUsage logs its own "📊 [ACCOUNTING] recordUsage invoked" + cost line, so no
+            // duplicate billing log is needed here.
             await recordUsage(
                 params.account,
                 requestId,
@@ -628,6 +660,60 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 inputWriteCachedTokens,
                 { reasoning_tokens: requestState.totalUsage.reasoning_tokens || 0 }
             );
+        } else if (requestState.streamReceivedData && !requestState.usageMarked) {
+            // 💰 BILLING LEAK DETECTOR (provider-agnostic):
+            // The provider stream DELIVERED a response (streamReceivedData === true) but we
+            // NEVER captured usage from it (usageMarked === false). That means the model ran,
+            // consumed compute, produced output — and this request is about to go UNBILLED.
+            // This is the exact gpt-5/o-model failure mode, but the check is generic so it will
+            // catch the same regression for ANY provider (OpenAI/Azure/Bedrock/Gemini) in future.
+            logger.error("🚨 [USAGE-CAPTURE] BILLING LEAK: stream delivered a response but NO usage was ever marked — this LLM call will NOT be billed.", {
+                requestId,
+                llmCallId,
+                modelId: model?.id,
+                provider: model?.provider,
+                user: params.account?.user,
+                accountId: params.account?.accountId,
+                apiKeyId: params.account?.apiKeyId,
+                streamReceivedData: requestState.streamReceivedData,
+                usageMarked: requestState.usageMarked,
+                rawTotalUsage: requestState.totalUsage
+            });
+
+            // Page on-call via the critical-error pipeline. A streamed answer that bills $0 is a
+            // silent revenue leak and must be investigated, not buried in info logs.
+            // We report llmCallId so the EXACT leaking call is identifiable even when several
+            // LLM calls share the same parent requestId (e.g. tool-loop iterations).
+            await logCriticalError({
+                functionName: 'UnifiedLLMClient.callUnifiedLLM',
+                errorType: 'UsageNeverMarkedAfterStream',
+                errorMessage: `Model ${model?.id || 'unknown'} (${model?.provider || 'unknown'}) streamed a response but usage was never marked — billing skipped. llmCallId=${llmCallId}`,
+                currentUser: params.account?.user || 'unknown',
+                // 💰 Highest severity possible. A streamed answer that bills $0 is a silent
+                // revenue leak (the exact gpt-5/o-model failure mode) and must page immediately.
+                severity: 'CRITICAL',
+                stackTrace: '',
+                context: {
+                    requestId,
+                    llmCallId,
+                    modelId: model?.id || 'unknown',
+                    provider: model?.provider || 'unknown',
+                    accountId: params.account?.accountId || 'unknown',
+                    apiKeyId: params.account?.apiKeyId || 'unknown',
+                    streamReceivedData: requestState.streamReceivedData,
+                    usageMarked: requestState.usageMarked,
+                    rawTotalUsage: requestState.totalUsage
+                }
+            }).catch(err => logger.error('Failed to log critical billing-leak error:', err));
+        } else {
+            // No data delivered (empty/aborted/errored response) — genuinely nothing to bill.
+            // Not an anomaly, so keep it quiet to avoid false alarms.
+            logger.debug("[USAGE-CAPTURE] No usage and no streamed data — nothing to bill (not an anomaly).", {
+                requestId,
+                llmCallId,
+                modelId: model?.id,
+                provider: model?.provider
+            });
         }
 
         // Queue conversation analysis - pass options to ensure conversationId is included
@@ -711,6 +797,29 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 }
 
 /**
+ * Recursively adds additionalProperties: false to all object-type nodes in a JSON schema.
+ * Required by Bedrock Claude 4+ models when using outputConfig structured output.
+ */
+function addAdditionalPropertiesFalse(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    const result = { ...schema };
+    if (result.type === 'object') {
+        result.additionalProperties = false;
+        if (result.properties) {
+            const updatedProps = {};
+            for (const [key, val] of Object.entries(result.properties)) {
+                updatedProps[key] = addAdditionalPropertiesFalse(val);
+            }
+            result.properties = updatedProps;
+        }
+    }
+    if (result.items) {
+        result.items = addAdditionalPropertiesFalse(result.items);
+    }
+    return result;
+}
+
+/**
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
@@ -750,16 +859,25 @@ RULES:
     let structuredOutputOptions = {};
 
     if (provider === 'Bedrock') {
-        structuredOutputOptions.outputConfig = {
-            textFormat: {
-                type: "json_schema",
-                structure: {
-                    jsonSchema: {
-                        schema: JSON.stringify(outputFormat)
+        // Only Claude models support outputConfig on Bedrock.
+        // Nova, Titan, Llama, Mistral, and other non-Claude models will error if outputConfig is sent.
+        // Claude 4+ models also require additionalProperties: false on all object schemas.
+        const modelId = (model?.id || '').toLowerCase();
+        const isClaudeModel = modelId.includes('claude');
+        if (isClaudeModel) {
+            const schemaWithAdditionalProps = addAdditionalPropertiesFalse(outputFormat);
+            structuredOutputOptions.outputConfig = {
+                textFormat: {
+                    type: "json_schema",
+                    structure: {
+                        jsonSchema: {
+                            schema: JSON.stringify(schemaWithAdditionalProps)
+                        }
                     }
                 }
-            }
-        };
+            };
+        }
+        // else: fall through to JSON-in-prompt only (no outputConfig)
     } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
         structuredOutputOptions.response_format = {
             type: "json_schema",

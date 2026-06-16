@@ -9,6 +9,8 @@ import {getModelByType, ModelTypes} from "../../params.js";
 import { promptUnifiedLLMForData } from "../../../llm/UnifiedLLMClient.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
+import {newStatus} from "../../status.js";
+import {sendStatusEventToStream, sendStateEventToStream, forceFlush} from "../../streams.js";
 
 const logger = getLogger("rag");
 
@@ -220,7 +222,10 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                     try {
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
                         const response = await getRagResults(params, token, searchString, ragDataSourceKeys, ragGroupDataSourcesKeys, ragAstDataSourcesKeys, resultsPerIdea);
-                        const sources = response.data.result.map((item) => {
+                        // Capture any datasources the backend denied/dropped. Identical across
+                        // the parallel idea-calls (same inputs), so the caller dedups by key.
+                        const removedDataSources = response.data?.removedDataSources || null;
+                        const sources = (response.data.result || []).map((item) => {
                             const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];
                             return {
@@ -240,7 +245,7 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                                 content
                             }
                         });
-                        return sources;
+                        return {sources, removedDataSources};
                     } catch (e) {
                         if (e.response) {
                             // Extract status code and response message
@@ -254,13 +259,37 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                         else {
                             logger.error("Error getting RAG results", e);
                         }
-                        return [];
+                        return {sources: [], removedDataSources: null};
                     }
                 });
             ragPromises.push(result);
         }
 
-        const sources = (await Promise.all(ragPromises)).flat();
+        const ragResponses = await Promise.all(ragPromises);
+        const sources = ragResponses.flatMap(r => r.sources);
+
+        // Merge denied datasources across idea-calls into a single deduped summary.
+        // Categories: individual (user owns -> show names), group/ast (generic message).
+        const mergedRemoved = {individual: new Set(), group: new Set(), ast: new Set()};
+        for (const r of ragResponses) {
+            const rds = r.removedDataSources;
+            if (!rds) continue;
+            (rds.individual || []).forEach(k => mergedRemoved.individual.add(k));
+            (rds.group || []).forEach(k => mergedRemoved.group.add(k));
+            (rds.ast || []).forEach(k => mergedRemoved.ast.add(k));
+        }
+        // Resolve names only for individual (owned) datasources; group/ast stay nameless.
+        const removedDataSources = {
+            individual: [...mergedRemoved.individual].map(key => ({
+                key,
+                name: keyLookup[key]?.name || undefined
+            })),
+            group: [...mergedRemoved.group].map(key => ({key})),
+            ast: [...mergedRemoved.ast].map(key => ({key})),
+        };
+        const hasRemoved = removedDataSources.individual.length > 0 ||
+            removedDataSources.group.length > 0 ||
+            removedDataSources.ast.length > 0;
         
         logger.debug("🔍 RAG: Raw results returned:", sources.length, "sources");
 
@@ -312,12 +341,64 @@ ${content}
         
         logger.debug("🔍 RAG: Final return - sources:", uniqueSources.length, "messages:", messages.length);
 
-        return {messages, sources:uniqueSources};
+        return {messages, sources:uniqueSources, removedDataSources: hasRemoved ? removedDataSources : null};
     } catch (e) {
         logger.error("Error getting context messages from RAG", e);
-        return {messages: [], sources: []};
+        return {messages: [], sources: [], removedDataSources: null};
     }
 }
+
+/**
+ * Emit a user-facing notification about datasources that were denied/dropped by
+ * the dual-retrieval backend. Mirrors the existing denied-file warning pattern.
+ *
+ *  - individual: the user is typically the owner -> safe to show file names
+ *  - group / ast: the user may NOT be the owner -> generic message only, no names
+ *
+ * @param {object} responseStream - active response stream
+ * @param {object|null} removedDataSources - {individual, group, ast} from getContextMessages*
+ */
+export const notifyRemovedDataSources = (responseStream, removedDataSources) => {
+    if (!removedDataSources || !responseStream || responseStream.destroyed) return;
+
+    const {individual = [], group = [], ast = []} = removedDataSources;
+    const messages = [];
+
+    if (individual.length > 0) {
+        const names = individual.map(d => d.name).filter(Boolean);
+        const detail = names.length > 0 ? names.join(", ") : `${individual.length} file(s)`;
+        messages.push(`The following data sources could not be accessed and were removed: ${detail}`);
+    }
+
+    // Group + AST: do NOT reveal names — the user may not own these files.
+    if (group.length > 0 || ast.length > 0) {
+        messages.push(
+            "Some of the assistant's data sources were not properly captured, " +
+            "so the assistant may not function as expected. Please contact the assistant's owner."
+        );
+    }
+
+    if (messages.length === 0) return;
+
+    // Translate into the shape RemovedDataSourcesBlock expects:
+    // { invalidIds: string[], deniedAccess: {objectId, name?, reason?}[], invalidImageIds: string[] }
+    const deniedAccess = [
+        ...individual.map(d => ({objectId: d.key, name: d.name || d.key, reason: 'no_permission_record'})),
+        ...group.map(d =>     ({objectId: d.key, reason: 'no_permission_record'})),
+        ...ast.map(d =>       ({objectId: d.key, reason: 'no_permission_record'})),
+    ];
+    const frontendRemoved = {invalidIds: [], deniedAccess, invalidImageIds: []};
+
+    sendStatusEventToStream(responseStream, newStatus({
+        inProgress: false,
+        message: `⚠️ Some data sources were removed: ${messages.join('; ')}`,
+        icon: "warning",
+        sticky: true,
+        metadata: {removedDataSources: frontendRemoved}
+    }));
+    sendStateEventToStream(responseStream, {removedDataSources: frontendRemoved});
+    forceFlush(responseStream);
+};
 
 export const checkEmbeddingCompletion = async (token, dataSourceIds, requestId) => {
     const checkEmbeddingsEndpoint = process.env.API_BASE_URL + '/embedding/check-completion';

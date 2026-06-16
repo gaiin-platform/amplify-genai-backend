@@ -39,7 +39,7 @@ custom:
   prune:
     automatic: true
     includeLayers: true
-    number: 20
+    number: 10
 
 
   cf-changesets:
