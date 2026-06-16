@@ -564,6 +564,45 @@ def delete_shared_mailbox_draft(
         raise SharedInboxError(f"Network error deleting shared mailbox draft: {str(e)}")
 
 
+def move_shared_mailbox_message(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    destination_folder_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Moves a message to a different folder in a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox (e.g. support@example.com)
+        message_id: Graph API message ID of the message to move
+        destination_folder_id: Target folder ID or well-known name
+                               (e.g. "Inbox", "Drafts", "SentItems", "DeletedItems", "Junk")
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing the moved message details (id, subject, isDraft, etc.)
+
+    Raises:
+        SharedMessageNotFoundError: If the message does not exist
+        SharedInboxError: For other failures
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/move"
+        payload = {"destinationId": destination_folder_id}
+        response = session.post(url, json=payload)
+        if not response.ok:
+            _handle_graph_error(response)
+
+        return _format_message(response.json())
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error moving shared mailbox message: {str(e)}")
+
+
 def add_shared_mailbox_draft_attachment(
     current_user: str,
     mailbox_email: str,
