@@ -1,34 +1,13 @@
 import json
-import re
 import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.html_utils import html_to_plain_text, markdown_to_html
+from integrations.o365.admin_config import get_default_timezone_windows
 
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
-
-
-def _html_to_plain_text(html: str) -> str:
-    """
-    Strip HTML tags and decode common entities to produce clean plain text.
-    Removes <style>/<script> blocks, preserves paragraph structure via newlines,
-    and collapses excessive whitespace — so agents get readable content instead
-    of raw HTML markup.
-    """
-    # Remove <style> and <script> blocks entirely (including their content)
-    html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    # Replace block-level tags with newlines so paragraphs survive stripping
-    html = re.sub(r'<(br|p|div|tr|li|h[1-6])\b[^>]*>', '\n', html, flags=re.IGNORECASE)
-    # Strip all remaining tags
-    html = re.sub(r'<[^>]+>', '', html)
-    # Decode common HTML entities
-    html = html.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<') \
-               .replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
-    # Collapse runs of whitespace / blank lines
-    html = re.sub(r'\n[ \t]+', '\n', html)
-    html = re.sub(r'\n{3,}', '\n\n', html)
-    return html.strip()
 
 from pycommon.logger import getLogger
 logger = getLogger(integration_name)
@@ -87,6 +66,7 @@ def list_messages(
     skip: int = 0,
     filter_query: Optional[str] = None,
     include_body: bool = False,
+    user_timezone: str = None,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -99,6 +79,7 @@ def list_messages(
         skip: Number of messages to skip
         filter_query: OData filter query
         include_body: Whether to include message body and bodyPreview (default: False)
+        user_timezone: User's preferred timezone in Windows format (default: "UTC")
 
     Returns:
         List of message details
@@ -135,13 +116,18 @@ def list_messages(
                 "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
             }
 
-        response = session.get(url, params=params)
+        if user_timezone is None:
+            user_timezone = get_default_timezone_windows()
+        headers = {}
+        if user_timezone and user_timezone != "UTC":
+            headers["Prefer"] = f'outlook.timezone="{user_timezone}"'
+
+        response = session.get(url, params=params, headers=headers)
 
         if not response.ok:
             handle_graph_error(response)
 
         messages = response.json().get("value", [])
-        # Use detailed=True and pass include_body parameter to format_message
         return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
 
     except requests.RequestException as e:
@@ -685,7 +671,7 @@ def format_message(message: Dict, detailed: bool = False, include_body: bool = T
                 content_type = message.get("body", {}).get("contentType", "text")
                 # Strip HTML markup so agents receive readable plain text
                 if content_type.lower() == "html":
-                    detailed_fields["body"] = _html_to_plain_text(raw_content)
+                    detailed_fields["body"] = html_to_plain_text(raw_content)
                     detailed_fields["bodyType"] = "text"
                 else:
                     detailed_fields["body"] = raw_content
@@ -791,6 +777,10 @@ def create_draft(
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
 
+        use_html = content_type and content_type.lower() == "html"
+        if use_html and body and not body.lstrip().startswith('<'):
+            body = markdown_to_html(body)
+
         if reply_to_message_id:
             # ── Threaded reply draft ──
             # Step 1: createReply — gives us a draft in the same conversation thread
@@ -804,7 +794,7 @@ def create_draft(
 
             # Step 2: PATCH the draft to set our actual body content
             if draft_id and body:
-                ct = "HTML" if content_type and content_type.lower() == "html" else "Text"
+                ct = "HTML" if use_html else "Text"
                 patch_url = f"{GRAPH_ENDPOINT}/me/messages/{draft_id}"
                 patch_payload = {
                     "body": {"contentType": ct, "content": body},
@@ -823,7 +813,7 @@ def create_draft(
             url = f"{GRAPH_ENDPOINT}/me/messages"
             payload = {
                 "subject": subject,
-                "body": {"contentType": content_type, "content": body},
+                "body": {"contentType": "HTML" if use_html else "Text", "content": body},
                 "importance": importance,
             }
             if to_recipients:
@@ -1220,12 +1210,11 @@ def search_messages(
             filter_parts = []
             remainder_tokens = []
 
-            # Match: field:"quoted value" or field:unquoted_value
-            for m in re.finditer(r'(\w+):"([^"]+)"|(\w+):(\S+)', stripped_query):
-                if m.group(1):
-                    field, value = m.group(1).lower(), m.group(2)
-                else:
-                    field, value = m.group(3).lower(), m.group(4)
+            # Match: field:>=value, field:<=value, field:"quoted value", or field:unquoted_value
+            for m in re.finditer(r'(\w+):(>=|<=|>|<)?"?([^"\s><=]+)"?', stripped_query):
+                field = m.group(1).lower()
+                operator = m.group(2) or ":"
+                value = m.group(3)
 
                 if field == "from":
                     filter_parts.append(f"from/emailAddress/address eq '{value}'")
@@ -1233,6 +1222,17 @@ def search_messages(
                     filter_parts.append(f"contains(subject, '{value}')")
                 elif field == "to":
                     filter_parts.append(f"toRecipients/any(r: r/emailAddress/address eq '{value}')")
+                elif field == "received":
+                    if operator == ">=":
+                        filter_parts.append(f"receivedDateTime ge {value}")
+                    elif operator == "<=":
+                        filter_parts.append(f"receivedDateTime le {value}")
+                    elif operator == ">":
+                        filter_parts.append(f"receivedDateTime gt {value}")
+                    elif operator == "<":
+                        filter_parts.append(f"receivedDateTime lt {value}")
+                    else:
+                        filter_parts.append(f"receivedDateTime ge {value}")
                 else:
                     # Unknown field — treat as keyword
                     remainder_tokens.append(value)

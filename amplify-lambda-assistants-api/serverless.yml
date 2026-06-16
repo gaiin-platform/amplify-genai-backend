@@ -220,6 +220,8 @@ functions:
       - http:
           path: integrations/oauth/start-auth
           method: post
+    environment:
+      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
   authCallback:
     handler: integrations/oauth.auth_callback
     layers:

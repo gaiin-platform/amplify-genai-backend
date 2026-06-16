@@ -54,4 +54,9 @@ integrations_list = [
         "id": "microsoft_user_groups",
         "description": "This integration enables assistants to manage and query Microsoft user groups via the Microsoft Graph API.",
     },
+    {
+        "name": "Shared Email",
+        "id": "microsoft_exchange",
+        "description": "This integration enables assistants to read, search, and draft emails in shared Exchange mailboxes through Microsoft Graph API.",
+    },
 ]

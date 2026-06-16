@@ -88,7 +88,7 @@ export const chatBedrock = async (chatBody, writable) => {
 
         // Add structured output configuration if provided
         if (body.outputConfig) {
-            input.outputConfig = body.outputConfig;
+            input.outputConfig = sanitizeOutputConfig(body.outputConfig);
             logger.info('\u2705 [Bedrock] Added native structured output configuration');
         }
 
@@ -109,6 +109,19 @@ export const chatBedrock = async (chatBody, writable) => {
             if (budget_tokens >= maxTokens) {
                 logger.warn(`Extended thinking disabled: budget_tokens (${budget_tokens}) >= maxTokens (${maxTokens}). Bedrock requires maxTokens > budget_tokens.`);
                 // Disable reasoning to prevent ValidationException
+            } else if (/claude.*opus-4-[789]|claude.*opus-4-[1-9][0-9]/i.test(currentModel.id)) {
+                // Opus 4.7+ — effort-based, no budget_tokens
+                input.additionalModelRequestFields = {
+                    "reasoning_config": { "type": "adaptive" },
+                    "output_config": { "effort": "high" }
+                };
+                logger.info(`Adaptive thinking enabled (Opus 4.7+, effort=high) with temperature=1.0, maxTokens=${maxTokens}`);
+            } else if (/claude.*sonnet-4-6/i.test(currentModel.id)) {
+                // Sonnet 4.6 — adaptive, no budget_tokens
+                input.additionalModelRequestFields = {
+                    "reasoning_config": { "type": "adaptive" }
+                };
+                logger.info(`Adaptive thinking enabled (Sonnet 4.6 bare adaptive) with temperature=1.0, maxTokens=${maxTokens}`);
             } else {
                 input.additionalModelRequestFields={
                     "reasoning_config": {
@@ -192,17 +205,14 @@ export const chatBedrock = async (chatBody, writable) => {
         });
 
         const response = await client.send( new ConverseStreamCommand(input) );
-        const { messageStream } = response.stream.options;
-        const decoder = new TextDecoder();
 
-        // Process stream with minimal overhead
-        for await (const chunk of messageStream) {
-            const jsonString = decoder.decode(chunk.body);
+        // Process stream events (SDK v3.1000+ returns parsed event objects directly)
+        for await (const event of response.stream) {
+            const jsonString = JSON.stringify(event);
             // Debug: Log chunks that contain tool-related events
             if (jsonString.includes('toolUse') || jsonString.includes('contentBlockStart') || jsonString.includes('contentBlockStop')) {
                 logger.debug(`🔧 Bedrock tool-related chunk: ${jsonString.substring(0, 500)}`);
             }
-            // Write directly as SSE format without re-parsing (already valid JSON)
             writable.write(`data: ${jsonString}\n\n`);
         }
         writable.end();
@@ -286,6 +296,54 @@ export const chatBedrock = async (chatBody, writable) => {
     }
 }
 
+
+/**
+ * Recursively ensures all JSON Schema objects have additionalProperties: false,
+ * and that any schema values that were JSON-encoded strings are parsed into objects.
+ * Bedrock requires both of these for structured output validation.
+ */
+function enforceAdditionalPropertiesFalse(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) return schema.map(enforceAdditionalPropertiesFalse);
+
+    const result = {};
+    for (const [key, value] of Object.entries(schema)) {
+        result[key] = enforceAdditionalPropertiesFalse(value);
+    }
+
+    if (result.type === 'object') {
+        result.additionalProperties = false;
+    }
+    return result;
+}
+
+function sanitizeOutputConfig(outputConfig) {
+    if (!outputConfig) return outputConfig;
+
+    try {
+        const config = JSON.parse(JSON.stringify(outputConfig)); // deep clone
+
+        const jsonSchema = config?.textFormat?.type?.json_schema?.structure?.jsonSchema;
+        if (jsonSchema) {
+            // schema may have been serialized as a JSON string — parse it first
+            if (typeof jsonSchema.schema === 'string') {
+                try {
+                    jsonSchema.schema = JSON.parse(jsonSchema.schema);
+                } catch (e) {
+                    logger.warn('[Bedrock] outputConfig jsonSchema.schema was a string but failed to parse:', e.message);
+                }
+            }
+            // Recursively inject additionalProperties: false on all object types
+            if (jsonSchema.schema && typeof jsonSchema.schema === 'object') {
+                jsonSchema.schema = enforceAdditionalPropertiesFalse(jsonSchema.schema);
+            }
+        }
+        return config;
+    } catch (e) {
+        logger.warn('[Bedrock] Failed to sanitize outputConfig, using original:', e.message);
+        return outputConfig;
+    }
+}
 
 function combineMessages(oldMessages, failSafeUserMessage) {
     if (!oldMessages || oldMessages.length === 0) return oldMessages;

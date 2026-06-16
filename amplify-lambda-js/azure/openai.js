@@ -246,8 +246,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             max_completion_tokens: data.max_tokens || options.maxTokens || model.outputTokenLimit,
             stream: true
         };
-        // Note: stream_options and reasoning_effort are NOT included for O-models with tools
-        // as they may cause 400 errors
     }
     // Azure and newer OpenAI API versions require max_completion_tokens instead of max_tokens
     // Apply to all completion endpoints — max_tokens is deprecated in newer API versions
@@ -296,6 +294,16 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (body.response_format && isCompletionEndpoint) {
         data.response_format = body.response_format;
         logger.info('\u2705 [OpenAI] Added native structured output configuration');
+    }
+
+    // 💰 BILLING-CRITICAL: usage tracking should ALWAYS be on for the chat/completions path.
+    // GUARDED to the completions path ONLY. The /responses API does NOT support
+    // `stream_options.include_usage` (it returns 400 "Unknown parameter: stream_options.include_usage")
+    // because on /responses usage is delivered automatically in the terminal `response.completed`
+    // event (response.usage). `isCompletionEndpoint || hasTools` is exactly the completions path
+    // (the inverse of the `!isCompletionEndpoint && !hasTools` /responses condition above).
+    if (isCompletionEndpoint || hasTools) {
+        data.stream_options = {include_usage: true};
     }
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})

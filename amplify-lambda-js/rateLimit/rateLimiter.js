@@ -1,12 +1,13 @@
 import {DynamoDBClient, QueryCommand, ScanCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
+import {buildAccountInfo} from "../common/accountInfo.js";
 import axios from "axios";
 
 const logger = getLogger("rateLimiter");
 
 // 💰 SMART CACHING: Multiple cache layers for performance
-let adminRateLimitCache = null; // Admin limits array (rarely change)
+let adminRateLimitCache = null; // { limits: RateLimit[], honorPersonalRateLimit: bool }
 let adminRateLimitCacheTime = 0;
 let groupRateLimitsCache = new Map(); // Group limits by user
 let historyCostCache = new Map(); // Cache ONLY historical costs (never changes)
@@ -470,9 +471,15 @@ export async function isRateLimited(params) {
     }
 
     try {
-        const accountId = params.body?.options?.accountId || 'general_account';
-        const apiKeyId = params.apiKeyId || 'NA';
-        const accountInfo = `${accountId}#${apiKeyId}`;
+        // 🔒 Build the composite key via the SAME shared helper accounting.js uses,
+        // so the key we query here can never diverge from the key usage is written under.
+        const billing = buildAccountInfo({
+            accountId: params.body?.options?.accountId,
+            apiKeyId: params.apiKeyId,
+            accessToken: params.accessToken,
+            user: params.user
+        });
+        const accountInfo = billing.accountInfo;
         const dynamodbClient = new DynamoDBClient();
         const command = new QueryCommand({
             TableName: costCalcTable,
@@ -541,10 +548,33 @@ export async function isRateLimited(params) {
 
         // ── Step 2: Fetch admin + group limits in parallel ───────────────────
         logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 2 — Fetching admin & group limits (parallel)...`);
-        const [adminRateLimits, groupRateLimits] = await Promise.all([
+        const [adminRateLimitConfig, groupRateLimits] = await Promise.all([
             getAdminRateLimits(),
             params.accessToken ? getUserGroupRateLimits(params.accessToken) : Promise.resolve([])
         ]);
+
+        const adminRateLimits = adminRateLimitConfig?.limits ?? [];
+        const honorConfig = adminRateLimitConfig?.honorPersonalRateLimit;
+        const honorEnabled = honorConfig?.enabled === true;
+        const honorScope = honorConfig?.scope ?? 'both'; // default to 'both' if not set
+
+        // ── Honor personal limit bypass ───────────────────────────────────────
+        // If admin has enabled honorPersonalRateLimit AND the user has a personal
+        // limit set (and it passed Step 1), check if this request's access type
+        // matches the configured scope before skipping the pool check.
+        if (honorEnabled && !noLimit(userRateLimit)) {
+            const isApiKey = params.body?.options?.api_accessed === true;
+            const scopeMatches =
+                honorScope === 'both' ||
+                (honorScope === 'apiKey' && isApiKey) ||
+                (honorScope === 'amplifyAccount' && !isApiKey);
+
+            if (scopeMatches) {
+                logger.debug(`\n✅ [RATE-LIMIT-CHECK] honorPersonalRateLimit enabled (scope=${honorScope}, isApiKey=${isApiKey}) — skipping admin/group pool check`);
+                return false;
+            }
+            logger.debug(`\n📋 [RATE-LIMIT-CHECK] honorPersonalRateLimit enabled but scope=${honorScope} does not match isApiKey=${isApiKey} — continuing to pool check`);
+        }
 
         const activeAdminLimits = Array.isArray(adminRateLimits)
             ? adminRateLimits.filter(l => l && l.period?.toLowerCase() !== 'unlimited')
@@ -592,7 +622,7 @@ export async function isRateLimited(params) {
 
         if (activeAdminLimits.length > 0) {
             limitPool.push({
-                limits: adminRateLimits,
+                limits: activeAdminLimits,
                 limitType: 'admin',
                 isAdminSet: true
             });
@@ -697,12 +727,12 @@ export async function isRateLimited(params) {
 
 /**
  * 💰 CACHED: Get admin rate limits configuration (array of RateLimit)
- * Caches for 10 minutes since admin settings rarely change
+ * Caches for 3 minutes
  */
 async function getAdminRateLimits() {
     // Check cache first
     const cacheAge = Date.now() - adminRateLimitCacheTime;
-    if (adminRateLimitCache && cacheAge < 10 * 60 * 1000) {
+    if (adminRateLimitCache && cacheAge < 3 * 60 * 1000) {
         logger.debug('Using cached admin rate limits');
         return adminRateLimitCache;
     }
@@ -736,11 +766,26 @@ async function getAdminRateLimits() {
         }
         const rateData = unmarshall(item);
 
-        // 💰 CACHE: Store admin rate limits array for 10 minutes
-        adminRateLimitCache = normalizeRateLimits(rateData.data);
+        // 💰 CACHE: Store admin rate limit config for 3 minutes
+        // Support both legacy flat shape and new { limits, honorPersonalRateLimit } shape
+        const rawData = rateData.data;
+        const limits = normalizeRateLimits(
+            rawData && typeof rawData === 'object' && 'limits' in rawData ? rawData.limits : rawData
+        );
+        // Normalize honorPersonalRateLimit — support legacy boolean, new object, or missing
+        const rawHonor = rawData?.honorPersonalRateLimit;
+        let honorPersonalRateLimit;
+        if (rawHonor && typeof rawHonor === 'object' && 'enabled' in rawHonor) {
+            honorPersonalRateLimit = { ...rawHonor, scope: rawHonor.scope ?? 'both' }; // ensure scope always set
+        } else if (typeof rawHonor === 'boolean') {
+            honorPersonalRateLimit = { enabled: rawHonor, scope: 'both' }; // legacy boolean migration
+        } else {
+            honorPersonalRateLimit = { enabled: false, scope: 'both' }; // default
+        }
+        adminRateLimitCache = { limits, honorPersonalRateLimit };
         adminRateLimitCacheTime = Date.now();
 
-        logger.debug(`🔄 [RATE-LIMIT-CACHE] Admin limits refreshed: ${adminRateLimitCache.length} limit(s) — ${adminRateLimitCache.map(l => `$${l.rate}/${l.period}`).join(', ')}`);
+        logger.debug(`🔄 [RATE-LIMIT-CACHE] Admin limits refreshed: ${limits.length} limit(s) — ${limits.map(l => `$${l.rate}/${l.period}`).join(', ')} | honorPersonal=${JSON.stringify(honorPersonalRateLimit)}`);
 
         return adminRateLimitCache;
 

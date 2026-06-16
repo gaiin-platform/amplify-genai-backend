@@ -14,6 +14,12 @@ class CustomBaseModel(BaseModel):
         populate_by_name = True
 
 
+class StepOutputAttribute(CustomBaseModel):
+    name: str
+    type: Optional[str] = "string"  # string | number | boolean | object | array
+    description: Optional[str] = None
+
+
 class Step(CustomBaseModel):
     stepName: Optional[str] = None
     instructions: Optional[str] = None
@@ -26,6 +32,13 @@ class Step(CustomBaseModel):
     on_failure: Optional[Dict[str, Any]] = None
     retries: Optional[int] = Field(None, ge=0)
     timeout: Optional[int] = Field(None, ge=0)  # Timeout in seconds
+    # Output attribute declarations — describe what this step produces
+    outputs: Optional[List[StepOutputAttribute]] = None
+    # Repeat control — allow the step to loop instead of always advancing
+    allowRepeat: Optional[bool] = False
+    maxRepeats: Optional[int] = Field(None, ge=0)
+    # Skip control — None/missing = default LLM heuristic, True = allow skip check, False = never skip
+    allowSkip: Optional[bool] = None
 
 
 class Limits(CustomBaseModel):
