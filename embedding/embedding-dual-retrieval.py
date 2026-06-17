@@ -1045,6 +1045,18 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
 
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
+    # Filter out any Bedrock KB IDs that came through AST/group permission paths
+    # (The initial filter only handles raw_src_ids; AST/group paths can also contain KB refs)
+    filtered_src_ids = []
+    for sid in src_ids:
+        if isinstance(sid, str) and sid.startswith("bedrock-kb://"):
+            kb_id = sid.split("bedrock-kb://")[1]
+            if kb_id and kb_id not in bedrock_kb_ids:
+                bedrock_kb_ids.append(kb_id)
+        else:
+            filtered_src_ids.append(sid)
+    src_ids = filtered_src_ids
+
     # CRITICAL: Check if we have any accessible sources before proceeding
     if not src_ids and not bedrock_kb_ids:
         logger.error(f"[NO_ACCESSIBLE_SOURCES] No accessible sources after permission checks")
