@@ -325,7 +325,11 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     toolResults.push(serverSideResult);
                     continue; // processed server-side, move to next tool call
                 } catch (serverSideError) {
-                    if (!serverSideError.message?.includes('not found')) {
+                    const canFallBackToClient =
+                        serverSideError.message?.includes('not found') ||
+                        serverSideError.message?.includes('not trusted for server-side execution');
+
+                    if (!canFallBackToClient) {
                         // Server found but execution failed — surface as tool error
                         logger.error(`MCP tool ${toolName} server-side execution failed: ${serverSideError.message}`);
                         toolResults.push({
@@ -336,8 +340,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                         });
                         continue;
                     }
-                    // Server not in backend registry — fall through to client-side
-                    logger.info(`MCP tool ${toolName} not in server registry, routing to client-side`);
+                    // Server not in backend registry or not trusted for backend execution.
+                    logger.info(`MCP tool ${toolName} unavailable for server-side execution, routing to client-side`);
                 }
 
                 // Client-side fallback: send tool call to frontend
