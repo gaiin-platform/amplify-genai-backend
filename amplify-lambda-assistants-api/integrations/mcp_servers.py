@@ -6,8 +6,11 @@ Users can add, remove, and configure their own MCP servers.
 """
 
 from datetime import datetime, timezone
+import ipaddress
 import json
 import os
+import socket
+import urllib.parse
 import uuid
 
 import boto3
@@ -93,6 +96,147 @@ def _default_mcp_oauth_callback_url() -> str:
     return f"{api_base}/integrations/mcp/server/oauth/callback" if api_base else ""
 
 
+_BLOCKED_MCP_HOSTNAMES = {
+    "localhost",
+    "metadata.google.internal",
+    "metadata.google",
+    "metadata.goog",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+}
+
+_BLOCKED_MCP_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".internal",
+    ".corp",
+    ".lan",
+    ".intranet",
+)
+
+_MCP_TRUSTED = "trusted"
+_MCP_UNTRUSTED = "untrusted"
+_VALID_MCP_TRUST_MODES = {_MCP_TRUSTED, _MCP_UNTRUSTED}
+
+
+def _is_blocked_network_address(addr: ipaddress._BaseAddress) -> bool:
+    """True when an address points to local/private/special-use network space."""
+    if (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    ):
+        return True
+
+    # Carrier-grade NAT and benchmarking ranges are not globally reachable.
+    if addr.version == 4:
+        if addr in ipaddress.ip_network("100.64.0.0/10"):
+            return True
+        if addr in ipaddress.ip_network("198.18.0.0/15"):
+            return True
+
+    return False
+
+
+def _validate_url_for_ssrf(url: str) -> str | None:
+    """Validate URL scheme/host and resolved targets to mitigate SSRF."""
+    if not url or not str(url).strip():
+        return "Server URL is required"
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return "Invalid server URL"
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return "Server URL must start with http:// or https://"
+
+    if parsed.username or parsed.password:
+        return "URLs with embedded credentials are not allowed"
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        return "Server URL must contain a valid hostname"
+
+    if hostname in _BLOCKED_MCP_HOSTNAMES:
+        return "Requests to internal/metadata hosts are not allowed"
+
+    if any(hostname.endswith(suffix) for suffix in _BLOCKED_MCP_SUFFIXES):
+        return "Requests to internal network domains are not allowed"
+
+    try:
+        direct_ip = ipaddress.ip_address(hostname)
+        if _is_blocked_network_address(direct_ip):
+            return "Requests to private/internal network addresses are not allowed"
+        return None
+    except ValueError:
+        pass
+
+    target_port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        addr_infos = socket.getaddrinfo(hostname, target_port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return "Could not resolve server hostname"
+
+    if not addr_infos:
+        return "Could not resolve server hostname"
+
+    checked_any = False
+    for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+        ip_str = (sockaddr[0] or "").split("%", 1)[0]
+        try:
+            resolved_ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return "Server hostname resolved to an invalid IP"
+
+        checked_any = True
+        if _is_blocked_network_address(resolved_ip):
+            return "Requests to private/internal network addresses are not allowed"
+
+    if not checked_any:
+        return "Could not resolve server hostname"
+
+    return None
+
+
+def _normalize_and_validate_remote_url(base_url: str, candidate_url: str | None) -> str | None:
+    """Return absolute URL when safe, else None."""
+    if not candidate_url:
+        return None
+
+    absolute_url = urllib.parse.urljoin(base_url, candidate_url)
+    if _validate_url_for_ssrf(absolute_url):
+        return None
+    return absolute_url
+
+
+def _get_server_trust_mode(server_data, default_if_missing=_MCP_TRUSTED) -> str:
+    """Return effective trust mode; legacy records default to trusted."""
+    mode = (server_data or {}).get("trustMode")
+    return mode if mode in _VALID_MCP_TRUST_MODES else default_if_missing
+
+
+def _get_server_trust_reason(server_data, default_if_missing="legacy_existing") -> str | None:
+    reason = (server_data or {}).get("trustReason")
+    if reason:
+        return reason
+    if _get_server_trust_mode(server_data, default_if_missing) == _MCP_TRUSTED:
+        return default_if_missing
+    return None
+
+
+def _backend_trust_error() -> dict:
+    return {
+        "success": False,
+        "error": "This MCP server is not trusted for server-side execution. Use client-side verification/execution or promote it to a trusted server.",
+        "clientSideOnly": True,
+    }
+
+
 
 
 def generate_server_id() -> str:
@@ -159,6 +303,8 @@ def list_mcp_servers(event, context, current_user, name, data):
                     "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
                     "oauthConnected": server_data.get("oauthConnected", False),
                     "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
+                    "trustMode": _get_server_trust_mode(server_data),
+                    "trustReason": _get_server_trust_reason(server_data),
                 })
 
         logger.info(f"Retrieved {len(servers)} MCP servers for user")
@@ -233,6 +379,8 @@ def get_mcp_server(event, context, current_user, name, data):
                 "headers": _sanitize_headers_for_response(server_data.get("headers", {})),
                 "oauthConnected": server_data.get("oauthConnected", False),
                 "oauthDiscoverable": server_data.get("oauthDiscoverable", False),
+                "trustMode": _get_server_trust_mode(server_data),
+                "trustReason": _get_server_trust_reason(server_data),
             }
         }
 
@@ -277,6 +425,7 @@ def add_mcp_server(event, context, current_user, name, data):
     server_name = request_data.get("name")
     server_url = request_data.get("url")
     transport = request_data.get("transport", "http")
+    requested_trust_mode = request_data.get("trustMode")
     headers = request_data.get("headers", {})
     if not isinstance(headers, dict):
         headers = {}
@@ -288,9 +437,9 @@ def add_mcp_server(event, context, current_user, name, data):
     if not server_url or not server_url.strip():
         return {"success": False, "message": "Server URL is required"}
 
-    # Validate URL format
-    if not server_url.startswith("http://") and not server_url.startswith("https://"):
-        return {"success": False, "message": "Server URL must start with http:// or https://"}
+    ssrf_error = _validate_url_for_ssrf(server_url.strip())
+    if ssrf_error:
+        return {"success": False, "message": ssrf_error}
 
     # Validate transport
     if transport not in ["http", "sse"]:
@@ -305,6 +454,7 @@ def add_mcp_server(event, context, current_user, name, data):
         pk = f"{hash_key}#{MCP_ENTITY_TYPE}"
         server_id = generate_server_id()
         now = datetime.now(timezone.utc).isoformat()
+        trust_mode = requested_trust_mode if requested_trust_mode in _VALID_MCP_TRUST_MODES else _MCP_UNTRUSTED
 
         server_data = {
             "name": server_name.strip(),
@@ -314,13 +464,15 @@ def add_mcp_server(event, context, current_user, name, data):
             "tools": [],
             "status": "disconnected",
             "headers": headers,
+            "trustMode": trust_mode,
+            "trustReason": "legacy_api_default" if trust_mode == _MCP_TRUSTED else "user_added",
             "createdAt": now,
             "updatedAt": now,
         }
 
         # Eagerly probe for OAuth2 discovery so the UI can show the right
         # "Sign In" button without the user having to click Refresh first.
-        discovery = _discover_mcp_oauth(server_url.strip())
+        discovery = _discover_mcp_oauth(server_url.strip()) if trust_mode == _MCP_TRUSTED else None
         if discovery:
             server_data["oauthDiscoverable"] = True
 
@@ -406,8 +558,9 @@ def update_mcp_server(event, context, current_user, name, data):
             existing_data["name"] = request_data["name"].strip()
         if "url" in request_data and request_data["url"]:
             url = request_data["url"].strip()
-            if not url.startswith("http://") and not url.startswith("https://"):
-                return {"success": False, "message": "Server URL must start with http:// or https://"}
+            ssrf_error = _validate_url_for_ssrf(url)
+            if ssrf_error:
+                return {"success": False, "message": ssrf_error}
             existing_data["url"] = url
         if "transport" in request_data:
             if request_data["transport"] not in ["http", "sse"]:
@@ -426,6 +579,11 @@ def update_mcp_server(event, context, current_user, name, data):
         if "headers" in request_data:
             v = request_data["headers"]
             existing_data["headers"] = v if isinstance(v, dict) else {}
+        if "trustMode" in request_data and request_data["trustMode"] in _VALID_MCP_TRUST_MODES:
+            existing_data["trustMode"] = request_data["trustMode"]
+            existing_data["trustReason"] = request_data.get("trustReason") or (
+                "manual_override" if request_data["trustMode"] == _MCP_TRUSTED else "user_added"
+            )
 
         existing_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
@@ -520,6 +678,10 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
     if not server_url:
         return {"success": False, "error": "Server URL is required"}
 
+    ssrf_error = _validate_url_for_ssrf(server_url)
+    if ssrf_error:
+        return {"success": False, "error": ssrf_error}
+
     # Build base headers, then merge any caller-supplied headers
     _base_headers = {
         "Content-Type": "application/json",
@@ -585,7 +747,8 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
             server_url,
             json=init_request,
             headers=_base_headers,
-            timeout=MCP_CONNECTION_TIMEOUT
+            timeout=MCP_CONNECTION_TIMEOUT,
+            allow_redirects=False,
         )
 
         if response.status_code == 401:
@@ -624,7 +787,8 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
                 "params": {}
             },
             headers=_base_headers,
-            timeout=MCP_NOTIFICATION_TIMEOUT
+            timeout=MCP_NOTIFICATION_TIMEOUT,
+            allow_redirects=False,
         )
 
         # Get tools list
@@ -639,7 +803,8 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
             server_url,
             json=tools_request,
             headers=_base_headers,
-            timeout=MCP_CONNECTION_TIMEOUT
+            timeout=MCP_CONNECTION_TIMEOUT,
+            allow_redirects=False,
         )
 
         tools = []
@@ -732,11 +897,16 @@ def test_mcp_connection(event, context, current_user, name, data):
             return {"success": False, "error": "MCP server not found"}
 
         stored = item.get("data", {})
+        if _get_server_trust_mode(stored) != _MCP_TRUSTED:
+            return _backend_trust_error()
         server_url = stored.get("url")
         # Use stored headers when no inline headers provided
         if not inline_headers:
             stored_headers = stored.get("headers", {})
             inline_headers = stored_headers if isinstance(stored_headers, dict) else {}
+
+    if server_url and not server_id:
+        return _backend_trust_error()
 
     # Use the internal helper function
     return _test_mcp_connection_by_url(server_url, inline_headers)
@@ -843,6 +1013,9 @@ def refresh_mcp_server_tools(event, context, current_user, name, data):
             return {"success": False, "message": "MCP server not found"}
 
         server_data = item.get("data", {})
+        if _get_server_trust_mode(server_data) != _MCP_TRUSTED:
+            result = _backend_trust_error()
+            return {"success": False, "message": result["error"], "clientSideOnly": True}
         server_url = server_data.get("url")
         server_headers = server_data.get("headers", {})
         if not isinstance(server_headers, dict):
@@ -924,10 +1097,12 @@ def _discover_mcp_oauth(server_url: str, auth_response=None) -> dict | None:
     Returns None if discovery fails.
     """
     import re
-    import urllib.parse
     import requests as _req
 
     try:
+        if _validate_url_for_ssrf(server_url):
+            return None
+
         # Step 1: Parse WWW-Authenticate from the 401 response (if provided),
         #         otherwise probe the server directly.
         resource_metadata_url = None
@@ -943,38 +1118,55 @@ def _discover_mcp_oauth(server_url: str, auth_response=None) -> dict | None:
                                  "clientInfo": {"name": "amplify", "version": "1.0"}}},
                 headers={"Content-Type": "application/json"},
                 timeout=10,
+                allow_redirects=False,
             )
             www_auth = probe.headers.get("WWW-Authenticate", "")
 
         # Extract resource_metadata="..." from the header value
         m = re.search(r'resource_metadata="([^"]+)"', www_auth, re.I)
         if m:
-            resource_metadata_url = m.group(1)
+            resource_metadata_url = _normalize_and_validate_remote_url(server_url, m.group(1).strip())
         else:
             # Fall back: try the standard path relative to server origin
             parsed = urllib.parse.urlparse(server_url)
-            resource_metadata_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource"
+            fallback = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource"
+            resource_metadata_url = _normalize_and_validate_remote_url(server_url, fallback)
+
+        if not resource_metadata_url:
+            return None
 
         # Step 2: Fetch protected resource metadata
-        pr_resp = _req.get(resource_metadata_url, timeout=10)
+        pr_resp = _req.get(resource_metadata_url, timeout=10, allow_redirects=False)
         pr_resp.raise_for_status()
         pr_meta = pr_resp.json()
 
         auth_servers = pr_meta.get("authorization_servers", [])
         if not auth_servers:
             return None
-        as_issuer = auth_servers[0].rstrip("/")
+        as_issuer = _normalize_and_validate_remote_url(resource_metadata_url, auth_servers[0])
+        if not as_issuer:
+            return None
+        as_issuer = as_issuer.rstrip("/")
 
         # Step 3: Fetch authorization server metadata
-        as_resp = _req.get(f"{as_issuer}/.well-known/oauth-authorization-server", timeout=10)
+        metadata_url = f"{as_issuer}/.well-known/oauth-authorization-server"
+        metadata_url = _normalize_and_validate_remote_url(as_issuer, metadata_url)
+        if not metadata_url:
+            return None
+
+        as_resp = _req.get(metadata_url, timeout=10, allow_redirects=False)
         as_resp.raise_for_status()
         as_meta = as_resp.json()
 
+        authorization_url = _normalize_and_validate_remote_url(as_issuer, as_meta.get("authorization_endpoint", ""))
+        token_url = _normalize_and_validate_remote_url(as_issuer, as_meta.get("token_endpoint", ""))
+        registration_url = _normalize_and_validate_remote_url(as_issuer, as_meta.get("registration_endpoint", ""))
+
         # Step 4: Return the useful bits
         return {
-            "authorizationUrl": as_meta.get("authorization_endpoint", ""),
-            "tokenUrl": as_meta.get("token_endpoint", ""),
-            "registrationUrl": as_meta.get("registration_endpoint", ""),
+            "authorizationUrl": authorization_url or "",
+            "tokenUrl": token_url or "",
+            "registrationUrl": registration_url or "",
             "scopes": " ".join(pr_meta.get("scopes_supported", [])),
             "pkceRequired": "S256" in as_meta.get("code_challenge_methods_supported", []),
             "publicClient": "none" in as_meta.get("token_endpoint_auth_methods_supported", []),
@@ -1057,6 +1249,11 @@ def start_mcp_oauth(event, context, current_user, name, data):
         return {"success": False, "message": "MCP server not found"}
 
     server_data = response["Item"].get("data", {})
+    if _get_server_trust_mode(server_data) != _MCP_TRUSTED:
+        return {
+            "success": False,
+            "message": "This MCP server is not trusted for server-side OAuth. Promote it to a trusted server before using backend OAuth.",
+        }
     server_url = server_data.get("url", "")
 
     # ------------------------------------------------------------------ #
@@ -1425,6 +1622,17 @@ def refresh_mcp_oauth_token(event, context, current_user, name, data):
     server_data["oauthConnected"] = True
     server_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
+    retest = _test_mcp_connection_by_url(server_data.get("url", ""), existing_headers)
+    if retest.get("success"):
+        result_data = retest.get("data", {})
+        server_data["tools"] = result_data.get("tools", [])
+        server_data["status"] = "connected"
+        server_data["lastConnected"] = datetime.now(timezone.utc).isoformat()
+        server_data["lastError"] = None
+    else:
+        server_data["status"] = "error"
+        server_data["lastError"] = retest.get("error", "Connection failed after OAuth token refresh")
+
     table.put_item(Item={"PK": pk, "SK": server_id, "data": server_data})
 
     logger.info(f"MCP OAuth token refreshed for server {server_id}, user {current_user}")
@@ -1555,6 +1763,17 @@ def _do_mcp_token_exchange(code, state, current_user):
     if refresh_token:
         server_data["oauthRefreshToken"] = refresh_token
     server_data["oauth2Config"] = cfg
+
+    retest = _test_mcp_connection_by_url(server_data.get("url", ""), existing_headers)
+    if retest.get("success"):
+        result_data = retest.get("data", {})
+        server_data["tools"] = result_data.get("tools", [])
+        server_data["status"] = "connected"
+        server_data["lastConnected"] = datetime.now(timezone.utc).isoformat()
+        server_data["lastError"] = None
+    else:
+        server_data["status"] = "error"
+        server_data["lastError"] = retest.get("error", "Connection failed after OAuth token exchange")
 
     table.put_item(Item={"PK": pk, "SK": server_id, "data": server_data})
 
