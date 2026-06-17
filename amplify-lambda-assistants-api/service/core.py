@@ -22,6 +22,8 @@ import boto3
 from datetime import datetime
 import re
 import urllib.parse
+import ipaddress
+import socket
 from service.jobs import check_job_status, set_job_result
 from service.url_validator import validate_url
 
@@ -179,6 +181,44 @@ def replace_placeholders(
     return value
 
 
+# Networks blocked for SSRF protection
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),    # localhost
+    ipaddress.ip_network("10.0.0.0/8"),      # RFC-1918 private
+    ipaddress.ip_network("172.16.0.0/12"),   # RFC-1918 private
+    ipaddress.ip_network("192.168.0.0/16"),  # RFC-1918 private
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local / AWS metadata endpoint
+    ipaddress.ip_network("::1/128"),         # IPv6 localhost
+    ipaddress.ip_network("fc00::/7"),        # IPv6 unique local
+    ipaddress.ip_network("fe80::/10"),       # IPv6 link-local
+]
+
+
+def _is_ssrf_safe_url(url):
+    """Returns True only if the URL is safe to fetch (not a private/internal address)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            logger.warning("SSRF check blocked non-http/https scheme: %s", parsed.scheme)
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        try:
+            ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+        except (socket.gaierror, ValueError) as e:
+            logger.warning("SSRF check could not resolve hostname %s: %s", hostname, e)
+            return False
+        for network in _BLOCKED_NETWORKS:
+            if ip in network:
+                logger.warning("SSRF check blocked request to private/internal IP %s (%s)", ip, hostname)
+                return False
+        return True
+    except Exception as e:
+        logger.warning("SSRF check error for URL %s: %s", url, e)
+        return False
+
+
 def build_http_action(current_user, data):
     # Extract request details
 
@@ -232,6 +272,10 @@ def build_http_action(current_user, data):
         logger.debug("Auth: %s", auth_instance)
         print_curl_command(method, url, headers, body, auth_instance)
 
+        # SSRF protection: block private/internal URLs
+        if not _is_ssrf_safe_url(url):
+            raise ValueError(f"Request to '{url}' is not allowed: URL targets a private or restricted address.")
+
         # Make the request
         response = requests.request(
             method=method,
@@ -251,39 +295,36 @@ def build_http_action(current_user, data):
 
 
 def resolve_op_definition(current_user, token, action_name, data):
-    op_def = data.get("operationDefinition", None)
-    if not op_def:
-        logger.debug("Operation definition not found in data, resolving...")
+    # Always resolve from the ops registry — never trust user-supplied operationDefinition
+    # (user-supplied operationDefinition was removed to prevent SSRF via arbitrary URL injection)
+    logger.debug("Resolving operation definition from ops registry for action: %s", action_name)
 
-        api_base = os.environ.get("API_BASE_URL", None)
-        # make a call to API_BASE_URL + /ops/get with {data:{tag:default}} as the payload and the token as a
-        # a bearer token
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-        payload = {"data": {"tag": "default"}}
-        try:
-            response = requests.post(
-                f"{api_base}/ops/get", headers=headers, data=json.dumps(payload)
-            )
-            response.raise_for_status()
-            result = response.json()
+    api_base = os.environ.get("API_BASE_URL", None)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {"data": {"tag": "default"}}
+    op_def = None
+    try:
+        response = requests.post(
+            f"{api_base}/ops/get", headers=headers, data=json.dumps(payload)
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            logger.debug("Result: %s", result)
-            # convert to dict
-            ops = result.get("data", [])
-            logger.debug("Ops: %s", ops)
-            # find the operation definition with the name action_name
-            op_def = next(
-                (op for op in ops if op.get("name", None) == action_name), None
-            )
-        except Exception as e:
-            logger.error("Failed to resolve operation definition: %s", str(e))
-            return None
+        # logger.debug("Result: %s", result)
+        ops = result.get("data", [])
+        # logger.debug("Ops: %s", ops)
+        op_def = next(
+            (op for op in ops if op.get("name", None) == action_name), None
+        )
+    except Exception as e:
+        logger.error("Failed to resolve operation definition: %s", str(e))
+        return None
 
-    if op_def and not data.get("operationDefinition", None):
-        data["operationDefinition"] = op_def
+    if op_def:
+        data["operationDefinition"] = op_def  # always set from registry
 
     logger.debug("Op def: %s", op_def)
     return op_def
@@ -299,12 +340,17 @@ def build_action(current_user, token, action_name, data):
 
     action_type = op_def.get("type", "custom")
 
+    # Only Amplify API and custom (S3-backed) ops are supported.
     if action_type != "http":
         logger.debug("Building Amplify API action.")
         return build_amplify_api_action(current_user, token, data, op_def.get("method", "POST"))
     else:
-        logger.debug("Building HTTP action.")
-        return build_http_action(current_user, data)
+        # Direct HTTP ops (type: "http") are disabled — build_http_action is kept
+    # for reference but is not reachable through normal flows.
+        logger.warning("HTTP action type is disabled. Op: %s", action_name)
+        raise ValueError(f"Operation type 'http' is not supported at this time: {action_name}.")
+        # logger.debug("Building HTTP action.")
+        # return build_http_action(current_user, data)
 
     logger.warning("Unknown operation type.")
     return lambda: (
