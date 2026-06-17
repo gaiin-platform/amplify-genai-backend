@@ -23,6 +23,7 @@ from datetime import datetime
 import re
 import urllib.parse
 from service.jobs import check_job_status, set_job_result
+from service.url_validator import validate_url
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["OP_LOG_DYNAMO_TABLE"])
@@ -103,6 +104,12 @@ def build_amplify_api_action(current_user, token, data, method="POST"):
 
     endpoint = data["operationDefinition"]["url"]
     url = f"{base_url}{endpoint}"
+
+    # SSRF protection: validate constructed URL
+    is_valid, reason = validate_url(url, allow_credential_forwarding=True)
+    if not is_valid:
+        logger.error("SSRF protection: blocked request to %s - %s", url, reason)
+        raise ValueError(f"Request blocked by SSRF protection: {reason}")
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -189,6 +196,13 @@ def build_http_action(current_user, data):
         operation_definition.get("body", ""), payload, escape_quotes=True
     )
     auth = operation_definition.get("auth", None)
+
+    # SSRF protection: validate the target URL
+    has_credentials = bool(auth) or "Authorization" in headers or "authorization" in headers
+    is_valid, reason = validate_url(url, allow_credential_forwarding=has_credentials)
+    if not is_valid:
+        logger.error("SSRF protection: blocked HTTP action to %s - %s", url, reason)
+        raise ValueError(f"Request blocked by SSRF protection: {reason}")
 
     # Debug logging
     logger.debug("Operation definition: %s", operation_definition)
