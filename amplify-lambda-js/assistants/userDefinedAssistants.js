@@ -361,11 +361,10 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                     });
                 }
             }
-
+            const user = params.account?.user;
             // 🎯 SKILLS INTEGRATION: Inject skills into assistant context
             let activeSkills = [];
             try {
-                const user = params.account?.user;
                 const skillsEnabled = process.env.SKILLS_DYNAMODB_TABLE; // Feature flag via env var existence
 
                 if (skillsEnabled && user) {
@@ -789,7 +788,7 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
                                 "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: extractAssistantDatasources(assistant, assistant._layeredAstId || null)}
+                            data: {dataSources: extractAssistantDatasources(assistant, assistant._layeredAstId || null, user)}
                         },
                         {
                             role: 'system',
@@ -927,7 +926,7 @@ function extractDriveDatasources(data) {
         .filter(datasource => datasource && datasource.id);
 }
 
-function extractAssistantDatasources(assistant, layeredAstId = null) {
+function extractAssistantDatasources(assistant, layeredAstId = null, currentUser = null) {
     if (!assistant) return [];
 
     const groupId = assistant.data?.groupId;
@@ -945,12 +944,20 @@ function extractAssistantDatasources(assistant, layeredAstId = null) {
         assistant.dataSources.forEach(ds => {
             if (!ds.groupId) ds.groupId = groupId;
         });
-    // If this assistant was reached via a Layered Assistant, tag datasources with
-    // both the LA publicId and the leaf assistantId. Dual retrieval will:
-    //   1. Check if the user has access to the *layered* assistant path
-    //   2. Check if the *leaf* assistant has access to the datasources
-    // This covers personal-leaf-without-astPath (Bug #7) and wrong-path-checked (Bug #6).
-    } else if (layeredAstId) {
+    // If this assistant was reached via a Layered Assistant, how we tag the
+    // datasources depends on whether the CURRENT USER owns the leaf assistant:
+    //
+    //   • You ARE the leaf owner → the leaf's datasources are your own files.
+    //     Do NOT take the special layered path — fall through and treat them
+    //     exactly like a normal assistant's datasources (individual / standalone
+    //     path checks already answer "does current_user have access?").
+    //
+    //   • You are NOT the leaf owner (reached via a shared standalone path or a
+    //     group) → dual retrieval will (1) confirm you can access the *layered*
+    //     assistant path (layeredAstId) and (2) verify the leaf assistant
+    //     actually owns the datasources by looking them up in the assistant
+    //     record (keyed by astId) — no owner email needs to be passed.
+    } else if (layeredAstId && currentUser && assistant.user && currentUser !== assistant.user) {
         assistant.dataSources.forEach(ds => {
             ds.ast = { layeredAstId, astId: assistant.assistantId };
         });

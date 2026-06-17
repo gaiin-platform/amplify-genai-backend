@@ -45,6 +45,7 @@ pg_port = int(os.environ.get("RAG_POSTGRES_DB_PORT", "3306"))  # Default to 3306
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 api_version = os.environ["API_VERSION"]
 object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
+assistants_table_name = os.environ.get("ASSISTANTS_DYNAMODB_TABLE")
 queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
 s3_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 sqs = boto3.client("sqs")
@@ -586,29 +587,113 @@ def _check_user_has_ast_path_access(lookup_table, ast_id, current_user, token):
         return False, None
 
 
+def assistant_owns_datasources(assistant_public_id, data_source_ids):
+    """
+    Verify that the given datasources actually belong to the assistant.
+
+    Rather than checking OBJECT_ACCESS for a (datasource, principal) grant, we
+    treat the assistant's own record as authoritative: the latest version of the
+    assistant in ASSISTANTS_DYNAMODB_TABLE contains the canonical `dataSources`
+    list. A datasource the user is requesting via this assistant is legitimate
+    iff its key appears in that list.
+
+    This answers "does the assistant have access to the datasource?" without
+    relying on the leaf owner's email or an astp/... grant existing.
+
+    Returns (owned_ids, not_owned_ids) preserving the input membership.
+    """
+    owned = []
+    not_owned = []
+
+    if not data_source_ids:
+        return owned, not_owned
+
+    if not assistants_table_name:
+        logger.error("ASSISTANTS_DYNAMODB_TABLE not set — cannot verify assistant datasource ownership")
+        return owned, list(data_source_ids)
+
+    try:
+        dynamodb = boto3.resource("dynamodb")
+        assistants_table = dynamodb.Table(assistants_table_name)
+        response = assistants_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
+            ScanIndexForward=False,  # latest version first
+            Limit=1,
+        )
+        items = response.get("Items", [])
+        if not items:
+            logger.info("No assistant record found for %s — denying all datasources", assistant_public_id)
+            return owned, list(data_source_ids)
+
+        assistant = items[0]
+        assistant_dss = assistant.get("dataSources", []) or []
+
+        # Build the set of every key form a stored datasource can present as, so
+        # we match regardless of whether retrieval sent the id, the raw key, or the
+        # content key. Strip any protocol prefix to normalize (e.g. s3://global/..).
+        allowed_keys = set()
+        for ds in assistant_dss:
+            if not isinstance(ds, dict):
+                continue
+            for field in ("id", "key"):
+                val = ds.get(field)
+                if val:
+                    allowed_keys.add(val)
+                    allowed_keys.add(val.split("://", 1)[1] if "://" in val else val)
+            metadata = ds.get("metadata") or {}
+            content_key = metadata.get("contentKey") if isinstance(metadata, dict) else None
+            if content_key:
+                allowed_keys.add(content_key)
+                allowed_keys.add(content_key.split("://", 1)[1] if "://" in content_key else content_key)
+
+        for src_id in data_source_ids:
+            normalized = src_id.split("://", 1)[1] if "://" in src_id else src_id
+            if src_id in allowed_keys or normalized in allowed_keys:
+                owned.append(src_id)
+            else:
+                not_owned.append(src_id)
+
+        logger.info(
+            "Assistant %s owns %d/%d requested datasources",
+            assistant_public_id, len(owned), len(data_source_ids)
+        )
+        return owned, not_owned
+
+    except Exception as e:
+        logger.error("Error verifying assistant datasource ownership for %s: %s", assistant_public_id, str(e))
+        return owned, list(data_source_ids)
+
+
 def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     """
     For each ast key → datasource list decide whether the current user can read
     those datasources.
 
+    The model is two independent gates:
+      Gate 1 — does the CURRENT USER have access to the assistant?
+      Gate 2 — does the ASSISTANT actually own the datasources?
+
+    Gate 2 is answered authoritatively by looking the datasources up in the
+    assistant's own record (assistant_owns_datasources), NOT by checking an
+    OBJECT_ACCESS grant for a principal. This avoids relying on the leaf owner's
+    email or an astp/... grant existing.
+
     The ast key is one of two shapes:
 
     1. Plain string  e.g. "ast/yyy"
-       → User must have access to that assistant's published path in the lookup
-         table (public / accessTo / createdBy).
-       → Datasource access: OBJECT_ACCESS(object=key, principal=ast_id).
-       → Bug #5 fallback: if path-level check fails, fall back to direct user
-         ownership (OBJECT_ACCESS principal=current_user) so that assistants
-         shared via normal object-access still work even when they also have
-         a published path.
+       → Gate 1: user must have access to that assistant's published path
+         (public / accessTo / createdBy), OR — fallback for assistants shared
+         directly via object-access — direct user ownership of the datasources.
+       → Gate 2: assistant_owns_datasources(ast_id, ...).
 
     2. JSON-serialised object  e.g. '{"layeredAstId":"astr/xxx","astId":"ast/yyy"}'
        Set by extractAssistantDatasources when a leaf was reached via a Layered
-       Assistant.
-       → User access check: against layeredAstId (the LA the user navigated to),
-         NOT the leaf's own published path.
-       → Datasource access: OBJECT_ACCESS(object=key, principal=astId) so the
-         leaf assistant's own file-ownership grants are honoured.
+       Assistant (only when the current user is NOT the leaf owner).
+       → Gate 1: user access checked against layeredAstId (the LA the user
+         navigated to), NOT the leaf's own published path.
+       → Gate 2: assistant_owns_datasources(astId, ...) — the leaf assistant's
+         own record is authoritative for which datasources belong to it.
     """
     accessible_src_ids = []
     access_denied_src_ids = []
@@ -663,13 +748,15 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
         try:
             if layered_ast_id:
                 # ── LAYERED PATH ───────────────────────────────────────────────
-                # Check user access via the Layered Assistant's published path,
-                # then verify the leaf assistant owns the datasources.
+                # Gate 1: user access via the Layered Assistant's published path.
                 has_access, _ = _check_user_has_ast_path_access(lookup_table, layered_ast_id, current_user, token)
 
                 if has_access:
-                    logger.info(f"User has access to LA {layered_ast_id}, checking leaf {ast_id} datasource ownership")
-                    good, bad = classify_src_ids_by_access(data_source_ids, ast_id)
+                    # Gate 2: verify the leaf assistant actually owns the datasources
+                    # by looking them up in the assistant's own record.
+                    logger.info(f"User has access to LA {layered_ast_id}, verifying leaf {ast_id} "
+                                f"owns the requested datasources")
+                    good, bad = assistant_owns_datasources(ast_id, data_source_ids)
                     accessible_src_ids.extend(good)
                     access_denied_src_ids.extend(bad)
                     performance_cache.cache_ast_permissions(current_user, ast_cache_key, good, bad)
@@ -680,12 +767,13 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
 
             else:
                 # ── PLAIN AST PATH ─────────────────────────────────────────────
-                # Primary: check user access via the assistant's own published path.
+                # Gate 1: check user access via the assistant's own published path.
                 has_path_access, _ = _check_user_has_ast_path_access(lookup_table, ast_id, current_user, token)
 
                 if has_path_access:
-                    logger.info(f"User has path-level access to AST {ast_id}, checking datasource ownership")
-                    good, bad = classify_src_ids_by_access(data_source_ids, ast_id)
+                    # Gate 2: verify the assistant owns the datasources via its record.
+                    logger.info(f"User has path-level access to AST {ast_id}, verifying datasource ownership")
+                    good, bad = assistant_owns_datasources(ast_id, data_source_ids)
                     accessible_src_ids.extend(good)
                     access_denied_src_ids.extend(bad)
                     performance_cache.cache_ast_permissions(current_user, ast_cache_key, good, bad)
@@ -937,11 +1025,37 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             results_map[task_type] = task_results[i]
     
     # Extract results with defaults for skipped checks
-    accessible_src_ids, _ = results_map.get('individual', ([], []))
-    group_accessible_src_ids, _ = results_map.get('group', ([], []))
-    ast_accessible_src_ids, _ = results_map.get('ast', ([], []))
+    accessible_src_ids, individual_denied_src_ids = results_map.get('individual', ([], []))
+    group_accessible_src_ids, group_denied_src_ids = results_map.get('group', ([], []))
+    ast_accessible_src_ids, ast_denied_src_ids = results_map.get('ast', ([], []))
+
+    # Build a structured summary of denied datasources so the chat service can
+    # notify the user. Categorized by access type so the JS side can choose how
+    # much detail to surface:
+    #   - individual: user typically owns these -> safe to show file names
+    #   - group / ast: user may not own these -> show a generic message only
+    removed_data_sources = {
+        "individual": individual_denied_src_ids,
+        "group": group_denied_src_ids,
+        "ast": ast_denied_src_ids,
+    }
+    if individual_denied_src_ids or group_denied_src_ids or ast_denied_src_ids:
+        logger.info(f"Denied datasources — individual={individual_denied_src_ids}, "
+                    f"group={group_denied_src_ids}, ast={ast_denied_src_ids}")
 
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
+
+    # Filter out any Bedrock KB IDs that came through AST/group permission paths
+    # (The initial filter only handles raw_src_ids; AST/group paths can also contain KB refs)
+    filtered_src_ids = []
+    for sid in src_ids:
+        if isinstance(sid, str) and sid.startswith("bedrock-kb://"):
+            kb_id = sid.split("bedrock-kb://")[1]
+            if kb_id and kb_id not in bedrock_kb_ids:
+                bedrock_kb_ids.append(kb_id)
+        else:
+            filtered_src_ids.append(sid)
+    src_ids = filtered_src_ids
 
     # CRITICAL: Check if we have any accessible sources before proceeding
     if not src_ids and not bedrock_kb_ids:
@@ -965,13 +1079,19 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             }
         )
 
-        return {
+        no_access_response = {
+            "result": [],
             "error": "No accessible data sources. User may not have permissions to the provided sources.",
             "details": {
                 "total_sources_requested": len(raw_src_ids) + sum(len(v) for v in raw_group_src_ids.values()) + sum(len(v) for v in raw_ast_src_ids.values()),
                 "accessible_sources": 0
             }
         }
+        # Surface the denied datasources even on the all-denied path so the chat
+        # service can notify the user (this is the most important case to report).
+        if any(removed_data_sources.values()):
+            no_access_response["removedDataSources"] = removed_data_sources
+        return no_access_response
 
     # If only Bedrock KB sources exist (no standard sources), skip the embedding pipeline
     if not src_ids and bedrock_kb_ids:
@@ -1297,6 +1417,10 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         "documents_processed": len(src_ids) + len(bedrock_kb_ids),
         "results_returned": len(related_docs)
     }
+
+    # Surface denied datasources so the chat service can notify the user.
+    if any(removed_data_sources.values()):
+        response["removedDataSources"] = removed_data_sources
 
     if bedrock_kb_ids:
         response["bedrock_kb_ids"] = bedrock_kb_ids

@@ -2,6 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import { getLogger } from "./common/logging.js";
+import { buildAccount } from "./common/accountInfo.js";
 import { ModelTypes, getModelByType } from "./common/params.js"
 import { createRequestState, deleteRequestState, updateKillswitch, localKill } from "./requests/requestState.js";
 import { sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush } from "./common/streams.js";
@@ -95,13 +96,14 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // Handle skills request
             logger.info("Processing skills request");
             // Build account object (needed by accounting/LLM calls such as skill screening)
-            params.account = {
+            // 🔒 Canonical account object (single constructor shared with main chat + accounting).
+            params.account = buildAccount({
                 user: params.user,
                 username: params.username,
                 accessToken: params.accessToken,
-                accountId: params.body?.options?.accountId,
-                apiKeyId: params.apiKeyId
-            };
+                apiKeyId: params.apiKeyId,
+                options: params.body?.options
+            });
             // Populate model shortcuts so skill screening can use cheapestModel etc.
             try {
                 let userModelData = await CacheManager.getCachedUserModels(params.user, params.accessToken);
@@ -392,13 +394,14 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             logger.debug("Calling chat with data");
 
             const assistantParams = {
-                account: {
+                // 🔒 Canonical account object (single constructor shared with skills + accounting).
+                account: buildAccount({
                     user: params.user,
                     username: params.username,  // Clean username for services like tool API key lookup
                     accessToken: params.accessToken,
-                    accountId: options.accountId,
-                    apiKeyId: params.apiKeyId
-                },
+                    apiKeyId: params.apiKeyId,
+                    options
+                }),
                 model,
                 requestId,
                 options,
