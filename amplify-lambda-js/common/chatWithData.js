@@ -9,7 +9,7 @@ import { defaultSource } from "./sources.js";
 import { getLogger } from "./logging.js";
 import { createTokenCounter } from "../azure/tokens.js";
 import { countChatTokens } from "../azure/tokens.js";
-import { getContextMessages } from "./chat/rag/rag.js";
+import { getContextMessages, notifyRemovedDataSources } from "./chat/rag/rag.js";
 import { forceFlush, sendStateEventToStream, sendStatusEventToStream } from "./streams.js";
 import { newStatus } from "./status.js";
 import { isKilled } from "../requests/requestState.js";
@@ -94,6 +94,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 sources_sample: ragResults.sources?.[0]
             });
             logger.info(`✅ RAG Query: Completed with ${ragResults.sources?.length || 0} sources found`);
+
+            // Notify the user if any data sources were denied/dropped by the backend.
+            notifyRemovedDataSources(responseStream, ragResults.removedDataSources);
         } catch (error) {
             logger.error("❌ RAG Query Failed:", error);
             logger.error("❌ RAG Query Failed:", error.message);

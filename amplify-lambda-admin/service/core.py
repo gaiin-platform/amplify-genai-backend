@@ -80,6 +80,8 @@ class AdminConfigTypes(Enum):
     CRITICAL_ERRORS = "criticalErrors"
     WEB_SEARCH_CONFIG = "webSearchConfig"
     USER_DOCUMENTATION_URL = "userDocumentationUrl"
+    DEFAULT_TIMEZONE = "defaultTimezone"
+    DEFAULT_SMART_MESSAGES = "defaultSmartMessages"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -693,7 +695,9 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS
-            | AdminConfigTypes.USER_DOCUMENTATION_URL ):
+            | AdminConfigTypes.USER_DOCUMENTATION_URL
+            | AdminConfigTypes.DEFAULT_TIMEZONE
+            | AdminConfigTypes.DEFAULT_SMART_MESSAGES ):
             logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
@@ -982,6 +986,8 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.CRITICAL_ERRORS,
             AdminConfigTypes.WEB_SEARCH_CONFIG,
             AdminConfigTypes.USER_DOCUMENTATION_URL,
+            AdminConfigTypes.DEFAULT_TIMEZONE,
+            AdminConfigTypes.DEFAULT_SMART_MESSAGES,
         ]
 
         for config_type in dynamo_config_types:
@@ -1225,6 +1231,10 @@ def initialize_config(config_type):
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     elif config_type == AdminConfigTypes.WEB_SEARCH_CONFIG:
         item["data"] = None
+    elif config_type == AdminConfigTypes.DEFAULT_TIMEZONE:
+        item["data"] = "UTC"
+    elif config_type == AdminConfigTypes.DEFAULT_SMART_MESSAGES:
+        item["data"] = True
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
@@ -1288,7 +1298,9 @@ def get_user_app_configs(event, context, current_user, name, data):
         AdminConfigTypes.PROMPT_COST_ALERT,
         AdminConfigTypes.WEB_SEARCH_CONFIG,
         AdminConfigTypes.USER_DOCUMENTATION_URL,
-        AdminConfigTypes.RATE_LIMIT
+        AdminConfigTypes.RATE_LIMIT,
+        AdminConfigTypes.DEFAULT_TIMEZONE,
+        AdminConfigTypes.DEFAULT_SMART_MESSAGES,
     ]
     configs = {}
     for config_type in app_configs:
