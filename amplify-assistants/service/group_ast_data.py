@@ -32,6 +32,7 @@ from pycommon.encoders import CustomPydanticJSONEncoder, LossyDecimalEncoder
 
 from service.core import get_most_recent_assistant_version
 from pycommon.api.amplify_groups import verify_member_of_ast_admin_group
+from pycommon.api.auth_admin import verify_user_as_admin
 
 
 # used for system users who have access to a group. Group assistants are based on group permissions
@@ -176,7 +177,7 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
             "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
 
-    if not verify_member_of_ast_admin_group(access_token, group_id):
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Assistant Conversations"):
         logger.warning(
             "User %s attempted to access conversations for assistant %s without group membership",
             current_user, assistant_id
@@ -261,7 +262,7 @@ def get_group_conversations_data(event, context, current_user, name, data):
             "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
 
-    if not verify_member_of_ast_admin_group(access_token, group_id):
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Conversation Data"):
         logger.warning(
             "User %s attempted to access conversation data for assistant %s without group membership",
             current_user, assistant_id
@@ -355,7 +356,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
 
-    if not verify_member_of_ast_admin_group(access_token, group_id):
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Assistant Dashboard"):
         logger.warning(
             "User %s attempted to access dashboard for assistant %s without group membership",
             current_user, assistant_id
