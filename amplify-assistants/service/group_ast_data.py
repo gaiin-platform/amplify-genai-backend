@@ -34,53 +34,6 @@ from service.core import get_most_recent_assistant_version
 from pycommon.api.amplify_groups import verify_user_in_amp_group
 
 
-def _is_group_member_or_admin(current_user, group_id, access_token):
-    """
-    Returns True if current_user is a member of the given group.
-    Mirrors the full membership logic from object-access/groups.py::is_group_member:
-      1. isPublic  — open to all authenticated users
-      2. members   — explicit per-user dict {email: permission}
-      3. systemUsers — list of system-user IDs
-      4. amplifyGroups — Cognito group intersection check
-    """
-    dynamodb = boto3.resource("dynamodb")
-    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
-    try:
-        response = groups_table.get_item(Key={"group_id": group_id})
-        item = response.get("Item")
-        if not item:
-            return False
-        # 1. Public group — any authenticated user may access
-        if item.get("isPublic", False):
-            return True
-        # 2. members is a dict {email: permission_level}
-        if current_user in item.get("members", {}):
-            return True
-        # 3. systemUsers is a list
-        if current_user in item.get("systemUsers", []):
-            return True
-        # 4. amplifyGroups — check Cognito group intersection
-        amplify_groups = item.get("amplifyGroups", [])
-        if amplify_groups and access_token and verify_user_in_amp_group(access_token, amplify_groups):
-            return True
-        return False
-    except Exception as e:
-        logger.error("Error checking group membership for user %s / group %s: %s", current_user, group_id, e)
-        return False
-
-
-def _get_group_id_for_assistant(assistant_id):
-    """
-    Looks up the groupId for a given assistantId from the assistants table.
-    Returns the groupId string, or None if not found.
-    """
-    dynamodb = boto3.resource("dynamodb")
-    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
-    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
-    if not assistant:
-        return None
-    return assistant.get("data", {}).get("groupId")
-
 # used for system users who have access to a group. Group assistants are based on group permissions
 # currently the data returned is best for our amplify wordpress plugin
 @required_env_vars({
@@ -209,13 +162,46 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
     assistant_id = data["data"]["assistantId"]
     access_token = data.get("access_token")
 
-    group_id = _get_group_id_for_assistant(assistant_id)
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
     if not group_id:
         return {
             "statusCode": 404,
-            "body": json.dumps({"error": "Assistant not found or not a group assistant"}),
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
-    if not _is_group_member_or_admin(current_user, group_id, access_token):
+
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    try:
+        response = groups_table.get_item(Key={"group_id": group_id})
+        group_item = response.get("Item")
+        if not group_item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Group not found"}),
+            }
+        amplify_groups = group_item.get("amplifyGroups", [])
+        is_member = (
+            group_item.get("isPublic", False)
+            or current_user in group_item.get("members", {})
+            or current_user in group_item.get("systemUsers", [])
+            or (amplify_groups and verify_user_in_amp_group(access_token, amplify_groups))
+        )
+    except Exception as e:
+        logger.error("Error checking group membership: %s", e)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to verify group membership"}),
+        }
+
+    if not is_member:
         logger.warning(
             "User %s attempted to access conversations for assistant %s without group membership",
             current_user, assistant_id
@@ -225,7 +211,6 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
             "body": json.dumps({"error": "Access denied: you are not a member of this group"}),
         }
 
-    dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
 
     try:
@@ -287,13 +272,46 @@ def get_group_conversations_data(event, context, current_user, name, data):
     assistant_id = data["data"]["assistantId"]
     access_token = data.get("access_token")
 
-    group_id = _get_group_id_for_assistant(assistant_id)
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
     if not group_id:
         return {
             "statusCode": 404,
-            "body": json.dumps({"error": "Assistant not found or not a group assistant"}),
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
-    if not _is_group_member_or_admin(current_user, group_id, access_token):
+
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    try:
+        response = groups_table.get_item(Key={"group_id": group_id})
+        group_item = response.get("Item")
+        if not group_item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Group not found"}),
+            }
+        amplify_groups = group_item.get("amplifyGroups", [])
+        is_member = (
+            group_item.get("isPublic", False)
+            or current_user in group_item.get("members", {})
+            or current_user in group_item.get("systemUsers", [])
+            or (amplify_groups and verify_user_in_amp_group(access_token, amplify_groups))
+        )
+    except Exception as e:
+        logger.error("Error checking group membership: %s", e)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to verify group membership"}),
+        }
+
+    if not is_member:
         logger.warning(
             "User %s attempted to access conversation data for assistant %s without group membership",
             current_user, assistant_id
@@ -306,10 +324,10 @@ def get_group_conversations_data(event, context, current_user, name, data):
     s3 = boto3.client("s3")
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
-    
+
     # For this function, we need to find the conversation record to check its migration status
     # We'll first try the consolidation bucket format, then fallback to legacy
-    
+
     # Try consolidation bucket first (migrated records)
     consolidation_key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
     try:
@@ -325,7 +343,7 @@ def get_group_conversations_data(event, context, current_user, name, data):
                 "statusCode": 500,
                 "body": json.dumps({"error": "Error retrieving conversation content"}),
             }
-    
+
     # Fallback to legacy bucket
     legacy_key = f"{assistant_id}/{conversation_id}.txt"
     try:
@@ -373,13 +391,46 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
     assistant_id = data["data"]["assistantId"]
     access_token = data.get("access_token")
 
-    group_id = _get_group_id_for_assistant(assistant_id)
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
     if not group_id:
         return {
             "statusCode": 404,
-            "body": json.dumps({"error": "Assistant not found or not a group assistant"}),
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
         }
-    if not _is_group_member_or_admin(current_user, group_id, access_token):
+
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+    try:
+        response = groups_table.get_item(Key={"group_id": group_id})
+        group_item = response.get("Item")
+        if not group_item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Group not found"}),
+            }
+        amplify_groups = group_item.get("amplifyGroups", [])
+        is_member = (
+            group_item.get("isPublic", False)
+            or current_user in group_item.get("members", {})
+            or current_user in group_item.get("systemUsers", [])
+            or (amplify_groups and verify_user_in_amp_group(access_token, amplify_groups))
+        )
+    except Exception as e:
+        logger.error("Error checking group membership: %s", e)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to verify group membership"}),
+        }
+
+    if not is_member:
         logger.warning(
             "User %s attempted to access dashboard for assistant %s without group membership",
             current_user, assistant_id
@@ -388,12 +439,12 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "statusCode": 403,
             "body": json.dumps({"error": "Access denied: you are not a member of this group"}),
         }
+
     start_date = data["data"].get("startDate")
     end_date = data["data"].get("endDate")
     include_conversation_data = data["data"].get("includeConversationData", False)
     include_conversation_content = data["data"].get("includeConversationContent", False)
 
-    dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
     # table = dynamodb.Table("group-assistant-conversations-content-test")
 
@@ -528,7 +579,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 if include_conversation_content:
                     conversation_id = conv.get("conversationId")
                     s3_location = conv.get("s3Location", "")
-                    
+
                     if conversation_id:
                         # Determine bucket and key based on migration status
                         if s3_location.startswith("s3://"):
@@ -544,14 +595,14 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                                 bucket_to_use = legacy_bucket
                         else:
                             # Migrated record - use consolidation bucket
-                            # s3Location should be like "agentConversations/astgp/..." 
+                            # s3Location should be like "agentConversations/astgp/..."
                             if s3_location.startswith("agentConversations/"):
                                 key = s3_location
                             else:
                                 # Fallback construction for migrated records
                                 key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
                             bucket_to_use = consolidation_bucket
-                        
+
                         try:
                             obj = s3.get_object(Bucket=bucket_to_use, Key=key)
                             conv["conversationContent"] = (
@@ -610,7 +661,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM],
 })
 @validated(op="save_user_rating")
 def save_user_rating(event, context, current_user, name, data):
@@ -630,28 +681,6 @@ def save_user_rating(event, context, current_user, name, data):
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
-
-    # Verify the conversation belongs to the current user before allowing a rating update
-    try:
-        existing = table.get_item(Key={"conversationId": conversation_id})
-        item = existing.get("Item")
-        if not item:
-            return {
-                "statusCode": 404,
-                "body": json.dumps({"error": "Conversation not found"}),
-            }
-        if item.get("user") != current_user:
-            logger.warning(
-                "User %s attempted to rate conversation %s owned by %s",
-                current_user, conversation_id, item.get("user")
-            )
-            return {
-                "statusCode": 403,
-                "body": json.dumps({"error": "Access denied: you do not own this conversation"}),
-            }
-    except ClientError as e:
-        logger.error("DynamoDB ClientError verifying conversation ownership: %s", str(e))
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
     try:
         # Construct the UpdateExpression based on whether userFeedback is present
