@@ -1957,3 +1957,51 @@ def sync_assistant_admins(event, context):
     else:
         logger.info("Feature flags updated successfully.")
         return {"statusCode": 200, "body": "Feature flags updated successfully."}
+
+
+import requests as http_requests
+
+
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="update")
+def test_endpoint(event, context, current_user, name, data):
+    if not authorized_admin(current_user):
+        return {"success": False, "message": "User is not an authorized admin"}
+
+    request_data = data.get("data", {})
+    url = request_data.get("url", "").strip()
+    key = request_data.get("key", "").strip()
+    body = request_data.get("body", {})
+
+    if not url:
+        return {"success": False, "message": "URL is required"}
+
+    if not url.startswith("https://"):
+        return {"success": False, "message": "Only HTTPS URLs are allowed"}
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        if key:
+            headers["Api-Key"] = key
+
+        response = http_requests.post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=30,
+        )
+
+        return {
+            "success": True,
+            "data": response.json() if response.headers.get("content-type", "").startswith("application/json") else {"raw": response.text[:5000]},
+            "statusCode": response.status_code,
+        }
+    except http_requests.exceptions.Timeout:
+        return {"success": False, "message": "Request timed out"}
+    except http_requests.exceptions.ConnectionError as e:
+        return {"success": False, "message": f"Connection error: {str(e)}"}
+    except Exception as e:
+        logger.error("Error testing endpoint: %s", str(e))
+        return {"success": False, "message": f"Error testing endpoint: {str(e)}"}
