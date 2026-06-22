@@ -283,10 +283,20 @@ def create_artifact_keys(current_user, artifact):
     created_at_str = artifact["createdAt"]
     created_at_dt = datetime.strptime(created_at_str, "%b %d, %Y")
     created_at_num = created_at_dt.strftime("%Y%m%d")
-    name = artifact["name"].replace(" ", "_")
+
+    # Sanitize name: strip anything that isn't alphanumeric, space, hyphen, underscore, or dot
+    # then replace spaces with underscores for safe use in S3 keys and DynamoDB IDs
+    sanitized_name = re.sub(r"[^\w\s.\-]", "", str(artifact["name"])).strip()
+    name = sanitized_name.replace(" ", "_") or "artifact"
+
+    # Ensure version is a non-negative integer
+    version = int(artifact["version"])
+    if version < 0:
+        raise ValueError(f"Invalid artifact version: {version}")
+
     # New format: clean key without user prefix
-    artifact_key = f"{created_at_num}/{name}:v{artifact['version']}"
-    artifact_id = f"{name}:v{artifact['version']}-{created_at_num}"
+    artifact_key = f"{created_at_num}/{name}:v{version}"
+    artifact_id = f"{name}:v{version}-{created_at_num}"
 
     return artifact_key, artifact_id, created_at_str
 
