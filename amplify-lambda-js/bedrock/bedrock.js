@@ -411,29 +411,46 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
 
     // Convert messages to Bedrock format, handling tool calls and tool results
     let updatedMessages = [];
+    // Tracks whether the previously processed message was a tool result, so that
+    // consecutive tool messages (the tool loop emits one per tool call) get MERGED
+    // into a single Bedrock user turn. Bedrock's Converse API requires that ALL
+    // toolResult blocks for the toolUse blocks of the preceding assistant message
+    // live in ONE user message — otherwise it rejects with
+    // "Expected toolResult blocks at messages.N.content for the following Ids: ...".
+    let prevWasTool = false;
     for (const m of messages) {
         if (m.role === 'tool') {
-            // Convert OpenAI tool result to Bedrock toolResult format
+            // Convert OpenAI tool result to a Bedrock toolResult content block.
             // Bedrock expects: { role: 'user', content: [{ toolResult: { toolUseId, content: [{text}] } }] }
+            let toolBlock;
             if (!m.tool_call_id) {
-                // Skip tool messages without tool_call_id - convert to regular user message
-                logger.warn(`Tool message missing tool_call_id, converting to regular user message`);
-                updatedMessages.push({
-                    role: 'user',
-                    content: [{ text: `Tool result: ${m.content || ''}` }]
-                });
+                // Tool message without tool_call_id - fall back to a plain text block
+                logger.warn(`Tool message missing tool_call_id, converting to text block`);
+                toolBlock = { text: `Tool result: ${m.content || ''}` };
             } else {
-                updatedMessages.push({
-                    role: 'user',
-                    content: [{
-                        toolResult: {
-                            toolUseId: m.tool_call_id,
-                            content: [{ text: m.content || '' }]
-                        }
-                    }]
-                });
+                toolBlock = {
+                    toolResult: {
+                        toolUseId: m.tool_call_id,
+                        content: [{ text: m.content || '' }]
+                    }
+                };
             }
-        } else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+
+            if (prevWasTool && updatedMessages.length > 0) {
+                // Merge into the existing tool-result user message so all
+                // toolResults for one assistant turn stay grouped together.
+                updatedMessages[updatedMessages.length - 1].content.push(toolBlock);
+            } else {
+                updatedMessages.push({ role: 'user', content: [toolBlock] });
+            }
+            prevWasTool = true;
+            continue;
+        }
+
+        // Any non-tool message ends the current tool-result grouping.
+        prevWasTool = false;
+
+        if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
             // Convert OpenAI assistant tool_calls to Bedrock toolUse format
             // Bedrock expects: { role: 'assistant', content: [{ toolUse: { toolUseId, name, input } }, ...] }
             const content = [];
