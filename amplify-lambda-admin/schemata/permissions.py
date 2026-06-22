@@ -70,5 +70,6 @@ permissions_by_state_type = {
     "/amplifymin/user_app_configs": {"read": can_read},
     "/amplifymin/amplify_groups/affiliated": {"read": can_read},
     "/amplifymin/critical_errors": {"read": can_read_critical_errors},
-    "/amplifymin/critical_errors/resolve": {"update": can_resolve_critical_errors}
+    "/amplifymin/critical_errors/resolve": {"update": can_resolve_critical_errors},
+    "/amplifymin/test_endpoint": {"update": can_update}
 }

@@ -1,5 +1,8 @@
+import ipaddress
 import json
 import os
+import socket
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from botocore.exceptions import ClientError
@@ -1962,6 +1965,84 @@ def sync_assistant_admins(event, context):
 import requests as http_requests
 
 
+_BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata.google.internal",
+    "metadata.google",
+    "metadata.goog",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+}
+
+_BLOCKED_SUFFIXES = (
+    ".localhost", ".local", ".internal", ".corp", ".lan", ".intranet",
+)
+
+
+def _is_blocked_address(addr):
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+        or (addr.version == 4 and (
+            addr in ipaddress.ip_network("100.64.0.0/10")
+            or addr in ipaddress.ip_network("198.18.0.0/15")
+        ))
+    )
+
+
+def _validate_url_for_ssrf(url):
+    """Returns an error string if the URL is unsafe, else None."""
+    if not url:
+        return "URL is required"
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return "Invalid URL format"
+
+    if parsed.scheme != "https":
+        return "Only HTTPS URLs are allowed"
+
+    if parsed.username or parsed.password:
+        return "URLs with embedded credentials are not allowed"
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return "URL must contain a valid hostname"
+
+    if hostname in _BLOCKED_HOSTNAMES:
+        return "Access to internal/metadata hosts is not allowed"
+
+    if any(hostname.endswith(s) for s in _BLOCKED_SUFFIXES):
+        return "Access to internal network domains is not allowed"
+
+    try:
+        if _is_blocked_address(ipaddress.ip_address(hostname)):
+            return "Access to private/internal network addresses is not allowed"
+        return None
+    except ValueError:
+        pass
+
+    try:
+        port = parsed.port or 443
+        addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return "Could not resolve hostname"
+
+    for _fam, _type, _proto, _canon, sockaddr in addr_infos:
+        ip_str = (sockaddr[0] or "").split("%", 1)[0]
+        try:
+            if _is_blocked_address(ipaddress.ip_address(ip_str)):
+                return "Access to private/internal network addresses is not allowed"
+        except ValueError:
+            return "Hostname resolved to an invalid IP"
+
+    return None
+
+
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
@@ -1975,11 +2056,9 @@ def test_endpoint(event, context, current_user, name, data):
     key = request_data.get("key", "").strip()
     body = request_data.get("body", {})
 
-    if not url:
-        return {"success": False, "message": "URL is required"}
-
-    if not url.startswith("https://"):
-        return {"success": False, "message": "Only HTTPS URLs are allowed"}
+    ssrf_error = _validate_url_for_ssrf(url)
+    if ssrf_error:
+        return {"success": False, "message": ssrf_error}
 
     try:
         headers = {"Content-Type": "application/json"}
@@ -2004,4 +2083,4 @@ def test_endpoint(event, context, current_user, name, data):
         return {"success": False, "message": f"Connection error: {str(e)}"}
     except Exception as e:
         logger.error("Error testing endpoint: %s", str(e))
-        return {"success": False, "message": f"Error testing endpoint: {str(e)}"}
+    return {"success": False, "message": f"Error testing endpoint: {str(e)}"}
