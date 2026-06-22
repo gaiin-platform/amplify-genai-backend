@@ -401,7 +401,25 @@ def share_artifact(event, context, current_user, name, data):
 
     if len(email_list) == 0:
         return {"success": False, "message": "No users to share with."}
-    
+
+    # OWNERSHIP VERIFICATION: Ensure the caller actually owns the artifact they are sharing.
+    # Derive the canonical key from the submitted artifact fields and confirm it exists
+    # in the caller's artifact namespace.  Without this check, any authenticated user
+    # could inject arbitrary content into another user's artifact collection (IDOR).
+    try:
+        claimed_key, _, _ = create_artifact_keys(current_user, artifact)
+    except Exception as e:
+        logger.warning("Unable to derive artifact key for ownership check: %s", e)
+        return {"success": False, "message": "Invalid artifact data."}
+
+    caller_artifact_info = validate_user_and_get_artifact_info(current_user, claimed_key)
+    if caller_artifact_info is None:
+        logger.warning(
+            "User %s attempted to share artifact '%s' that does not exist in their namespace.",
+            current_user, claimed_key,
+        )
+        return {"success": False, "message": "You do not own the artifact you are attempting to share."}
+
     valid_users, invalid_users = are_valid_amplify_users(access_token, email_list)
 
     if len(valid_users) == 0:
