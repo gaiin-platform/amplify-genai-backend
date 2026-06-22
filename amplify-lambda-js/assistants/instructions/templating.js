@@ -103,6 +103,10 @@ export const fillInTemplate = async (responseStream, params, body, ds, templateS
             return contextData.assistant.name;
         });
 
+        Handlebars.registerHelper('API_BASE_URL', function () {
+            return process.env.API_BASE_URL;
+        });
+
         Handlebars.registerHelper('datetime', function (fmt) {
             // Output a date string in the provided fmt
             return new Date().toISOString();
