@@ -603,7 +603,28 @@ def handle_event(
                             f"Invalid Workflow. Action not found: Step {i+1}, Action: {step.tool}"
                         )
 
-        if additional_goals and not workflow:
+        # Determine whether assistant instructions are present
+        # (additional_goals contains the assistant's Instructions: goal when an assistant is selected)
+        has_assistant_instructions = any(
+            getattr(g, "name", "") == "Instructions:" for g in additional_goals
+        )
+
+        if workflow and has_assistant_instructions:
+            # Workflow is PRIMARY — use workflow_agent to enforce step-by-step execution.
+            # Assistant instructions are passed as additional_goals so the assistant's
+            # personality/context is preserved alongside the workflow steps.
+            logger.info(
+                "Assistant + Workflow: building workflow_agent with workflow as primary, "
+                "assistant instructions as additional context"
+            )
+            agent = workflow_agent.build_clean(
+                environment=environment,
+                action_registry=action_registry,
+                generate_response=llm,
+                workflow=workflow,
+                additional_goals=additional_goals,
+            )
+        elif additional_goals and not workflow:
             logger.info("Building action agent with additional goals: %s", additional_goals)
             agent = actions_agent.build_clean(
                 environment=environment,
@@ -620,6 +641,7 @@ def handle_event(
                 additional_goals=additional_goals,
             )
         else:
+            # Workflow only — no assistant instructions — workflow_agent drives execution
             logger.info("Building workflow agent with workflow: %s", workflow)
             agent = workflow_agent.build_clean(
                 environment=environment,

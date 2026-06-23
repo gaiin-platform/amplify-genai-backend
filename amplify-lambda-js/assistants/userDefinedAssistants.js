@@ -577,11 +577,20 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         }
                     );
 
-                    let workflowTemplateId = assistant.data?.workflowTemplateId ? 
+                    let workflowTemplateId = assistant.data?.workflowTemplateId ?
                                             {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
 
                     if (!workflowTemplateId.workflow && assistant.data.baseWorkflowTemplateId) { // backup
                         workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
+                    }
+
+                    // If no workflow on the assistant itself, check if user attached one from the chat input
+                    if (!workflowTemplateId.workflow) {
+                        const lastMsgWorkflowId = body.messages.slice(-1)[0]?.data?.workflowTemplateId;
+                        if (lastMsgWorkflowId) {
+                            logger.info("Workflow templateId found in message data:", lastMsgWorkflowId);
+                            workflowTemplateId = {workflow: {templateId: lastMsgWorkflowId}};
+                        }
                     }
 
                     // const segment = AWSXRay.getSegment();
