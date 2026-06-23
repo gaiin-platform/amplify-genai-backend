@@ -31,6 +31,9 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
 from pycommon.encoders import CustomPydanticJSONEncoder, LossyDecimalEncoder
 
 from service.core import get_most_recent_assistant_version
+from pycommon.api.amplify_groups import verify_member_of_ast_admin_group
+from pycommon.api.auth_admin import verify_user_as_admin
+
 
 # used for system users who have access to a group. Group assistants are based on group permissions
 # currently the data returned is best for our amplify wordpress plugin
@@ -146,6 +149,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
 # to see all conversations of a specific group assistant. assistantId must be provided in the data field.
 @required_env_vars({
     "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
 })
 @validated(op="get_group_assistant_conversations")
 def get_group_assistant_conversations(event, context, current_user, name, data):
@@ -156,8 +160,33 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         }
 
     assistant_id = data["data"]["assistantId"]
+    access_token = data.get("access_token")
 
-    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
+    if not group_id:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
+        }
+
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Assistant Conversations"):
+        logger.warning(
+            "User %s attempted to access conversations for assistant %s without group membership",
+            current_user, assistant_id
+        )
+        return {
+            "statusCode": 403,
+            "body": json.dumps({"error": "Access denied: you are not a member of this group"}),
+        }
+
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
 
     try:
@@ -198,6 +227,7 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion - legacy fallback
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
 })
 @validated(op="get_group_conversations_data")
 def get_group_conversations_data(event, context, current_user, name, data):
@@ -215,14 +245,40 @@ def get_group_conversations_data(event, context, current_user, name, data):
 
     conversation_id = data["data"]["conversationId"]
     assistant_id = data["data"]["assistantId"]
+    access_token = data.get("access_token")
+
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
+    if not group_id:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
+        }
+
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Conversation Data"):
+        logger.warning(
+            "User %s attempted to access conversation data for assistant %s without group membership",
+            current_user, assistant_id
+        )
+        return {
+            "statusCode": 403,
+            "body": json.dumps({"error": "Access denied: you are not a member of this group"}),
+        }
 
     s3 = boto3.client("s3")
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
-    
+
     # For this function, we need to find the conversation record to check its migration status
     # We'll first try the consolidation bucket format, then fallback to legacy
-    
+
     # Try consolidation bucket first (migrated records)
     consolidation_key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
     try:
@@ -238,7 +294,7 @@ def get_group_conversations_data(event, context, current_user, name, data):
                 "statusCode": 500,
                 "body": json.dumps({"error": "Error retrieving conversation content"}),
             }
-    
+
     # Fallback to legacy bucket
     legacy_key = f"{assistant_id}/{conversation_id}.txt"
     try:
@@ -272,6 +328,7 @@ def get_group_conversations_data(event, context, current_user, name, data):
     "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
     "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], #Marked for deletion - legacy fallback
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
 })
 @validated(op="get_group_assistant_dashboards")
 def get_group_assistant_dashboards(event, context, current_user, name, data):
@@ -282,12 +339,38 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         }
 
     assistant_id = data["data"]["assistantId"]
+    access_token = data.get("access_token")
+
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+    if not assistant:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant not found"}),
+        }
+
+    group_id = assistant.get("data", {}).get("groupId")
+    if not group_id:
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "Assistant is not a group assistant"}),
+        }
+
+    if not verify_member_of_ast_admin_group(access_token, group_id) and not verify_user_as_admin(access_token, "Access Group Assistant Dashboard"):
+        logger.warning(
+            "User %s attempted to access dashboard for assistant %s without group membership",
+            current_user, assistant_id
+        )
+        return {
+            "statusCode": 403,
+            "body": json.dumps({"error": "Access denied: you are not a member of this group"}),
+        }
+
     start_date = data["data"].get("startDate")
     end_date = data["data"].get("endDate")
     include_conversation_data = data["data"].get("includeConversationData", False)
     include_conversation_content = data["data"].get("includeConversationContent", False)
 
-    dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
     # table = dynamodb.Table("group-assistant-conversations-content-test")
 
@@ -422,7 +505,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 if include_conversation_content:
                     conversation_id = conv.get("conversationId")
                     s3_location = conv.get("s3Location", "")
-                    
+
                     if conversation_id:
                         # Determine bucket and key based on migration status
                         if s3_location.startswith("s3://"):
@@ -438,14 +521,14 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                                 bucket_to_use = legacy_bucket
                         else:
                             # Migrated record - use consolidation bucket
-                            # s3Location should be like "agentConversations/astgp/..." 
+                            # s3Location should be like "agentConversations/astgp/..."
                             if s3_location.startswith("agentConversations/"):
                                 key = s3_location
                             else:
                                 # Fallback construction for migrated records
                                 key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
                             bucket_to_use = consolidation_bucket
-                        
+
                         try:
                             obj = s3.get_object(Bucket=bucket_to_use, Key=key)
                             conv["conversationContent"] = (

@@ -72,7 +72,7 @@ export_schema = {
                     "type",
                 ],
             },
-            "required": ["version", "history", "folders", "prompts"],
         },
     },
+    "required": ["version", "history", "folders", "prompts"],
 }

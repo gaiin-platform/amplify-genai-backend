@@ -373,7 +373,7 @@ def share_with_users(event, context, current_user, name, data):
     new_data["sharedBy"] = current_user.lower()
 
     conversations = remove_code_interpreter_details(
-        new_data["history"]
+        new_data.get("history", [])
     )  # if it has any, else it just returns the conv back
 
     # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
@@ -384,7 +384,7 @@ def share_with_users(event, context, current_user, name, data):
         )
         if not object_permissions["success"]:
             return object_permissions
-    prompts = new_data["prompts"]
+    prompts = new_data.get("prompts", [])
 
     # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
     if len(prompts) > 0 and len(valid_users) > 0 and current_user != valid_users[0]:

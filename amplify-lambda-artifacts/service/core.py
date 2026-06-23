@@ -283,10 +283,20 @@ def create_artifact_keys(current_user, artifact):
     created_at_str = artifact["createdAt"]
     created_at_dt = datetime.strptime(created_at_str, "%b %d, %Y")
     created_at_num = created_at_dt.strftime("%Y%m%d")
-    name = artifact["name"].replace(" ", "_")
+
+    # Sanitize name: strip anything that isn't alphanumeric, space, hyphen, underscore, or dot
+    # then replace spaces with underscores for safe use in S3 keys and DynamoDB IDs
+    sanitized_name = re.sub(r"[^\w\s.\-]", "", str(artifact["name"])).strip()
+    name = sanitized_name.replace(" ", "_") or "artifact"
+
+    # Ensure version is a non-negative integer
+    version = int(artifact["version"])
+    if version < 0:
+        raise ValueError(f"Invalid artifact version: {version}")
+
     # New format: clean key without user prefix
-    artifact_key = f"{created_at_num}/{name}:v{artifact['version']}"
-    artifact_id = f"{name}:v{artifact['version']}-{created_at_num}"
+    artifact_key = f"{created_at_num}/{name}:v{version}"
+    artifact_id = f"{name}:v{version}-{created_at_num}"
 
     return artifact_key, artifact_id, created_at_str
 
@@ -401,7 +411,25 @@ def share_artifact(event, context, current_user, name, data):
 
     if len(email_list) == 0:
         return {"success": False, "message": "No users to share with."}
-    
+
+    # OWNERSHIP VERIFICATION: Ensure the caller actually owns the artifact they are sharing.
+    # Derive the canonical key from the submitted artifact fields and confirm it exists
+    # in the caller's artifact namespace.  Without this check, any authenticated user
+    # could inject arbitrary content into another user's artifact collection (IDOR).
+    try:
+        claimed_key, _, _ = create_artifact_keys(current_user, artifact)
+    except Exception as e:
+        logger.warning("Unable to derive artifact key for ownership check: %s", e)
+        return {"success": False, "message": "Invalid artifact data."}
+
+    caller_artifact_info = validate_user_and_get_artifact_info(current_user, claimed_key)
+    if caller_artifact_info is None:
+        logger.warning(
+            "User %s attempted to share artifact '%s' that does not exist in their namespace.",
+            current_user, claimed_key,
+        )
+        return {"success": False, "message": "You do not own the artifact you are attempting to share."}
+
     valid_users, invalid_users = are_valid_amplify_users(access_token, email_list)
 
     if len(valid_users) == 0:

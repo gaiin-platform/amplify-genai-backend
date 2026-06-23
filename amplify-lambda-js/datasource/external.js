@@ -1,6 +1,7 @@
 import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
+import {validateUrl} from "../common/urlValidator.js";
 
 const dynamodbClient = new DynamoDBClient({ });
 const logger = getLogger("datasource.external");
@@ -43,6 +44,13 @@ const createHandler = async (sourceType, config) => {
 
     // Valid options are 'lastMessage', 'allMessages', 'lastMessageContent', 'none'
     const queryMode = config.queryMode || 'lastMessage';
+
+    // Validate endpoint URL to prevent SSRF
+    const urlValidation = validateUrl(endpoint, { allowCredentialForwarding: includeAccessToken });
+    if (!urlValidation.valid) {
+        logger.error(`SSRF protection: blocked external datasource endpoint: ${endpoint} - ${urlValidation.reason}`);
+        return null;
+    }
 
     const requestBuilder = async (chatRequest, params, dataSource) => {
         const requestData = {
@@ -93,10 +101,17 @@ const createHandler = async (sourceType, config) => {
     return async (chatRequest, params, dataSource) => {
 
         const request = await requestBuilder(chatRequest, params, dataSource);
-        const endpoint = request.endpoint;
+        const resolvedEndpoint = request.endpoint;
         delete request.endpoint;
 
-        const response = await fetch(endpoint, request);
+        // Re-validate the final resolved endpoint (in case GET params changed the URL)
+        const finalValidation = validateUrl(resolvedEndpoint, { allowCredentialForwarding: includeAccessToken });
+        if (!finalValidation.valid) {
+            logger.error(`SSRF protection: blocked resolved endpoint: ${resolvedEndpoint} - ${finalValidation.reason}`);
+            throw new Error(`Request blocked by SSRF protection: ${finalValidation.reason}`);
+        }
+
+        const response = await fetch(resolvedEndpoint, request);
         const data = await response.json();
 
         const location = (data && data.location) ?

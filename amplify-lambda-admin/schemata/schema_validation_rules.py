@@ -20,6 +20,7 @@ rules = {
         "/amplifymin/user_app_configs": {"read": {}},
         "/amplifymin/critical_errors": {"read": get_critical_errors_schema},
         "/amplifymin/critical_errors/resolve": {"update": resolve_critical_error_schema},
+        "/amplifymin/test_endpoint": {"update": {}},
     },
     "api_validators": {
         "/amplifymin/auth": {"read": auth_as_admin_schema},

@@ -165,6 +165,15 @@ functions:
           method: post
           cors: true
 
+  test_endpoint:
+    handler: service/core.test_endpoint
+    timeout: 30
+    events:
+      - http:
+          path: amplifymin/test_endpoint
+          method: post
+          cors: true
+
   get_user_amplify_groups:
     handler: service/user_services.get_user_amplify_groups
     events:
