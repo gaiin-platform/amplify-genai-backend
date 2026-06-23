@@ -498,8 +498,20 @@ def handle_critical_errors_config_update(update_data: dict) -> dict:
 
 
 # Web Search Config Constants
-WEB_SEARCH_SUPPORTED_PROVIDERS = ["brave_search", "tavily", "serper", "serpapi"]
+WEB_SEARCH_SUPPORTED_PROVIDERS = ["brave_search", "tavily", "serper", "serpapi", "bedrock_agentcore"]
 WEB_SEARCH_SSM_PREFIX = "/tools/web_search"
+
+# Extra (non-secret) configuration fields persisted alongside the provider in the
+# admin config item. Used by the Bedrock AgentCore provider, which needs a gateway
+# URL (and optionally OAuth client-credentials settings) in addition to its secret.
+WEB_SEARCH_EXTRA_CONFIG_FIELDS = [
+    "bedrockAgentCoreGatewayUrl",
+    "bedrockAgentCoreRegion",
+    "bedrockAgentCoreTokenUrl",
+    "bedrockAgentCoreClientId",
+    "bedrockAgentCoreScope",
+    "bedrockAgentCoreToolName",
+]
 
 
 def build_web_search_parameter_name(provider: str) -> str:
@@ -600,12 +612,24 @@ def handle_web_search_config_update(update_data: dict) -> dict:
                 logger.error("Error checking for API key in SSM: %s", str(e))
                 has_api_key = False
 
+    # AgentCore "user_token" auth forwards the caller's own access token to the
+    # gateway, so it can be enabled without a stored secret as long as a gateway
+    # URL is configured.
+    auth_mode = update_data.get("bedrockAgentCoreAuthMode")
+    gateway_url = update_data.get("bedrockAgentCoreGatewayUrl")
+    agentcore_keyless = (
+        provider == "bedrock_agentcore"
+        and bool(gateway_url)
+        and (auth_mode == "user_token"
+             or (not auth_mode and not update_data.get("bedrockAgentCoreTokenUrl")))
+    )
+    is_enabled = has_api_key or agentcore_keyless
+
     # Store config in DynamoDB (without the API key - that's in SSM)
-    # isEnabled is true only if an API key exists in SSM
     config_data = {
         "provider": provider,
         "allowUserWebSearchKeys": update_data.get("allowUserWebSearchKeys", False),
-        "isEnabled": has_api_key,
+        "isEnabled": is_enabled,
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
     # Include webSearchUserMessage if provided and non-empty after trimming
@@ -613,6 +637,14 @@ def handle_web_search_config_update(update_data: dict) -> dict:
         message = update_data["webSearchUserMessage"]
         if message and isinstance(message, str) and message.strip():
             config_data["webSearchUserMessage"] = message.strip()
+
+    # Persist provider-specific non-secret config (e.g. the Bedrock AgentCore
+    # gateway URL, OAuth settings, and auth mode). Secrets stay only in SSM.
+    for field in WEB_SEARCH_EXTRA_CONFIG_FIELDS:
+        if field in update_data:
+            value = update_data[field]
+            if value and isinstance(value, str) and value.strip():
+                config_data[field] = value.strip()
 
     result = update_admin_config_data(AdminConfigTypes.WEB_SEARCH_CONFIG.value, config_data)
 
@@ -642,24 +674,33 @@ def get_web_search_config() -> dict:
         if not provider:
             return None
 
-        # Try to get the actual key to verify it exists and mask it
+        result = {
+            "provider": provider,
+            "isEnabled": bool(config.get("isEnabled", False)),
+            "lastUpdated": config.get("lastUpdated"),
+        }
+
+        # Surface provider-specific non-secret config so the admin UI can render
+        # and edit it (e.g. the Bedrock AgentCore gateway URL and auth mode).
+        for field in WEB_SEARCH_EXTRA_CONFIG_FIELDS:
+            if field in config:
+                result[field] = config.get(field)
+
+        # Mask the stored key if one exists. AgentCore user_token mode has no
+        # stored secret, so a missing key there is expected (not "unconfigured").
         try:
             ssm_client = boto3.client("ssm")
             param_name = build_web_search_parameter_name(provider)
             ssm_response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
-            api_key = ssm_response["Parameter"]["Value"]
-
-            return {
-                "provider": provider,
-                "isEnabled": True,
-                "maskedKey": mask_api_key(api_key),
-                "lastUpdated": config.get("lastUpdated"),
-            }
+            result["maskedKey"] = mask_api_key(ssm_response["Parameter"]["Value"])
         except ClientError as e:
-            if e.response['Error']['Code'] == 'ParameterNotFound':
+            if e.response['Error']['Code'] != 'ParameterNotFound':
+                raise
+            if provider != "bedrock_agentcore":
                 # Config exists but key was deleted from SSM
                 return None
-            raise
+
+        return result
 
     except Exception as e:
         logger.error("Error getting web search config: %s", str(e))
@@ -1058,6 +1099,16 @@ def get_configs(event, context, current_user, name, data):
                         # Enrich web search config with masked API key from SSM
                         provider = new_data and new_data.get("provider")
                         if provider:
+                            # AgentCore "user_token" mode is authorized by the caller's
+                            # own token, so it has no stored secret - it's enabled by
+                            # virtue of having a gateway URL configured.
+                            auth_mode = new_data.get("bedrockAgentCoreAuthMode")
+                            agentcore_keyless = (
+                                provider == "bedrock_agentcore"
+                                and bool(new_data.get("bedrockAgentCoreGatewayUrl"))
+                                and (auth_mode == "user_token"
+                                     or (not auth_mode and not new_data.get("bedrockAgentCoreTokenUrl")))
+                            )
                             try:
                                 ssm_client = boto3.client("ssm")
                                 param_name = build_web_search_parameter_name(provider)
@@ -1067,9 +1118,10 @@ def get_configs(event, context, current_user, name, data):
                                 new_data["maskedKey"] = mask_api_key(api_key)
                             except ClientError as e:
                                 if e.response['Error']['Code'] == 'ParameterNotFound':
-                                    # Config exists but key was deleted from SSM
-                                    new_data["isEnabled"] = False
+                                    # No stored secret. Keyless AgentCore is still enabled;
+                                    # any other provider really is unconfigured.
                                     new_data["maskedKey"] = None
+                                    new_data["isEnabled"] = True if agentcore_keyless else False
                                 else:
                                     logger.error("Error getting web search API key: %s", str(e))
                                     new_data["isEnabled"] = False
