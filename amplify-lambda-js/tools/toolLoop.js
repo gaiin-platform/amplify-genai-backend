@@ -87,6 +87,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     let apiKeys = await getUserToolApiKeys(userId);
      // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
     let adminKey = null;
+    // AgentCore can be authorized without a stored key (user_token / IAM gateway).
+    let webSearchKeylessAvailable = false;
 
     if (options.webSearchEnabled) {
         try {
@@ -97,6 +99,10 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                 ...apiKeys,
                     [adminKey.provider]: adminKey.api_key
                 };
+            } else if (adminKey && adminKey.provider && adminKey.config?.gatewayUrl) {
+                // AgentCore gateway authorized via the caller's token (no stored secret).
+                logger.info(`Admin web search available (${adminKey.provider}, keyless), auto-enabling tool loop`);
+                webSearchKeylessAvailable = true;
             } else {
                 logger.warn("→ Web search enabled for this request but no admin API key configured");
                 options.webSearchEnabled = false;
@@ -119,8 +125,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // Collect all available tools
     const allTools = [];
 
-    // Add web search tool if API keys are available
-    if (Object.keys(apiKeys).length > 0) {
+    // Add web search tool if API keys are available, or AgentCore is keyless-authorized
+    if (Object.keys(apiKeys).length > 0 || webSearchKeylessAvailable) {
         allTools.push(WEB_SEARCH_TOOL_DEFINITION);
     }
 
@@ -413,8 +419,12 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                         }));
                     }
                 } else {
-                    // Execute web search or other built-in tools
-                    toolResult = await executeToolCall(toolCall, apiKeys);
+                    // Execute web search or other built-in tools.
+                    // Pass the caller's access token so the AgentCore gateway can
+                    // authorize the request in user_token mode.
+                    toolResult = await executeToolCall(toolCall, apiKeys, {
+                        accessToken: params.account?.accessToken
+                    });
 
                     // Collect web search sources for display
                     if (toolName === 'web_search' && toolResult.rawResult && toolResult.rawResult.results) {

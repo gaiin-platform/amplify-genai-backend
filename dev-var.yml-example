@@ -45,4 +45,12 @@ MAX_ACU: "16"
 # Var for Admin interface access
 ADMINS: "" #CSV list of email usernames that need admin access. Can add secondary admins once deployed
 
+# Bedrock AgentCore Web Search (optional web search provider)
+# When enabled, deployment provisions an AgentCore Gateway + Web Search tool target automatically.
+# Requires the running admin Lambda's boto3 to support 'bedrock-agentcore-control' and the
+# Web Search connector (currently us-east-1 only). Safe to leave false.
+WEB_SEARCH_AGENTCORE_ENABLED: false #true to auto-provision the AgentCore web search gateway on deploy
+WEB_SEARCH_AGENTCORE_AUTOENABLE: false #true to make bedrock_agentcore the active provider when none is configured
+WEB_SEARCH_AGENTCORE_REGION: "us-east-1" #region for the AgentCore gateway/web search connector
+
 LOG_LEVEL: "INFO" # Valid Values Include: DEBUG | INFO | WARNING | ERROR | CRITICAL
