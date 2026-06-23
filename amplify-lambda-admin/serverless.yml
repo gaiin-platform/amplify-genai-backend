@@ -56,10 +56,10 @@ provider:
     STAGE: ${sls:stage}
 
   # Bedrock AgentCore Web Search provisioning (opt-in via stage vars; safe defaults)
-    WEB_SEARCH_AGENTCORE_ENABLED: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_ENABLED, 'false'}
-    WEB_SEARCH_AGENTCORE_AUTOENABLE: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_AUTOENABLE, 'false'}
-    WEB_SEARCH_AGENTCORE_REGION: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_REGION, 'us-east-1'}
-    WEB_SEARCH_AGENTCORE_GATEWAY_NAME: amplify-${self:custom.depName}-${sls:stage}-web-search
+    WEB_SEARCH_AGENTCORE_ENABLED: ${ssm:/amplify/${sls:stage}/WEB_SEARCH_AGENTCORE_ENABLED, 'false'}
+    WEB_SEARCH_AGENTCORE_AUTOENABLE: ${ssm:/amplify/${sls:stage}/WEB_SEARCH_AGENTCORE_AUTOENABLE, 'false'}
+    WEB_SEARCH_AGENTCORE_REGION: ${ssm:/amplify/${sls:stage}/WEB_SEARCH_AGENTCORE_REGION, 'us-east-1'}
+    WEB_SEARCH_AGENTCORE_GATEWAY_NAME: ${self:service}-${sls:stage}-web-search
     AGENTCORE_GATEWAY_ROLE_ARN: !GetAtt AgentCoreWebSearchGatewayRole.Arn
 
   # Locally Defined Variables
