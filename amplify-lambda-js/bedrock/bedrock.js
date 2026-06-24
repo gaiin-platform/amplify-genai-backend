@@ -103,33 +103,29 @@ export const chatBedrock = async (chatBody, writable) => {
         }
 
         if (isReasoningEnabled) {
-            const budget_tokens = getBudgetTokens({options}, maxTokens);
-
-            // Final validation: Bedrock strictly requires maxTokens > budget_tokens
-            if (budget_tokens >= maxTokens) {
-                logger.warn(`Extended thinking disabled: budget_tokens (${budget_tokens}) >= maxTokens (${maxTokens}). Bedrock requires maxTokens > budget_tokens.`);
-                // Disable reasoning to prevent ValidationException
-            } else if (/claude.*opus-4-[789]|claude.*opus-4-[1-9][0-9]/i.test(currentModel.id)) {
-                // Opus 4.7+ — effort-based, no budget_tokens
+            if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]/i.test(currentModel.id)) {
+                // Opus 4.6+ — effort-based reasoning. Honor the user's selected reasoning
+                // level. This mirrors how azure/openai.js and litellmClient.js map
+                // options.reasoningLevel -> effort (low | medium | high).
+                const effort = options.reasoningLevel ?? "low";
                 input.additionalModelRequestFields = {
                     "reasoning_config": { "type": "adaptive" },
-                    "output_config": { "effort": "high" }
+                    "output_config": { "effort": effort }
                 };
-                logger.info(`Adaptive thinking enabled (Opus 4.7+, effort=high) with temperature=1.0, maxTokens=${maxTokens}`);
-            } else if (/claude.*sonnet-4-6/i.test(currentModel.id)) {
-                // Sonnet 4.6 — adaptive, no budget_tokens
-                input.additionalModelRequestFields = {
-                    "reasoning_config": { "type": "adaptive" }
-                };
-                logger.info(`Adaptive thinking enabled (Sonnet 4.6 bare adaptive) with temperature=1.0, maxTokens=${maxTokens}`);
+                logger.info(`Adaptive thinking enabled (Opus 4.6+, effort=${effort}) with temperature=1.0, maxTokens=${maxTokens}`);
             } else {
-                input.additionalModelRequestFields={
+                // All other reasoning-capable Claude models (e.g. Sonnet 4.6) use
+                // "enabled" with budget_tokens. getBudgetTokens encodes the user's
+                // reasoning level (low=1024, medium=2048, high=4096) and already
+                // reserves output tokens, so budget_tokens is always < maxTokens.
+                const budget_tokens = getBudgetTokens({options}, maxTokens);
+                input.additionalModelRequestFields = {
                     "reasoning_config": {
                         "type": "enabled",
                         "budget_tokens": budget_tokens
-                    },
-                }
-                logger.info(`Extended thinking enabled with temperature=1.0 (original: ${options.temperature}), budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
+                    }
+                };
+                logger.info(`Extended thinking enabled with temperature=1.0, budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
             }
         } else if (currentModel.supportsReasoning && disableReasoning) {
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
