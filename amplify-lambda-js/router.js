@@ -233,16 +233,23 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // Check rate limit result first (early exit if rate limited)
             if (rateLimitResult) {
                 const rateLimitInfo = params.body.options.rateLimit;
-                let errorMessage = "Request limit reached."
+                let errorMessage = "Current request exceeds allowed rate limit.";
                 if (rateLimitInfo) {
-                    const currentRate = rateLimitInfo.currentSpent ? `Current Spent: ${formatCurrentSpent(rateLimitInfo)}` : "";
-                    const rateLimitStr = `${rateLimitInfo.adminSet ? "Amplify " : ""}Set Rate limit: ${formatRateLimit(rateLimitInfo)}`;
-                    errorMessage = `${errorMessage} ${currentRate} ${rateLimitStr}`;
+
+                    if (rateLimitInfo.adminSet) {
+                        // Keep admin rate limit message concise to avoid exposing internal limits
+                        errorMessage = `Amplify Admin ${rateLimitInfo?.period?.toLowerCase() || ""} rate limit exceeded`;
+                    } else {
+                        const currentRate = rateLimitInfo.currentSpent ? `Current Spent: ${formatCurrentSpent(rateLimitInfo)}` : "";
+                        const rateLimitStr = `Set Rate limit: ${formatRateLimit(rateLimitInfo)}`;
+                        errorMessage = `${errorMessage} ${currentRate} ${rateLimitStr}`;
+                    }
+                    
                 }
                 logger.warn(`🚫 Rate limit exceeded for user ${params.user}: ${errorMessage}`);
                 return returnResponse(responseStream, {
                     statusCode: 429,
-                    statusText: "Request limit reached. Please try again in a few minutes.",
+                    statusText: "Request limit reached.",
                     body: { error: errorMessage }
                 });
             }
