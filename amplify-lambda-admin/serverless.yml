@@ -50,9 +50,17 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
     OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    COGNITO_CLIENT_ID: ${ssm:/amplify/${sls:stage}/COGNITO_CLIENT_ID, ''}
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
+
+  # Bedrock AgentCore Web Search provisioning (opt-in via stage vars; safe defaults)
+    WEB_SEARCH_AGENTCORE_ENABLED: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_ENABLED, 'false'}
+    WEB_SEARCH_AGENTCORE_AUTOENABLE: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_AUTOENABLE, 'false'}
+    WEB_SEARCH_AGENTCORE_REGION: ${self:custom.stageVars.WEB_SEARCH_AGENTCORE_REGION, 'us-east-1'}
+    WEB_SEARCH_AGENTCORE_GATEWAY_NAME: amplify-${self:custom.depName}-${sls:stage}-web-search
+    AGENTCORE_GATEWAY_ROLE_ARN: !GetAtt AgentCoreWebSearchGatewayRole.Arn
 
   # Locally Defined Variables
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-configs
@@ -157,6 +165,15 @@ functions:
           method: post
           cors: true
 
+  test_endpoint:
+    handler: service/core.test_endpoint
+    timeout: 30
+    events:
+      - http:
+          path: amplifymin/test_endpoint
+          method: post
+          cors: true
+
   get_user_amplify_groups:
     handler: service/user_services.get_user_amplify_groups
     events:
@@ -229,6 +246,12 @@ functions:
           batchSize: 10
           maximumBatchingWindowInSeconds: 5
           functionResponseType: ReportBatchItemFailures
+
+  provision_agentcore_web_search:
+    handler: service/agentcore_web_search_provisioner.lambda_handler
+    timeout: 300
+    description: Provisions the Bedrock AgentCore web search gateway + target (CloudFormation custom resource)
+    # No HTTP events - invoked by a CloudFormation custom resource during deploy
 
 resources:
   Resources:
@@ -326,6 +349,34 @@ resources:
               Action:
                 - sts:GetCallerIdentity
               Resource: "*"
+
+            # Bedrock AgentCore web search provisioning (custom resource)
+            # NOTE: gateway/target control operations use the "bedrock-agentcore:" IAM
+            # action prefix, even though the SDK client is "bedrock-agentcore-control".
+            - Effect: Allow
+              Action:
+                - bedrock-agentcore:CreateGateway
+                - bedrock-agentcore:UpdateGateway
+                - bedrock-agentcore:GetGateway
+                - bedrock-agentcore:ListGateways
+                - bedrock-agentcore:DeleteGateway
+                - bedrock-agentcore:CreateGatewayTarget
+                - bedrock-agentcore:UpdateGatewayTarget
+                - bedrock-agentcore:GetGatewayTarget
+                - bedrock-agentcore:ListGatewayTargets
+                - bedrock-agentcore:DeleteGatewayTarget
+                # Gateways provision a workload identity as a dependency
+                - bedrock-agentcore:CreateWorkloadIdentity
+                - bedrock-agentcore:GetWorkloadIdentity
+                - bedrock-agentcore:UpdateWorkloadIdentity
+                - bedrock-agentcore:DeleteWorkloadIdentity
+                - bedrock-agentcore:ListWorkloadIdentities
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - !GetAtt AgentCoreWebSearchGatewayRole.Arn
             
             - Effect: Allow
               Action:
@@ -333,6 +384,40 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
     
+    # Bedrock AgentCore Gateway service role - lets the AgentCore service invoke
+    # the gateway and the managed Web Search tool on the account's behalf.
+    AgentCoreWebSearchGatewayRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: bedrock-agentcore.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: agentcore-web-search
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: InvokeGateway
+                  Effect: Allow
+                  Action: bedrock-agentcore:InvokeGateway
+                  Resource: arn:aws:bedrock-agentcore:${self:custom.stageVars.WEB_SEARCH_AGENTCORE_REGION, 'us-east-1'}:${aws:accountId}:gateway/*
+                - Sid: InvokeWebSearch
+                  Effect: Allow
+                  Action: bedrock-agentcore:InvokeWebSearch
+                  Resource: arn:aws:bedrock-agentcore:${self:custom.stageVars.WEB_SEARCH_AGENTCORE_REGION, 'us-east-1'}:aws:tool/web-search.v1
+
+    # Custom resource that creates/updates the AgentCore gateway + web search target.
+    # Re-runs on every deploy (TriggerHash). No-op unless WEB_SEARCH_AGENTCORE_ENABLED=true.
+    AgentCoreWebSearchProvision:
+      Type: Custom::AgentCoreWebSearch
+      Properties:
+        ServiceToken: !GetAtt ProvisionUnderscoreagentcoreUnderscorewebUnderscoresearchLambdaFunction.Arn
+        TriggerHash: ${sls:instanceId}
+
     AmplifyAdminTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:

@@ -169,6 +169,7 @@ from integrations.o365.shared_inbox import (
     create_shared_mailbox_draft,
     delete_shared_mailbox_draft,
     add_shared_mailbox_draft_attachment,
+    move_shared_mailbox_message,
 )
 from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
@@ -4282,4 +4283,45 @@ def add_shared_mailbox_draft_attachment_handler(current_user, data):
         content_type=None,
         content_bytes=None,
         is_inline=False,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/move_shared_mailbox_message",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftMoveSharedMailboxMessage",
+    description=(
+        "Moves a message from one folder to another within a shared Exchange mailbox. "
+        "The destination_folder_id can be a well-known folder name "
+        "(Inbox, Drafts, SentItems, DeletedItems, Junk) "
+        "or a folder ID obtained from list_shared_mailbox_folders."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox (e.g. support@example.com)",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Graph API message ID of the message to move",
+            },
+            "destination_folder_id": {
+                "type": "string",
+                "description": (
+                    "Target folder ID or well-known name "
+                    "(Inbox, Drafts, SentItems, DeletedItems, Junk)"
+                ),
+            },
+        },
+        "required": ["mailbox_email", "message_id", "destination_folder_id"],
+    },
+)
+def move_shared_mailbox_message_handler(current_user, data):
+    return common_handler(
+        move_shared_mailbox_message,
+        mailbox_email=None,
+        message_id=None,
+        destination_folder_id=None,
     )(current_user, data)

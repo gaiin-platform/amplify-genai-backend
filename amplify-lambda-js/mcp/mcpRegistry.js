@@ -101,7 +101,9 @@ export async function getUserMCPServers(userId) {
                     status: serverConfig.status || 'disconnected',
                     createdAt: serverConfig.createdAt,
                     updatedAt: serverConfig.updatedAt,
-                    headers: serverConfig.headers || {}
+                    headers: serverConfig.headers || {},
+                    trustMode: serverConfig.trustMode || 'trusted',
+                    trustReason: serverConfig.trustReason || (serverConfig.trustMode ? null : 'legacy_existing')
                 });
             }
         }
@@ -339,6 +341,10 @@ export async function connectMCPServer(userId, serverId) {
 
     if (!serverConfig.enabled) {
         throw new Error(`MCP server ${serverId} is disabled`);
+    }
+
+    if ((serverConfig.trustMode || 'trusted') !== 'trusted') {
+        throw new Error(`MCP server ${serverId} is not trusted for server-side execution`);
     }
 
     const cacheKey = `${userId}:${serverId}`;

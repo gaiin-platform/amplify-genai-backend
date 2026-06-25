@@ -175,6 +175,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (data.hasOwnProperty('imageSources')) delete data.imageSources;
     if (data.hasOwnProperty('videoSources')) delete data.videoSources;
+    if (data.hasOwnProperty('dataSources')) delete data.dataSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
     if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
     

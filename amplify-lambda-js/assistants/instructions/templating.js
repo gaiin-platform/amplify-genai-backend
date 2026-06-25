@@ -1,4 +1,4 @@
-import Handlebars from "handlebars";
+import HandlebarsModule from "handlebars";
 import yaml from "js-yaml";
 import {formatOps, getOps} from "../ops/ops.js";
 import {sendStateEventToStream} from "../../common/streams.js";
@@ -26,9 +26,12 @@ function parseAllOpsOccurrences(templateStr) {
 export const fillInTemplate = async (responseStream, params, body, ds, templateStr, contextData) => {
     // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
+    // Use a fresh Handlebars environment per invocation to avoid stale helpers
+    // persisting across warm Lambda container reuse (global registry is shared).
+    const Handlebars = HandlebarsModule.create();
+
     contextData = {
         ...contextData,
-        user: params.account.user,
     }
 
     let result = templateStr;
@@ -100,8 +103,8 @@ export const fillInTemplate = async (responseStream, params, body, ds, templateS
             return contextData.assistant.name;
         });
 
-        Handlebars.registerHelper('user', function () {
-            return contextData.user;
+        Handlebars.registerHelper('API_BASE_URL', function () {
+            return process.env.API_BASE_URL;
         });
 
         Handlebars.registerHelper('datetime', function (fmt) {
@@ -111,10 +114,6 @@ export const fillInTemplate = async (responseStream, params, body, ds, templateS
 
         Handlebars.registerHelper('yaml', function (context) {
             return yaml.dump(context);
-        });
-
-        Handlebars.registerHelper('API_BASE_URL', function () {
-            return process.env.API_BASE_URL;
         });
 
         const template = Handlebars.compile(templateStr);
