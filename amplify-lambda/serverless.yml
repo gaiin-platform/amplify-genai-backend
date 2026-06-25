@@ -215,12 +215,6 @@ functions:
           method: POST
           cors: true
 
-  parameter_store_populator:
-    handler: utilities/parameter_store_populator.lambda_handler
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
-    description: Auto-populates Parameter Store with locally defined variables
 
   get_conversation:
     handler: state/conversation.get_conversation
@@ -573,6 +567,19 @@ functions:
     description: Central runtime configuration manager for API Gateway timeout extension
     # No HTTP events - invoked by CloudFormation custom resources from other services
 
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  param_populator:
+    handler: populate_env_vars.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
+
 resources:
   # Use extensions to add DependsOn to the auto-generated role without overriding it
   extensions:
@@ -587,15 +594,17 @@ resources:
         - LambdaIAMPolicyAPIGateway
 
   Resources:
-    # Custom resource to auto-populate Parameter Store with locally defined variables
-    ParameterStoreAutoPopulate:
-      Type: Custom::ParameterStorePopulate
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local param_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
       Properties:
-        ServiceToken: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt ParamUnderscorepopulatorLambdaFunction.Arn
         ServiceName: ${self:service}
         Stage: ${sls:stage}
         TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
-        # No need to pass EnvironmentVariables - Lambda dynamically fetches them!
 
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
@@ -1584,10 +1593,4 @@ resources:
       Export:
         Name:
           Fn::Sub: "${sls:stage}-EmbeddingChunksIndexDlqArn"
-   
-    ParameterStorePopulatorArn:
-      Description: "ARN of the parameter store populator Lambda function"
-      Value: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
-      Export:
-        Name:
-          Fn::Sub: "${sls:stage}-ParameterStorePopulatorArn"
+

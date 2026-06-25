@@ -379,7 +379,7 @@ resources:
   Resources:
     # Custom Resource: Auto-populate Parameter Store with locally defined variables
     # This runs on every deployment to ensure SSM parameters are up-to-date
-    # Uses the local parameter_store_populator Lambda function defined above
+    # Uses the local ast_param_populator Lambda function defined above
     ParamStoreAutoPopulate:
       Type: Custom::ParamStorePopulate
       Properties:

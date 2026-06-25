@@ -100,7 +100,7 @@ functions:
   microsoftAdminConfigOpsTrigger:
     handler: service/register_ops.integration_config_trigger
     memorySize: 1024
-    timeout: 300 
+    timeout: 300
     events:
       - stream:
           type: dynamodb
@@ -109,8 +109,30 @@ functions:
           batchSize: 1
           startingPosition: TRIM_HORIZON
 
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  param_populator:
+    handler: populate_env_vars.lambda_handler
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
+
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local param_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
+      Properties:
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt ParamUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
 
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
@@ -187,14 +209,21 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
 
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
-              
+
             - Effect: Allow
               Action:
                 - dynamodb:PutItem
