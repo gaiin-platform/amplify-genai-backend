@@ -230,6 +230,19 @@ const processAccountInfo = async (accountInfo) => {
     return `${newAccount}#${id}`;
 };
 
+// Helper function to resolve an amp- API key (or api_owner_id) to its api_owner_id.
+// Returns the resolved id, or the original identifier if it cannot be resolved.
+// Never throws — callers rely on graceful fallback behaviour.
+const resolveApiKeyToId = async (identifier) => {
+    try {
+        const { id } = await getApiKeyDetails(identifier);
+        return id || identifier;
+    } catch (error) {
+        logger.warn(`resolveApiKeyToId: could not resolve '${identifier}': ${error.message}`);
+        return identifier;
+    }
+};
+
 const internalApiKeyUserCostHandler = async (event, context, callback) => {
     let params = null;
     try {
