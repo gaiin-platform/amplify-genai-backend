@@ -11,7 +11,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
-import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
+import {sendStateEventToStream, sendStatusEventToStream, forceFlush, sendErrorMessage} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 import {getLogger} from "../common/logging.js";
 // Skills integration
@@ -671,13 +671,29 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         logger.info(`Passing ${activeSkills.length} skills to agent loop: ${activeSkills.map(s => s.name).join(', ')}`);
                     }
 
-                    invokeAgent(
-                        params.account.accessToken,
-                        sessionId,
-                        params.options.requestId,
-                        body.messages,
-                        agentMetadata
-                    );
+                    // Race invokeAgent against a short timeout so synchronous failures
+                    // (WAF 403, network error) are caught and reported to the user.
+                    // WAF 403 returns in <1s; a successful start also returns quickly.
+                    // If the timeout fires first (>10s), assume the agent started OK.
+                    const AGENT_INVOKE_TIMEOUT_MS = 10000;
+                    const agentInvokeResult = await Promise.race([
+                        invokeAgent(
+                            params.account.accessToken,
+                            sessionId,
+                            params.options.requestId,
+                            body.messages,
+                            agentMetadata
+                        ),
+                        new Promise(resolve => setTimeout(() => resolve({ _timedOut: true }), AGENT_INVOKE_TIMEOUT_MS))
+                    ]);
+
+                    if (agentInvokeResult === undefined) {
+                        // invokeAgent swallows errors and returns undefined — invocation failed
+                        // before the timeout (e.g. WAF 403, connection refused, 5xx).
+                        logger.error(`Agent invocation failed for sessionId: ${sessionId}. Check for WAF blocks or agent-loop errors.`);
+                        sendErrorMessage(responseStream, 503);
+                        return;
+                    }
 
                     sendStatusEventToStream(responseStream, statusInfo);
                     forceFlush(responseStream);
