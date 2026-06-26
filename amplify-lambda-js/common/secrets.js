@@ -116,6 +116,18 @@ export const getLLMConfig = async (model_name, model_provider) => {
         const key = await getSecretApiKey("OPENAI_API_KEY");
         return { url, key };
     }
+    // Guard against null parsed_secret — this happens in local dev when AWS credentials
+    // have expired and Secrets Manager could not be reached during module initialisation.
+    // Without this guard the caller would get a confusing
+    // "TypeError: Cannot read properties of null (reading 'models')" crash.
+    if (!parsed_secret) {
+        const envVarHint = 'LOCAL_SECRET_' + (secret_name || '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+        const hint = process.env.LOCAL_DEVELOPMENT === 'true'
+            ? ` In local development, either refresh your AWS credentials (e.g. run \`aws sso login\`)` +
+              ` or set the ${envVarHint} environment variable in .env.local with the JSON endpoints payload.`
+            : '';
+        throw new Error(`LLM endpoint configuration is unavailable for model '${model_name}'.${hint}`);
+    }
     return getEndpointData(parsed_secret, model_name);
 };
 

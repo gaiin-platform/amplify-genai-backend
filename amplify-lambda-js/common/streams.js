@@ -367,6 +367,13 @@ export const sendErrorMessage = (writable, statusCode, code=null) => {
         errorMessage = "Too Many Requests: You have sent too many requests in a given amount of time to this model." + waitMessage;
     } else if ([408, 503, 504].includes(statusCode)) {
         errorMessage = "Request Timed Out: We did not receive a timely response from the model providers server." + waitMessage;
+    } else if (statusCode === 403) {
+        // 403 is returned by AWS when credentials have expired (ExpiredTokenException)
+        // or when IAM permissions are missing.  Give a clear, actionable message.
+        errorMessage = process.env.LOCAL_DEVELOPMENT === 'true'
+            ? "Access Denied (403): Your AWS credentials have expired. " +
+              "Please refresh them (e.g. run `aws sso login`) and restart the local server."
+            : "Access Denied: The model provider rejected the request. Please try again or contact your administrator.";
     } else if (statusCode === 413) {
         errorMessage = "Request Entity Too Large: The request body is too large. Please try again with a smaller request.";
     }
