@@ -11,7 +11,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
-import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
+import {sendStateEventToStream, sendStatusEventToStream, forceFlush, sendErrorMessage} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 import {getLogger} from "../common/logging.js";
 // Skills integration
@@ -671,14 +671,32 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         logger.info(`Passing ${activeSkills.length} skills to agent loop: ${activeSkills.map(s => s.name).join(', ')}`);
                     }
 
-                    invokeAgent(
+                    // Fire without awaiting — the agent lambda stays open while it works
+                    // and the frontend polls for results. We race against a short window
+                    // to catch fast failures (WAF blocks, auth errors) that come back in
+                    // well under a second. If nothing comes back in time, it's processing.
+                    const invokePromise = invokeAgent(
                         params.account.accessToken,
                         sessionId,
                         params.options.requestId,
                         body.messages,
                         agentMetadata
+                    ).then(result => ({ type: 'result', value: result }))
+                     .catch(err  => ({ type: 'error',  err }));
+
+                    const timeoutPromise = new Promise(resolve =>
+                        setTimeout(() => resolve({ type: 'timeout' }), 1000)
                     );
 
+                    const raceResult = await Promise.race([invokePromise, timeoutPromise]);
+
+                    if (raceResult.type === 'error' || (raceResult.type === 'result' && !raceResult.value)) {
+                        logger.error(`Agent invocation failed for sessionId: ${sessionId}.`, raceResult.err || '');
+                        sendErrorMessage(responseStream, 503);
+                        return;
+                    }
+
+                    // Timed out (still running) or got a fast success — either way, proceed
                     sendStatusEventToStream(responseStream, statusInfo);
                     forceFlush(responseStream);
 
