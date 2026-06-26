@@ -23,7 +23,8 @@ export const invokeAgent = async function(accessToken, sessionId, requestId, pro
             {
                 headers: {
                     Authorization: "Bearer "+accessToken
-                }
+                },
+                timeout: 10000
             }
         );
         logger.info("Agent invocation successful for sessionId:", sessionId);

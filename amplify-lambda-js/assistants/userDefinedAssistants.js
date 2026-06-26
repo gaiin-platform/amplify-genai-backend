@@ -671,26 +671,16 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         logger.info(`Passing ${activeSkills.length} skills to agent loop: ${activeSkills.map(s => s.name).join(', ')}`);
                     }
 
-                    // Race invokeAgent against a short timeout so synchronous failures
-                    // (WAF 403, network error) are caught and reported to the user.
-                    // WAF 403 returns in <1s; a successful start also returns quickly.
-                    // If the timeout fires first (>10s), assume the agent started OK.
-                    const AGENT_INVOKE_TIMEOUT_MS = 10000;
-                    const agentInvokeResult = await Promise.race([
-                        invokeAgent(
-                            params.account.accessToken,
-                            sessionId,
-                            params.options.requestId,
-                            body.messages,
-                            agentMetadata
-                        ),
-                        new Promise(resolve => setTimeout(() => resolve({ _timedOut: true }), AGENT_INVOKE_TIMEOUT_MS))
-                    ]);
+                    const agentInvokeResult = await invokeAgent(
+                        params.account.accessToken,
+                        sessionId,
+                        params.options.requestId,
+                        body.messages,
+                        agentMetadata
+                    );
 
-                    if (agentInvokeResult === undefined) {
-                        // invokeAgent swallows errors and returns undefined — invocation failed
-                        // before the timeout (e.g. WAF 403, connection refused, 5xx).
-                        logger.error(`Agent invocation failed for sessionId: ${sessionId}. Check for WAF blocks or agent-loop errors.`);
+                    if (!agentInvokeResult) {
+                        logger.error(`Agent invocation failed for sessionId: ${sessionId}.`);
                         sendErrorMessage(responseStream, 503);
                         return;
                     }
