@@ -589,12 +589,19 @@ update_admin_config_schema = {
                                         "properties": {
                                             "provider": {
                                                 "type": "string",
-                                                "enum": ["brave_search", "tavily", "serper", "serpapi"]
+                                                "enum": ["brave_search", "tavily", "serper", "serpapi", "bedrock_agentcore"]
                                             },
                                             "isEnabled": {"type": "boolean"},
                                             "allowUserWebSearchKeys": {"type": "boolean"},
                                             "webSearchUserMessage": {"type": "string"},
-                                            "api_key": {"type": "string"}
+                                            "api_key": {"type": "string"},
+                                            "bedrockAgentCoreGatewayUrl": {"type": "string"},
+                                            "bedrockAgentCoreRegion": {"type": "string"},
+                                            "bedrockAgentCoreTokenUrl": {"type": "string"},
+                                            "bedrockAgentCoreClientId": {"type": "string"},
+                                            "bedrockAgentCoreScope": {"type": "string"},
+                                            "bedrockAgentCoreToolName": {"type": "string"},
+                                            "bedrockAgentCoreAuthMode": {"type": "string"}
                                         },
                                         "required": [],
                                         "additionalProperties": False

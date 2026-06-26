@@ -114,7 +114,9 @@ def get_presigned_download_url(event, context, current_user, name, data):
     if not access_result["success"]:
         return access_result
 
-    download_filename = item["name"]
+    # Strip any path components from the filename to prevent Content-Disposition path traversal
+    # (e.g. "../../.ssh/authorized_keys" → "authorized_keys")
+    download_filename = re.sub(r'^.*[/\\]', '', item.get("name") or "")
     
     is_media_file = item["type"] in IMAGE_FILE_TYPES or item["type"] in VIDEO_FILE_TYPES
     response_headers = (
@@ -215,6 +217,16 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 
         # Since groups can have documents that belongs to others and the group itself only has permission to we need to check the table
         if group_id:  # checks can access of the group_id
+            # Verify the requesting user is actually a member of the supplied group_id
+            # before checking the group's object-access permissions.  Without this check,
+            # any user could supply an arbitrary groupId and leverage that group's
+            # read permissions to download files they don't own.
+            logger.debug("Verifying user is a member of groupId before object-access check: %s", group_id)
+            if not verify_member_of_ast_admin_group(access_token, group_id):
+                return {
+                    "success": False,
+                    "message": f"User is not a member of groupId: {group_id}",
+                }
             object_table = dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"])
 
             try:
@@ -290,17 +302,6 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     rate_limit = data["rate_limit"]
 
     # Now extract the nested data object
-    data = data["data"]
-    key = data["key"]
-    group_id = data.get("groupId")
-
-    if group_id and not is_group_admin(group_id, current_user):
-        logger.warning("User %s attempted to reprocess group %s file without admin rights", current_user, group_id)
-        return {"success": False, "message": f"User does not have admin access to group: {group_id}"}
-
-    if group_id:
-        current_user = group_id
-
     data = data["data"]
     key = data["key"]
     group_id = data.get("groupId")
