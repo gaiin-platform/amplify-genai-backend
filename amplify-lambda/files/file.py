@@ -114,7 +114,9 @@ def get_presigned_download_url(event, context, current_user, name, data):
     if not access_result["success"]:
         return access_result
 
-    download_filename = item["name"]
+    # Strip any path components from the filename to prevent Content-Disposition path traversal
+    # (e.g. "../../.ssh/authorized_keys" → "authorized_keys")
+    download_filename = re.sub(r'^.*[/\\]', '', item.get("name") or "")
     
     is_media_file = item["type"] in IMAGE_FILE_TYPES or item["type"] in VIDEO_FILE_TYPES
     response_headers = (
