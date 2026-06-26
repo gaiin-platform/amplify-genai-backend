@@ -22,7 +22,7 @@ from pycommon.api.ops_reqs import get_all_op
 from base_feature_flags import feature_flags
 from datetime import datetime
 from botocore.config import Config
-from service.user_services import is_in_amp_group
+from service.user_services import is_in_amp_group, find_all_user_groups
 from pycommon.const import NO_RATE_LIMIT, APIAccessType
 from pycommon.decorators import required_env_vars, track_execution
 from pycommon.dal.providers.aws.resource_perms import (
@@ -1719,72 +1719,6 @@ def get_all_amplify_groups():
     except Exception as e:
         logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
     return None
-
-
-@required_env_vars({
-    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
-})
-@validated(op="read")
-def get_user_affiliated_groups(event, context, current_user, name, data):
-    try:
-        all_groups = get_all_amplify_groups()
-        if not all_groups:
-            return {"success": False, "message": "No Amplify Groups Found"}
-        
-        affiliated_groups = find_all_user_groups(current_user, all_groups)
-        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
-    except Exception as e:
-        logger.error("Error retrieving user affiliated groups: %s", str(e))
-        return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
-
-
-def find_all_user_groups(current_user, all_groups):
-    """
-    Find all groups a user is affiliated with (direct and indirect membership).
-    
-    Returns a list of group names the user belongs to.
-    """
-    affiliated = []
-    
-    # Phase 1: Find all groups where user is a direct member
-    direct_groups = set()
-    for group_name, group_data in all_groups.items():
-        members = group_data.get("members", [])
-        if current_user in members:
-            direct_groups.add(group_name)
-            affiliated.append(group_name)
-    
-    # Phase 2: Find all groups that include user's groups (directly or indirectly)
-    # Use BFS to find all groups that eventually include user's direct groups
-    for group_name, group_data in all_groups.items():
-        if group_name not in direct_groups:  # Skip already found direct groups
-            visited = set()
-            if group_includes_user_groups(group_name, direct_groups, all_groups, visited):
-                affiliated.append(group_name)
-    
-    return affiliated
-
-
-def group_includes_user_groups(group_name, user_direct_groups, all_groups, visited):
-    """
-    Check if a group includes any of the user's direct groups through its includeFromOtherGroups chain.
-    """
-    if group_name not in all_groups or group_name in visited:
-        return False
-    
-    visited.add(group_name)
-    group_data = all_groups[group_name]
-    
-    # Check if this group directly includes any of user's direct groups
-    includes = group_data.get("includeFromOtherGroups", [])
-    for included_group in includes:
-        if included_group in user_direct_groups:
-            return True
-        # Recursively check if included group eventually includes user's groups
-        if group_includes_user_groups(included_group, user_direct_groups, all_groups, visited):
-            return True
-    
-    return False
 
 
 @required_env_vars({
