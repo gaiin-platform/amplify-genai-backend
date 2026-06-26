@@ -985,10 +985,16 @@ export const processSmartMessages = async ({
                 role: 'system',
                 content: instructions
             },
-            ...messagesToAnalyze.map(msg => ({
-                role: msg.role,
-                content: msg.content
-            }))
+            // Exclude system-role messages: the assistant's system prompt is not conversation
+            // history and should not be passed to the smart-messages LLM. Including HTML-heavy
+            // system prompts (e.g. bio templates) can cause the structured JSON response to be
+            // truncated at the output token limit, breaking the downstream parse step.
+            ...messagesToAnalyze
+                .filter(msg => msg.role !== 'system')
+                .map(msg => ({
+                    role: msg.role,
+                    content: msg.content
+                }))
         ];
         llmMessages[llmMessages.length - 1].content = promptContent;
 
