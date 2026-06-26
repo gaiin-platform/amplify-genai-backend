@@ -24,65 +24,12 @@ SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS"
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
-# Dedicated timeouts for background / restoration AgentCore calls.
-# These are intentionally shorter than EXECUTION_TIMEOUT_SECONDS so they
-# cannot consume the Lambda's remaining time budget before the user's real
-# request runs.
-MEMORY_UPDATE_TIMEOUT_SECONDS = 30   # fire-and-forget memory update after each turn
-MEMORY_RESTORE_TIMEOUT_SECONDS = 60  # environment restoration on session renewal
-
-# Memory file lives under this prefix in the consolidation bucket.
-# Kept separate from codeInterpreter/ (generated output files) so the
-# download endpoint — which hard-codes the codeInterpreter/ prefix —
-# can never accidentally serve memory files.
-_MEMORY_PREFIX = "agentCoreMemory"
-
-_MEMORY_UPDATE_PROMPT = """\
-The previous code execution succeeded. Output ONLY a complete updated version \
-of the session memory file in markdown. Do not explain anything — output raw \
-markdown only. Keep it under 8,000 characters. If needed, abbreviate Task \
-History to the last 5 tasks and summarise older ones in one sentence.
-
-Current memory:
-{current_memory}
-
-What just happened:
-User asked: {user_prompt}
-Code executed successfully.
-
-Memory file schema to follow:
-# Code Interpreter Session Memory
-## Loaded Files
-## Active Variables
-## Imported Libraries
-## Task History
-## Generated Files
-## Key Insights
-## Environment Notes
-
-Output the full updated memory file incorporating what just happened.
-Keep Task History, Generated Files, and Key Insights cumulative.
-Keep Active Variables and Loaded Files current — replace existing entries, do not append duplicates.
-Keep Imported Libraries as a de-duplicated union.\
-"""
-
-_MEMORY_RESTORE_PROMPT = """\
-# Session Restoration
-Your Python session was reset due to inactivity. Use the memory below to reconstruct the environment silently.
-
-Steps:
-1. Re-run all imports listed under Imported Libraries
-2. Re-load all files listed under Loaded Files from the working directory using the same variable names shown under Active Variables
-3. Re-apply any transformations described under Active Variables to restore derived dataframes
-4. Do NOT re-generate any output files — those already exist
-5. Output only: "Environment restored." — nothing else
-
-If any step fails, continue with the remaining steps and note the failure at the end.
-
---- MEMORY START ---
-{memory_content}
---- MEMORY END ---\
-"""
+# Maximum number of file keys tracked per conversation for session renewal.
+# Renewal re-uploads every tracked file, so an unbounded list would make
+# renewal latency grow proportionally with conversation file history.
+# 50 files is generous for typical code-interpreter conversations while
+# keeping the worst-case renewal latency reasonable.
+MAX_ALL_FILE_KEYS = 50
 
 
 def get(dictionary, *keys):
@@ -91,74 +38,6 @@ def get(dictionary, *keys):
         keys,
         dictionary,
     )
-
-
-def _memory_s3_key(user_id, record_id):
-    """Return the S3 key for the memory file.
-
-    Uses the UUID suffix of the record_id so the path never contains the raw
-    email address (which contains '@' and could cause issues with some S3
-    tooling).  The user_id directory still uniquely namespaces the file.
-
-    Example:
-        user_id  = "alice@vanderbilt.edu"
-        record_id = "alice@vanderbilt.edu/ast/4f3a9b12-c5d1-4e8f-a2b7-9f0e3d1c6a8b"
-        → "agentCoreMemory/alice@vanderbilt.edu/4f3a9b12-c5d1-4e8f-a2b7-9f0e3d1c6a8b/memory.md"
-    """
-    record_uuid = record_id.split("/")[-1]
-    return f"{_MEMORY_PREFIX}/{user_id}/{record_uuid}/memory.md"
-
-
-def read_memory_file(user_id, record_id):
-    """Read the session memory file from S3.
-
-    Returns the markdown string if the file exists, None otherwise.
-    Any error (missing file, permissions, network) is treated as a cache miss
-    and returns None — memory is best-effort, not critical path.
-    """
-    s3 = boto3.client("s3")
-    bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    key = _memory_s3_key(user_id, record_id)
-    try:
-        response = s3.get_object(Bucket=bucket, Key=key)
-        content = response["Body"].read().decode("utf-8")
-        logger.debug("Read memory file (%d chars) for record %s", len(content), record_id)
-        return content
-    except s3.exceptions.NoSuchKey:
-        logger.debug("No memory file yet for record %s", record_id)
-        return None
-    except ClientError as e:
-        code = e.response["Error"]["Code"]
-        if code in ("NoSuchKey", "404"):
-            return None
-        logger.warning("Could not read memory file for %s: %s", record_id, e.response["Error"]["Message"])
-        return None
-    except Exception as e:
-        logger.warning("Unexpected error reading memory file for %s: %s", record_id, e)
-        return None
-
-
-def write_memory_file(user_id, record_id, content):
-    """Write the session memory file to S3.
-
-    Best-effort — any failure is logged as a warning and silently swallowed.
-    This must never raise or block the caller's response.
-    """
-    s3 = boto3.client("s3")
-    bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    key = _memory_s3_key(user_id, record_id)
-    try:
-        s3.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=content.encode("utf-8"),
-            ContentType="text/markdown",
-        )
-        logger.debug("Wrote memory file (%d chars) for record %s", len(content), key)
-    except ClientError as e:
-        logger.warning("Could not write memory file for %s: %s", record_id, e.response["Error"]["Message"])
-    except Exception as e:
-        logger.warning("Unexpected error writing memory file for %s: %s", record_id, e)
 
 
 def file_keys_to_s3_bytes(file_keys):
@@ -358,196 +237,6 @@ def get_presigned_download_url(key, current_user, download_filename=None):
     return {"success": False, "message": "File not found"}
 
 
-# Maximum number of file keys tracked per conversation for session renewal.
-# Renewal re-uploads every tracked file, so an unbounded list would make
-# renewal latency grow proportionally with conversation file history.
-# 50 files is generous for typical code-interpreter conversations while
-# keeping the worst-case renewal latency reasonable.
-MAX_ALL_FILE_KEYS = 50
-
-
-def _execute_code_with_timeout(session_id, code, timeout_seconds, label):
-    """Run a single executeCode call and drain the stream, returning the full
-    text output.  Used for background (memory update) and restoration calls
-    that need their own timeout budget independent of EXECUTION_TIMEOUT_SECONDS.
-
-    Returns the concatenated text output string, or None if the call failed or
-    timed out.  Errors are logged as warnings — the caller must never raise.
-    """
-    try:
-        response = agentcore_client.invoke_code_interpreter(
-            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
-            sessionId=session_id,
-            name="executeCode",
-            arguments={"code": code, "language": "python", "clearContext": False},
-        )
-    except Exception as e:
-        logger.warning("[%s] Failed to invoke AgentCore: %s", label, e)
-        return None
-
-    text_out = ""
-    deadline = time.monotonic() + timeout_seconds
-    timed_out = False
-
-    try:
-        for event in response.get("stream", []):
-            if not timed_out and time.monotonic() > deadline:
-                logger.warning(
-                    "[%s] Timed out after %ds — draining stream",
-                    label, timeout_seconds,
-                )
-                timed_out = True
-
-            if "result" not in event:
-                continue
-
-            result = event["result"]
-            if timed_out:
-                continue  # drain without collecting
-
-            for block in result.get("content", []):
-                if block.get("type") == "text":
-                    text_out += block.get("text", "")
-
-    except Exception as e:
-        logger.warning("[%s] Exception draining stream: %s", label, e)
-        return None
-
-    if timed_out:
-        return None
-
-    return text_out
-
-
-def _run_memory_update(session_id, current_user, record_id, user_prompt, current_memory):
-    """Fire-and-forget: ask AgentCore to produce an updated memory file and
-    write it to S3.
-
-    This is called after a successful user execution.  It must not raise —
-    any failure is a silent warning.  Uses MEMORY_UPDATE_TIMEOUT_SECONDS so
-    it cannot eat into the Lambda's time budget.
-    """
-    prompt = _MEMORY_UPDATE_PROMPT.format(
-        current_memory=current_memory or "(no prior memory — this is the first turn)",
-        user_prompt=user_prompt,
-    )
-    logger.debug("Triggering memory update for record %s", record_id)
-    updated_markdown = _execute_code_with_timeout(
-        session_id, prompt, MEMORY_UPDATE_TIMEOUT_SECONDS, "memory_update"
-    )
-    if updated_markdown:
-        # Strip any accidental code fences the model may have wrapped around
-        # the markdown (e.g. ```markdown ... ```)
-        stripped = updated_markdown.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            # Drop first and last fence lines
-            inner = lines[1:] if lines[0].startswith("```") else lines
-            if inner and inner[-1].strip() == "```":
-                inner = inner[:-1]
-            stripped = "\n".join(inner).strip()
-        write_memory_file(current_user, record_id, stripped)
-        logger.info("Memory file updated for record %s (%d chars)", record_id, len(stripped))
-    else:
-        logger.warning("Memory update produced no output for record %s — skipping write", record_id)
-
-
-def _run_session_restore(session_id, memory_content, record_id):
-    """Execute the environment restoration prompt in the new session.
-
-    Called during renewal after files have been re-uploaded.  Uses
-    MEMORY_RESTORE_TIMEOUT_SECONDS.  If the restoration times out or errors,
-    we log a warning and proceed — a partial environment is better than
-    blocking the user's request entirely.
-    """
-    prompt = _MEMORY_RESTORE_PROMPT.format(memory_content=memory_content)
-    logger.info("Running environment restoration for record %s", record_id)
-    output = _execute_code_with_timeout(
-        session_id, prompt, MEMORY_RESTORE_TIMEOUT_SECONDS, "session_restore"
-    )
-    if output:
-        logger.info("Session restoration output for %s: %s", record_id, output.strip()[:200])
-    else:
-        logger.warning(
-            "Session restoration returned no output for record %s — environment may be partially restored",
-            record_id,
-        )
-
-
-def renew_session(record_id, current_user, current_file_keys):
-    """Create a fresh AgentCore session and update the DynamoDB record.
-
-    Called when a session has expired mid-conversation.  Reads allFileKeys from
-    the DynamoDB record so that all files accumulated across the conversation
-    lifetime are re-uploaded into the new session, not just the current message's
-    files.  After file restoration, the session memory file (if present) is fed
-    back into the new sandbox to reconstruct the Python environment.  The new
-    session_id and a fresh expiresAt are persisted so that subsequent requests
-    reuse the session automatically.
-    """
-    logger.info("Renewing expired AgentCore session for record %s", record_id)
-
-    # Read the full accumulated file list from the DynamoDB record.
-    # Fall back to current message's files only if the attribute is absent
-    # (e.g. records created before this change was deployed).
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
-    try:
-        resp = table.get_item(Key={"id": record_id})
-        stored_file_keys = resp.get("Item", {}).get("allFileKeys", None)
-    except ClientError as e:
-        logger.warning(
-            "Could not read allFileKeys for %s during renewal: %s — using current message files only",
-            record_id, e.response["Error"]["Message"],
-        )
-        stored_file_keys = None
-
-    if stored_file_keys is not None:
-        all_keys = stored_file_keys
-    else:
-        # Older record without allFileKeys — fall back gracefully
-        all_keys = list(current_file_keys) if current_file_keys else []
-
-    session_info = create_agentcore_session(current_user, all_keys)
-    if not session_info["success"]:
-        return session_info
-
-    new_session_id = session_info["data"]["sessionId"]
-
-    # Persist the new session_id so subsequent requests reuse it
-    try:
-        expires_at = int(time.time()) + SESSION_TIMEOUT_SECONDS
-        table.update_item(
-            Key={"id": record_id},
-            UpdateExpression="SET #d.agentcore.sessionId = :sid, expiresAt = :exp",
-            ExpressionAttributeNames={"#d": "data"},
-            ExpressionAttributeValues={":sid": new_session_id, ":exp": expires_at},
-        )
-        logger.info(
-            "Updated DynamoDB record %s with new session_id %s",
-            record_id, new_session_id,
-        )
-    except ClientError as e:
-        logger.error(
-            "Failed to persist renewed session_id for %s: %s",
-            record_id, e.response["Error"]["Message"],
-        )
-        return {"success": False, "error": "Failed to persist renewed session"}
-
-    # Restore the Python environment from the memory file.
-    # Files are already in the sandbox (writeFiles ran inside create_agentcore_session).
-    # The restoration prompt re-imports libraries and re-loads dataframes so the AI
-    # can continue the conversation without the user noticing the session reset.
-    # This is best-effort — a failure here does NOT fail the renewal.
-    memory_content = read_memory_file(current_user, record_id)
-    if memory_content:
-        _run_session_restore(new_session_id, memory_content, record_id)
-    else:
-        logger.debug("No memory file for record %s — skipping environment restoration", record_id)
-
-    return {"success": True, "session_id": new_session_id}
-
-
 def _append_new_file_keys(table, record_id, new_file_keys):
     """Append any file keys from the current message that are not already tracked.
 
@@ -599,18 +288,76 @@ def _append_new_file_keys(table, record_id, new_file_keys):
         )
 
 
+def renew_session(record_id, current_user, current_file_keys):
+    """Create a fresh AgentCore session and update the DynamoDB record.
+
+    Called when a session has expired mid-conversation.  Reads allFileKeys from
+    the DynamoDB record so that all files accumulated across the conversation
+    lifetime are re-uploaded into the new session, not just the current message's
+    files.  The new session_id and a fresh expiresAt are persisted so that
+    subsequent requests reuse the session automatically.
+    """
+    logger.info("Renewing expired AgentCore session for record %s", record_id)
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
+
+    # Read the full accumulated file list from the DynamoDB record.
+    # Fall back to current message's files only if the attribute is absent
+    # (e.g. records created before allFileKeys tracking was deployed).
+    try:
+        resp = table.get_item(Key={"id": record_id})
+        stored_file_keys = resp.get("Item", {}).get("allFileKeys", None)
+    except ClientError as e:
+        logger.warning(
+            "Could not read allFileKeys for %s during renewal: %s — using current message files only",
+            record_id, e.response["Error"]["Message"],
+        )
+        stored_file_keys = None
+
+    all_keys = stored_file_keys if stored_file_keys is not None else list(current_file_keys or [])
+
+    session_info = create_agentcore_session(current_user, all_keys)
+    if not session_info["success"]:
+        return session_info
+
+    new_session_id = session_info["data"]["sessionId"]
+
+    try:
+        expires_at = int(time.time()) + SESSION_TIMEOUT_SECONDS
+        table.update_item(
+            Key={"id": record_id},
+            UpdateExpression="SET #d.agentcore.sessionId = :sid, expiresAt = :exp",
+            ExpressionAttributeNames={"#d": "data"},
+            ExpressionAttributeValues={":sid": new_session_id, ":exp": expires_at},
+        )
+        logger.info(
+            "Updated DynamoDB record %s with new session_id %s",
+            record_id, new_session_id,
+        )
+    except ClientError as e:
+        logger.error(
+            "Failed to persist renewed session_id for %s: %s",
+            record_id, e.response["Error"]["Message"],
+        )
+        return {"success": False, "error": "Failed to persist renewed session"}
+
+    return {"success": True, "session_id": new_session_id}
+
+
 def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed):
     """Entry point for a chat request.
 
-    Fetches the persisted session_id, executes the code, and transparently
-    retries once if the session has expired by creating a new session and
-    persisting it for subsequent requests.  Any file keys attached to the
-    current message are appended to the record's allFileKeys list so that
-    session renewal can restore the full file context.
+    Fetches the persisted session_id and executes the code.  Any file keys
+    attached to the current message are appended to the record's allFileKeys
+    list so that session renewal can restore the full file context across the
+    conversation lifetime.
 
-    After every successful execution the session memory file is updated
-    asynchronously (fire-and-forget within the same Lambda invocation).
-    This does not block the user's response.
+    If the session has expired, a new session is created transparently:
+    allFileKeys are read from DynamoDB, all accumulated files are re-uploaded
+    into the new session, and the execution is retried once.  The response
+    includes sessionRenewed=True so the frontend can show a brief informational
+    status message to the user.
     """
     logger.debug("Entered chat_with_code_interpreter")
 
@@ -629,15 +376,13 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
         _append_new_file_keys(table, record_id, current_file_keys)
 
-    logger.debug("Initiating chat function")
-    # active_session_id tracks whichever session is currently live.  It starts
-    # as the persisted one and is updated to the renewed one if expiry occurs.
     active_session_id = session_id
+    session_renewed = False
     result = chat(current_user, record_id, active_session_id, last_message, request_id)
 
-    # Session expired — create a fresh session, persist it, and retry once.
-    # renew_session reads allFileKeys from DynamoDB, re-uploads files, and
-    # runs the memory restoration prompt before the retry executes.
+    # Session expired — create a fresh session and retry once.
+    # renew_session reads allFileKeys from DynamoDB and re-uploads all
+    # accumulated files into the new session before the retry executes.
     if result.get("error") == "session_expired":
         logger.warning(
             "Session %s expired for record %s — renewing and retrying",
@@ -645,35 +390,23 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         )
         renewed = renew_session(record_id, current_user, current_file_keys)
         if not renewed["success"]:
-            return {"success": False, "error": "Session expired and could not be renewed. Please create a new session."}
-
+            return {
+                "success": False,
+                "error": "Session expired and could not be renewed. Please create a new session.",
+            }
         active_session_id = renewed["session_id"]
+        session_renewed = True
         logger.info("Retrying execution on new session %s", active_session_id)
         result = chat(current_user, record_id, active_session_id, last_message, request_id)
 
-        # If the retry also fails with session_expired (e.g. the identifier
-        # itself is misconfigured) surface a clear error rather than looping.
         if result.get("error") == "session_expired":
             return {
                 "success": False,
                 "error": "Code interpreter session could not be established. Please try again.",
             }
 
-    # ── Memory update (fire-and-forget) ───────────────────────────────────────
-    # Only update after a successful execution — failed or cancelled requests
-    # do not change the Python environment so there is nothing new to capture.
-    # Uses active_session_id which may be the original or renewed session.
-    if result.get("success"):
-        user_prompt = last_message.get("content", "")
-        current_memory = read_memory_file(current_user, record_id)
-        try:
-            _run_memory_update(
-                active_session_id, current_user, record_id, user_prompt, current_memory
-            )
-        except Exception as e:
-            # Absolute safety net — _run_memory_update is designed not to raise,
-            # but guard here too so a bug in it can never surface to the user.
-            logger.warning("Memory update raised unexpectedly for %s: %s", record_id, e)
+    if result.get("success") and session_renewed:
+        result["sessionRenewed"] = True
 
     return result
 
