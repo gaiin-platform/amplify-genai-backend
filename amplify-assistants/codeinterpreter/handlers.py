@@ -99,6 +99,10 @@ logger = getLogger("code_interpreter")
                 "type": "string",
                 "description": "Status message describing the result",
             },
+            "sessionRenewed": {
+                "type": "boolean",
+                "description": "True when the AgentCore session had expired and was transparently renewed before executing the request. The frontend can display an informational notice to the user when this is true.",
+            },
             "data": {
                 "type": "object",
                 "properties": {

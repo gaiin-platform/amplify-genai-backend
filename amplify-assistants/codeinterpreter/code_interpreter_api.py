@@ -24,13 +24,6 @@ SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS"
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
-# Maximum number of file keys tracked per conversation for session renewal.
-# Renewal re-uploads every tracked file, so an unbounded list would make
-# renewal latency grow proportionally with conversation file history.
-# 50 files is generous for typical code-interpreter conversations while
-# keeping the worst-case renewal latency reasonable.
-MAX_ALL_FILE_KEYS = 50
-
 
 def get(dictionary, *keys):
     return reduce(
@@ -237,85 +230,46 @@ def get_presigned_download_url(key, current_user, download_filename=None):
     return {"success": False, "message": "File not found"}
 
 
-def _append_new_file_keys(table, record_id, new_file_keys):
-    """Append any file keys from the current message that are not already tracked.
+def extract_all_file_keys(messages, amplify_messages=True):
+    """Collect all unique file keys across every message in the conversation.
 
-    Uses a DynamoDB list_append expression so we only write when there are
-    genuinely new keys.  Caps the total at MAX_ALL_FILE_KEYS to keep renewal
-    latency bounded.
+    Used on session renewal so that all files ever attached are re-uploaded
+    into the fresh AgentCore session.
     """
-    if not new_file_keys:
-        return
-
-    try:
-        # Read the current list first so we can diff — avoids a write on every
-        # message when there are no new attachments (the common case).
-        resp = table.get_item(
-            Key={"id": record_id},
-            ProjectionExpression="allFileKeys",
-        )
-        existing = set(resp.get("Item", {}).get("allFileKeys") or [])
-        to_add = [k for k in new_file_keys if k not in existing]
-
-        if not to_add:
-            return  # Nothing new — skip the write
-
-        # Enforce cap: only take as many new keys as fit under the limit
-        available_slots = MAX_ALL_FILE_KEYS - len(existing)
-        if available_slots <= 0:
-            logger.warning(
-                "allFileKeys cap (%d) reached for record %s — new files will not be tracked for renewal",
-                MAX_ALL_FILE_KEYS, record_id,
-            )
-            return
-
-        to_add = to_add[:available_slots]
-
-        table.update_item(
-            Key={"id": record_id},
-            UpdateExpression="SET allFileKeys = list_append(if_not_exists(allFileKeys, :empty), :new)",
-            ExpressionAttributeValues={":new": to_add, ":empty": []},
-        )
-        logger.debug(
-            "Appended %d new file key(s) to record %s (total tracked: %d)",
-            len(to_add), record_id, len(existing) + len(to_add),
-        )
-    except ClientError as e:
-        # Non-fatal — file tracking is best-effort; the current execution proceeds
-        logger.warning(
-            "Failed to append file keys for record %s: %s",
-            record_id, e.response["Error"]["Message"],
-        )
+    seen = set()
+    result = []
+    for msg in (messages or []):
+        if not amplify_messages:
+            keys = msg.get("dataSourceIds", [])
+        elif (
+            msg.get("data")
+            and "dataSources" in msg["data"]
+            and msg["data"]["dataSources"]
+        ):
+            keys = [source["id"] for source in msg["data"]["dataSources"]]
+        else:
+            keys = []
+        for k in keys:
+            if k not in seen:
+                seen.add(k)
+                result.append(k)
+    return result
 
 
-def renew_session(record_id, current_user, current_file_keys):
+def renew_session(record_id, current_user, messages, amplify_messages=True):
     """Create a fresh AgentCore session and update the DynamoDB record.
 
-    Called when a session has expired mid-conversation.  Reads allFileKeys from
-    the DynamoDB record so that all files accumulated across the conversation
-    lifetime are re-uploaded into the new session, not just the current message's
-    files.  The new session_id and a fresh expiresAt are persisted so that
-    subsequent requests reuse the session automatically.
+    Called when a session has expired mid-conversation.  Derives all file keys
+    directly from the full conversation messages so that every file ever
+    attached is re-uploaded into the new session.  The new session_id is
+    persisted so that subsequent requests reuse the session automatically.
     """
     logger.info("Renewing expired AgentCore session for record %s", record_id)
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
 
-    # Read the full accumulated file list from the DynamoDB record.
-    # Fall back to current message's files only if the attribute is absent
-    # (e.g. records created before allFileKeys tracking was deployed).
-    try:
-        resp = table.get_item(Key={"id": record_id})
-        stored_file_keys = resp.get("Item", {}).get("allFileKeys", None)
-    except ClientError as e:
-        logger.warning(
-            "Could not read allFileKeys for %s during renewal: %s — using current message files only",
-            record_id, e.response["Error"]["Message"],
-        )
-        stored_file_keys = None
-
-    all_keys = stored_file_keys if stored_file_keys is not None else list(current_file_keys or [])
+    all_keys = extract_all_file_keys(messages, amplify_messages=amplify_messages)
 
     session_info = create_agentcore_session(current_user, all_keys)
     if not session_info["success"]:
@@ -324,12 +278,11 @@ def renew_session(record_id, current_user, current_file_keys):
     new_session_id = session_info["data"]["sessionId"]
 
     try:
-        expires_at = int(time.time()) + SESSION_TIMEOUT_SECONDS
         table.update_item(
             Key={"id": record_id},
-            UpdateExpression="SET #d.agentcore.sessionId = :sid, expiresAt = :exp",
+            UpdateExpression="SET #d.sessionId = :sid",
             ExpressionAttributeNames={"#d": "data"},
-            ExpressionAttributeValues={":sid": new_session_id, ":exp": expires_at},
+            ExpressionAttributeValues={":sid": new_session_id},
         )
         logger.info(
             "Updated DynamoDB record %s with new session_id %s",
@@ -348,16 +301,13 @@ def renew_session(record_id, current_user, current_file_keys):
 def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed):
     """Entry point for a chat request.
 
-    Fetches the persisted session_id and executes the code.  Any file keys
-    attached to the current message are appended to the record's allFileKeys
-    list so that session renewal can restore the full file context across the
-    conversation lifetime.
+    Fetches the persisted session_id and executes the code.
 
     If the session has expired, a new session is created transparently:
-    allFileKeys are read from DynamoDB, all accumulated files are re-uploaded
-    into the new session, and the execution is retried once.  The response
-    includes sessionRenewed=True so the frontend can show a brief informational
-    status message to the user.
+    all file keys are derived from the full conversation messages and
+    re-uploaded into the new session, and the execution is retried once.
+    The response includes sessionRenewed=True so the frontend can show a
+    brief informational status message to the user.
     """
     logger.debug("Entered chat_with_code_interpreter")
 
@@ -366,29 +316,22 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         return record_existence
 
     session_id = record_existence["session_id"]
-    last_message = extract_last_message(messages, amplify_messages=not api_accessed)
-
-    # Accumulate file keys from this message into the record so renewal can
-    # restore the full file context across the conversation lifetime.
-    current_file_keys = last_message.get("file_keys", [])
-    if current_file_keys:
-        dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
-        _append_new_file_keys(table, record_id, current_file_keys)
+    amplify_messages = not api_accessed
+    last_message = extract_last_message(messages, amplify_messages=amplify_messages)
 
     active_session_id = session_id
     session_renewed = False
     result = chat(current_user, record_id, active_session_id, last_message, request_id)
 
     # Session expired — create a fresh session and retry once.
-    # renew_session reads allFileKeys from DynamoDB and re-uploads all
-    # accumulated files into the new session before the retry executes.
+    # Derive all file keys from the full conversation messages and re-upload
+    # them into the new session before retrying the execution.
     if result.get("error") == "session_expired":
         logger.warning(
             "Session %s expired for record %s — renewing and retrying",
             active_session_id, record_id,
         )
-        renewed = renew_session(record_id, current_user, current_file_keys)
+        renewed = renew_session(record_id, current_user, messages, amplify_messages=amplify_messages)
         if not renewed["success"]:
             return {
                 "success": False,
@@ -771,7 +714,7 @@ def get_record(record_id, current_user):
         if item["user"] != current_user:
             return {"success": False, "error": "Not authorized to access this assistant"}
 
-        session_id = get(item, "data", "agentcore", "sessionId")
+        session_id = get(item, "data", "sessionId")
         if session_id:
             return {"success": True, "record_id": record_id, "session_id": session_id}
         return {"success": False, "error": "Assistant has no active session"}
@@ -824,14 +767,11 @@ def create_new_assistant(user_id, file_keys, account_id="", request_id=""):
         return session_info
 
     record_id = f"{user_id}/ast/{str(uuid.uuid4())}"
-    expires_at = int(time.time()) + SESSION_TIMEOUT_SECONDS
     table.put_item(Item={
         "id": record_id,
         "user": user_id,
         "createdAt": timestamp,
-        "expiresAt": expires_at,
-        "allFileKeys": list(file_keys) if file_keys else [],
-        "data": {"agentcore": {"sessionId": session_info["data"]["sessionId"]}},
+        "data": {"sessionId": session_info["data"]["sessionId"]},
     })
     logger.info("Created code interpreter record %s for user %s", record_id, user_id)
 
@@ -868,7 +808,7 @@ def delete_record_by_id(record_id, user_id):
         return {"success": False, "message": "Not authorized to delete this assistant"}
 
     # Stop the AgentCore session
-    session_id = get(item, "data", "agentcore", "sessionId")
+    session_id = get(item, "data", "sessionId")
     if session_id:
         try:
             agentcore_client.stop_code_interpreter_session(
