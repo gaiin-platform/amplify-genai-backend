@@ -54,14 +54,25 @@ def _notebook_url(path: str, query_params: dict | None = None) -> str:
     return url
 
 
+def _is_ip(hostname: str) -> bool:
+    """Return True if hostname is a bare IP address (v4 or v6)."""
+    import re
+    return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", hostname or "") or
+                re.match(r"^\[?[0-9a-fA-F:]+\]?$", hostname or ""))
+
+
 def _forward_headers(access_token: str) -> dict:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
-    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
-    if host:
-        headers["Host"] = host
+    # Only inject an explicit Host header when connecting to a bare IP address.
+    # For proper hostnames (e.g. the public ALB DNS), let http.client derive
+    # the Host header automatically — overriding it breaks TLS SNI matching.
+    raw_url = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL", "")
+    parsed = urlparse(raw_url)
+    if _is_ip(parsed.hostname):
+        headers["Host"] = parsed.hostname
     return headers
 
 
@@ -238,9 +249,10 @@ def notebook_upload(event, context, current_user, name, data):
         "Authorization": f"Bearer {access_token}",
         "Content-Type": content_type,
     }
-    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
-    if host:
-        headers["Host"] = host
+    raw_url = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL", "")
+    parsed_url = urlparse(raw_url)
+    if _is_ip(parsed_url.hostname):
+        headers["Host"] = parsed_url.hostname
 
     try:
         _, content, _ = _do_request("POST", url, headers, raw_body)
