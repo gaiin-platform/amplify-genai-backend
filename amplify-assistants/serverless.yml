@@ -71,6 +71,10 @@ provider:
 
     # Locally Defined Variables
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
+    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs # old-depricated code interpreter
+    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads # old-depricated code interpreter
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files #Marked for future deletion
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content #Marked for future deletion
     ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
@@ -97,6 +101,8 @@ provider:
     REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
+    S3_SHARE_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_SHARE_BUCKET_NAME} #Marked for future deletion
+    SHARES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/SHARES_DYNAMODB_TABLE}  #Marked for future deletion
 
   iam:
     role:
@@ -555,6 +561,37 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}
 
+    AssistantsFilesBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME} #Marked for future deletion
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
+    GroupAssistantConversationsBucket: #Marked for future deletion
+      Type: 'AWS::S3::Bucket'
+      DeletionPolicy: Retain
+      Properties:
+        BucketName: ${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET', 'PUT']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
     AssistantCodeInterpreterDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -624,6 +661,7 @@ resources:
 
             - Effect: Allow
               Action:
+                - secretsmanager:GetSecretValue
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:GetItem
@@ -641,6 +679,11 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}" #Marked for future deletion
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
@@ -650,8 +693,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
@@ -672,8 +717,14 @@ resources:
 
             - Effect: Allow
               Action:
+                - s3:PutObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}" #Marked for future deletion
+
+            - Effect: Allow
+              Action:
                 - dynamodb:GetItem
-              Resource: 
+              Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
