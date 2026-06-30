@@ -154,6 +154,7 @@ functions:
           path: vu-agent/tools
           method: get
           cors: true
+
 resources:
   Resources:
 
