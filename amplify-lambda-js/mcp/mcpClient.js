@@ -13,6 +13,90 @@ const logger = getLogger('mcpClient');
 const MCP_VERSION = '2024-11-05';
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 
+function validateUrlForSSRF(url) {
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return 'Invalid URL format';
+    }
+
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+        return 'Server URL must use http or https';
+    }
+
+    if (parsed.username || parsed.password) {
+        return 'URLs with embedded credentials are not allowed';
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    if (!hostname) {
+        return 'Server URL must contain a valid hostname';
+    }
+
+    const blockedHostnames = new Set([
+        'localhost',
+        'metadata.google.internal',
+        'metadata.google',
+        'metadata.goog',
+        'kubernetes.default',
+        'kubernetes.default.svc',
+    ]);
+
+    if (blockedHostnames.has(hostname)) {
+        return 'Requests to internal/metadata services are not allowed';
+    }
+
+    if (
+        hostname.endsWith('.localhost') ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.corp') ||
+        hostname.endsWith('.lan') ||
+        hostname.endsWith('.intranet')
+    ) {
+        return 'Requests to internal network domains are not allowed';
+    }
+
+    const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipMatch) {
+        const a = Number(ipMatch[1]);
+        const b = Number(ipMatch[2]);
+        const isBlockedRange = (
+            a === 10 ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) ||
+            a === 127 ||
+            a === 0 ||
+            (a === 169 && b === 254) ||
+            (a === 100 && b >= 64 && b <= 127) ||
+            (a === 198 && (b === 18 || b === 19))
+        );
+
+        if (isBlockedRange) {
+            return 'Requests to private/internal network addresses are not allowed';
+        }
+    }
+
+    const normalizedV6 = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+        normalizedV6 === '::1' ||
+        normalizedV6 === '::' ||
+        normalizedV6.startsWith('fe80:') ||
+        normalizedV6.startsWith('fc00:') ||
+        normalizedV6.startsWith('fd00:') ||
+        normalizedV6.startsWith('::ffff:127.') ||
+        normalizedV6.startsWith('::ffff:10.') ||
+        normalizedV6.startsWith('::ffff:192.168.') ||
+        normalizedV6.startsWith('::ffff:169.254.')
+    ) {
+        return 'Requests to private/internal network addresses are not allowed';
+    }
+
+    return null;
+}
+
 /**
  * MCP Client class for managing connections to MCP servers
  */
@@ -220,6 +304,11 @@ export class MCPClient {
      * Make HTTP request to MCP server
      */
     async _httpRequest(message, expectResponse = true) {
+        const ssrfError = validateUrlForSSRF(this.url);
+        if (ssrfError) {
+            throw new Error(ssrfError);
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
@@ -232,7 +321,8 @@ export class MCPClient {
                     ...this.headers
                 },
                 body: JSON.stringify(message),
-                signal: controller.signal
+                signal: controller.signal,
+                redirect: 'manual'
             });
 
             clearTimeout(timeoutId);

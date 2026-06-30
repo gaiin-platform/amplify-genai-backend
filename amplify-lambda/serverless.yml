@@ -193,6 +193,16 @@ functions:
           method: put
           cors: true
 
+  get_conv_upload_url:
+    handler: state/conversation.get_conversation_upload_url
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/get-upload-url
+          method: get
+          cors: true
+
   delete_conversation:
     handler: state/conversation.delete_conversation
     layers:

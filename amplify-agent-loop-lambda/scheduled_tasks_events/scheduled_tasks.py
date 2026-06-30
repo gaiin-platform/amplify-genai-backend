@@ -1103,6 +1103,7 @@ def find_tasks_to_execute():
                             )
                             continue
 
+
                 except Exception as e:
                     logger.error(f"Error with croniter for task {task_id}: {e}. Skipping.", exc_info=True)
                     continue
