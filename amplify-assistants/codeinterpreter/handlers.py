@@ -1,7 +1,7 @@
 # Copyright (c) 2024 Vanderbilt University
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-from . import code_interpreter_api as assistants
+from . import code_interpreter_api as codeinterpreter
 import random
 import string
 import re
@@ -25,7 +25,7 @@ logger = getLogger("code_interpreter")
     name="chatWithCodeInterpreter",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Initiate a conversation with the Code Interpreter. Each request can append new messages to the existing conversation using a unique assistant ID.
+    description="""Initiate a conversation with the Code Interpreter. Each request can append new messages to the existing conversation using a unique code interpreter record ID.
     Data source keys for files can be found by calling files/query
     Example request:
     {
@@ -108,15 +108,15 @@ logger = getLogger("code_interpreter")
                 "properties": {
                     "sessionId": {
                         "type": "string",
-                        "description": "The assistant/session ID for the conversation",
+                        "description": "The code interpreter record ID for the conversation",
                     },
                     "role": {
                         "type": "string",
-                        "description": "The role of the response (typically 'assistant')",
+                        "description": "The role of the response (typically 'user' or 'assistant')",
                     },
                     "textContent": {
                         "type": "string",
-                        "description": "The text response from the assistant",
+                        "description": "The text response from the code interpreter",
                     },
                     "content": {
                         "type": "array",
@@ -176,7 +176,7 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
     api_accessed = data["api_accessed"]
     request_id = generate_req_id() if api_accessed else data["data"]["requestId"]
 
-    return assistants.chat_with_code_interpreter(
+    return codeinterpreter.chat_with_code_interpreter(
         current_user,
         record_id,
         messages,
@@ -191,7 +191,7 @@ def generate_req_id():
 
 @api_tool(
     path="/assistant/create/codeinterpreter",
-    name="createCodeInterpreterAssistant",
+    name="createCodeInterpreterSession",
     method="POST",
     tags=["apiDocumentation"],
     description="""Create a new AgentCore Code Interpreter session.
@@ -205,7 +205,7 @@ def generate_req_id():
     Example response:
     {
         "success": true,
-        "message": "Assistant created successfully.",
+        "message": "Code interpreter session created successfully.",
         "data": {
             "codeInterpreterRecordId": "yourEmail@vanderbilt.edu/ast/373849029843"
         }
@@ -254,14 +254,14 @@ def generate_req_id():
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
 })
 @validated(op="create")
-def create_code_interpreter_assistant(event, context, current_user, name, data):
+def create_code_interpreter_session(event, context, current_user, name, data):
     extracted_data = data["data"]
     file_keys = extracted_data.get("dataSources", [])
     api_accessed = data["api_accessed"]
     account_id = data["account"] if api_accessed else extracted_data.get("accountId", "")
     request_id = generate_req_id() if api_accessed else extracted_data.get("requestId", generate_req_id())
 
-    return assistants.create_new_assistant(
+    return codeinterpreter.create_new_session(
         user_id=current_user,
         file_keys=file_keys,
         account_id=account_id,
@@ -271,10 +271,10 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
 
 @api_tool(
     path="/assistant/agentcore/session/delete",
-    name="deleteCodeInterpreterAssistant",
+    name="deleteCodeInterpreterSession",
     method="DELETE",
     tags=["apiDocumentation"],
-    description="""Delete a Code Interpreter assistant instance, permanently removing it from the platform and stopping its underlying AgentCore session.
+    description="""Delete a Code Interpreter session, permanently removing the record from the platform and stopping its underlying AgentCore session.
 
     Example request (via query parameter):
     DELETE /assistant/agentcore/session/delete?codeInterpreterRecordId=yourEmail@vanderbilt.edu/ast/38940562397049823
@@ -309,7 +309,7 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
     "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
 })
 @validated(op="delete")
-def delete_assistant(event, context, current_user, name, data):
+def delete_code_interpreter_session(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
     logger.debug("Query params: %s", query_params)
     record_id = query_params.get("codeInterpreterRecordId", "")
@@ -321,7 +321,7 @@ def delete_assistant(event, context, current_user, name, data):
             "message": "Invalid or missing codeInterpreterRecordId parameter",
         }
     logger.info("Deleting code interpreter record: %s", record_id)
-    return assistants.delete_record_by_id(record_id, current_user)
+    return codeinterpreter.delete_record_by_id(record_id, current_user)
 
 
 @api_tool(
@@ -329,7 +329,7 @@ def delete_assistant(event, context, current_user, name, data):
     name="downloadCodeInterpreterFiles",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Download files generated by the Code Interpreter assistant via pre-signed URLs.
+    description="""Download files generated by the Code Interpreter via pre-signed URLs.
 
     Example request:
     {
@@ -382,7 +382,7 @@ def get_presigned_url_code_interpreter(event, context, current_user, name, data)
     key = data["key"]
     file_name = data.get("fileName", None)
 
-    return assistants.get_presigned_download_url(key, current_user, file_name)
+    return codeinterpreter.get_presigned_download_url(key, current_user, file_name)
 
 
 def is_valid_query_param_id(id, current_user, prefix):

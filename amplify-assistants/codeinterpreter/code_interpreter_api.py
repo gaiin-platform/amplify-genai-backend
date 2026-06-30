@@ -280,9 +280,12 @@ def renew_session(record_id, current_user, messages, amplify_messages=True):
     try:
         table.update_item(
             Key={"id": record_id},
-            UpdateExpression="SET #d.sessionId = :sid",
+            UpdateExpression="SET #d.sessionId = :sid, updatedAt = :ts",
             ExpressionAttributeNames={"#d": "data"},
-            ExpressionAttributeValues={":sid": new_session_id},
+            ExpressionAttributeValues={
+                ":sid": new_session_id,
+                ":ts": int(time.time() * 1000),
+            },
         )
         logger.info(
             "Updated DynamoDB record %s with new session_id %s",
@@ -321,7 +324,7 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
 
     active_session_id = session_id
     session_renewed = False
-    result = chat(current_user, record_id, active_session_id, last_message, request_id)
+    result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed)
 
     # Session expired — create a fresh session and retry once.
     # Derive all file keys from the full conversation messages and re-upload
@@ -340,7 +343,7 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         active_session_id = renewed["session_id"]
         session_renewed = True
         logger.info("Retrying execution on new session %s", active_session_id)
-        result = chat(current_user, record_id, active_session_id, last_message, request_id)
+        result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed)
 
         if result.get("error") == "session_expired":
             return {
@@ -455,7 +458,7 @@ def _send_stop_task(session_id, task_id):
         logger.warning("Failed to send stopTask for task %s: %s", task_id, e)
 
 
-def chat(current_user, record_id, session_id, last_message, request_id):
+def chat(current_user, record_id, session_id, last_message, request_id, api_accessed=False):
     """Execute code via AgentCore and return structured results.
 
     AgentCore is a stateless code execution sandbox — it does not maintain
@@ -474,8 +477,8 @@ def chat(current_user, record_id, session_id, last_message, request_id):
     stream. Instead we check the kill switch before starting and drain the stream
     as fast as possible, sending stopTask after the stream closes if cancelled.
     """
-    # Check kill switch before starting execution
-    if request_killed and request_id:
+    # Check kill switch before starting execution (skip for direct API access — no frontend managing request state)
+    if not api_accessed and request_killed and request_id:
         try:
             if request_killed(current_user, request_id):
                 logger.info("Request %s cancelled before execution", request_id)
@@ -540,7 +543,8 @@ def chat(current_user, record_id, session_id, last_message, request_id):
             # ── Kill-switch check ──────────────────────────────────────────────
             # We cannot call stopTask here (same thread, blocking stream) so we
             # drain the stream and send stopTask after the loop if cancelled.
-            if not cancelled and request_killed and request_id:
+            # Skip for direct API access — no frontend managing request state.
+            if not api_accessed and not cancelled and request_killed and request_id:
                 try:
                     if request_killed(current_user, request_id):
                         logger.info("Request %s cancelled during stream — draining", request_id)
@@ -708,16 +712,16 @@ def get_record(record_id, current_user):
         response = table.get_item(Key={"id": record_id})
 
         if "Item" not in response:
-            return {"success": False, "error": "Assistant not found"}
+            return {"success": False, "error": "Code interpreter record not found"}
 
         item = response["Item"]
         if item["user"] != current_user:
-            return {"success": False, "error": "Not authorized to access this assistant"}
+            return {"success": False, "error": "Not authorized to access this code interpreter session"}
 
         session_id = get(item, "data", "sessionId")
         if session_id:
             return {"success": True, "record_id": record_id, "session_id": session_id}
-        return {"success": False, "error": "Assistant has no active session"}
+        return {"success": False, "error": "Code interpreter record has no active session"}
 
     except ClientError as e:
         logger.error("ClientError: %s", e.response["Error"]["Message"])
@@ -752,7 +756,7 @@ def create_agentcore_session(user_id, file_keys):
         return {"success": False, "error": f"Failed to create AgentCore session: {e}"}
 
 
-def create_new_assistant(user_id, file_keys, account_id="", request_id=""):
+def create_new_session(user_id, file_keys, account_id="", request_id=""):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
     timestamp = int(time.time() * 1000)
@@ -770,7 +774,9 @@ def create_new_assistant(user_id, file_keys, account_id="", request_id=""):
     table.put_item(Item={
         "id": record_id,
         "user": user_id,
+        "assistant": "AgentCoreCodeInterpreter",
         "createdAt": timestamp,
+        "updatedAt": timestamp,
         "data": {"sessionId": session_info["data"]["sessionId"]},
     })
     logger.info("Created code interpreter record %s for user %s", record_id, user_id)
@@ -785,7 +791,7 @@ def create_new_assistant(user_id, file_keys, account_id="", request_id=""):
 
     return {
         "success": True,
-        "message": "Assistant created successfully",
+        "message": "Code interpreter session created successfully",
         "data": {"codeInterpreterRecordId": record_id},
     }
 
@@ -798,14 +804,14 @@ def delete_record_by_id(record_id, user_id):
         response = table.get_item(Key={"id": record_id})
     except ClientError as e:
         logger.error("ClientError: %s", e.response["Error"]["Message"])
-        return {"success": False, "message": "Assistant not found"}
+        return {"success": False, "message": "Code interpreter record not found"}
 
     if "Item" not in response:
-        return {"success": False, "message": "Assistant not found"}
+        return {"success": False, "message": "Code interpreter record not found"}
 
     item = response["Item"]
     if item["user"] != user_id:
-        return {"success": False, "message": "Not authorized to delete this assistant"}
+        return {"success": False, "message": "Not authorized to delete this code interpreter session"}
 
     # Stop the AgentCore session
     session_id = get(item, "data", "sessionId")
@@ -829,6 +835,6 @@ def delete_record_by_id(record_id, user_id):
         table.delete_item(Key={"id": record_id})
     except ClientError as e:
         logger.error("ClientError: %s", e.response["Error"]["Message"])
-        return {"success": False, "message": "Failed to delete assistant record from database"}
+        return {"success": False, "message": "Failed to delete code interpreter record from database"}
 
-    return {"success": True, "message": "Assistant deleted successfully"}
+    return {"success": True, "message": "Code interpreter session deleted successfully"}
