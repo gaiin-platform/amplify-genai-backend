@@ -1,0 +1,103 @@
+* Ensure you are working off the `dev` branch and follow the instructions for setting up environment variables files in `/var`.  From this Readme https://github.com/karnsab/amplify-lambda-mono/blob/dev/README.md   
+
+The `ORGANIZATION_EMAIL_DOMAIN` environment variable needs to be added to all `.env` var/ files. 
+
+* Ensure you have a .env.local file at the root of the directory used for running locally with lambda-js.
+
+
+
+
+## Running `lambda-js` Locally 
+
+To run `lambda-js` with `localServer.js`:
+
+1. Navigate to the `amplify-lambda-js` directory:
+
+```bash
+cd amplify-lambda-js/
+```
+
+2. Install the dependencies if you haven't already:
+
+```bash
+npm i
+```
+
+3. Ensure AWS credentials are located in ~/.aws/credentials and AWS_PROFILE env var matches
+
+
+4. Run the local server from root:
+
+```bash
+node amplify-lambda-js/local/localServer.js
+```
+
+
+
+## Running Lambda with Serverless Offline
+
+### Install Serverless
+
+First, install Serverless globally:
+
+```bash
+npm install -g serverless
+```
+
+Then, install the necessary Serverless plugins:
+
+```bash
+npm install --save-dev @serverless/compose
+
+npm install --save-dev serverless-offline
+
+sls plugin install -n serverless-python-requirements
+
+```
+
+After navigating to the `amplify-lambda` directory, install any additional dependencies:
+
+```bash
+npm i
+```
+
+### Run Serverless Offline
+
+You can run Serverless offline for `amplify-lambda` using one of the following methods,
+where <stage> corresponds to the appropriate deployment stage ('dev', 'staging', 'prod'):
+
+1. Directly from the repository root directory:
+
+```bash
+serverless amplify-lambda:offline --httpPort 3015 --stage <stage> 
+```
+
+2. By navigating to the `amplify-lambda` directory:
+
+```bash
+cd amplify-lambda
+serverless offline --httpPort 3015 --stage <stage>
+```
+
+
+## Running Amplify
+
+To have Amplify running and pointed to your local lambda versions, follow these steps:
+
+1. Add the necessary variables to your `.env.local` file:
+
+```
+API_BASE_URL=http://localhost:3015
+CHAT_ENDPOINT=http://localhost:8000
+```
+
+2. Start the development server:
+
+```bash
+npm run dev
+```
+
+3. Open [http://localhost:3000](http://localhost:3000) in your browser to view the application.
+
+
+
