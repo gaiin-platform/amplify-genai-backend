@@ -216,7 +216,7 @@ functions:
   # This endpoint is mainly for local testing but doesn't have
   # a long enough timeout for use when running in AWS behind API Gateway
   create_code_int_ast:
-    handler: codeinterpreter/handlers.create_code_interpreter_assistant
+    handler: codeinterpreter/handlers.create_code_interpreter_session
     timeout: 30
     events:
       - http:
@@ -240,7 +240,7 @@ functions:
   #   url: true
     
   delete_agentcore_session:
-    handler: codeinterpreter/handlers.delete_assistant
+    handler: codeinterpreter/handlers.delete_code_interpreter_session
     events:
       - http:
           path: assistant/agentcore/session/delete
