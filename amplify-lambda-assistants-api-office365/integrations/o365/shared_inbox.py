@@ -411,14 +411,13 @@ def list_shared_mailbox_folders(
     """
     Lists mail folders in a shared Exchange mailbox.
 
-    When include_child_folders is True, child folders are fetched in a single
-    request per top-level folder using Graph API's $expand=childFolders, avoiding
-    the N+1 request pattern of fetching children individually.
+    When include_child_folders is True, recursively fetches all nested child
+    folders at every depth level using the /childFolders Graph API endpoint.
 
     Args:
         current_user: Amplify user identifier
         mailbox_email: Email address of the shared mailbox
-        include_child_folders: Whether to include child folders (default: True)
+        include_child_folders: Whether to recursively include all nested folders (default: True)
         access_token: Amplify API access token
 
     Returns:
@@ -426,29 +425,39 @@ def list_shared_mailbox_folders(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/mailFolders"
 
-        folder_select = "id,displayName,totalItemCount,unreadItemCount,parentFolderId"
-        params: Dict = {
-            "$select": folder_select,
-            "$top": 100,
-        }
-        if include_child_folders:
-            # $expand=childFolders fetches one level of children in the same
-            # request, eliminating a separate HTTP call per top-level folder.
-            params["$expand"] = f"childFolders($select={folder_select})"
+        folder_select = "id,displayName,totalItemCount,unreadItemCount,parentFolderId,childFolderCount"
 
-        response = session.get(url, params=params)
-        if not response.ok:
-            _handle_graph_error(response)
+        def _fetch_folders(url: str) -> List[Dict]:
+            """Fetch all pages of folders from a given URL."""
+            folders = []
+            next_url = url
+            while next_url:
+                response = session.get(next_url, params={"$select": folder_select, "$top": 100} if "?" not in next_url else None)
+                if not response.ok:
+                    _handle_graph_error(response)
+                body = response.json()
+                folders.extend(body.get("value", []))
+                next_url = body.get("@odata.nextLink")
+            return folders
 
-        folders = response.json().get("value", [])
+        def _recurse_children(folder_id: str, result: List[Dict]) -> None:
+            """Recursively fetch and append all child folders for a given folder ID."""
+            child_url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/mailFolders/{folder_id}/childFolders"
+            children = _fetch_folders(child_url)
+            for child in children:
+                result.append(_extract_folder(child))
+                if child.get("childFolderCount", 0) > 0:
+                    _recurse_children(child["id"], result)
+
+        top_level_url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/mailFolders"
+        top_folders = _fetch_folders(top_level_url)
+
         result = []
-        for f in folders:
+        for f in top_folders:
             result.append(_extract_folder(f))
-            if include_child_folders:
-                for child in f.get("childFolders", []):
-                    result.append(_extract_folder(child))
+            if include_child_folders and f.get("childFolderCount", 0) > 0:
+                _recurse_children(f["id"], result)
 
         return result
 
@@ -562,6 +571,45 @@ def delete_shared_mailbox_draft(
 
     except requests.RequestException as e:
         raise SharedInboxError(f"Network error deleting shared mailbox draft: {str(e)}")
+
+
+def move_shared_mailbox_message(
+    current_user: str,
+    mailbox_email: str,
+    message_id: str,
+    destination_folder_id: str,
+    access_token: str = None,
+) -> Dict:
+    """
+    Moves a message to a different folder in a shared Exchange mailbox.
+
+    Args:
+        current_user: Amplify user identifier
+        mailbox_email: Email address of the shared mailbox (e.g. support@example.com)
+        message_id: Graph API message ID of the message to move
+        destination_folder_id: Target folder ID or well-known name
+                               (e.g. "Inbox", "Drafts", "SentItems", "DeletedItems", "Junk")
+        access_token: Amplify API access token
+
+    Returns:
+        Dict containing the moved message details (id, subject, isDraft, etc.)
+
+    Raises:
+        SharedMessageNotFoundError: If the message does not exist
+        SharedInboxError: For other failures
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/move"
+        payload = {"destinationId": destination_folder_id}
+        response = session.post(url, json=payload)
+        if not response.ok:
+            _handle_graph_error(response)
+
+        return _format_message(response.json())
+
+    except requests.RequestException as e:
+        raise SharedInboxError(f"Network error moving shared mailbox message: {str(e)}")
 
 
 def add_shared_mailbox_draft_attachment(

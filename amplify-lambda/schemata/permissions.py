@@ -81,6 +81,7 @@ permissions_by_state_type = {
     "/state/accounts/get": {"get": can_read},
     "/state/accounts/save": {"save": can_save},
     "/state/conversation/upload": {"conversation_upload": can_upload},
+    "/state/conversation/get-upload-url": {"conversation_upload": can_upload},
     "/state/conversation/register": {"conversation_upload": can_upload},
     "/state/conversation/get/multiple": {"get_multiple_conversations": can_read},
     "/state/conversation/get": {"read": can_read},
