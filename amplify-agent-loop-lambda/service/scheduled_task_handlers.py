@@ -82,6 +82,30 @@ logger = getLogger("scheduled_task_handlers")
                 "description": "Email addresses to notify (optional)",
             },
             "timeZone": {"type": "string", "description": "Time zone for scheduling"},
+            "exclusionsEnabled": {
+                "type": "boolean",
+                "description": "Whether the exclusion rules panel is enabled",
+            },
+            "excludedDaysOfWeek": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Days of the week to skip (e.g. ['MON', 'FRI'])",
+            },
+            "excludedWeeksOfMonth": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Weeks of the month to skip (1-5)",
+            },
+            "excludedMonths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Months to skip (e.g. ['JAN', 'JUL'])",
+            },
+            "excludedDates": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific dates to skip (ISO format)",
+            },
         },
         "required": [
             "taskName",
@@ -125,6 +149,11 @@ def create_scheduled_task_handler(
     notify_on_failure=False,
     notify_email_addresses=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     try:
         logger.info("Creating scheduled task with object_info: %s", object_info)
@@ -145,6 +174,11 @@ def create_scheduled_task_handler(
             access_token=access_token,
             account=account_id,
             time_zone=time_zone,
+            exclusions_enabled=exclusions_enabled,
+            excluded_days_of_week=excluded_days_of_week,
+            excluded_weeks_of_month=excluded_weeks_of_month,
+            excluded_months=excluded_months,
+            excluded_dates=excluded_dates,
         )
         return {
             "success": True,
@@ -336,6 +370,30 @@ def list_scheduled_tasks_handler(current_user, access_token):
                 "description": "Email addresses to notify (optional)",
             },
             "timeZone": {"type": "string", "description": "Time zone for scheduling"},
+            "exclusionsEnabled": {
+                "type": "boolean",
+                "description": "Whether the exclusion rules panel is enabled",
+            },
+            "excludedDaysOfWeek": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Days of the week to skip (e.g. ['MON', 'FRI'])",
+            },
+            "excludedWeeksOfMonth": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Weeks of the month to skip (1-5)",
+            },
+            "excludedMonths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Months to skip (e.g. ['JAN', 'JUL'])",
+            },
+            "excludedDates": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific dates to skip (ISO format)",
+            },
         },
         "required": ["taskId"],
     },
@@ -368,6 +426,11 @@ def update_scheduled_task_handler(
     notify_on_failure=None,
     notify_email_addresses=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     try:
         result = update_scheduled_task(
@@ -386,6 +449,11 @@ def update_scheduled_task_handler(
             notify_on_failure=notify_on_failure,
             notify_email_addresses=notify_email_addresses,
             time_zone=time_zone,
+            exclusions_enabled=exclusions_enabled,
+            excluded_days_of_week=excluded_days_of_week,
+            excluded_weeks_of_month=excluded_weeks_of_month,
+            excluded_months=excluded_months,
+            excluded_dates=excluded_dates,
         )
         return result
     except Exception as e:
