@@ -30,6 +30,11 @@ def create_scheduled_task(
     access_token=None,
     account=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     """
     Create a new scheduled task.
@@ -112,6 +117,16 @@ def create_scheduled_task(
         item["notifyOnFailure"] = serializer.serialize(notify_on_failure)
     if notify_email_addresses:
         item["notifyEmailAddresses"] = serializer.serialize(notify_email_addresses)
+    if exclusions_enabled is not None:
+        item["exclusionsEnabled"] = serializer.serialize(exclusions_enabled)
+    if excluded_days_of_week is not None:
+        item["excludedDaysOfWeek"] = serializer.serialize(excluded_days_of_week)
+    if excluded_weeks_of_month is not None:
+        item["excludedWeeksOfMonth"] = serializer.serialize(excluded_weeks_of_month)
+    if excluded_months is not None:
+        item["excludedMonths"] = serializer.serialize(excluded_months)
+    if excluded_dates is not None:
+        item["excludedDates"] = serializer.serialize(excluded_dates)
 
     try:
         # Insert the task into the DynamoDB table
@@ -188,6 +203,13 @@ def get_scheduled_task(current_user, task_id, access_token=None):
             result["notifyOnFailure"] = task["notifyOnFailure"]
         if "notifyEmailAddresses" in task:
             result["notifyEmailAddresses"] = task["notifyEmailAddresses"]
+
+        # Always return exclusion fields so frontend gets consistent data
+        result["exclusionsEnabled"] = bool(task.get("exclusionsEnabled", False))
+        result["excludedDaysOfWeek"] = list(task.get("excludedDaysOfWeek", []) or [])
+        result["excludedWeeksOfMonth"] = [int(w) for w in (task.get("excludedWeeksOfMonth", []) or [])]
+        result["excludedMonths"] = list(task.get("excludedMonths", []) or [])
+        result["excludedDates"] = list(task.get("excludedDates", []) or [])
 
         return result
 
@@ -289,6 +311,11 @@ def update_scheduled_task(
     notify_on_failure=None,
     notify_email_addresses=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     """
     Update an existing scheduled task.
@@ -330,8 +357,8 @@ def update_scheduled_task(
         expression_attribute_names = {}
         expression_attribute_values = {}
 
-        def add_to_update(field_name, param_value, dynamo_field=None):
-            if param_value is not None:
+        def add_to_update(field_name, param_value, dynamo_field=None, always=False):
+            if param_value is not None or always:
                 if dynamo_field is None:
                     dynamo_field = field_name
                 placeholder = f":val{len(expression_attribute_values)}"
@@ -357,6 +384,11 @@ def update_scheduled_task(
         add_to_update("notifyEmailAddresses", notify_email_addresses)
         add_to_update("updatedAt", datetime.now().isoformat())
         add_to_update("timeZone", time_zone)
+        add_to_update("exclusionsEnabled", exclusions_enabled if exclusions_enabled is not None else False, always=True)
+        add_to_update("excludedDaysOfWeek", excluded_days_of_week or [], always=True)
+        add_to_update("excludedWeeksOfMonth", excluded_weeks_of_month or [], always=True)
+        add_to_update("excludedMonths", excluded_months or [], always=True)
+        add_to_update("excludedDates", excluded_dates or [], always=True)
 
         # If nothing to update
         if not update_expression_parts:
