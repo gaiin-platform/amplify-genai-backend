@@ -774,3 +774,4 @@ resources:
                 - bedrock-agentcore:InvokeCodeInterpreter
               Resource:
                 - "arn:aws:bedrock-agentcore:${aws:region}:${aws:accountId}:code-interpreter/*"
+                - "arn:aws:bedrock-agentcore:${aws:region}:aws:code-interpreter/*"
