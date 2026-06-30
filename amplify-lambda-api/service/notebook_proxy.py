@@ -4,8 +4,9 @@ Lambda handlers that proxy requests from the Amplify frontend to the Open
 Notebook service running inside the ai-pod VPC. Three endpoints:
 
   POST /notebook/proxy       — JSON requests/responses
-  POST /notebook/proxy/raw   — Binary responses (e.g. podcast audio), returned
-                               as base64-encoded data in a JSON envelope
+  POST /notebook/proxy/raw   — Audio presigned-URL resolution; rewrites /audio
+                               to /audio-url and returns the S3 presigned URL as
+                               JSON so large audio blobs never pass through Lambda
   POST /notebook/upload      — Multipart file uploads forwarded to /api/sources
 
 The Lambda is VPC-attached to vpc-0da53fc9ca1356120 so it can reach the Open
@@ -167,16 +168,24 @@ def notebook_proxy(event, context, current_user, name, data):
 
 
 # ---------------------------------------------------------------------------
-# POST /notebook/proxy/raw  — Binary proxy (audio blobs)
+# POST /notebook/proxy/raw  — Audio presigned-URL proxy
 # ---------------------------------------------------------------------------
 
 @required_env_vars({"OPEN_NOTEBOOK_INTERNAL_URL": []})
 @validated("proxy")
 def notebook_proxy_raw(event, context, current_user, name, data):
-    """Forward a request to Open Notebook and return binary content as base64.
+    """Forward an audio-URL request to Open Notebook and return the presigned URL.
+
+    The frontend calls this with path /podcasts/episodes/{id}/audio.  We rewrite
+    that to /podcasts/episodes/{id}/audio-url so Open Notebook returns a short-lived
+    S3 presigned URL (or a fallback streaming path) as JSON instead of streaming
+    the entire MP3 binary through Lambda (which is capped at ~6 MB / 10 MB and
+    would break for large audio files).
 
     Response shape:
-      { "success": true, "data": { "content_type": "audio/mpeg", "data_b64": "<base64>" } }
+      { "success": true, "data": { "url": "<presigned-url>", "type": "presigned" } }
+    or for non-S3 backends:
+      { "success": true, "data": { "url": "/api/...", "type": "stream" } }
     """
     payload = data.get("data", {})
     method = (payload.get("method") or "GET").upper()
@@ -188,21 +197,20 @@ def notebook_proxy_raw(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
+    # Rewrite /audio -> /audio-url so we get a JSON presigned URL response
+    # instead of streaming the full MP3 binary through Lambda/API-Gateway.
+    if path.endswith("/audio") and not path.endswith("/audio-url"):
+        path = path + "-url"
+
     url = _notebook_url(path, query_params)
     logger.info("notebook_proxy_raw: %s %s user=%s", method, url, current_user)
 
     body_bytes = json.dumps(body).encode("utf-8") if body is not None else None
 
     try:
-        _, content, content_type = _do_request(method, url, _forward_headers(access_token), body_bytes)
-        data_b64 = base64.b64encode(content).decode("utf-8")
-        return {
-            "success": True,
-            "data": {
-                "content_type": content_type,
-                "data_b64": data_b64,
-            },
-        }
+        _, content, _ = _do_request(method, url, _forward_headers(access_token), body_bytes)
+        result = json.loads(content) if content else {}
+        return {"success": True, "data": result}
     except HTTPError as e:
         logger.error("notebook_proxy_raw upstream error: %s", e.code)
         return {"success": False, "message": f"Upstream error {e.code}", "data": None}
