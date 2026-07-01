@@ -5,10 +5,19 @@ from typing import Dict, List, Optional
 from integrations.oauth import get_ms_graph_session
 from integrations.o365.html_utils import html_to_plain_text
 
+from pycommon.logger import getLogger
+
 integration_name = "microsoft_exchange"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
-from pycommon.logger import getLogger
+# Graph message IDs are mutable — they change when a message is moved to a
+# different folder (by anyone, including other users of the shared mailbox).
+# Requesting the immutable ID type makes Graph return stable IDs that survive
+# moves, preventing spurious 404s when acting on a previously-fetched message ID.
+# Applied per-call on message operations only; folder IDs are already stable.
+# See: https://learn.microsoft.com/en-us/graph/outlook-immutable-id
+_IMMUTABLE_ID_HEADER = {"Prefer": 'IdType="ImmutableId"'}
+
 logger = getLogger(integration_name)
 
 
@@ -127,7 +136,7 @@ def list_shared_mailbox_messages(
                 "$orderby": "receivedDateTime desc",
             }
 
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -168,7 +177,7 @@ def get_shared_mailbox_message(
             select_fields = "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,importance,isRead,isDraft,conversationId,bodyPreview"
 
         params = {"$select": select_fields}
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -200,7 +209,7 @@ def get_shared_mailbox_attachments(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments"
         params = {"$select": "id,name,contentType,size,isInline,lastModifiedDateTime"}
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -260,7 +269,7 @@ def download_shared_mailbox_attachment(
         metadata_url = (
             f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments/{attachment_id}"
         )
-        metadata_response = session.get(metadata_url)
+        metadata_response = session.get(metadata_url, headers=_IMMUTABLE_ID_HEADER)
 
         if not metadata_response.ok:
             if metadata_response.status_code == 404:
@@ -291,7 +300,7 @@ def download_shared_mailbox_attachment(
                     f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
                     f"/attachments/{attachment_id}/$value"
                 )
-                content_response = session.get(content_url)
+                content_response = session.get(content_url, headers=_IMMUTABLE_ID_HEADER)
 
                 if content_response.ok:
                     result["contentBytes"] = base64.b64encode(content_response.content).decode("utf-8")
@@ -380,7 +389,7 @@ def search_shared_mailbox_messages(
             "$select": select_fields,
         }
 
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -521,7 +530,7 @@ def create_shared_mailbox_draft(
                 {"emailAddress": {"address": addr}} for addr in bcc_recipients
             ]
 
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -602,7 +611,7 @@ def move_shared_mailbox_message(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/move"
         payload = {"destinationId": destination_folder_id}
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -651,7 +660,7 @@ def add_shared_mailbox_draft_attachment(
             "contentBytes": content_bytes,
             "isInline": is_inline,
         }
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
