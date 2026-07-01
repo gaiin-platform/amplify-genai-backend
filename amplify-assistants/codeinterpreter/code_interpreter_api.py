@@ -519,7 +519,9 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     except Exception as e:
         logger.error("Failed to invoke AgentCore code interpreter: %s", e)
         err_str = str(e)
-        if "ResourceNotFoundException" in err_str:
+        if "ResourceNotFoundException" in err_str or (
+            "ValidationException" in err_str and "not active" in err_str
+        ):
             return {"success": False, "error": "session_expired"}
         return {"success": False, "error": f"Failed to invoke code interpreter: {err_str}"}
 
@@ -566,7 +568,9 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
             if err_key:
                 err_msg = event[err_key].get("message", err_key)
                 logger.error("AgentCore stream error '%s': %s", err_key, err_msg)
-                if err_key == "resourceNotFoundException":
+                if err_key == "resourceNotFoundException" or (
+                    err_key == "validationException" and "not active" in err_msg.lower()
+                ):
                     return {"success": False, "error": "session_expired"}
                 return {"success": False, "error": err_msg}
 

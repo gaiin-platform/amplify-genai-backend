@@ -106,7 +106,7 @@ logger = getLogger("code_interpreter")
             "data": {
                 "type": "object",
                 "properties": {
-                    "sessionId": {
+                    "codeInterpreterRecordId": {
                         "type": "string",
                         "description": "The code interpreter record ID for the conversation",
                     },
