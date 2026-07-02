@@ -37,7 +37,7 @@ export_schema = {
                     "id": {"type": "string"},
                     "date": {"type": ["string", "null"]},
                     "name": {"type": "string"},
-                    "type": {"type": "string", "enum": ["chat", "workflow", "prompt", "root_prompt"]},
+                    "type": {"type": "string", "enum": ["chat", "workflow", "prompt"]},
                 },
                 "required": ["id", "name", "type"],
             },
@@ -53,7 +53,7 @@ export_schema = {
                     "content": {"type": "string"},
                     "model": {"type": ["object", "null"]},
                     "folderId": {"type": ["string", "null"]},
-                    "type": {"type": ["string", "null"], "enum": ["prompt", "root_prompt"]},
+                    "type": {"type": ["string", "null"]},
                     "data": {
                         "type": "object",
                         "properties": {
@@ -72,7 +72,7 @@ export_schema = {
                     "type",
                 ],
             },
-               "required": ["version", "history", "folders", "prompts"],
         },
-    }
+    },
+    "required": ["version", "history", "folders", "prompts"],
 }
