@@ -3,6 +3,10 @@ import requests
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.attachment_staging import (
+    DOWNLOAD_URL_TTL_SECONDS,
+    stage_attachment_for_download,
+)
 from integrations.o365.html_utils import html_to_plain_text, markdown_to_html
 from integrations.o365.admin_config import get_default_timezone_windows
 
@@ -404,10 +408,22 @@ def download_attachment(
                     result["contentBytes"] = attachment_metadata.get("contentBytes")
                     result["deliveryMethod"] = "metadata_content"
             else:
-                # Large file - return download URL to avoid API Gateway limits
-                result["downloadUrl"] = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                # Large file — the raw Graph $value URL is useless to callers
+                # (it requires OUR Graph token, so it always 401s). Fetch the
+                # bytes server-side and stage in S3; the caller gets a
+                # pre-signed URL that needs no auth.
+                content_url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                content_response = session.get(content_url)
+                if not content_response.ok:
+                    handle_graph_error(content_response)
+
+                result["downloadUrl"] = stage_attachment_for_download(
+                    content_response.content,
+                    attachment_metadata.get("name"),
+                    attachment_metadata.get("contentType"),
+                )
                 result["deliveryMethod"] = "download_url"
-                result["note"] = f"File too large ({file_size:,} bytes) for direct API response. Use downloadUrl with authentication headers."
+                result["note"] = f"File too large ({file_size:,} bytes) for direct API response. downloadUrl is a pre-signed URL valid for {DOWNLOAD_URL_TTL_SECONDS // 60} minutes — fetch it without auth headers."
                 
             return result
             

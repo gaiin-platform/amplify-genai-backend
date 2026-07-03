@@ -3,6 +3,10 @@ import json
 import requests
 from typing import Dict, List, Optional
 from integrations.oauth import get_ms_graph_session
+from integrations.o365.attachment_staging import (
+    DOWNLOAD_URL_TTL_SECONDS,
+    stage_attachment_for_download,
+)
 from integrations.o365.html_utils import html_to_plain_text
 
 from pycommon.logger import getLogger
@@ -241,9 +245,10 @@ def download_shared_mailbox_attachment(
     Downloads a specific attachment from a message in a shared Exchange mailbox.
 
     For files under 7MB, returns base64-encoded content directly in the response.
-    For larger files, returns a temporary download URL to avoid API Gateway limits
-    (API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
-    so 7MB is the safe threshold).
+    For larger files, the content is fetched server-side, staged in S3, and a
+    pre-signed download URL is returned to avoid API Gateway limits (API Gateway
+    has a 10MB response limit; base64 encoding adds ~33% overhead, so 7MB is the
+    safe threshold). The pre-signed URL must be fetched WITHOUT auth headers.
 
     Handles three Graph API attachment types:
     - fileAttachment: Returns base64 contentBytes or a download URL
@@ -310,15 +315,28 @@ def download_shared_mailbox_attachment(
                     result["contentBytes"] = attachment_metadata.get("contentBytes")
                     result["deliveryMethod"] = "metadata_content"
             else:
-                # Large file — caller must fetch using the download URL with auth headers
-                result["downloadUrl"] = (
+                # Large file — the raw Graph $value URL is useless to callers
+                # (it requires OUR Graph token, which they don't have, so it
+                # always 401s). Fetch the bytes server-side and stage them in
+                # S3; the caller gets a pre-signed URL that needs no auth.
+                content_url = (
                     f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
                     f"/attachments/{attachment_id}/$value"
+                )
+                content_response = session.get(content_url, headers=_IMMUTABLE_ID_HEADER)
+                if not content_response.ok:
+                    _handle_graph_error(content_response)
+
+                result["downloadUrl"] = stage_attachment_for_download(
+                    content_response.content,
+                    attachment_metadata.get("name"),
+                    attachment_metadata.get("contentType"),
                 )
                 result["deliveryMethod"] = "download_url"
                 result["note"] = (
                     f"File too large ({file_size:,} bytes) for direct API response. "
-                    f"Use downloadUrl with an Authorization: Bearer header."
+                    f"downloadUrl is a pre-signed URL valid for "
+                    f"{DOWNLOAD_URL_TTL_SECONDS // 60} minutes — fetch it without auth headers."
                 )
 
             return result

@@ -1053,7 +1053,7 @@ def get_attachments_handler(current_user, data):
     path="/microsoft/integrations/download_attachment",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftDownloadAttachment",
-    description="Downloads a specific attachment from a message. Files under 7MB return base64 content directly. Larger files return download URLs to avoid API Gateway limits.",
+    description="Downloads a specific attachment from a message. Files under 7MB return base64 content directly. Larger files return a pre-signed download URL (fetch it without auth headers) to avoid API Gateway limits.",
     parameters={
         "type": "object",
         "properties": {
@@ -4046,7 +4046,7 @@ def get_shared_mailbox_attachments_handler(current_user, data):
     path="/microsoft/integrations/download_shared_mailbox_attachment",
     tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
     name="microsoftDownloadSharedMailboxAttachment",
-    description="Downloads a specific attachment from a message in a shared Exchange mailbox. Files under 7MB return base64-encoded content directly. Larger files return a download URL to avoid API Gateway limits.",
+    description="Downloads a specific attachment from a message in a shared Exchange mailbox. Files under 7MB return base64-encoded content directly. Larger files return a pre-signed download URL (fetch it without auth headers) to avoid API Gateway limits.",
     parameters={
         "type": "object",
         "properties": {

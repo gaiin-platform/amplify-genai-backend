@@ -57,6 +57,10 @@ provider:
     
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    # Staging area for mailbox attachments too large for a direct API Gateway
+    # response — served back to callers via pre-signed URL (see
+    # integrations/o365/attachment_staging.py). 1-day lifecycle expiration.
+    ATTACHMENT_STAGING_BUCKET: ${self:service}-${sls:stage}-attachments
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -126,6 +130,28 @@ resources:
             path: /microsoft/integrations/{proxy+}
             method: POST
 
+    # Short-lived staging for mailbox attachments >7MB (see
+    # integrations/o365/attachment_staging.py). Callers receive a pre-signed
+    # GET URL; the lifecycle rule cleans up staged objects after a day.
+    AttachmentStagingBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.ATTACHMENT_STAGING_BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: DeleteStagedAttachments
+              Status: Enabled
+              ExpirationInDays: 1
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -188,6 +214,13 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.ATTACHMENT_STAGING_BUCKET}/*"
 
             - Effect: Allow
               Action:
