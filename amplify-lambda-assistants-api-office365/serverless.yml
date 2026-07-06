@@ -57,6 +57,7 @@ provider:
     
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    SHARED_MAILBOX_ATTACHMENTS_BUCKET: !Ref SharedMailboxAttachmentsBucket
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -112,6 +113,24 @@ functions:
 resources:
   Resources:
 
+    # Staging bucket for large shared-mailbox attachments (>7MB).
+    # Objects are automatically expired after 1 day — these may contain PII
+    # (e.g. financial documents) and must not persist longer than necessary.
+    SharedMailboxAttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: !Sub "amplify-${self:custom.depName}-mailbox-attachments-${sls:stage}"
+        LifecycleConfiguration:
+          Rules:
+            - Id: ExpireAttachmentsAfterOneDay
+              Status: Enabled
+              ExpirationInDays: 1
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
@@ -140,10 +159,6 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
-                - s3:GetObject
-                - s3:PutObject
-                - s3:ListBucket
-                - s3:DeleteObject
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -155,6 +170,19 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - !Sub "arn:aws:s3:::${SharedMailboxAttachmentsBucket}/*"
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${SharedMailboxAttachmentsBucket}"
 
             - Effect: Allow
               Action:
