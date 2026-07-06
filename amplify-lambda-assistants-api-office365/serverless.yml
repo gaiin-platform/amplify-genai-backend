@@ -57,7 +57,6 @@ provider:
     
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    SHARED_MAILBOX_ATTACHMENTS_BUCKET: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
@@ -65,6 +64,7 @@ provider:
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
@@ -112,7 +112,6 @@ functions:
 
 resources:
   Resources:
-
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
@@ -159,12 +158,12 @@ resources:
                 - s3:GetObject
                 - s3:DeleteObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.SHARED_MAILBOX_ATTACHMENTS_BUCKET}/sharedMailboxAttachments/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/sharedMailboxAttachments/*"
             - Effect: Allow
               Action:
                 - s3:ListBucket
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.SHARED_MAILBOX_ATTACHMENTS_BUCKET}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
 
             - Effect: Allow
               Action:
