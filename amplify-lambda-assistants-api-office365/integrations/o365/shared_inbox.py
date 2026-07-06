@@ -1,5 +1,8 @@
 import base64
 import json
+import os
+import uuid
+import boto3
 import requests
 from typing import Dict, List, Optional
 from integrations.oauth import get_ms_graph_session
@@ -241,9 +244,10 @@ def download_shared_mailbox_attachment(
     Downloads a specific attachment from a message in a shared Exchange mailbox.
 
     For files under 7MB, returns base64-encoded content directly in the response.
-    For larger files, returns a temporary download URL to avoid API Gateway limits
-    (API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
-    so 7MB is the safe threshold).
+    For larger files, fetches the bytes server-side (using the Lambda's own Graph
+    session), stages them in S3, and returns a short-lived presigned URL.
+    API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
+    so 7MB is the safe threshold for inline delivery.
 
     Handles three Graph API attachment types:
     - fileAttachment: Returns base64 contentBytes or a download URL
@@ -310,15 +314,45 @@ def download_shared_mailbox_attachment(
                     result["contentBytes"] = attachment_metadata.get("contentBytes")
                     result["deliveryMethod"] = "metadata_content"
             else:
-                # Large file — caller must fetch using the download URL with auth headers
-                result["downloadUrl"] = (
+                # Large file — fetch bytes server-side (Lambda has the Graph session),
+                # stage in S3, and return a short-lived presigned URL.
+                # Returning a raw Graph URL would require the caller to hold a Graph
+                # OAuth token, which they do not — they only have an Amplify API key.
+                content_url = (
                     f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
                     f"/attachments/{attachment_id}/$value"
                 )
-                result["deliveryMethod"] = "download_url"
+                content_response = session.get(content_url, headers=_IMMUTABLE_ID_HEADER)
+                if not content_response.ok:
+                    _handle_graph_error(content_response)
+
+                bucket_name = os.environ["SHARED_MAILBOX_ATTACHMENTS_BUCKET"]
+                safe_filename = attachment_metadata.get("name", "attachment")
+                s3_key = f"shared-mailbox/{current_user}/{uuid.uuid4().hex}/{safe_filename}"
+
+                s3_client = boto3.client("s3")
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=content_response.content,
+                    ContentType=attachment_metadata.get("contentType", "application/octet-stream"),
+                )
+
+                # Presigned URLs embed auth in the query string — 1-hour TTL is
+                # enough for any downstream processing pipeline.
+                presigned_url = s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": bucket_name, "Key": s3_key},
+                    ExpiresIn=3600,
+                )
+
+                result["downloadUrl"] = presigned_url
+                result["deliveryMethod"] = "presigned_url"
                 result["note"] = (
                     f"File too large ({file_size:,} bytes) for direct API response. "
-                    f"Use downloadUrl with an Authorization: Bearer header."
+                    f"Fetch downloadUrl directly — do NOT add an Authorization header. "
+                    f"S3 presigned URLs embed credentials in the query string; attaching "
+                    f"a second auth mechanism will cause S3 to reject the request."
                 )
 
             return result
