@@ -326,7 +326,7 @@ def download_shared_mailbox_attachment(
                 if not content_response.ok:
                     _handle_graph_error(content_response)
 
-                bucket_name = os.environ["SHARED_MAILBOX_ATTACHMENTS_BUCKET"]
+                bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
                 safe_filename = attachment_metadata.get("name", "attachment")
                 s3_key = f"sharedMailboxAttachments/{current_user}/{uuid.uuid4().hex}/{safe_filename}"
 
