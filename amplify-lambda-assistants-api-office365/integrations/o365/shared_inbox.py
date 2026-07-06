@@ -328,7 +328,7 @@ def download_shared_mailbox_attachment(
 
                 bucket_name = os.environ["SHARED_MAILBOX_ATTACHMENTS_BUCKET"]
                 safe_filename = attachment_metadata.get("name", "attachment")
-                s3_key = f"shared-mailbox/{current_user}/{uuid.uuid4().hex}/{safe_filename}"
+                s3_key = f"sharedMailboxAttachments/{current_user}/{uuid.uuid4().hex}/{safe_filename}"
 
                 s3_client = boto3.client("s3")
                 s3_client.put_object(

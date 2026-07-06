@@ -1335,6 +1335,10 @@ resources:
               Status: Enabled
               Prefix: conversion/
               ExpirationInDays: 1
+            - Id: SharedMailboxAttachmentsCleanup
+              Status: Enabled
+              Prefix: sharedMailboxAttachments/
+              ExpirationInDays: 1
         NotificationConfiguration:
           LambdaConfigurations:
             - Event: s3:ObjectCreated:*
