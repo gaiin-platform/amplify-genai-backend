@@ -834,19 +834,6 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
                 firstFewGroups: Object.keys(allGroups).slice(0, 3),
                 dataStructure: typeof allGroups
             });
-
-            // Debug: Log the structure of the first group to see if rateLimit exists
-            const firstGroupName = Object.keys(allGroups)[0];
-            if (firstGroupName) {
-                const firstGroup = allGroups[firstGroupName];
-                logger.info("First group structure for debugging", {
-                    groupName: firstGroupName,
-                    keys: Object.keys(firstGroup),
-                    hasRateLimit: 'rateLimit' in firstGroup,
-                    rateLimit: firstGroup.rateLimit,
-                    rawData: JSON.stringify(firstGroup).substring(0, 500)
-                });
-            }
             
         } catch (groupsError) {
             logger.error("Error fetching amplify groups", { 
@@ -1196,14 +1183,6 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
                 (groupData.costs.total / platformTotalCost) * 100 : 0;
         }
 
-        // Debug: Log Admins group info
-        if (billingGroupsData['Admins']) {
-            logger.info("Admins group final data", {
-                name: billingGroupsData['Admins'].groupInfo.name,
-                rateLimit: billingGroupsData['Admins'].groupInfo.rateLimit,
-                costs: billingGroupsData['Admins'].costs
-            });
-        }
 
         const totalDuration = Date.now() - startTime;
         
