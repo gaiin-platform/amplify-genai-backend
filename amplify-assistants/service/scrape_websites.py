@@ -8,6 +8,7 @@ import boto3
 import json
 import requests
 import xmltodict
+import pytz
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
