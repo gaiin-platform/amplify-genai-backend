@@ -704,14 +704,16 @@ def process_assistant_websites(assistant, access_token, force_rescan=False, grou
                 needs_rescan = True
                 if last_scanned:
                     last_scan_date = datetime.fromisoformat(last_scanned)
-                    time_since_scan = datetime.now() - last_scan_date
+                    # Use UTC now to match timezone-aware lastScanned date
+                    current_time = datetime.now(pytz.utc)
+                    time_since_scan = current_time - last_scan_date
 
                     # For quarterly schedules (85-95 days), use calendar quarter comparison
                     # This ensures quarterly rescans align with calendar quarters (Q1, Q2, Q3, Q4)
                     # rather than fixed 90-day intervals, matching the cron expression "*/3" months
                     if 85 <= int(scan_frequency) <= 95:
                         last_scan_quarter = (last_scan_date.month - 1) // 3
-                        current_quarter = (datetime.now().month - 1) // 3
+                        current_quarter = (current_time.month - 1) // 3
                         needs_rescan = current_quarter != last_scan_quarter
                         logger.debug("  -> Quarterly rescan check: last_quarter=%d, current_quarter=%d, needs_rescan=%s",
                                    last_scan_quarter, current_quarter, needs_rescan)
