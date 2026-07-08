@@ -705,6 +705,8 @@ def process_assistant_websites(assistant, access_token, force_rescan=False, grou
                 needs_rescan = True
                 if last_scanned:
                     last_scan_date = datetime.fromisoformat(last_scanned)
+                    if last_scan_date.tzinfo is None:
+                        last_scan_date = last_scan_date.replace(tzinfo=pytz.utc)
                     # Use UTC now to match timezone-aware lastScanned date
                     current_time = datetime.now(pytz.utc)
                     time_since_scan = current_time - last_scan_date
