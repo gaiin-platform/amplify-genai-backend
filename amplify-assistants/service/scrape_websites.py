@@ -8,6 +8,7 @@ import boto3
 import json
 import requests
 import xmltodict
+import pytz
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -704,10 +705,26 @@ def process_assistant_websites(assistant, access_token, force_rescan=False, grou
                 needs_rescan = True
                 if last_scanned:
                     last_scan_date = datetime.fromisoformat(last_scanned)
-                    time_since_scan = datetime.now() - last_scan_date
-                    needs_rescan = time_since_scan >= timedelta(days=int(scan_frequency))
-                    logger.debug("  -> Time since last scan: %s days", time_since_scan.days)
-                    logger.debug("  -> Needs rescan: %s (frequency: %s days)", needs_rescan, scan_frequency)
+                    if last_scan_date.tzinfo is None:
+                        last_scan_date = last_scan_date.replace(tzinfo=pytz.utc)
+                    # Use UTC now to match timezone-aware lastScanned date
+                    current_time = datetime.now(pytz.utc)
+                    time_since_scan = current_time - last_scan_date
+
+                    # For quarterly schedules (85-95 days), use calendar quarter comparison
+                    # This ensures quarterly rescans align with calendar quarters (Q1, Q2, Q3, Q4)
+                    # rather than fixed 90-day intervals, matching the cron expression "*/3" months
+                    if 85 <= int(scan_frequency) <= 95:
+                        last_scan_quarter = (last_scan_date.month - 1) // 3
+                        current_quarter = (current_time.month - 1) // 3
+                        needs_rescan = current_quarter != last_scan_quarter
+                        logger.debug("  -> Quarterly rescan check: last_quarter=%d, current_quarter=%d, needs_rescan=%s",
+                                   last_scan_quarter, current_quarter, needs_rescan)
+                    else:
+                        # For daily, weekly, monthly: use time-based comparison
+                        needs_rescan = time_since_scan >= timedelta(days=int(scan_frequency))
+                        logger.debug("  -> Time since last scan: %s days", time_since_scan.days)
+                        logger.debug("  -> Needs rescan: %s (frequency: %s days)", needs_rescan, scan_frequency)
                 else:
                     logger.debug("  -> Needs rescan: %s (never scanned)", needs_rescan)
             
