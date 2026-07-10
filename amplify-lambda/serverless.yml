@@ -33,8 +33,8 @@ custom:
     strip: true
       
     # uncomment in case of issues with pythonRequirement layers not uploading to aws
-    # useStaticCache: false
-    # useDownloadCache: false
+    useStaticCache: false
+    useDownloadCache: false
 
   prune:
     automatic: true
