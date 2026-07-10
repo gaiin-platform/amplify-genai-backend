@@ -899,10 +899,47 @@ def process_document_for_rag(event, context):
                         else:
                             logger.info("🆕 New document %s - processing", key)
                         try:
+                        # if its a pdf insert the new logic here
                             text = asyncio.run(
                                 extract_text_from_file(file_extension, file_content, user, account_data)
                             )
                             logger.info("Extracted text from %s", key)
+
+                            # Experimental: render full PDF pages as images and transcribe them via
+                            # the vision LLM (rag.handlers.visual_to_text). This complements the
+                            # existing embedded-image extraction, which only captures raster image
+                            # objects and misses vector-drawn charts/diagrams/tables. Guarded by an
+                            # env var kill-switch and fully isolated: any failure here is logged and
+                            # swallowed so it can NEVER break primary text extraction.
+                            if (
+                                file_extension == ".pdf"
+                                and account_data
+                                and isinstance(text, list)
+                                and os.environ.get("ENABLE_PDF_FULL_PAGE_IMAGES", "true").lower() == "true"
+                            ):
+                                try:
+                                    # Persist rendered page images durably to the file-text
+                                    # bucket (no S3 event notifications configured on it, so
+                                    # this can never recursively re-trigger RAG/embedding
+                                    # processing). Verifiable directly in CloudWatch logs + S3.
+                                    full_page_chunks = asyncio.run(
+                                        PDFHandler().process_full_page_visuals(
+                                            file_content, user, account_data,
+                                            s3_bucket=os.environ.get("S3_FILE_TEXT_BUCKET_NAME"),
+                                            s3_key_prefix=f"{key}/pages",
+                                        )
+                                    )
+                                    if full_page_chunks:
+                                        text.extend(full_page_chunks)
+                                        logger.info(
+                                            "Added %d full-page image chunk(s) for %s", len(full_page_chunks), key
+                                        )
+                                except Exception as full_page_error:
+                                    logger.warning(
+                                        "Full-page PDF image processing failed for %s (continuing without it): %s",
+                                        key, str(full_page_error)
+                                    )
+
                             total_tokens = sum(d.get("tokens", 0) for d in text)
                             total_items = len(text)
                         except Exception as extract_error:
@@ -1599,3 +1636,5 @@ if __name__ == "__main__":
     logger.info("Looking for file at: %s", file_path)
     result = test_extract_text_locally(file_path)
     logger.info("Extracted %d chunks", len(result))
+
+    
