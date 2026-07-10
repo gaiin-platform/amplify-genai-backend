@@ -4,6 +4,7 @@
 import io
 import pypdfium2 as pdfium
 import fitz  # PyMuPDF for PDF modification
+import boto3
 from enum import Enum
 
 from rag.handlers.text import TextExtractionHandler
@@ -11,6 +12,11 @@ from rag.handlers.shared_functions import hash_visual_data, format_visual_chunk_
 
 from pycommon.logger import getLogger
 logger = getLogger("rag_pdf")
+
+# Client used only for durably persisting rendered full-page images to S3
+# (separate from the transient save/delete round-trip in visual_to_text.py
+# that is used purely to feed the vision LLM).
+s3_client = boto3.client("s3")
 
 PNG = "image/png"
 
@@ -520,3 +526,143 @@ class PDFHandler(TextExtractionHandler):
             }
         except:
             return {"region": "unknown"}
+
+    ### Full-Page Image Rendering (complements embedded-image extraction above) ###
+    def render_full_page_visuals(self, file_content, dpi=150, s3_bucket=None, s3_key_prefix=None):
+        """
+        Render every page of the PDF to a full-page PNG image using PyMuPDF.
+
+        This complements extract_page_images()/extract_page_visuals() above, which
+        only capture embedded RASTER image objects. Vector-drawn charts, diagrams,
+        and tables (which are not stored as raster images) are invisible to that
+        extraction path but ARE captured here since we rasterize the whole page.
+
+        Returns a visual_map dict (marker -> visual_data) using the same schema as
+        extract_image_object_data(), so it can be fed straight into
+        batch_process_visuals() / format_visual_chunk_data() unchanged.
+        Never raises - returns {} on any failure.
+
+        If s3_bucket and s3_key_prefix are both provided, each rendered page PNG
+        is ALSO durably persisted to s3://{s3_bucket}/{s3_key_prefix}/page_{n}.png.
+        This is separate from (and unaffected by) the transient save/delete
+        round-trip that visual_to_text.py performs purely to feed the vision LLM -
+        that temporary copy is deleted after transcription, this durable copy is not.
+        Upload failures are logged and swallowed; they never affect the returned
+        visual_map or raise.
+        """
+        visual_map = {}
+
+        if not file_content:
+            logger.warning("Empty or None file content. Returning empty full-page visual map.")
+            return visual_map
+
+        try:
+            doc = fitz.open(stream=file_content, filetype="pdf")
+        except Exception as e:
+            logger.error("Error opening PDF for full-page rendering: %s", e)
+            return visual_map
+
+        try:
+            zoom = dpi / 72.0
+            matrix = fitz.Matrix(zoom, zoom)
+
+            for page_index in range(doc.page_count):
+                page_number = page_index + 1
+                try:
+                    page = doc.load_page(page_index)
+                    pixmap = page.get_pixmap(matrix=matrix)
+                    image_bytes = pixmap.tobytes("png")
+
+                    if not image_bytes:
+                        logger.warning("No image bytes produced for full-page render of page %d", page_number)
+                        continue
+
+                    marker = f"<FullPageImage#{page_number}>"
+                    visual_map[marker] = {
+                        "type": VisualType.IMAGE.value,
+                        "format": PNG,
+                        "data": image_bytes,
+                        "hash": hash_visual_data(image_bytes),
+                        "location": {
+                            "page_number": page_number,
+                        },
+                        "alt_text": "",
+                        "title": f"Full page render of page {page_number}",
+                        "hyperlink": "",
+                    }
+
+                    # Durably persist the page image to S3 (proper, non-temporary
+                    # storage). Fully isolated: never raises, only logs on failure.
+                    if s3_bucket and s3_key_prefix:
+                        try:
+                            page_image_key = f"{s3_key_prefix}/page_{page_number}.png"
+                            s3_client.put_object(
+                                Bucket=s3_bucket,
+                                Key=page_image_key,
+                                Body=image_bytes,
+                                ContentType=PNG,
+                            )
+                            logger.info(
+                                "Persisted full-page image for page %d to s3://%s/%s",
+                                page_number, s3_bucket, page_image_key
+                            )
+                        except Exception as upload_error:
+                            logger.error(
+                                "Failed to persist full-page image for page %d to s3://%s/%s (continuing): %s",
+                                page_number, s3_bucket, s3_key_prefix, upload_error
+                            )
+                except Exception as page_error:
+                    logger.error("Error rendering full-page image for page %d: %s", page_number, page_error)
+                    continue
+
+        except Exception as e:
+            logger.error("Error rendering full-page visuals from PDF: %s", e)
+        finally:
+            doc.close()
+
+        logger.debug("Rendered %d full-page visual(s) from PDF", len(visual_map))
+        return visual_map
+
+    async def process_full_page_visuals(self, file_content, current_user, account_data, s3_bucket=None, s3_key_prefix=None):
+        """
+        Render every PDF page as a full-page image and run it through the existing
+        vision-LLM transcription pipeline (rag.handlers.visual_to_text), returning
+        RAG chunks for any page that produced a meaningful transcription.
+
+        If s3_bucket and s3_key_prefix are provided, each rendered page image is
+        ALSO durably persisted to S3 (see render_full_page_visuals docstring).
+
+        Fully isolated from the primary text-extraction path: never raises. Any
+        failure results in an empty list being returned so callers can safely
+        `extend()` their existing chunk list with the result.
+        """
+        visual_map = self.render_full_page_visuals(
+            file_content, s3_bucket=s3_bucket, s3_key_prefix=s3_key_prefix
+        )
+        if not visual_map:
+            return []
+
+        try:
+            # ! Import here to avoid circular imports (same pattern used in
+            # rag.core.extract_text_from_file)
+            from rag.handlers.visual_to_text import batch_process_visuals
+
+            processed_visuals = await batch_process_visuals(visual_map, current_user, account_data)
+        except ImportError as e:
+            logger.warning("Full-page visual processing not available (circular import): %s", e)
+            return []
+        except Exception as e:
+            logger.error("Error batch processing full-page visuals: %s", e)
+            return []
+
+        chunks = []
+        for marker, visual_data in processed_visuals.items():
+            if visual_data.get("transcription"):
+                try:
+                    chunks.append(format_visual_chunk_data(visual_data, self.num_tokens_from_string))
+                except Exception as format_error:
+                    logger.error("Error formatting full-page visual chunk %s: %s", marker, format_error)
+                    continue
+
+        logger.info("Formatted %d full-page image chunk(s) from %d rendered page(s)", len(chunks), len(visual_map))
+        return chunks
