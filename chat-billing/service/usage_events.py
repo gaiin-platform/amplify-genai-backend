@@ -11,7 +11,10 @@ serverless.yml. Producers send fail-safe JSON events shaped like:
 
     {
       "type": "llm_usage",            # or "additional_charge"
-      "user": "alice@vanderbilt.edu", # required — real email, becomes account["user"]
+      "user": "alice@vanderbilt.edu", # required — real email; rewritten to the
+                                      # canonical Amplify id (Cognito sub for
+                                      # migrated users) before recording, so
+                                      # notebook and chat costs share one identity
       "account_id": "1234-5678",      # optional COA override; when absent (the
                                       # normal case) the user's default account
                                       # is resolved from ACCOUNTS_DYNAMO_TABLE
@@ -79,6 +82,11 @@ _model_id_cache: Dict[str, str] = {}
 _account_cache: Dict[str, Tuple[str, float]] = {}
 ACCOUNT_CACHE_TTL_SECONDS = 300
 
+# Cache of canonical user ids: email -> (canonical_id, cached_at_epoch). Long
+# TTL — the email->user_id mapping only changes on an identity migration.
+_canonical_user_cache: Dict[str, Tuple[str, float]] = {}
+CANONICAL_USER_CACHE_TTL_SECONDS = 3600
+
 
 def _model_has_rate(model_id: str) -> bool:
     """Returns True if MODEL_RATE_TABLE has a row for this exact model id."""
@@ -125,8 +133,60 @@ def resolve_model_id(reported_model_id: str) -> Optional[str]:
     return None
 
 
+def resolve_canonical_user(email: str) -> str:
+    """Map a reported email to the identity Amplify chat bills under.
+
+    amplify-lambda-js (common/handlers.js) uses the user's row key in
+    COGNITO_USERS_DYNAMODB_TABLE as current_user — the Cognito sub for
+    migrated users, the plain email for legacy rows. Chat-usage rows,
+    cost-calculations rows, Accounts rows, and the MTD cost views are all
+    keyed by that same id, so recording notebook usage under anything else
+    would split a user's costs across two identities. Resolution:
+
+      1. a row keyed by the email itself  -> the email is canonical
+      2. a row whose `email` attribute matches -> that row's user_id (the sub)
+      3. no row at all -> the email, unchanged
+
+    Step 2 is a filtered Scan (no GSI on email), which is fine: the table is
+    tiny (tens of users) and results are cached for an hour. Failures resolve
+    to the email itself and are not cached.
+    """
+    cached = _canonical_user_cache.get(email)
+    if cached and (time.time() - cached[1]) < CANONICAL_USER_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    canonical = email
+    try:
+        table = dynamodb.Table(os.environ["COGNITO_USERS_DYNAMODB_TABLE"])
+        if "Item" not in table.get_item(Key={"user_id": email}):
+            from boto3.dynamodb.conditions import Attr
+
+            scan_kwargs: Dict[str, Any] = {
+                "FilterExpression": Attr("email").eq(email),
+                "ProjectionExpression": "user_id",
+            }
+            while True:
+                resp = table.scan(**scan_kwargs)
+                items = resp.get("Items", [])
+                if items:
+                    canonical = str(items[0]["user_id"])
+                    break
+                if "LastEvaluatedKey" not in resp:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    except Exception as e:
+        logger.error("resolve_canonical_user failed for %s: %s", email, str(e))
+        return email  # don't cache failures
+
+    _canonical_user_cache[email] = (canonical, time.time())
+    return canonical
+
+
 def resolve_default_account(user: str) -> str:
     """Resolve the user's default COA from ACCOUNTS_DYNAMO_TABLE.
+
+    `user` must already be the canonical id (see resolve_canonical_user) —
+    the Accounts table is keyed by the same id Amplify chat uses.
 
     Mirrors the frontend's home-state derivation (home.tsx): the account with
     isDefault=true, else the noCoaAccount ("general_account"). There is no
@@ -320,6 +380,10 @@ def _process_additional_charge(body: Dict[str, Any]) -> None:
         "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
         "MODEL_RATE_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
         "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+        "COGNITO_USERS_DYNAMODB_TABLE": [
+            DynamoDBOperation.GET_ITEM,
+            DynamoDBOperation.SCAN,
+        ],
     }
 )
 @track_execution(operation_name="process_usage_event_from_sqs", account="system")
@@ -349,6 +413,20 @@ def process_usage_event_from_sqs(event: dict, context) -> dict:
                 user = body.get("user", "unknown") if isinstance(body, dict) else "unknown"
                 _report_billing_data_loss(message_id, reason, body, user)
                 continue  # don't retry malformed data
+
+            # Producers send the user's email; rewrite it to the canonical id
+            # Amplify chat bills under (Cognito sub for migrated users) BEFORE
+            # any recording or COA lookup, keeping the original email in the
+            # details for readability.
+            reported_user = body["user"]
+            canonical_user = resolve_canonical_user(reported_user)
+            if canonical_user != reported_user:
+                body["user"] = canonical_user
+                details = body.get("details")
+                if not isinstance(details, dict):
+                    details = {}
+                details.setdefault("email", reported_user)
+                body["details"] = details
 
             event_type = body["type"]
 
