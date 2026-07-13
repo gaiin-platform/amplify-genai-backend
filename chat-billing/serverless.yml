@@ -77,11 +77,13 @@ provider:
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
+    USAGE_EVENTS_SQS_QUEUE_NAME: ${self:service}-${sls:stage}-usage-events
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
@@ -152,7 +154,20 @@ functions:
           path: models/register_ops
           method: post
           cors: true
-  
+
+  process_usage_events:
+    handler: service/usage_events.process_usage_event_from_sqs
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - sqs:
+          arn: !GetAtt UsageEventsQueue.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+          functionResponseType: ReportBatchItemFailures
+
+
 resources:
   Resources:
 
@@ -191,6 +206,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -213,6 +230,13 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.USAGE_EVENTS_SQS_QUEUE_NAME}"
     # model rates needed for usage cost calculations
     ModelRateTable:
       Type: 'AWS::DynamoDB::Table'
@@ -250,4 +274,35 @@ resources:
           - AttributeName: 'id'
             KeyType: 'HASH'
 
-  
+    # receives usage events from external services (e.g. Open Notebook) whose
+    # LLM/embedding calls happen outside the Amplify request path; drained by
+    # process_usage_events into the standard accounting tables
+    UsageEventsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.USAGE_EVENTS_SQS_QUEUE_NAME}-dlq
+        MessageRetentionPeriod: 1209600  # 14 days
+
+    UsageEventsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.USAGE_EVENTS_SQS_QUEUE_NAME}
+        VisibilityTimeout: 180  # 6x Lambda timeout
+        MessageRetentionPeriod: 345600  # 4 days
+        ReceiveMessageWaitTimeSeconds: 20  # Long polling
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt UsageEventsDeadLetterQueue.Arn
+          maxReceiveCount: 3  # Retry 3 times before DLQ
+
+  Outputs:
+    UsageEventsQueueArn:
+      Value: !GetAtt UsageEventsQueue.Arn
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-UsageEventsQueueArn"
+
+    UsageEventsQueueUrl:
+      Value: !Ref UsageEventsQueue
+      Export:
+        Name:
+          Fn::Sub: "${sls:stage}-UsageEventsQueueUrl"
