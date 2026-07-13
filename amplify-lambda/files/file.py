@@ -503,9 +503,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
         "statusUrl": "<statusUrl>",
         "contentUrl": "<contentUrl>",
         "metadataUrl": "<metadataUrl>",
-        "key": "yourEmail@vanderbilt.edu/date/293088.json",
-        "name": "fileName.pdf",
-        "type": "application/pdf"
+        "key": "yourEmail@vanderbilt.edu/date/293088.json"
     }
 
     The user can use the presigned url 'uploadUrl' to upload their file to Amplify.
@@ -563,14 +561,6 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
             "key": {
                 "type": "string",
                 "description": "Unique identifier for the uploaded file",
-            },
-            "name": {
-                "type": "string",
-                "description": "Original filename of the uploaded file",
-            },
-            "type": {
-                "type": "string",
-                "description": "MIME type of the uploaded file",
             },
         },
         "required": ["success"],
@@ -634,14 +624,6 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
             "key": {
                 "type": "string",
                 "description": "Unique identifier for the uploaded file",
-            },
-            "name": {
-                "type": "string",
-                "description": "Original filename of the uploaded file",
-            },
-            "type": {
-                "type": "string",
-                "description": "MIME type of the uploaded file",
             },
         },
         "required": ["success"],
@@ -843,10 +825,8 @@ def get_presigned_url(event, context, current_user, name, data):
             "contentUrl": presigned_text_content_url,
             "metadataUrl": presigned_text_metadata_url,
             "key": key,
-            "name": name,
-            "type": file_type,
         }
-
+        
     return {"success": False}
 
 
