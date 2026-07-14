@@ -257,6 +257,11 @@ def get_data_source_details(data_sources):
     if missing_ids:
         logger.warning("The following requested IDs were not found: %s", missing_ids)
 
+    # batch_get_item returns items in arbitrary order — re-sort to match the original
+    # caller-supplied order so that image labels (#1, #2, ...) map to the correct files.
+    id_order = {ds_id: idx for idx, ds_id in enumerate(data_source_ids)}
+    formatted_sources.sort(key=lambda item: id_order.get(item["key"], len(data_source_ids)))
+
     # Convert any Decimal objects to regular Python types
     formatted_sources = convert_decimal(formatted_sources)
 
