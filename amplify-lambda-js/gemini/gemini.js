@@ -438,12 +438,6 @@ async function includeImageSources(imageSources, messages, model, responseStream
     }
 
     try {
-        // Extract filenames for reference labels - prefer source.name (original filename) over S3 path
-        const imageFilenames = imageSources.map((source, idx) => {
-            const filename = source.name || source.id.split('/').pop() || `image_${idx + 1}`;
-            return filename;
-        });
-
         // Process all images
         const imagePromises = imageSources.map(async (source) => {
             const base64Content = await getImageBase64Content(source);
@@ -465,41 +459,20 @@ async function includeImageSources(imageSources, messages, model, responseStream
         if (firstUserMsgIndex !== -1) {
             const userMsg = messages[firstUserMsgIndex];
 
-            // Build image reference labels to help model map filenames to images
-            const imageReferenceLabels = imageFilenames
-                .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
-                .join('\n');
-            const imageReferenceInstruction = `Image Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.\n\n`;
-
-            // Convert to the OpenAI format for multimodal content
+            // Convert to array format and add images
             if (typeof userMsg.content === 'string') {
-                // Convert string content to array format
                 messages[firstUserMsgIndex] = {
                     ...userMsg,
                     content: [
-                        { type: "text", text: imageReferenceInstruction + additionalImageInstruction + userMsg.content },
+                        { type: "text", text: additionalImageInstruction + userMsg.content },
                         ...imageContents
                     ]
                 };
             } else if (Array.isArray(userMsg.content)) {
-                // Add reference labels at the beginning of existing array content
-                const textContent = userMsg.content.find(c => c.type === 'text');
-                if (textContent) {
-                    textContent.text = imageReferenceInstruction + additionalImageInstruction + textContent.text;
-                    messages[firstUserMsgIndex] = {
-                        ...userMsg,
-                        content: [...userMsg.content, ...imageContents]
-                    };
-                } else {
-                    messages[firstUserMsgIndex] = {
-                        ...userMsg,
-                        content: [
-                            { type: "text", text: imageReferenceInstruction + additionalImageInstruction },
-                            ...userMsg.content,
-                            ...imageContents
-                        ]
-                    };
-                }
+                messages[firstUserMsgIndex] = {
+                    ...userMsg,
+                    content: [...userMsg.content, ...imageContents]
+                };
             }
         }
 
