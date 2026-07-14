@@ -498,12 +498,9 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
 async function includeImageSources(dataSources, messages, responseStream) {
     if (!dataSources || dataSources.length === 0) return messages;
 
-    console.log("[DEBUG] dataSources received:", JSON.stringify(dataSources, null, 2));
-
     // Extract filenames for reference labels - prefer ds.name (original filename) over S3 path
     const imageFilenames = dataSources.map((ds, idx) => {
         const filename = ds.name || ds.id.split('/').pop() || `image_${idx + 1}`;
-        console.log(`[DEBUG] Image ${idx}: ds.name="${ds.name}", extracted filename="${filename}", ds.id="${ds.id}"`);
         return filename;
     });
 
@@ -562,9 +559,6 @@ async function includeImageSources(dataSources, messages, responseStream) {
         .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
         .join('\n');
     const imageReferenceInstruction = `\n\nImage Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.`;
-
-    console.log("[DEBUG] Image Reference Labels:", imageReferenceLabels);
-    console.log("[DEBUG] Full instruction being sent to model:", imageReferenceInstruction);
 
     content.push({ "text": imageReferenceInstruction + additionalImageInstruction});
     content = [...content, ...imageMessageContent[0]];
