@@ -459,16 +459,18 @@ async function includeImageSources(imageSources, messages, model, responseStream
         if (firstUserMsgIndex !== -1) {
             const userMsg = messages[firstUserMsgIndex];
 
-            // Convert to array format and add images
+            // Convert to the OpenAI format for multimodal content
             if (typeof userMsg.content === 'string') {
+                // Convert string content to array format
                 messages[firstUserMsgIndex] = {
                     ...userMsg,
                     content: [
-                        { type: "text", text: additionalImageInstruction + userMsg.content },
+                        { type: "text", text: userMsg.content },
                         ...imageContents
                     ]
                 };
             } else if (Array.isArray(userMsg.content)) {
+                // Add to existing array content
                 messages[firstUserMsgIndex] = {
                     ...userMsg,
                     content: [...userMsg.content, ...imageContents]
@@ -479,6 +481,7 @@ async function includeImageSources(imageSources, messages, model, responseStream
         sendStateEventToStream(responseStream, {
             sources: { images: { sources: imageSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
         });
+        sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
         console.error("Error processing images:", error);
