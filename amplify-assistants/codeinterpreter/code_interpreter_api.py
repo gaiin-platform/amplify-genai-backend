@@ -24,6 +24,47 @@ SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS"
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
+# File extensions the postamble will capture from the sandbox filesystem.
+_WATCHED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
+
+# Marker tokens used to delimit file paths printed by the postamble.
+# Deliberately unusual so they cannot appear in normal user output.
+_FILE_MARKER_START = "__AMPLIFY_FILE__:"
+_FILE_MARKER_END = ":__END__"
+
+# MIME type lookup by extension.
+_EXT_TO_MIME = {
+    ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".pdf":  "application/pdf",
+    ".csv":  "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+# Preamble: snapshot the working directory BEFORE user code runs.
+# Written as a raw string so backslashes are literal inside the injected code.
+_PREAMBLE = """
+import os as _os
+_amplify_cwd = _os.getcwd()
+_amplify_before = set(_os.listdir(_amplify_cwd))
+"""
+
+# Postamble: compare directory listing AFTER user code, print new files with markers.
+_POSTAMBLE = """
+try:
+    import os as _os
+    _amplify_after = set(_os.listdir(_amplify_cwd))
+    _amplify_new = _amplify_after - _amplify_before
+    _amplify_watched = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
+    for _amplify_f in sorted(_amplify_new):
+        if _os.path.splitext(_amplify_f)[1].lower() in _amplify_watched:
+            _amplify_path = _os.path.join(_amplify_cwd, _amplify_f)
+            print(f"__AMPLIFY_FILE__:{_amplify_path}:__END__")
+except Exception:
+    pass
+"""
+
 
 def get(dictionary, *keys):
     return reduce(
@@ -145,7 +186,11 @@ def send_file_to_s3(file_bytes, file_key, file_name, user_id, content_type="bina
         )
         logger.info("File uploaded to consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
 
-        file_url = get_presigned_download_url(file_key, user_id, file_name)
+        # Generate a plain presigned URL (no ResponseContentDisposition) for display.
+        # The download endpoint is called separately by the frontend with the filename
+        # so the browser receives an 'attachment' header only for actual downloads.
+        # Using an attachment-flavoured URL here blocks <img> tags from rendering the image.
+        file_url = get_presigned_download_url(file_key, user_id, download_filename=None)
         if file_url["success"]:
             return {"success": True, "presigned_url": file_url["downloadUrl"]}
         return file_url
@@ -256,20 +301,27 @@ def extract_all_file_keys(messages, amplify_messages=True):
     return result
 
 
-def renew_session(record_id, current_user, messages, amplify_messages=True):
+def renew_session(record_id, current_user, messages, amplify_messages=True, all_file_keys=None):
     """Create a fresh AgentCore session and update the DynamoDB record.
 
-    Called when a session has expired mid-conversation.  Derives all file keys
-    directly from the full conversation messages so that every file ever
-    attached is re-uploaded into the new session.  The new session_id is
-    persisted so that subsequent requests reuse the session automatically.
+    Called when a session has expired mid-conversation.  Reloads every file
+    the user has ever uploaded into the new session so the sandbox is fully
+    restored.  The new session_id is persisted so subsequent requests reuse it.
+
+    all_file_keys: when provided (collected by the JS layer before smart-messages
+    may prune body.messages), used directly instead of extracting from messages.
+    This guarantees files from pruned messages are still reloaded.
     """
     logger.info("Renewing expired AgentCore session for record %s", record_id)
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
 
-    all_keys = extract_all_file_keys(messages, amplify_messages=amplify_messages)
+    if all_file_keys:
+        all_keys = all_file_keys
+        logger.info("renew_session: using %d pre-collected file key(s)", len(all_keys))
+    else:
+        all_keys = extract_all_file_keys(messages, amplify_messages=amplify_messages)
 
     session_info = create_agentcore_session(current_user, all_keys)
     if not session_info["success"]:
@@ -301,16 +353,28 @@ def renew_session(record_id, current_user, messages, amplify_messages=True):
     return {"success": True, "session_id": new_session_id}
 
 
-def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed):
+def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed, file_keys=None, all_conversation_file_keys=None):
     """Entry point for a chat request.
 
     Fetches the persisted session_id and executes the code.
 
     If the session has expired, a new session is created transparently:
-    all file keys are derived from the full conversation messages and
+    all file keys are derived from the full conversation history and
     re-uploaded into the new session, and the execution is retried once.
     The response includes sessionRenewed=True so the frontend can show a
     brief informational status message to the user.
+
+    file_keys: explicit list of S3 keys for files attached to the current
+    request.  When provided these take precedence over any keys extracted
+    from the messages array so that files attached to a message in an
+    existing session are reliably loaded into the sandbox before execution.
+
+    all_conversation_file_keys: complete deduplicated list of every file key
+    ever attached across all conversation messages, collected by the JS layer
+    before smart-messages processing may prune old messages.  Used exclusively
+    by renew_session so that a freshly created replacement session receives
+    every file the user has uploaded, not just those in the (possibly pruned)
+    messages array.
     """
     logger.debug("Entered chat_with_code_interpreter")
 
@@ -322,19 +386,31 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
     amplify_messages = not api_accessed
     last_message = extract_last_message(messages, amplify_messages=amplify_messages)
 
+    # If explicit file_keys were passed (from the JS layer's resolved dataSources),
+    # override the keys extracted from the message.  This ensures files attached
+    # to the current message are loaded even when the session already exists.
+    if file_keys:
+        last_message = {**last_message, "file_keys": file_keys}
+        logger.info("Using %d explicit file_key(s) for this request", len(file_keys))
+
     active_session_id = session_id
     session_renewed = False
     result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed)
 
     # Session expired — create a fresh session and retry once.
-    # Derive all file keys from the full conversation messages and re-upload
-    # them into the new session before retrying the execution.
+    # Prefer all_conversation_file_keys when available (collected before smart-messages
+    # pruning) so every file ever uploaded is reloaded into the new session.
+    # Fall back to deriving keys from the messages array for API-direct callers.
     if result.get("error") == "session_expired":
         logger.warning(
             "Session %s expired for record %s — renewing and retrying",
             active_session_id, record_id,
         )
-        renewed = renew_session(record_id, current_user, messages, amplify_messages=amplify_messages)
+        renewed = renew_session(
+            record_id, current_user, messages,
+            amplify_messages=amplify_messages,
+            all_file_keys=all_conversation_file_keys or None,
+        )
         if not renewed["success"]:
             return {
                 "success": False,
@@ -383,7 +459,7 @@ def extract_last_message(messages, amplify_messages=True):
     return {"content": content, "file_keys": file_keys}
 
 
-def extract_file_from_block(block, current_user):
+def extract_file_from_block(block, current_user, session_id=None):
     """Extract a file from an AgentCore result content block and upload it to S3.
 
     AgentCore result content blocks have this structure:
@@ -405,6 +481,7 @@ def extract_file_from_block(block, current_user):
       }
     """
     block_type = block.get("type")
+    logger.info("extract_file_from_block: type=%s keys=%s", block_type, list(block.keys()))
 
     if block_type == "image":
         # data is raw bytes from the SDK (not base64)
@@ -415,23 +492,77 @@ def extract_file_from_block(block, current_user):
         ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
         file_name = f"generated_image.{ext}"
         s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
+        logger.info("image block: mime_type=%s file_bytes_len=%d", mime_type, len(file_bytes) if file_bytes else 0)
 
     elif block_type == "resource":
-        resource = block.get("resource", {})
-        mime_type = resource.get("mimeType", "binary/octet-stream")
+        resource = block.get("resource") or {}
+        logger.info("resource block: resource_keys=%s top_keys=%s", list(resource.keys()), list(block.keys()))
+        mime_type = resource.get("mimeType") or block.get("mimeType", "binary/octet-stream")
         uri = resource.get("uri", "") or block.get("uri", "")
-        file_name = uri.split("/")[-1] if uri else ""
+        file_name = uri.split("/")[-1] if uri else block.get("name", "")
         if not file_name:
             ext = mime_type.split("/")[-1] if "/" in mime_type else "bin"
             file_name = f"generated_file.{ext}"
         s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
 
-        # Prefer blob (bytes), fall back to text encoded as UTF-8
-        raw = resource.get("blob")
+        # Prefer blob (bytes) from nested resource, then top-level blob, then text
+        raw = resource.get("blob") or block.get("blob")
         if raw is None:
-            text = resource.get("text", "")
+            text = resource.get("text") or block.get("text", "")
             raw = text.encode("utf-8") if text else b""
         file_bytes = raw if isinstance(raw, bytes) else base64.b64decode(raw)
+        logger.info("resource block: mime_type=%s file_name=%s file_bytes_len=%d", mime_type, file_name, len(file_bytes) if file_bytes else 0)
+
+    elif block_type == "resource_link":
+        # resource_link points to a file in the session sandbox by URI.
+        # Use the readFiles operation to fetch its bytes, then upload to S3.
+        uri = block.get("uri", "")
+        file_name = uri.split("/")[-1] if uri else block.get("name", "")
+        mime_type = block.get("mimeType", "binary/octet-stream")
+        logger.info("resource_link block: uri=%s mime_type=%s", uri, mime_type)
+
+        if not uri or not session_id:
+            return {"success": False, "error": f"resource_link block missing uri or session_id: uri={uri}"}
+
+        # Infer MIME type from file extension if not provided
+        if mime_type == "binary/octet-stream" and file_name:
+            lower = file_name.lower()
+            if lower.endswith(".png"):
+                mime_type = "image/png"
+            elif lower.endswith(".jpg") or lower.endswith(".jpeg"):
+                mime_type = "image/jpeg"
+            elif lower.endswith(".csv"):
+                mime_type = "text/csv"
+            elif lower.endswith(".pdf"):
+                mime_type = "application/pdf"
+
+        if not file_name:
+            ext = mime_type.split("/")[-1] if "/" in mime_type else "bin"
+            file_name = f"generated_file.{ext}"
+
+        try:
+            read_response = agentcore_client.invoke_code_interpreter(
+                codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+                sessionId=session_id,
+                name="readFiles",
+                arguments={"paths": [uri]},
+            )
+            file_bytes = b""
+            for event in read_response.get("stream", []):
+                if "result" in event:
+                    for content_block in event["result"].get("content", []):
+                        blob = content_block.get("blob") or content_block.get("resource", {}).get("blob")
+                        if blob:
+                            file_bytes += blob if isinstance(blob, bytes) else base64.b64decode(blob)
+                        text = content_block.get("text") or content_block.get("resource", {}).get("text")
+                        if text and not file_bytes:
+                            file_bytes = text.encode("utf-8")
+            logger.info("resource_link readFiles: file_name=%s file_bytes_len=%d", file_name, len(file_bytes))
+        except Exception as e:
+            logger.error("Failed to readFiles for resource_link %s: %s", uri, e)
+            return {"success": False, "error": f"Failed to read resource_link: {e}"}
+
+        s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
 
     else:
         return {"success": False, "error": f"Unhandled block type: {block_type}"}
@@ -439,6 +570,70 @@ def extract_file_from_block(block, current_user):
     if not file_bytes:
         return {"success": False, "error": f"Empty file content for block type: {block_type}"}
 
+    return upload_file_and_get_urls(file_bytes, mime_type, s3_file_key, current_user, file_name)
+
+
+def _fetch_and_upload_sandbox_file(path, session_id, current_user):
+    """Read a file from the AgentCore sandbox via readFiles and upload it to S3.
+
+    Called after executeCode for each path discovered by the postamble markers.
+    Returns the same shape as upload_file_and_get_urls:
+        {"success": True,  "data": {"type": mime, "values": {...}}}
+        {"success": False, "error": "..."}
+    """
+    file_name = os.path.basename(path)
+    ext = os.path.splitext(file_name)[1].lower()
+    mime_type = _EXT_TO_MIME.get(ext, "binary/octet-stream")
+    logger.info("readFiles: path=%s mime_type=%s", path, mime_type)
+
+    try:
+        read_response = agentcore_client.invoke_code_interpreter(
+            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+            sessionId=session_id,
+            name="readFiles",
+            arguments={"paths": [path]},
+        )
+    except Exception as e:
+        logger.error("readFiles API call failed for %s: %s", path, e)
+        return {"success": False, "error": f"readFiles call failed: {e}"}
+
+    file_bytes = b""
+    text_chunks: list[str] = []
+    try:
+        for event in read_response.get("stream", []):
+            if "result" not in event:
+                continue
+            for block in event["result"].get("content", []):
+                # Bytes can arrive as a top-level blob/data field, or inside a
+                # nested resource object (base64-encoded or raw bytes).
+                raw = (
+                    block.get("data")
+                    or block.get("blob")
+                    or (block.get("resource") or {}).get("blob")
+                )
+                if raw:
+                    file_bytes += raw if isinstance(raw, bytes) else base64.b64decode(raw)
+                    continue
+                # Fallback: text content (e.g. CSV files returned as text/plain).
+                # Accumulate all chunks before encoding so multi-chunk responses
+                # are handled correctly and binary bytes always take precedence.
+                text = block.get("text") or (block.get("resource") or {}).get("text")
+                if text:
+                    text_chunks.append(text)
+    except Exception as e:
+        logger.error("Error reading readFiles stream for %s: %s", path, e)
+        return {"success": False, "error": f"readFiles stream error: {e}"}
+
+    # If no binary data was received but text was, encode the accumulated text.
+    if not file_bytes and text_chunks:
+        file_bytes = "".join(text_chunks).encode("utf-8")
+
+    if not file_bytes:
+        logger.warning("readFiles returned no bytes for %s", path)
+        return {"success": False, "error": f"readFiles returned empty content for {path}"}
+
+    s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
+    logger.info("Uploading sandbox file to S3: key=%s size=%d", s3_file_key, len(file_bytes))
     return upload_file_and_get_urls(file_bytes, mime_type, s3_file_key, current_user, file_name)
 
 
@@ -490,10 +685,16 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
         except Exception as e:
             logger.warning("Failed to check kill switch: %s", e)
 
-    code = last_message["content"]
+    user_code = last_message["content"]
     file_keys = last_message.get("file_keys", [])
     if file_keys:
         load_files_for_session(session_id, file_keys)
+
+    # Wrap the user's code with a preamble that snapshots the working directory
+    # before execution and a postamble that detects newly created files afterward.
+    # The postamble prints each new file's absolute path using unique markers so
+    # we can parse them out of stdout and retrieve the files via readFiles.
+    code = _PREAMBLE + user_code + _POSTAMBLE
 
     task_id = None
     text_content = ""
@@ -574,6 +775,16 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
                     return {"success": False, "error": "session_expired"}
                 return {"success": False, "error": err_msg}
 
+            logger.info("AgentCore stream event keys: %s", list(event.keys()))
+            if "result" in event:
+                r = event["result"]
+                logger.info(
+                    "AgentCore result: isError=%s structuredContent=%s content_block_types=%s",
+                    r.get("isError"),
+                    r.get("structuredContent"),
+                    [b.get("type") for b in r.get("content", [])],
+                )
+
             if "result" not in event:
                 continue
 
@@ -588,17 +799,13 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
             if timed_out or cancelled:
                 continue
 
-            # Collect text and file outputs from content blocks
+            # Collect text output from content blocks.
+            # AgentCore only emits "text" blocks for executeCode — image/resource
+            # blocks are never produced for savefig()-style files. We detect those
+            # via the postamble markers in stdout and fetch them after the stream.
             for block in result.get("content", []):
-                btype = block.get("type")
-                if btype == "text":
+                if block.get("type") == "text":
                     text_content += block.get("text", "") + "\n"
-                elif btype in ("image", "resource"):
-                    file_result = extract_file_from_block(block, current_user)
-                    if file_result.get("success"):
-                        output_files.append(file_result["data"])
-                    else:
-                        logger.warning("Failed to extract file block: %s", file_result.get("error"))
 
             # isError signals a Python-level execution error (traceback in stderr).
             # We still collect any text/file content produced before the error.
@@ -633,13 +840,38 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     if execution_error is not None:
         return {"success": False, "error": f"Code execution error: {execution_error}"}
 
+    # ── Post-execution: detect and fetch files printed by the postamble ────────
+    # Parse __AMPLIFY_FILE__:<path>:__END__ markers out of stdout, fetch each
+    # file's bytes from the sandbox via readFiles, upload to S3, and strip the
+    # marker lines from the text that goes back to the LLM.
+    clean_lines = []
+    discovered_paths = []
+    for line in text_content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_FILE_MARKER_START) and stripped.endswith(_FILE_MARKER_END):
+            path = stripped[len(_FILE_MARKER_START):-len(_FILE_MARKER_END)]
+            if path:
+                discovered_paths.append(path)
+        else:
+            clean_lines.append(line)
+
+    text_content = "\n".join(clean_lines)
+    logger.info("Postamble discovered %d file(s): %s", len(discovered_paths), discovered_paths)
+
+    for path in discovered_paths:
+        file_result = _fetch_and_upload_sandbox_file(path, session_id, current_user)
+        if file_result.get("success"):
+            output_files.append(file_result["data"])
+            logger.info("Sandbox file uploaded: %s -> %s", path, file_result["data"].get("type"))
+        else:
+            logger.warning("Failed to fetch sandbox file %s: %s", path, file_result.get("error"))
+
     return {
         "success": True,
         "message": "Chat completed successfully",
         "data": {
             "data": {
                 "codeInterpreterRecordId": record_id,
-                "role": "assistant",
                 "textContent": text_content.rstrip("\n"),
                 "content": output_files,
             }

@@ -127,7 +127,11 @@ export const chatBedrock = async (chatBody, writable) => {
                 };
                 logger.info(`Extended thinking enabled with temperature=1.0, budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
             }
-        } else if (currentModel.supportsReasoning && disableReasoning) {
+        } else if (currentModel.supportsReasoning && disableReasoning && !hasTools) {
+            // Only set reasoning_config:disabled when there are no tools involved.
+            // Bedrock rejects any additionalModelRequestFields alongside toolConfig, and
+            // code interpreter's follow-up call sets disableReasoning=true while also
+            // passing tools, so this guard is required to avoid that conflict.
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
             input.additionalModelRequestFields = {
                 "reasoning_config": {

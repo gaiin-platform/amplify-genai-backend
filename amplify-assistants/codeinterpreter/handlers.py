@@ -172,6 +172,8 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
     logger.debug("Chat_with_code_interpreter validated")
     record_id = data["data"]["codeInterpreterRecordId"]
     messages = data["data"]["messages"]
+    file_keys = data["data"].get("file_keys", [])
+    all_conversation_file_keys = data["data"].get("all_conversation_file_keys", [])
 
     api_accessed = data["api_accessed"]
     request_id = generate_req_id() if api_accessed else data["data"]["requestId"]
@@ -182,6 +184,8 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
         messages,
         request_id,
         api_accessed,
+        file_keys=file_keys,
+        all_conversation_file_keys=all_conversation_file_keys,
     )
 
 

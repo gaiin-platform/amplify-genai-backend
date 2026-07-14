@@ -377,13 +377,30 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             options.advancedModel = getModelByType(params, ModelTypes.ADVANCED);
             options.documentCachingModel = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
 
-            // ensure the model id in the body and options is consitent with the changes 
+            // ensure the model id in the body and options is consitent with the changes
             let body = { ...params.body, options: options, model: model.id };
             logger.debug("Checking access on data sources");
             logger.info("Request options.", options);
             logger.info("Request data sources", dataSources);
 
             delete body.dataSources;
+
+            // Collect every file key referenced across all conversation messages BEFORE
+            // smart-messages processing runs.  Smart messages can prune old messages from
+            // body.messages, which would cause renew_session to miss files uploaded in
+            // those pruned messages.  We store the complete set here so it survives the
+            // replacement and can be forwarded to the Python backend.
+            const allConversationFileKeys = [
+                ...new Set(
+                    (body.messages || [])
+                        .flatMap(m => m.data?.dataSources ?? [])
+                        .map(d => d.id)
+                        .filter(Boolean)
+                )
+            ];
+            if (allConversationFileKeys.length > 0) {
+                body.allConversationFileKeys = allConversationFileKeys;
+            }
 
 
             // ⚡ Create request state 

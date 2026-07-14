@@ -7,6 +7,7 @@ import { getLogger } from "../common/logging.js";
 import { isKilled } from "../requests/requestState.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
+import { v4 as uuidv4 } from "uuid";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -39,8 +40,8 @@ const CODE_INTERPRETER_SYSTEM_PROMPT =
     "You have access to a secure Python sandbox via the `execute_code` tool. " +
     "Always use this tool to run code rather than showing hypothetical output. " +
     "Rules:\n" +
-    "1. Display a preview of the code you intend to run before calling the tool.\n" +
-    "2. After execution, show the output in Markdown.\n" +
+    "1. Do NOT include the Python code or raw sandbox output in your response.\n" +
+    "2. Write a natural, helpful response based on what the code produced — explain findings, insights, or results in your own words.\n" +
     "3. Reference generated files by their filename — do NOT include download links.\n" +
     "4. Do not attach duplicate files with identical content.\n" +
     "5. Always include generated files in your response.";
@@ -99,14 +100,17 @@ function buildToolResultContent(responseData) {
     const inner = responseData?.data?.data ?? {};
     const result = { output: inner.textContent || "" };
     if (inner.content && inner.content.length > 0) {
-        result.files = inner.content.map(f => ({
-            type: f.type,
-            file_key: f.values?.file_key,
-            presigned_url: f.values?.presigned_url,
-            file_key_low_res: f.values?.file_key_low_res,
-            presigned_url_low_res: f.values?.presigned_url_low_res,
-            file_size: f.values?.file_size
-        }));
+        result.files = inner.content.map(f => {
+            // Extract human-readable filename from the S3 key (pattern: uuid-FN-filename)
+            const fileKey = f.values?.file_key || "";
+            const fnMatch = fileKey.match(/-FN-([^/]+)$/);
+            const fileName = fnMatch ? fnMatch[1] : fileKey.split("/").pop() || "generated_file";
+            return {
+                type: f.type,
+                file_name: fileName,
+                file_size: f.values?.file_size
+            };
+        });
     }
     return JSON.stringify(result);
 }
@@ -135,16 +139,30 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 await assistantBase.handler(params, { ...body, messages, options: { ...options, maxTokens: options.maxTokens || 4000 } }, ds, responseStream);
             };
 
-            let codeInterpreterRecordId = options.codeInterpreterRecordId || null;
+            let codeInterpreterRecordId = options.codeInterpreterRecordId || body.codeInterpreterRecordId || null;
 
-            // If files are attached, create the session now so they are loaded into the
-            // sandbox before the LLM call — the LLM can then reference them by filename.
-            const fileKeys = messages.flatMap(m => m.data?.dataSources ?? []).map(d => d.id);
+            // Create session eagerly on every first message (no existing session).
+            // If files are attached they are loaded into the sandbox now so the LLM
+            // can reference them by filename. If no files, we still create the session
+            // up front so it exists before the first LLM call.
+            //
+            // File keys come from two sources:
+            //   1. `ds` — the resolved top-level body.dataSources (files attached to this request)
+            //   2. The last message's data.dataSources — per-message attachments
+            // We union both to ensure nothing is missed.
+            const dsFileKeys = (ds || []).map(d => d.id).filter(Boolean);
+            const lastMsgFileKeys = (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => d.id).filter(Boolean);
+            const allCurrentFileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
+            const fileKeys = allCurrentFileKeys;
 
-            if (fileKeys.length > 0 && codeInterpreterRecordId === null) {
+            if (codeInterpreterRecordId === null) {
                 if (await isKilled(account.user, responseStream, body)) return;
 
-                sendStatusMessage(responseStream, "Preparing code interpreter session with your files...");
+                const statusMsg = fileKeys.length > 0
+                    ? "Preparing code interpreter session with your files..."
+                    : "Starting code interpreter session...";
+                sendStatusMessage(responseStream, statusMsg);
+
                 const createResponse = await fetchRequest(
                     token, { dataSources: fileKeys },
                     process.env.API_BASE_URL + "/assistant/create/codeinterpreter"
@@ -152,10 +170,13 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
                 if (createResponse?.success && createResponse.data) {
                     codeInterpreterRecordId = createResponse.data.codeInterpreterRecordId;
-                    sendStateEventToStream(responseStream, { codeInterpreterRecordId });
+                    // Nest under "codeInterpreter" so the frontend's deepMerge accumulates
+                    // it at currentState.codeInterpreter.codeInterpreterRecordId, which is
+                    // where useChatSendService reads it and persists it on the conversation.
+                    sendStateEventToStream(responseStream, { codeInterpreter: { codeInterpreterRecordId } });
                 } else {
-                    const errMsg = String(createResponse?.error);
-                    logger.error("Failed to create session for file upload: %s", errMsg);
+                    const errMsg = String(createResponse?.error || "Failed to create session");
+                    logger.error("Failed to create code interpreter session: %s", errMsg);
                     logCriticalError({
                         functionName: "codeInterpreter_sessionCreation",
                         errorType: "SessionCreationFailure",
@@ -187,14 +208,16 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
             let firstCallResult;
             try {
+                // Pass null stream — the first call captures tool arguments only and
+                // must NOT stream raw LLM output (including tool call JSON) to the user.
                 firstCallResult = await callUnifiedLLM(
                     { ...params, options: { ...params.options, model } },
                     llmMessages,
-                    responseStream,
+                    null,
                     {
                         tools: [CODE_INTERPRETER_TOOL_DEFINITION],
                         tool_choice: "required",
-                        keepStreamOpen: true,
+                        disableReasoning: true,
                         temperature: options.temperature,
                         max_tokens: options.maxTokens || 4000
                     }
@@ -216,6 +239,11 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
 
             const toolCall = toolCalls[0];
+            // Ensure tool call has a stable id — Bedrock may omit toolUseId in some events.
+            if (!toolCall.id) {
+                toolCall.id = uuidv4();
+                logger.warn("toolCall.id was missing — generated fallback id: %s", toolCall.id);
+            }
             let args = {};
             try {
                 args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
@@ -224,43 +252,24 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
             const code = args.code || "";
 
-            // Lazy session creation — only reached when no files were attached.
-            if (codeInterpreterRecordId === null) {
-                if (await isKilled(account.user, responseStream, body)) return;
-
-                sendStatusMessage(responseStream, "Starting code interpreter session...");
-                const createResponse = await fetchRequest(
-                    token, { dataSources: [] },
-                    process.env.API_BASE_URL + "/assistant/create/codeinterpreter"
-                );
-
-                if (createResponse?.success && createResponse.data) {
-                    codeInterpreterRecordId = createResponse.data.codeInterpreterRecordId;
-                    sendStateEventToStream(responseStream, { codeInterpreterRecordId });
-                } else {
-                    const errMsg = String(createResponse?.error);
-                    logger.error("Failed to create session: %s", errMsg);
-                    logCriticalError({
-                        functionName: "codeInterpreter_sessionCreation",
-                        errorType: "SessionCreationFailure",
-                        errorMessage: errMsg,
-                        currentUser: account?.user || "unknown",
-                        severity: "HIGH",
-                        stackTrace: "",
-                        context: { requestId: options?.requestId || "unknown", codeInterpreterRecordId: "N/A" }
-                    }).catch(err => logger.error("Failed to log critical error:", err));
-                    await fallbackToLLM(errMsg);
-                    return;
-                }
-            }
-
             // Execute the LLM-written code via the Python lambda.
             if (await isKilled(account.user, responseStream, body)) return;
             sendStatusMessage(responseStream, "Code interpreter is executing your code...");
 
             const executionResponse = await fetchRequest(
                 token,
-                { codeInterpreterRecordId, messages: [{ role: "user", content: code }], accountId: account.accountId || "general_account", requestId: options.requestId },
+                {
+                    codeInterpreterRecordId,
+                    messages: [{ role: "user", content: code }],
+                    file_keys: fileKeys,
+                    // All file keys collected from the full conversation history before
+                    // smart-messages may have pruned body.messages.  Used by the Python
+                    // backend's renew_session so it can reload every file ever uploaded
+                    // into a freshly created replacement session.
+                    all_conversation_file_keys: body.allConversationFileKeys || [],
+                    accountId: account.accountId || "general_account",
+                    requestId: options.requestId
+                },
                 process.env.API_BASE_URL + "/assistant/chat/codeinterpreter"
             );
 
@@ -270,7 +279,8 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             if (executionResponse?.success && executionResponse.data) {
                 sendStatusMessage(responseStream, "Code execution complete — generating response...");
                 const { textContent, ...messageData } = executionResponse.data.data;
-                ciStateData = messageData;
+                // sessionRenewed is returned at the top level of the response (not nested under data.data)
+                ciStateData = { ...messageData, ...(executionResponse.sessionRenewed ? { sessionRenewed: true } : {}) };
                 toolResultContent = buildToolResultContent(executionResponse);
             } else {
                 const errMsg = String(executionResponse?.error || "Unknown execution error");
@@ -299,6 +309,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
             if (ciStateData) {
                 sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
+                // Force flush so the file state reaches the frontend before the second LLM call
+                // starts streaming text (which the frontend needs to render the files block).
+                forceFlush(responseStream);
             }
 
             // Second LLM call: format and stream the final response with the tool result in context.
@@ -325,7 +338,8 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 max_tokens: options.maxTokens || 4000,
                 dataSources: [],
                 imageSources: [],
-                options: { ...options, disableDataSources: true, maxTokens: options.maxTokens || 4000 }
+                tools: [CODE_INTERPRETER_TOOL_DEFINITION],
+                options: { ...options, disableDataSources: true, disableReasoning: true, maxTokens: options.maxTokens || 4000 }
             }, [], responseStream);
         }
     };
