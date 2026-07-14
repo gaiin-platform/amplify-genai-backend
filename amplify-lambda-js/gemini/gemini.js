@@ -438,6 +438,12 @@ async function includeImageSources(imageSources, messages, model, responseStream
     }
 
     try {
+        // Extract filenames for reference labels - prefer source.name (original filename) over S3 path
+        const imageFilenames = imageSources.map((ds, idx) => {
+            const filename = ds.name || ds.id.split('/').pop() || `image_${idx + 1}`;
+            return filename;
+        });
+
         // Process all images
         const imagePromises = imageSources.map(async (source) => {
             const base64Content = await getImageBase64Content(source);
@@ -459,22 +465,46 @@ async function includeImageSources(imageSources, messages, model, responseStream
         if (firstUserMsgIndex !== -1) {
             const userMsg = messages[firstUserMsgIndex];
 
+            // Build image reference labels to help model map filenames to images
+            const imageReferenceLabels = imageFilenames
+                .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
+                .join('\n');
+            const imageReferenceInstruction = `Image Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.\n\n`;
+
             // Convert to the OpenAI format for multimodal content
             if (typeof userMsg.content === 'string') {
                 // Convert string content to array format
                 messages[firstUserMsgIndex] = {
                     ...userMsg,
                     content: [
-                        { type: "text", text: userMsg.content },
+                        { type: "text", text: imageReferenceInstruction + userMsg.content },
                         ...imageContents
                     ]
                 };
             } else if (Array.isArray(userMsg.content)) {
-                // Add to existing array content
-                messages[firstUserMsgIndex] = {
-                    ...userMsg,
-                    content: [...userMsg.content, ...imageContents]
-                };
+                // Prepend image reference to first text content, or add as new text content
+                const hasTextContent = userMsg.content.some(c => c.type === 'text');
+                if (hasTextContent) {
+                    // Prepend to existing text content
+                    messages[firstUserMsgIndex] = {
+                        ...userMsg,
+                        content: userMsg.content.map(c =>
+                            c.type === 'text' && !c.text.includes('Image Reference Labels')
+                                ? { ...c, text: imageReferenceInstruction + c.text }
+                                : c
+                        )
+                    };
+                } else {
+                    // Add as new text content if no text exists
+                    messages[firstUserMsgIndex] = {
+                        ...userMsg,
+                        content: [
+                            { type: "text", text: imageReferenceInstruction },
+                            ...userMsg.content,
+                            ...imageContents
+                        ]
+                    };
+                }
             }
         }
 
