@@ -682,16 +682,11 @@ async function includeImageSources(dataSources, messages, model, responseStream,
           });
     }
 
-    // Build image reference labels to help model map filenames to images
-    const imageReferenceLabels = imageFilenames
-        .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
-        .join('\n');
-    const imageReferenceInstruction = `Image Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.\n\n`;
-
+ 
     // message must be a user message
     const textType = isNonStandardOpenAI ? "input_text" : "text";
     messages[msgLen]['content'] = [{ "type": textType,
-                                     "text": imageReferenceInstruction + additionalImageInstruction
+                                     "text": additionalImageInstruction(imageFilenames)
                                     },
                                     ...imageMessageContent,
                                     { "type": textType,

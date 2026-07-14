@@ -465,12 +465,8 @@ async function includeImageSources(imageSources, messages, model, responseStream
         if (firstUserMsgIndex !== -1) {
             const userMsg = messages[firstUserMsgIndex];
 
-            // Build image reference labels to help model map filenames to images
-            const imageReferenceLabels = imageFilenames
-                .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
-                .join('\n');
-            const imageReferenceInstruction = `Image Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.\n\n`;
-
+     
+            const imageReferenceInstruction = additionalImageInstruction(imageFilenames);
             // Convert to the OpenAI format for multimodal content
             if (typeof userMsg.content === 'string') {
                 // Convert string content to array format
@@ -511,7 +507,6 @@ async function includeImageSources(imageSources, messages, model, responseStream
         sendStateEventToStream(responseStream, {
             sources: { images: { sources: imageSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
         });
-        sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
         console.error("Error processing images:", error);
@@ -572,7 +567,6 @@ async function includeVideoSources(videoSources, messages, model, responseStream
         sendStateEventToStream(responseStream, {
             sources: { videos: { sources: videoSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
         });
-        sendStateEventToStream(responseStream, additionalImageInstruction);
         return messages;
     } catch (error) {
         console.error("Error processing videos:", error);

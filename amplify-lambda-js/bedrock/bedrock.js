@@ -554,13 +554,8 @@ async function includeImageSources(dataSources, messages, responseStream) {
     const msgLen = messages.length - 1;
     let content = messages[msgLen]['content'];
 
-    // Build image reference labels to help model map filenames to images
-    const imageReferenceLabels = imageFilenames
-        .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
-        .join('\n');
-    const imageReferenceInstruction = `\n\nImage Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.`;
 
-    content.push({ "text": imageReferenceInstruction + additionalImageInstruction});
+    content.push({ "text": additionalImageInstruction(imageFilenames)});
     content = [...content, ...imageMessageContent[0]];
     messages[msgLen]['content'] = content;
     if (listIdx > 0) {
