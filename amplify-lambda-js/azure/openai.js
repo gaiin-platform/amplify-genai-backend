@@ -648,8 +648,14 @@ async function includeImageSources(dataSources, messages, model, responseStream,
       });
     const retrievedImages = [];
 
+    // Extract filenames for reference labels - prefer ds.name (original filename) over S3 path
+    const imageFilenames = dataSources.map((ds, idx) => {
+        const filename = ds.name || ds.id.split('/').pop() || `image_${idx + 1}`;
+        return filename;
+    });
+
     let imageMessageContent = [];
-    
+
     for (let i = 0; i < dataSources.length; i++) {
         const ds = dataSources[i];
         const encoded_image = await getImageBase64Content(ds);
@@ -661,27 +667,28 @@ async function includeImageSources(dataSources, messages, model, responseStream,
                     "image_url": `data:${ds.type};base64,${encoded_image}`
                 });
             } else {
-                imageMessageContent.push( 
+                imageMessageContent.push(
                     { "type": "image_url",
                       "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
-                    } 
+                    }
                 );
             }
         }
     }
-    
+
     if (retrievedImages.length > 0) {
         sendStateEventToStream(responseStream, {
             sources: { images: { sources: retrievedImages} }
           });
     }
 
+ 
     // message must be a user message
     const textType = isNonStandardOpenAI ? "input_text" : "text";
     messages[msgLen]['content'] = [{ "type": textType,
-                                     "text": additionalImageInstruction
-                                    }, 
-                                    ...imageMessageContent, 
+                                     "text": additionalImageInstruction(imageFilenames)
+                                    },
+                                    ...imageMessageContent,
                                     { "type": textType,
                                         "text": messages[msgLen]['content']
                                     }
