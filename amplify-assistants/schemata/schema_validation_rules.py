@@ -32,6 +32,8 @@ rules = {
             "download": download_ci_files_schema
         },
         "/assistant/agentcore/session/delete": {"delete": {}},
+        "/assistant/openai/delete": {"delete": {}}, # TO BE DELETED
+        "/assistant/openai/thread/delete": {"delete": {}}, # TO BE DELETED
         "/assistant/remove_astp_permissions": {
             "remove_astp_permissions": remove_astp_perms_schema
         },
@@ -74,6 +76,8 @@ rules = {
             "download": download_ci_files_schema
         },
         "/assistant/agentcore/session/delete": {"delete": {}},
+        "/assistant/openai/delete": {"delete": {}}, # TO BE DELETED
+        "/assistant/openai/thread/delete": {"delete": {}}, # TO BE DELETED
         "/assistant/remove_astp_permissions": {
             "remove_astp_permissions": remove_astp_perms_schema
         },

@@ -63,6 +63,10 @@ provider:
     AGENTCORE_CODE_INTERPRETER_ID: ${ssm:/amplify/${sls:stage}/AGENTCORE_CODE_INTERPRETER_ID}
     AGENTCORE_SESSION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_SESSION_TIMEOUT_SECONDS}
     AGENTCORE_EXECUTION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_EXECUTION_TIMEOUT_SECONDS, '240'}
+    ASSISTANTS_OPENAI_PROVIDER: ${ssm:/amplify/${sls:stage}/ASSISTANTS_OPENAI_PROVIDER} # TO BE DELETED
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
@@ -244,6 +248,24 @@ functions:
     events:
       - http:
           path: assistant/agentcore/session/delete
+          method: delete
+          cors: true
+
+  # TO BE DELETED
+  delete_ast_thread:
+    handler: openaiazure/assistant.delete_assistant_thread
+    events:
+      - http:
+          path: assistant/openai/thread/delete
+          method: delete
+          cors: true
+
+  # TO BE DELETED
+  delete_ast_open_ai:
+    handler: openaiazure/assistant.delete_assistant
+    events:
+      - http:
+          path: assistant/openai/delete
           method: delete
           cors: true
 
@@ -621,6 +643,64 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
 
+    # TO BE DELETED
+    AssistantThreadsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: UserNameIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: name
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}
+
+    # TO BE DELETED
+    AssistantThreadRunsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
+
     GroupAssistantConversationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -713,6 +793,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}/*"
+                - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+                - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
 
 
             - Effect: Allow
