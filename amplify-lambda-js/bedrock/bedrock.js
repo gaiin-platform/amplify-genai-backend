@@ -163,7 +163,28 @@ export const chatBedrock = async (chatBody, writable) => {
 
         // Add tool configuration if tools are provided OR if messages contain tool content
         if ((body.tools && body.tools.length > 0) || hasToolRelatedContent) {
-            const tools = body.tools && body.tools.length > 0 ? body.tools : [];
+            let tools = body.tools && body.tools.length > 0 ? body.tools : [];
+
+            // SAFETY NET: Bedrock's Converse API rejects `toolConfig: { tools: [] }` with
+            // "ValidationException: The provided request is not valid". If the caller
+            // forgot to forward the original tool definitions (body.tools) but the message
+            // history still contains toolUse/toolResult blocks, reconstruct minimal
+            // toolSpecs from the toolUse names found in history so the request stays valid
+            // instead of hard-failing.
+            if (tools.length === 0 && hasToolRelatedContent) {
+                const toolNames = new Set();
+                sanitizedMessages.forEach(msg => {
+                    if (Array.isArray(msg.content)) {
+                        msg.content.forEach(block => {
+                            if (block.toolUse?.name) toolNames.add(block.toolUse.name);
+                        });
+                    }
+                });
+                if (toolNames.size > 0) {
+                    logger.warn(`body.tools missing but tool-related content found in history — reconstructing minimal toolConfig for: ${[...toolNames].join(', ')}`);
+                    tools = [...toolNames].map(name => ({ function: { name, description: name, parameters: { type: "object", properties: {} } } }));
+                }
+            }
 
             input.toolConfig = {
                 tools: tools.map(tool => {
@@ -184,7 +205,11 @@ export const chatBedrock = async (chatBody, writable) => {
             if (tools.length > 0) {
                 logger.info(`Added ${tools.length} tools to Bedrock request`);
             } else {
-                logger.info('Added empty toolConfig (required for tool-related content in history)');
+                // No tool definitions available and none could be reconstructed from
+                // history — omit toolConfig entirely rather than sending an empty
+                // tools array, which Bedrock rejects as an invalid request.
+                delete input.toolConfig;
+                logger.warn('Tool-related content found in history but no tools available to build toolConfig — omitting toolConfig to avoid an invalid request');
             }
         }
 

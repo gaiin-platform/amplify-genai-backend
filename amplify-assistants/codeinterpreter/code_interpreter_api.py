@@ -1,16 +1,14 @@
 import base64
-import math
 import uuid
 import time
 from functools import reduce
 from io import BytesIO
 import boto3
 import botocore
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import ClientError
 from pycommon.api.request_state import request_killed
 
 import os
-from PIL import Image
 from pycommon.logger import getLogger
 logger = getLogger("code_interpreter")
 
@@ -24,13 +22,10 @@ SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS"
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
-# File extensions the postamble will capture from the sandbox filesystem.
+# File extensions we surface to the user as "generated files". Output file
+# detection is done via the native AgentCore `listFiles` operation (see
+# list_sandbox_files() below) — no code injection into the user's script.
 _WATCHED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
-
-# Marker tokens used to delimit file paths printed by the postamble.
-# Deliberately unusual so they cannot appear in normal user output.
-_FILE_MARKER_START = "__AMPLIFY_FILE__:"
-_FILE_MARKER_END = ":__END__"
 
 # MIME type lookup by extension.
 _EXT_TO_MIME = {
@@ -41,29 +36,6 @@ _EXT_TO_MIME = {
     ".csv":  "text/csv",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
-
-# Preamble: snapshot the working directory BEFORE user code runs.
-# Written as a raw string so backslashes are literal inside the injected code.
-_PREAMBLE = """
-import os as _os
-_amplify_cwd = _os.getcwd()
-_amplify_before = set(_os.listdir(_amplify_cwd))
-"""
-
-# Postamble: compare directory listing AFTER user code, print new files with markers.
-_POSTAMBLE = """
-try:
-    import os as _os
-    _amplify_after = set(_os.listdir(_amplify_cwd))
-    _amplify_new = _amplify_after - _amplify_before
-    _amplify_watched = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
-    for _amplify_f in sorted(_amplify_new):
-        if _os.path.splitext(_amplify_f)[1].lower() in _amplify_watched:
-            _amplify_path = _os.path.join(_amplify_cwd, _amplify_f)
-            print(f"__AMPLIFY_FILE__:{_amplify_path}:__END__")
-except Exception:
-    pass
-"""
 
 
 def get(dictionary, *keys):
@@ -168,77 +140,6 @@ def load_files_for_session(session_id, file_keys):
         logger.info("Successfully loaded %d file(s) into session %s", len(files_data), session_id)
     except Exception as e:
         logger.error("Failed to write files to AgentCore session %s: %s", session_id, e)
-
-
-def send_file_to_s3(file_bytes, file_key, file_name, user_id, content_type="binary/octet-stream"):
-    """Upload output file bytes to the S3 consolidation bucket and return a presigned URL."""
-    logger.debug("Sending file to S3: %s", file_key)
-    s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    consolidation_key = f"codeInterpreter/{file_key}"
-
-    try:
-        s3.upload_fileobj(
-            BytesIO(file_bytes),
-            consolidation_bucket,
-            consolidation_key,
-            ExtraArgs={"ACL": "private", "ContentType": content_type},
-        )
-        logger.info("File uploaded to consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
-
-        # Generate a plain presigned URL (no ResponseContentDisposition) for display.
-        # The download endpoint is called separately by the frontend with the filename
-        # so the browser receives an 'attachment' header only for actual downloads.
-        # Using an attachment-flavoured URL here blocks <img> tags from rendering the image.
-        file_url = get_presigned_download_url(file_key, user_id, download_filename=None)
-        if file_url["success"]:
-            return {"success": True, "presigned_url": file_url["downloadUrl"]}
-        return file_url
-
-    except NoCredentialsError:
-        logger.error("Credentials not available")
-    except ClientError as e:
-        logger.error("ClientError uploading file to S3: %s", e.response["Error"]["Message"])
-    except Exception as e:
-        logger.error("Unexpected error uploading file to S3: %s", e)
-
-    return {"success": False, "error": "Failed to upload file to S3"}
-
-
-def create_low_res_version(file_bytes):
-    """Resize an image to under 200 KB while maintaining aspect ratio."""
-    logger.debug("Creating lower resolution version of image")
-    image = Image.open(BytesIO(file_bytes))
-    original_width, original_height = image.size
-    target_size_bytes = 204800  # 200 KB
-    max_width, max_height = 800, 600
-
-    resized_bytes = BytesIO()
-    try:
-        while True:
-            ratio = min(max_width / original_width, max_height / original_height)
-            target_size = (int(original_width * ratio), int(original_height * ratio))
-            resized_image = image.resize(target_size, Image.LANCZOS)
-
-            resized_bytes.seek(0)
-            resized_bytes.truncate()
-            resized_image.save(resized_bytes, format=image.format or "PNG")
-            resized_size = resized_bytes.tell()
-
-            if resized_size <= target_size_bytes:
-                break
-
-            scale_factor = math.sqrt(resized_size / target_size_bytes)
-            max_width = int(max_width / scale_factor)
-            max_height = int(max_height / scale_factor)
-
-            if max_width < 100 or max_height < 100:
-                raise ValueError("Cannot reduce image below 100px — target threshold unreachable.")
-
-        resized_bytes.seek(0)
-        return resized_bytes.read()
-    finally:
-        resized_bytes.close()
 
 
 def get_presigned_download_url(key, current_user, download_filename=None):
@@ -459,126 +360,108 @@ def extract_last_message(messages, amplify_messages=True):
     return {"content": content, "file_keys": file_keys}
 
 
-def extract_file_from_block(block, current_user, session_id=None):
-    """Extract a file from an AgentCore result content block and upload it to S3.
+def list_sandbox_files(session_id, directory_path=None):
+    """List files currently present in the AgentCore sandbox filesystem.
 
-    AgentCore result content blocks have this structure:
-      {
-        "type": "text" | "image" | "resource" | "resource_link",
-        "text": "...",          # for type=text
-        "data": <bytes>,        # for type=image (raw bytes, NOT base64)
-        "mimeType": "image/png",# for type=image
-        "uri": "...",           # for type=resource / resource_link
-        "name": "...",
-        "size": <int>,
-        "resource": {           # for type=resource
-            "type": "...",
-            "uri": "...",
-            "mimeType": "...",
-            "blob": <bytes>,    # binary resource content
-            "text": "...",      # text resource content
-        }
-      }
+    Uses the native `listFiles` operation (see AWS's `ToolName` enum:
+    executeCode, executeCommand, readFiles, listFiles, removeFiles, writeFiles,
+    startCommandExecution, getTask, stopTask). No code is injected into the
+    user's script — this is a plain out-of-band call to the sandbox, the same
+    way `readFiles`/`writeFiles` are already used elsewhere in this module.
+
+    AgentCore's ContentBlock supports a `resource_link` type specifically
+    designed for "pointer to a resource" results (uri/name/mimeType/size
+    carried directly on the block, no content transferred) — this is what a
+    directory listing is expected to return, one block per file/directory.
+    Some content may instead arrive as a `resource` block (uri nested under
+    `resource`) or, for older/alternate sandbox behavior, as a `text` block
+    containing a plain listing — all are handled defensively below since the
+    exact shape isn't pinned down by AWS's API reference (the operation's
+    arguments/response are generic ToolArguments/ContentBlockList).
+
+    Returns:
+        A set of normalized file paths, or None if the listing could not be
+        retrieved (so callers can distinguish "empty directory" from
+        "listing failed" and skip diffing rather than produce false positives).
     """
-    block_type = block.get("type")
-    logger.info("extract_file_from_block: type=%s keys=%s", block_type, list(block.keys()))
+    arguments = {"directoryPath": directory_path} if directory_path else {}
+    # TEMP DIAGNOSTIC (see investigation notes): logs the exact arguments sent and the raw
+    # content blocks returned by listFiles, so we can confirm the real response shape and
+    # whether the default (no directoryPath) listing root actually matches the directory
+    # executeCode writes generated files into. Remove once the file-return issue is diagnosed.
+    logger.info("list_sandbox_files: invoking listFiles session=%s arguments=%s", session_id, arguments)
 
-    if block_type == "image":
-        # data is raw bytes from the SDK (not base64)
-        file_bytes = block.get("data", b"")
-        if isinstance(file_bytes, str):
-            file_bytes = base64.b64decode(file_bytes)
-        mime_type = block.get("mimeType", "image/png")
-        ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
-        file_name = f"generated_image.{ext}"
-        s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
-        logger.info("image block: mime_type=%s file_bytes_len=%d", mime_type, len(file_bytes) if file_bytes else 0)
+    try:
+        response = agentcore_client.invoke_code_interpreter(
+            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+            sessionId=session_id,
+            name="listFiles",
+            arguments=arguments,
+        )
+    except Exception as e:
+        logger.warning("listFiles call failed for session %s: %s", session_id, e)
+        return None
 
-    elif block_type == "resource":
-        resource = block.get("resource") or {}
-        logger.info("resource block: resource_keys=%s top_keys=%s", list(resource.keys()), list(block.keys()))
-        mime_type = resource.get("mimeType") or block.get("mimeType", "binary/octet-stream")
-        uri = resource.get("uri", "") or block.get("uri", "")
-        file_name = uri.split("/")[-1] if uri else block.get("name", "")
-        if not file_name:
-            ext = mime_type.split("/")[-1] if "/" in mime_type else "bin"
-            file_name = f"generated_file.{ext}"
-        s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
-
-        # Prefer blob (bytes) from nested resource, then top-level blob, then text
-        raw = resource.get("blob") or block.get("blob")
-        if raw is None:
-            text = resource.get("text") or block.get("text", "")
-            raw = text.encode("utf-8") if text else b""
-        file_bytes = raw if isinstance(raw, bytes) else base64.b64decode(raw)
-        logger.info("resource block: mime_type=%s file_name=%s file_bytes_len=%d", mime_type, file_name, len(file_bytes) if file_bytes else 0)
-
-    elif block_type == "resource_link":
-        # resource_link points to a file in the session sandbox by URI.
-        # Use the readFiles operation to fetch its bytes, then upload to S3.
-        uri = block.get("uri", "")
-        file_name = uri.split("/")[-1] if uri else block.get("name", "")
-        mime_type = block.get("mimeType", "binary/octet-stream")
-        logger.info("resource_link block: uri=%s mime_type=%s", uri, mime_type)
-
-        if not uri or not session_id:
-            return {"success": False, "error": f"resource_link block missing uri or session_id: uri={uri}"}
-
-        # Infer MIME type from file extension if not provided
-        if mime_type == "binary/octet-stream" and file_name:
-            lower = file_name.lower()
-            if lower.endswith(".png"):
-                mime_type = "image/png"
-            elif lower.endswith(".jpg") or lower.endswith(".jpeg"):
-                mime_type = "image/jpeg"
-            elif lower.endswith(".csv"):
-                mime_type = "text/csv"
-            elif lower.endswith(".pdf"):
-                mime_type = "application/pdf"
-
-        if not file_name:
-            ext = mime_type.split("/")[-1] if "/" in mime_type else "bin"
-            file_name = f"generated_file.{ext}"
-
-        try:
-            read_response = agentcore_client.invoke_code_interpreter(
-                codeInterpreterIdentifier=CODE_INTERPRETER_ID,
-                sessionId=session_id,
-                name="readFiles",
-                arguments={"paths": [uri]},
+    paths = set()
+    try:
+        for event in response.get("stream", []):
+            if "result" not in event:
+                continue
+            result = event["result"]
+            logger.info(
+                "list_sandbox_files: raw result for session %s: isError=%s structuredContent=%s content=%s",
+                session_id, result.get("isError"), result.get("structuredContent"), result.get("content"),
             )
-            file_bytes = b""
-            for event in read_response.get("stream", []):
-                if "result" in event:
-                    for content_block in event["result"].get("content", []):
-                        blob = content_block.get("blob") or content_block.get("resource", {}).get("blob")
-                        if blob:
-                            file_bytes += blob if isinstance(blob, bytes) else base64.b64decode(blob)
-                        text = content_block.get("text") or content_block.get("resource", {}).get("text")
-                        if text and not file_bytes:
-                            file_bytes = text.encode("utf-8")
-            logger.info("resource_link readFiles: file_name=%s file_bytes_len=%d", file_name, len(file_bytes))
-        except Exception as e:
-            logger.error("Failed to readFiles for resource_link %s: %s", uri, e)
-            return {"success": False, "error": f"Failed to read resource_link: {e}"}
+            if result.get("isError"):
+                logger.warning(
+                    "listFiles returned isError for session %s: %s",
+                    session_id, result.get("structuredContent"),
+                )
+                continue
+            for block in result.get("content", []):
+                block_type = block.get("type")
+                logger.info(
+                    "list_sandbox_files: block type=%s keys=%s raw=%s",
+                    block_type, list(block.keys()), block,
+                )
+                if block_type in ("resource_link", "resource"):
+                    resource = block.get("resource") or {}
+                    uri = block.get("uri") or resource.get("uri", "")
+                    path = None
+                    if uri:
+                        path = uri[len("file://"):] if uri.startswith("file://") else uri
+                    elif block.get("name"):
+                        path = block["name"]
+                    if path:
+                        paths.add(path)
+                elif block_type == "text":
+                    # Best-effort fallback: a plain-text directory listing,
+                    # one path per line.
+                    for line in block.get("text", "").splitlines():
+                        line = line.strip()
+                        if line:
+                            paths.add(line)
+    except Exception as e:
+        logger.warning("Error parsing listFiles response for session %s: %s", session_id, e)
+        return None
 
-        s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
-
-    else:
-        return {"success": False, "error": f"Unhandled block type: {block_type}"}
-
-    if not file_bytes:
-        return {"success": False, "error": f"Empty file content for block type: {block_type}"}
-
-    return upload_file_and_get_urls(file_bytes, mime_type, s3_file_key, current_user, file_name)
+    logger.info("list_sandbox_files: session=%s directory_path=%s -> paths=%s", session_id, directory_path, paths)
+    return paths
 
 
-def _fetch_and_upload_sandbox_file(path, session_id, current_user):
-    """Read a file from the AgentCore sandbox via readFiles and upload it to S3.
+def _fetch_sandbox_file_inline(path, session_id):
+    """Read a file's bytes from the AgentCore sandbox via readFiles and return
+    them base64-encoded for inline rendering in the chat response.
 
-    Called after executeCode for each path discovered by the postamble markers.
-    Returns the same shape as upload_file_and_get_urls:
-        {"success": True,  "data": {"type": mime, "values": {...}}}
+    Generated files only need to be visible in the chat response — they don't
+    need to persist anywhere — so there is no S3 upload / presigned URL step.
+    The bytes flow straight from the sandbox back to the frontend.
+
+    Called for each new path discovered by diffing list_sandbox_files() before
+    and after code execution.
+
+    Returns:
+        {"success": True,  "data": {"type": mime, "values": {"data": <base64 str>, "file_name": ..., "file_size": <int>}}}
         {"success": False, "error": "..."}
     """
     file_name = os.path.basename(path)
@@ -632,9 +515,19 @@ def _fetch_and_upload_sandbox_file(path, session_id, current_user):
         logger.warning("readFiles returned no bytes for %s", path)
         return {"success": False, "error": f"readFiles returned empty content for {path}"}
 
-    s3_file_key = f"{current_user}/{uuid.uuid4()}-FN-{file_name}"
-    logger.info("Uploading sandbox file to S3: key=%s size=%d", s3_file_key, len(file_bytes))
-    return upload_file_and_get_urls(file_bytes, mime_type, s3_file_key, current_user, file_name)
+    logger.info("Encoding sandbox file inline: name=%s size=%d", file_name, len(file_bytes))
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    return {
+        "success": True,
+        "data": {
+            "type": mime_type,
+            "values": {
+                "data": encoded,
+                "file_name": file_name,
+                "file_size": len(file_bytes),
+            },
+        },
+    }
 
 
 def _send_stop_task(session_id, task_id):
@@ -671,6 +564,17 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     iterator in the same thread, we cannot send stopTask while consuming the
     stream. Instead we check the kill switch before starting and drain the stream
     as fast as possible, sending stopTask after the stream closes if cancelled.
+
+    Output file detection: rather than injecting tracking code into the user's
+    script (a preamble/postamble that snapshots os.listdir() before/after and
+    prints markers to stdout), we call the native `listFiles` operation via
+    list_sandbox_files() immediately before and after `executeCode` and diff
+    the two listings. This uses AgentCore's own tool surface exactly the way
+    readFiles/writeFiles are already used elsewhere in this module, and it
+    means output files are still detected even if the user's code raises an
+    exception (the preamble/postamble approach could never run its cleanup
+    code in that case since it depended on control flow reaching the postamble
+    within the same script).
     """
     # Check kill switch before starting execution (skip for direct API access — no frontend managing request state)
     if not api_accessed and request_killed and request_id:
@@ -690,11 +594,13 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     if file_keys:
         load_files_for_session(session_id, file_keys)
 
-    # Wrap the user's code with a preamble that snapshots the working directory
-    # before execution and a postamble that detects newly created files afterward.
-    # The postamble prints each new file's absolute path using unique markers so
-    # we can parse them out of stdout and retrieve the files via readFiles.
-    code = _PREAMBLE + user_code + _POSTAMBLE
+    # Snapshot the sandbox filesystem via the native listFiles operation before
+    # running the user's code, unmodified, so we can detect newly created files
+    # afterward by diffing (see list_sandbox_files() docstring for details).
+    # A None result means the listing failed — we simply skip output-file
+    # detection for this execution rather than risk false positives.
+    files_before = list_sandbox_files(session_id)
+    code = user_code
 
     task_id = None
     text_content = ""
@@ -801,8 +707,8 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
 
             # Collect text output from content blocks.
             # AgentCore only emits "text" blocks for executeCode — image/resource
-            # blocks are never produced for savefig()-style files. We detect those
-            # via the postamble markers in stdout and fetch them after the stream.
+            # blocks are never produced for savefig()-style files. Those are
+            # detected after the stream by diffing list_sandbox_files() before/after.
             for block in result.get("content", []):
                 if block.get("type") == "text":
                     text_content += block.get("text", "") + "\n"
@@ -840,29 +746,32 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     if execution_error is not None:
         return {"success": False, "error": f"Code execution error: {execution_error}"}
 
-    # ── Post-execution: detect and fetch files printed by the postamble ────────
-    # Parse __AMPLIFY_FILE__:<path>:__END__ markers out of stdout, fetch each
-    # file's bytes from the sandbox via readFiles, upload to S3, and strip the
-    # marker lines from the text that goes back to the LLM.
-    clean_lines = []
+    # ── Post-execution: detect new files via listFiles diffing ────────────────
+    # Take a second snapshot and diff against the pre-execution listing to find
+    # files the user's code created. Only files with a recognized/expected
+    # extension are surfaced (matches prior behavior) — this avoids attaching
+    # incidental sandbox artifacts (e.g. __pycache__) that aren't meaningful
+    # outputs to show the user.
     discovered_paths = []
-    for line in text_content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(_FILE_MARKER_START) and stripped.endswith(_FILE_MARKER_END):
-            path = stripped[len(_FILE_MARKER_START):-len(_FILE_MARKER_END)]
-            if path:
-                discovered_paths.append(path)
-        else:
-            clean_lines.append(line)
-
-    text_content = "\n".join(clean_lines)
-    logger.info("Postamble discovered %d file(s): %s", len(discovered_paths), discovered_paths)
+    files_after = list_sandbox_files(session_id)
+    if files_before is not None and files_after is not None:
+        new_paths = sorted(files_after - files_before)
+        discovered_paths = [
+            p for p in new_paths
+            if os.path.splitext(p)[1].lower() in _WATCHED_EXTENSIONS
+        ]
+        logger.info("listFiles diff discovered %d file(s): %s", len(discovered_paths), discovered_paths)
+    else:
+        logger.warning(
+            "Could not determine sandbox file listing for session %s — "
+            "skipping output file detection for this execution.", session_id,
+        )
 
     for path in discovered_paths:
-        file_result = _fetch_and_upload_sandbox_file(path, session_id, current_user)
+        file_result = _fetch_sandbox_file_inline(path, session_id)
         if file_result.get("success"):
             output_files.append(file_result["data"])
-            logger.info("Sandbox file uploaded: %s -> %s", path, file_result["data"].get("type"))
+            logger.info("Sandbox file encoded inline: %s -> %s", path, file_result["data"].get("type"))
         else:
             logger.warning("Failed to fetch sandbox file %s: %s", path, file_result.get("error"))
 
@@ -877,38 +786,6 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
             }
         },
     }
-
-
-def upload_file_and_get_urls(file_bytes, content_type, file_key, current_user, file_name=None):
-    """Upload file bytes to S3 and return presigned URL(s).
-
-    For PNG images over 200 KB, also creates and uploads a low-res version.
-    """
-    values = {}
-
-    presigned = send_file_to_s3(file_bytes, file_key, file_name, current_user, content_type)
-    if presigned and presigned.get("success"):
-        values["file_key"] = file_key
-        values["presigned_url"] = presigned["presigned_url"]
-        values["file_size"] = len(file_bytes)
-
-    if "png" in content_type and len(file_bytes) > 204800:
-        logger.debug("PNG exceeds 200 KB — creating low-res version")
-        try:
-            low_res_bytes = create_low_res_version(file_bytes)
-            file_key_low_res = file_key + "-low-res"
-            presigned_low_res = send_file_to_s3(
-                low_res_bytes, file_key_low_res, file_name, current_user, content_type
-            )
-            if presigned_low_res and presigned_low_res.get("success"):
-                values["file_key_low_res"] = file_key_low_res
-                values["presigned_url_low_res"] = presigned_low_res["presigned_url"]
-        except Exception as e:
-            logger.warning("Failed to create low-res image: %s", e)
-
-    if values:
-        return {"success": True, "data": {"type": content_type, "values": values}}
-    return {"success": False, "error": "Failed to upload file to S3"}
 
 
 def record_session_charge(info):
@@ -999,7 +876,22 @@ def create_new_session(user_id, file_keys, account_id="", request_id=""):
 
     for file_key in file_keys:
         file_key_user = file_key.split("//")[1] if "//" in file_key else file_key
+        # TEMP DIAGNOSTIC (see investigation notes): logs the raw values being compared so
+        # we can tell apart a genuine authorization mismatch from a casing/format mismatch
+        # between the uploading Lambda's current_user and this Lambda's current_user, and
+        # from group-assistant key substitution (groupId has no "@").  Remove once the
+        # session-creation/file-authorization issue is confirmed diagnosed.
+        logger.info(
+            "create_new_session auth check: user_id=%r file_key=%r file_key_user=%r "
+            "has_at=%s len=%d user_in_key=%s",
+            user_id, file_key, file_key_user,
+            "@" in file_key_user, len(file_key_user), user_id in file_key_user,
+        )
         if "@" not in file_key_user or len(file_key_user) < 6 or user_id not in file_key_user:
+            logger.warning(
+                "create_new_session: authorization FAILED for user_id=%r against file_key_user=%r",
+                user_id, file_key_user,
+            )
             return {"success": False, "error": "You are not authorized to access the referenced files"}
 
     session_info = create_agentcore_session(user_id, file_keys)

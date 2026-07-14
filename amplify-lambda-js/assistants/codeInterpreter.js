@@ -96,21 +96,17 @@ function extractToolCalls(result) {
 }
 
 // Structured tool result fed back to the LLM — includes stdout and generated file metadata.
+// Note: only metadata (name/size/type) is included here, never the base64 file data itself —
+// that would needlessly bloat the LLM's context with content it doesn't need to reason about.
 function buildToolResultContent(responseData) {
     const inner = responseData?.data?.data ?? {};
     const result = { output: inner.textContent || "" };
     if (inner.content && inner.content.length > 0) {
-        result.files = inner.content.map(f => {
-            // Extract human-readable filename from the S3 key (pattern: uuid-FN-filename)
-            const fileKey = f.values?.file_key || "";
-            const fnMatch = fileKey.match(/-FN-([^/]+)$/);
-            const fileName = fnMatch ? fnMatch[1] : fileKey.split("/").pop() || "generated_file";
-            return {
-                type: f.type,
-                file_name: fileName,
-                file_size: f.values?.file_size
-            };
-        });
+        result.files = inner.content.map(f => ({
+            type: f.type,
+            file_name: f.values?.file_name || "generated_file",
+            file_size: f.values?.file_size
+        }));
     }
     return JSON.stringify(result);
 }
@@ -150,10 +146,37 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             //   1. `ds` — the resolved top-level body.dataSources (files attached to this request)
             //   2. The last message's data.dataSources — per-message attachments
             // We union both to ensure nothing is missed.
-            const dsFileKeys = (ds || []).map(d => d.id).filter(Boolean);
-            const lastMsgFileKeys = (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => d.id).filter(Boolean);
+            //
+            // IMPORTANT: `ds` has already passed through resolveDataSources() ->
+            // translateUserDataSourcesToHashDataSources(), which REWRITES ds.id to the
+            // global, deduplicated RAG text-location key (e.g. "s3://bucket/global/<hash>")
+            // whenever the file has already been indexed for RAG. That global key does not
+            // contain the user's email and points at extracted RAG text, not the original
+            // file bytes — the Python backend's file_keys_to_s3_bytes/create_new_session
+            // both expect the ORIGINAL per-user key (e.g. "user@email.com/2024-05-08/hash.ext")
+            // and reject anything else as unauthorized. When translation happens, the
+            // original id is preserved on metadata.userDataSourceId, so prefer that.
+            const dsFileKeys = (ds || []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
+            const lastMsgFileKeys = (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
             const allCurrentFileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
             const fileKeys = allCurrentFileKeys;
+
+            // TEMP DIAGNOSTIC (see investigation notes): dumps the raw dataSources arrays and
+            // the resolved fileKeys so we can confirm whether top-level image/video dataSources
+            // (filtered out of `ds` upstream by resolveDataSources' isImage/isVideo split) are
+            // ever silently missing from what gets sent to the code interpreter, and whether
+            // metadata.userDataSourceId is actually present when RAG hash-translation kicks in.
+            // Remove once the file-handling issue is diagnosed.
+            logger.info("codeInterpreter file key resolution diagnostic: %s", JSON.stringify({
+                account: account.user,
+                ds_raw: (ds || []).map(d => ({ id: d.id, type: d.type, metadata: d.metadata })),
+                lastMsgDataSources_raw: (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => ({ id: d.id, type: d.type, metadata: d.metadata })),
+                imageSources: (body.imageSources || []).map(d => ({ id: d.id, type: d.type })),
+                videoSources: (body.videoSources || []).map(d => ({ id: d.id, type: d.type })),
+                dsFileKeys,
+                lastMsgFileKeys,
+                fileKeys
+            }));
 
             if (codeInterpreterRecordId === null) {
                 if (await isKilled(account.user, responseStream, body)) return;
