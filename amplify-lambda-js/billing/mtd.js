@@ -829,7 +829,7 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
 
             // Parse the groups data
             allGroups = groupsResult.Item.data;
-            logger.info("Successfully fetched amplify groups", { 
+            logger.info("Successfully fetched amplify groups", {
                 groupCount: Object.keys(allGroups).length,
                 firstFewGroups: Object.keys(allGroups).slice(0, 3),
                 dataStructure: typeof allGroups
@@ -1129,12 +1129,32 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
             
             // Get group configuration
             const groupConfig = allGroups[groupName];
-            
+
+            // Extract rate limit - handle both document and raw DynamoDB formats
+            let rateLimitInfo = null;
+            const rawRateLimit = groupConfig.rateLimit || groupConfig.M?.rateLimit;
+            if (rawRateLimit) {
+                if (Array.isArray(rawRateLimit)) {
+                    // Direct array format: [{ rate: 9999.99, period: 'daily' }, ...]
+                    rateLimitInfo = rawRateLimit;
+                } else if (rawRateLimit.L) {
+                    // DynamoDB List format
+                    rateLimitInfo = rawRateLimit.L.map(item => {
+                        const obj = {};
+                        if (item.M) {
+                            if (item.M.rate && item.M.rate.N) obj.rate = parseFloat(item.M.rate.N);
+                            if (item.M.period && item.M.period.S) obj.period = item.M.period.S;
+                        }
+                        return obj;
+                    });
+                }
+            }
+
             billingGroupsData[groupName] = {
                 groupInfo: {
                     name: groupName,
                     createdBy: groupConfig.createdBy || groupConfig.M?.createdBy?.S || 'Unknown',
-                    rateLimit: groupConfig.rateLimit || groupConfig.M?.rateLimit || null,
+                    rateLimit: rateLimitInfo,
                     directMemberCount: affiliation.summary.directCount,
                     indirectMemberCount: affiliation.summary.indirectCount,
                     totalMemberCount: affiliation.summary.totalCount
@@ -1159,10 +1179,11 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
         
         // Calculate percentage of platform costs for each group
         for (const groupData of Object.values(billingGroupsData)) {
-            groupData.costs.percentOfPlatform = platformTotalCost > 0 ? 
+            groupData.costs.percentOfPlatform = platformTotalCost > 0 ?
                 (groupData.costs.total / platformTotalCost) * 100 : 0;
         }
-        
+
+
         const totalDuration = Date.now() - startTime;
         
         const response = {

@@ -591,14 +591,15 @@ def assistant_owns_datasources(assistant_public_id, data_source_ids):
     """
     Verify that the given datasources actually belong to the assistant.
 
-    Rather than checking OBJECT_ACCESS for a (datasource, principal) grant, we
-    treat the assistant's own record as authoritative: the latest version of the
-    assistant in ASSISTANTS_DYNAMODB_TABLE contains the canonical `dataSources`
-    list. A datasource the user is requesting via this assistant is legitimate
-    iff its key appears in that list.
+    Primary check: the latest version of the assistant in ASSISTANTS_DYNAMODB_TABLE
+    contains the canonical `dataSources` list. A datasource is legitimate iff its
+    key appears in that list.
 
-    This answers "does the assistant have access to the datasource?" without
-    relying on the leaf owner's email or an astp/... grant existing.
+    Fallback for drive-integration assistants: their `dataSources` list is empty
+    because all files live under `data.integrationDriveData`. RAG processing grants
+    the astp/xxx principal read access to each global/ content key in OBJECT_ACCESS,
+    so for any IDs not matched by the record lookup we check OBJECT_ACCESS directly
+    with assistant_public_id as the principal.
 
     Returns (owned_ids, not_owned_ids) preserving the input membership.
     """
@@ -655,9 +656,28 @@ def assistant_owns_datasources(assistant_public_id, data_source_ids):
                 not_owned.append(src_id)
 
         logger.info(
-            "Assistant %s owns %d/%d requested datasources",
+            "Assistant %s owns %d/%d requested datasources via record lookup",
             assistant_public_id, len(owned), len(data_source_ids)
         )
+
+        # Fallback: for drive-integration assistants dataSources is empty, but RAG
+        # granted assistant_public_id (astp/xxx) read access in OBJECT_ACCESS for
+        # each global/ content key. Check that directly for any unmatched IDs.
+        if not_owned:
+            logger.info(
+                "Assistant %s: %d datasources unmatched in record, checking OBJECT_ACCESS "
+                "with principal %s (drive-integration fallback)",
+                assistant_public_id, len(not_owned), assistant_public_id
+            )
+            astp_good, astp_bad = classify_src_ids_by_access(not_owned, assistant_public_id)
+            if astp_good:
+                logger.info(
+                    "Drive-integration fallback: %d datasources authorized via OBJECT_ACCESS "
+                    "principal %s", len(astp_good), assistant_public_id
+                )
+            owned = owned + astp_good
+            not_owned = astp_bad
+
         return owned, not_owned
 
     except Exception as e:
