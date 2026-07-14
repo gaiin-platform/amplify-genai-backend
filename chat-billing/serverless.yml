@@ -77,16 +77,11 @@ provider:
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
-    # SQS queue that external workloads (e.g. Open Notebook) send usage events to.
-    # The process_usage_events consumer (below) records them via pycommon accounting.
-    USAGE_EVENTS_QUEUE_NAME: ${self:service}-${sls:stage}-usage-events
 
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
-    # CHAT_USAGE_DYNAMO_TABLE is owned by amplify-lambda; record_usage writes to it.
-    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
@@ -157,22 +152,7 @@ functions:
           path: models/register_ops
           method: post
           cors: true
-
-  # Consumes usage events emitted by external workloads (Open Notebook) and
-  # records them via pycommon record_usage / record_additional_charge.
-  # Modeled on amplify-lambda-admin critical_error_processor.
-  process_usage_events:
-    handler: service/usage_events.process_usage_event_from_sqs
-    timeout: 30
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - sqs:
-          arn: !GetAtt UsageEventsQueue.Arn
-          batchSize: 10
-          maximumBatchingWindowInSeconds: 5
-          functionResponseType: ReportBatchItemFailures
-
+  
 resources:
   Resources:
 
@@ -206,8 +186,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
@@ -235,15 +213,6 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
-
-            # The process_usage_events consumer receives from the UsageEventsQueue.
-            - Effect: Allow
-              Action:
-                - sqs:ReceiveMessage
-                - sqs:DeleteMessage
-                - sqs:GetQueueAttributes
-              Resource:
-                - !GetAtt UsageEventsQueue.Arn
     # model rates needed for usage cost calculations
     ModelRateTable:
       Type: 'AWS::DynamoDB::Table'
@@ -281,38 +250,4 @@ resources:
           - AttributeName: 'id'
             KeyType: 'HASH'
 
-    # Dead-letter queue for usage events that fail processing maxReceiveCount times.
-    UsageEventsDeadLetterQueue:
-      Type: AWS::SQS::Queue
-      Properties:
-        QueueName: ${self:provider.environment.USAGE_EVENTS_QUEUE_NAME}-dlq
-        MessageRetentionPeriod: 1209600  # 14 days
-
-    # Queue that external workloads (Open Notebook ECS) send usage events to.
-    # Producers are granted sqs:SendMessage on this ARN out-of-band (the
-    # open-notebook-ecs-task role is not managed by this repo).
-    UsageEventsQueue:
-      Type: AWS::SQS::Queue
-      Properties:
-        QueueName: ${self:provider.environment.USAGE_EVENTS_QUEUE_NAME}
-        VisibilityTimeout: 180  # 3 minutes (6x Lambda timeout of 30s)
-        MessageRetentionPeriod: 345600  # 4 days
-        ReceiveMessageWaitTimeSeconds: 20  # Long polling
-        RedrivePolicy:
-          deadLetterTargetArn: !GetAtt UsageEventsDeadLetterQueue.Arn
-          maxReceiveCount: 3  # Retry 3 times before DLQ
-
-  Outputs:
-    # Exported so producer stacks / IAM policies can reference the queue.
-    UsageEventsQueueUrl:
-      Value: !Ref UsageEventsQueue
-      Export:
-        Name:
-          Fn::Sub: "${sls:stage}-UsageEventsQueueUrl"
-
-    UsageEventsQueueArn:
-      Value: !GetAtt UsageEventsQueue.Arn
-      Export:
-        Name:
-          Fn::Sub: "${sls:stage}-UsageEventsQueueArn"
-
+  
