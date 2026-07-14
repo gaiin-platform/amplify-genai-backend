@@ -498,6 +498,12 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
 async function includeImageSources(dataSources, messages, responseStream) {
     if (!dataSources || dataSources.length === 0) return messages;
 
+    // Extract filenames for reference labels - prefer ds.name (original filename) over S3 path
+    const imageFilenames = dataSources.map((ds, idx) => {
+        const filename = ds.name || ds.id.split('/').pop() || `image_${idx + 1}`;
+        return filename;
+    });
+
     // Process all images in parallel for faster execution
     const imagePromises = dataSources.map(async (ds) => {
         try {
@@ -507,7 +513,7 @@ async function includeImageSources(dataSources, messages, responseStream) {
                     ds: {...ds, contentKey: extractKey(ds.id)},
                     imageData: {
                         "image": {
-                            "format": ds.type.split('/')[1], 
+                            "format": ds.type.split('/')[1],
                             "source": {
                                 "bytes": Uint8Array.from(atob(encoded_image), char => char.charCodeAt(0))
                             }
@@ -520,12 +526,12 @@ async function includeImageSources(dataSources, messages, responseStream) {
         }
         return null;
     });
-    
+
     const results = await Promise.all(imagePromises);
     const retrievedImages = [];
     let imageMessageContent = [[]];
     let listIdx = 0;
-    
+
     // Process results
     for (const result of results) {
         if (result) {
@@ -547,7 +553,14 @@ async function includeImageSources(dataSources, messages, responseStream) {
 
     const msgLen = messages.length - 1;
     let content = messages[msgLen]['content'];
-    content.push({ "text": additionalImageInstruction});
+
+    // Build image reference labels to help model map filenames to images
+    const imageReferenceLabels = imageFilenames
+        .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
+        .join('\n');
+    const imageReferenceInstruction = `\n\nImage Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.`;
+
+    content.push({ "text": imageReferenceInstruction + additionalImageInstruction});
     content = [...content, ...imageMessageContent[0]];
     messages[msgLen]['content'] = content;
     if (listIdx > 0) {
