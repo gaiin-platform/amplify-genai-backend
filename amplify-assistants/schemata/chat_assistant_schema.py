@@ -39,18 +39,23 @@ chat_assistant_schema = {
                                                 "values": {
                                                     "type": "object",
                                                     "properties": {
-                                                        # Base64-encoded file bytes, returned directly for
-                                                        # inline rendering — generated files are not persisted
-                                                        # to S3, so there is no file_key/presigned_url.
-                                                        "data": {"type": "string"},
-                                                        "file_name": {"type": "string"},
+                                                        "file_key": {"type": "string"},
+                                                        "presigned_url": {
+                                                            "type": "string"
+                                                        },
+                                                        "file_key_low_res": {
+                                                            "type": "string"
+                                                        },
+                                                        "presigned_url_low_res": {
+                                                            "type": "string"
+                                                        },
                                                         "file_size": {
                                                             "type": "integer"
                                                         },
                                                     },
                                                     "required": [
-                                                        "data",
-                                                        "file_name",
+                                                        "file_key",
+                                                        "presigned_url",
                                                     ],
                                                     "additionalProperties": False,
                                                 },

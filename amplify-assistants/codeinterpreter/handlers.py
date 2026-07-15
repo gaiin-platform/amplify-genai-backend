@@ -174,6 +174,9 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
     messages = data["data"]["messages"]
     file_keys = data["data"].get("file_keys", [])
     all_conversation_file_keys = data["data"].get("all_conversation_file_keys", [])
+    # Map of file_key -> original filename, since the S3 key's basename is a random UUID.
+    file_names = data["data"].get("file_names", {})
+    all_conversation_file_names = data["data"].get("all_conversation_file_names", {})
 
     api_accessed = data["api_accessed"]
     request_id = generate_req_id() if api_accessed else data["data"]["requestId"]
@@ -186,6 +189,8 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
         api_accessed,
         file_keys=file_keys,
         all_conversation_file_keys=all_conversation_file_keys,
+        file_names=file_names,
+        all_conversation_file_names=all_conversation_file_names,
     )
 
 
@@ -261,6 +266,8 @@ def generate_req_id():
 def create_code_interpreter_session(event, context, current_user, name, data):
     extracted_data = data["data"]
     file_keys = extracted_data.get("dataSources", [])
+    # Map of file_key -> original filename (see chat_with_code_interpreter comment above).
+    file_names = extracted_data.get("fileNames", {})
     api_accessed = data["api_accessed"]
     account_id = data["account"] if api_accessed else extracted_data.get("accountId", "")
     request_id = generate_req_id() if api_accessed else extracted_data.get("requestId", generate_req_id())
@@ -270,6 +277,7 @@ def create_code_interpreter_session(event, context, current_user, name, data):
         file_keys=file_keys,
         account_id=account_id,
         request_id=request_id,
+        file_names=file_names,
     )
 
 

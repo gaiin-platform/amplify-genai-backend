@@ -38,13 +38,18 @@ export const CODE_INTERPRETER_TOOL_DEFINITION = {
 
 const CODE_INTERPRETER_SYSTEM_PROMPT =
     "You have access to a secure Python sandbox via the `execute_code` tool. " +
+    "The sandbox persists for the entire conversation — files attached in any earlier message " +
+    "remain available by their filename in later messages, even without being re-attached. " +
+    "Never claim a previously attached file is unavailable; use execute_code to check for it " +
+    "(e.g. os.listdir('.')) before saying you cannot access it. " +
     "Always use this tool to run code rather than showing hypothetical output. " +
     "Rules:\n" +
     "1. Do NOT include the Python code or raw sandbox output in your response.\n" +
-    "2. Write a natural, helpful response based on what the code produced — explain findings, insights, or results in your own words.\n" +
-    "3. Reference generated files by their filename — do NOT include download links.\n" +
-    "4. Do not attach duplicate files with identical content.\n" +
-    "5. Always include generated files in your response.";
+    "2. Do NOT emit tool-call syntax (e.g. <function_name>, <invoke>) as visible text — call the tool directly.\n" +
+    "3. Write a natural, helpful response based on what the code produced — explain findings, insights, or results in your own words.\n" +
+    "4. Reference generated files by their filename — do NOT include download links.\n" +
+    "5. Do not attach duplicate files with identical content.\n" +
+    "6. Always include generated files in your response.";
 
 const description =
     "Executes Python in a secure sandbox, handling diverse data to craft files and visual graphs. " +
@@ -95,18 +100,22 @@ function extractToolCalls(result) {
     return [];
 }
 
-// Structured tool result fed back to the LLM — includes stdout and generated file metadata.
-// Note: only metadata (name/size/type) is included here, never the base64 file data itself —
-// that would needlessly bloat the LLM's context with content it doesn't need to reason about.
+// Structured tool result fed back to the LLM — includes stdout and generated file metadata
+// (never the file bytes themselves, to keep the LLM's context small).
 function buildToolResultContent(responseData) {
     const inner = responseData?.data?.data ?? {};
     const result = { output: inner.textContent || "" };
     if (inner.content && inner.content.length > 0) {
-        result.files = inner.content.map(f => ({
-            type: f.type,
-            file_name: f.values?.file_name || "generated_file",
-            file_size: f.values?.file_size
-        }));
+        result.files = inner.content.map(f => {
+            const fileKey = f.values?.file_key || "";
+            const fnMatch = fileKey.match(/-FN-([^/]+)$/);
+            const fileName = fnMatch ? fnMatch[1] : fileKey.split("/").pop() || "generated_file";
+            return {
+                type: f.type,
+                file_name: fileName,
+                file_size: f.values?.file_size
+            };
+        });
     }
     return JSON.stringify(result);
 }
@@ -137,46 +146,22 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
             let codeInterpreterRecordId = options.codeInterpreterRecordId || body.codeInterpreterRecordId || null;
 
-            // Create session eagerly on every first message (no existing session).
-            // If files are attached they are loaded into the sandbox now so the LLM
-            // can reference them by filename. If no files, we still create the session
-            // up front so it exists before the first LLM call.
-            //
-            // File keys come from two sources:
-            //   1. `ds` — the resolved top-level body.dataSources (files attached to this request)
-            //   2. The last message's data.dataSources — per-message attachments
-            // We union both to ensure nothing is missed.
-            //
-            // IMPORTANT: `ds` has already passed through resolveDataSources() ->
-            // translateUserDataSourcesToHashDataSources(), which REWRITES ds.id to the
-            // global, deduplicated RAG text-location key (e.g. "s3://bucket/global/<hash>")
-            // whenever the file has already been indexed for RAG. That global key does not
-            // contain the user's email and points at extracted RAG text, not the original
-            // file bytes — the Python backend's file_keys_to_s3_bytes/create_new_session
-            // both expect the ORIGINAL per-user key (e.g. "user@email.com/2024-05-08/hash.ext")
-            // and reject anything else as unauthorized. When translation happens, the
-            // original id is preserved on metadata.userDataSourceId, so prefer that.
+            // File keys come from body.dataSources (ds) and the last message's per-message
+            // attachments. `ds` has already passed through translateUserDataSourcesToHashDataSources,
+            // which rewrites ds.id to a global RAG key when the file is indexed — the original
+            // per-user key is preserved at metadata.userDataSourceId, so prefer that.
             const dsFileKeys = (ds || []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
             const lastMsgFileKeys = (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
-            const allCurrentFileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
-            const fileKeys = allCurrentFileKeys;
+            const fileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
 
-            // TEMP DIAGNOSTIC (see investigation notes): dumps the raw dataSources arrays and
-            // the resolved fileKeys so we can confirm whether top-level image/video dataSources
-            // (filtered out of `ds` upstream by resolveDataSources' isImage/isVideo split) are
-            // ever silently missing from what gets sent to the code interpreter, and whether
-            // metadata.userDataSourceId is actually present when RAG hash-translation kicks in.
-            // Remove once the file-handling issue is diagnosed.
-            logger.info("codeInterpreter file key resolution diagnostic: %s", JSON.stringify({
-                account: account.user,
-                ds_raw: (ds || []).map(d => ({ id: d.id, type: d.type, metadata: d.metadata })),
-                lastMsgDataSources_raw: (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => ({ id: d.id, type: d.type, metadata: d.metadata })),
-                imageSources: (body.imageSources || []).map(d => ({ id: d.id, type: d.type })),
-                videoSources: (body.videoSources || []).map(d => ({ id: d.id, type: d.type })),
-                dsFileKeys,
-                lastMsgFileKeys,
-                fileKeys
-            }));
+            // Map each file key to its original filename — S3 keys are random UUIDs, not
+            // the real filename, so the sandbox needs this to load files under a name the
+            // LLM's code can reference (e.g. pd.read_csv('sales_data.csv')).
+            const fileKeyToName = {};
+            for (const d of [...(ds || []), ...(messages[messages.length - 1]?.data?.dataSources ?? [])]) {
+                const key = d.metadata?.userDataSourceId || d.id;
+                if (key && d.name) fileKeyToName[key] = d.name;
+            }
 
             if (codeInterpreterRecordId === null) {
                 if (await isKilled(account.user, responseStream, body)) return;
@@ -187,7 +172,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 sendStatusMessage(responseStream, statusMsg);
 
                 const createResponse = await fetchRequest(
-                    token, { dataSources: fileKeys },
+                    token, { dataSources: fileKeys, fileNames: fileKeyToName },
                     process.env.API_BASE_URL + "/assistant/create/codeinterpreter"
                 );
 
@@ -225,145 +210,139 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 llmMessages = [{ role: "system", content: CODE_INTERPRETER_SYSTEM_PROMPT }, ...messages];
             }
 
-            // First LLM call: tool selection. keepStreamOpen so we can continue after.
-            if (await isKilled(account.user, responseStream, body)) return;
-            sendStatusMessage(responseStream, "Code interpreter is analysing your request...");
+            const MAX_TOOL_ITERATIONS = 5;
+            let conversationMessages = llmMessages;
+            let executedAny = false;
+            const allGeneratedFiles = [];
 
-            let firstCallResult;
-            try {
-                // Pass null stream — the first call captures tool arguments only and
-                // must NOT stream raw LLM output (including tool call JSON) to the user.
-                firstCallResult = await callUnifiedLLM(
-                    { ...params, options: { ...params.options, model } },
-                    llmMessages,
-                    null,
+            for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+                if (await isKilled(account.user, responseStream, body)) return;
+                sendStatusMessage(responseStream, "Code interpreter is analysing your request...");
+
+                let callResult;
+                try {
+                    callResult = await callUnifiedLLM(
+                        { ...params, options: { ...params.options, model } },
+                        conversationMessages,
+                        null,
+                        {
+                            tools: [CODE_INTERPRETER_TOOL_DEFINITION],
+                            tool_choice: "auto",
+                            disableReasoning: true,
+                            temperature: options.temperature,
+                            max_tokens: options.maxTokens || 4000
+                        }
+                    );
+                } catch (err) {
+                    logger.error("Code interpreter LLM call failed: %s", err.message);
+                    sendStatusMessage(responseStream, String(err.message), false, "Code interpreter LLM call failed.");
+                    return;
+                }
+
+                const toolCalls = extractToolCalls(callResult);
+                if (!toolCalls || toolCalls.length === 0) {
+                    break;
+                }
+
+                const toolCall = toolCalls[0];
+                if (!toolCall.id) {
+                    toolCall.id = uuidv4();
+                }
+                let args = {};
+                try {
+                    args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
+                } catch (e) {
+                    logger.warn("Failed to parse tool call arguments: %s", e.message);
+                }
+                const code = args.code || "";
+
+                if (await isKilled(account.user, responseStream, body)) return;
+                sendStatusMessage(responseStream, "Code interpreter is executing your code...");
+
+                const executionResponse = await fetchRequest(
+                    token,
                     {
-                        tools: [CODE_INTERPRETER_TOOL_DEFINITION],
-                        tool_choice: "required",
-                        disableReasoning: true,
-                        temperature: options.temperature,
-                        max_tokens: options.maxTokens || 4000
-                    }
+                        codeInterpreterRecordId,
+                        messages: [{ role: "user", content: code }],
+                        file_keys: fileKeys,
+                        file_names: fileKeyToName,
+                        all_conversation_file_keys: body.allConversationFileKeys || [],
+                        all_conversation_file_names: body.allConversationFileNames || {},
+                        accountId: account.accountId || "general_account",
+                        requestId: options.requestId
+                    },
+                    process.env.API_BASE_URL + "/assistant/chat/codeinterpreter"
                 );
-            } catch (err) {
-                logger.error("First LLM call failed: %s", err.message);
-                sendStatusMessage(responseStream, String(err.message), false, "Code interpreter LLM call failed.");
-                return;
-            }
 
-            const toolCalls = extractToolCalls(firstCallResult);
+                let toolResultContent;
 
-            // LLM decided no code execution is needed — stream response directly.
-            if (!toolCalls || toolCalls.length === 0) {
-                logger.info("LLM did not call execute_code — routing to base assistant.");
-                sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
-                await assistantBase.handler(params, { ...body, messages: llmMessages, options: { ...options, maxTokens: options.maxTokens || 4000 } }, ds, responseStream);
-                return;
-            }
-
-            const toolCall = toolCalls[0];
-            // Ensure tool call has a stable id — Bedrock may omit toolUseId in some events.
-            if (!toolCall.id) {
-                toolCall.id = uuidv4();
-                logger.warn("toolCall.id was missing — generated fallback id: %s", toolCall.id);
-            }
-            let args = {};
-            try {
-                args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
-            } catch (e) {
-                logger.warn("Failed to parse tool call arguments: %s", e.message);
-            }
-            const code = args.code || "";
-
-            // Execute the LLM-written code via the Python lambda.
-            if (await isKilled(account.user, responseStream, body)) return;
-            sendStatusMessage(responseStream, "Code interpreter is executing your code...");
-
-            const executionResponse = await fetchRequest(
-                token,
-                {
-                    codeInterpreterRecordId,
-                    messages: [{ role: "user", content: code }],
-                    file_keys: fileKeys,
-                    // All file keys collected from the full conversation history before
-                    // smart-messages may have pruned body.messages.  Used by the Python
-                    // backend's renew_session so it can reload every file ever uploaded
-                    // into a freshly created replacement session.
-                    all_conversation_file_keys: body.allConversationFileKeys || [],
-                    accountId: account.accountId || "general_account",
-                    requestId: options.requestId
-                },
-                process.env.API_BASE_URL + "/assistant/chat/codeinterpreter"
-            );
-
-            let toolResultContent;
-            let ciStateData = null;
-
-            if (executionResponse?.success && executionResponse.data) {
-                sendStatusMessage(responseStream, "Code execution complete — generating response...");
-                const { textContent, ...messageData } = executionResponse.data.data;
-                // sessionRenewed is returned at the top level of the response (not nested under data.data)
-                ciStateData = { ...messageData, ...(executionResponse.sessionRenewed ? { sessionRenewed: true } : {}) };
-                toolResultContent = buildToolResultContent(executionResponse);
-            } else {
-                const errMsg = String(executionResponse?.error || "Unknown execution error");
-                logger.error("Code execution failed: %s", errMsg);
-                sendStateEventToStream(responseStream, {
-                    codeInterpreter: { error: errMsg.includes("session_expired") ? "session" : errMsg }
-                });
-                logCriticalError({
-                    functionName: "codeInterpreter_executionFailure",
-                    errorType: "CodeInterpreterExecutionFailure",
-                    errorMessage: `Code execution failed: ${errMsg}`,
-                    currentUser: account?.user || "unknown",
-                    severity: "HIGH",
-                    stackTrace: "",
-                    context: {
-                        requestId: options?.requestId || "unknown",
-                        codeInterpreterRecordId: codeInterpreterRecordId || "N/A",
-                        hasRecordId: !!codeInterpreterRecordId,
-                        errorDetails: errMsg,
-                        accountId: account?.accountId || "general_account"
+                if (executionResponse?.success && executionResponse.data) {
+                    sendStatusMessage(responseStream, "Code execution complete — generating response...");
+                    const { textContent, content, ...messageData } = executionResponse.data.data;
+                    if (content && content.length > 0) {
+                        allGeneratedFiles.push(...content);
                     }
-                }).catch(err => logger.error("Failed to log critical error:", err));
-                await fallbackToLLM(errMsg);
-                return;
+                    const ciStateData = {
+                        ...messageData,
+                        content: allGeneratedFiles,
+                        ...(executionResponse.sessionRenewed ? { sessionRenewed: true } : {})
+                    };
+                    sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
+                    forceFlush(responseStream);
+                    toolResultContent = buildToolResultContent(executionResponse);
+                } else {
+                    const errMsg = String(executionResponse?.error || "Unknown execution error");
+                    logger.error("Code execution failed: %s", errMsg);
+                    sendStateEventToStream(responseStream, {
+                        codeInterpreter: { error: errMsg.includes("session_expired") ? "session" : errMsg }
+                    });
+                    logCriticalError({
+                        functionName: "codeInterpreter_executionFailure",
+                        errorType: "CodeInterpreterExecutionFailure",
+                        errorMessage: `Code execution failed: ${errMsg}`,
+                        currentUser: account?.user || "unknown",
+                        severity: "HIGH",
+                        stackTrace: "",
+                        context: {
+                            requestId: options?.requestId || "unknown",
+                            codeInterpreterRecordId: codeInterpreterRecordId || "N/A",
+                            hasRecordId: !!codeInterpreterRecordId,
+                            errorDetails: errMsg,
+                            accountId: account?.accountId || "general_account"
+                        }
+                    }).catch(err => logger.error("Failed to log critical error:", err));
+                    await fallbackToLLM(errMsg);
+                    return;
+                }
+
+                executedAny = true;
+                conversationMessages = [
+                    ...conversationMessages,
+                    {
+                        role: "assistant",
+                        content: callResult.content || "",
+                        tool_calls: [{ id: toolCall.id, type: toolCall.type || "function", function: toolCall.function }]
+                    },
+                    {
+                        role: "tool",
+                        tool_call_id: toolCall.id,
+                        content: toolResultContent
+                    }
+                ];
             }
 
-            if (ciStateData) {
-                sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
-                // Force flush so the file state reaches the frontend before the second LLM call
-                // starts streaming text (which the frontend needs to render the files block).
-                forceFlush(responseStream);
-            }
-
-            // Second LLM call: format and stream the final response with the tool result in context.
             if (await isKilled(account.user, responseStream, body)) return;
             sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
 
-            const messagesWithToolResult = [
-                ...llmMessages,
-                {
-                    role: "assistant",
-                    content: firstCallResult.content || "",
-                    tool_calls: [{ id: toolCall.id, type: toolCall.type || "function", function: toolCall.function }]
-                },
-                {
-                    role: "tool",
-                    tool_call_id: toolCall.id,
-                    content: toolResultContent
-                }
-            ];
-
             await assistantBase.handler(params, {
                 ...body,
-                messages: messagesWithToolResult,
+                messages: conversationMessages,
                 max_tokens: options.maxTokens || 4000,
-                dataSources: [],
-                imageSources: [],
-                tools: [CODE_INTERPRETER_TOOL_DEFINITION],
-                options: { ...options, disableDataSources: true, disableReasoning: true, maxTokens: options.maxTokens || 4000 }
-            }, [], responseStream);
+                dataSources: executedAny ? [] : body.dataSources,
+                imageSources: executedAny ? [] : body.imageSources,
+                tools: executedAny ? [CODE_INTERPRETER_TOOL_DEFINITION] : undefined,
+                options: { ...options, disableDataSources: executedAny, disableReasoning: true, maxTokens: options.maxTokens || 4000 }
+            }, executedAny ? [] : ds, responseStream);
         }
     };
 };

@@ -165,12 +165,8 @@ export const chatBedrock = async (chatBody, writable) => {
         if ((body.tools && body.tools.length > 0) || hasToolRelatedContent) {
             let tools = body.tools && body.tools.length > 0 ? body.tools : [];
 
-            // SAFETY NET: Bedrock's Converse API rejects `toolConfig: { tools: [] }` with
-            // "ValidationException: The provided request is not valid". If the caller
-            // forgot to forward the original tool definitions (body.tools) but the message
-            // history still contains toolUse/toolResult blocks, reconstruct minimal
-            // toolSpecs from the toolUse names found in history so the request stays valid
-            // instead of hard-failing.
+            // Bedrock rejects toolConfig: { tools: [] } — reconstruct minimal toolSpecs
+            // from toolUse names in history if body.tools wasn't forwarded.
             if (tools.length === 0 && hasToolRelatedContent) {
                 const toolNames = new Set();
                 sanitizedMessages.forEach(msg => {
@@ -201,6 +197,32 @@ export const chatBedrock = async (chatBody, writable) => {
                     };
                 })
             };
+
+            // Translate OpenAI-style body.tool_choice into Bedrock's toolConfig.toolChoice
+            // shape. Only Claude 3+ and Mistral Large support toolChoice — others reject it.
+            const supportsToolChoice = /claude|mistral-large/i.test(currentModel.id || "");
+            if (tools.length > 0 && body.tool_choice && supportsToolChoice) {
+                const choice = body.tool_choice;
+                if (choice === "required" || choice === "any") {
+                    input.toolConfig.toolChoice = { any: {} };
+                } else if (choice === "auto") {
+                    input.toolConfig.toolChoice = { auto: {} };
+                } else if (choice && typeof choice === "object") {
+                    // OpenAI shape: { type: "function", function: { name: "..." } }
+                    const toolName = choice.function?.name || choice.name;
+                    if (toolName) {
+                        input.toolConfig.toolChoice = { tool: { name: toolName } };
+                    }
+                } else if (typeof choice === "string" && choice !== "none") {
+                    // A bare tool name string.
+                    input.toolConfig.toolChoice = { tool: { name: choice } };
+                }
+                if (input.toolConfig.toolChoice) {
+                    logger.info(`Set Bedrock toolChoice: ${JSON.stringify(input.toolConfig.toolChoice)}`);
+                }
+            } else if (tools.length > 0 && body.tool_choice && !supportsToolChoice) {
+                logger.warn(`body.tool_choice=${JSON.stringify(body.tool_choice)} requested but model ${currentModel.id} does not support toolChoice — ignoring (model will decide freely whether to call a tool)`);
+            }
 
             if (tools.length > 0) {
                 logger.info(`Added ${tools.length} tools to Bedrock request`);

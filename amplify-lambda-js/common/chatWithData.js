@@ -528,11 +528,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             smartMessagesFiltered: smartMessagesFiltered,
             // Pass conversationId for cache management in overflow handler
             conversationId: conversationId,
-            // ✅ FIX: Pass tools through so Bedrock's toolConfig isn't built with an empty
-            // tools list. When message history contains toolUse/toolResult blocks (e.g.
-            // the code interpreter's second/"answer" call) but tools is missing here,
-            // bedrock.js falls back to `toolConfig: { tools: [] }`, which Bedrock's
-            // Converse API rejects with "ValidationException: The provided request is not valid".
+            // Forward tools so bedrock.js doesn't build an empty toolConfig when
+            // history contains toolUse/toolResult blocks but tools wasn't passed.
             tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
             disableReasoning: chatRequestOrig.options?.disableReasoning
         }

@@ -385,21 +385,25 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             delete body.dataSources;
 
-            // Collect every file key referenced across all conversation messages BEFORE
-            // smart-messages processing runs.  Smart messages can prune old messages from
-            // body.messages, which would cause renew_session to miss files uploaded in
-            // those pruned messages.  We store the complete set here so it survives the
-            // replacement and can be forwarded to the Python backend.
+            // Collect every file key across all conversation messages before smart-messages
+            // may prune body.messages, so renew_session can still restore pruned files.
+            const allConversationDataSources = (body.messages || []).flatMap(m => m.data?.dataSources ?? []);
             const allConversationFileKeys = [
                 ...new Set(
-                    (body.messages || [])
-                        .flatMap(m => m.data?.dataSources ?? [])
+                    allConversationDataSources
                         .map(d => d.id)
                         .filter(Boolean)
                 )
             ];
             if (allConversationFileKeys.length > 0) {
                 body.allConversationFileKeys = allConversationFileKeys;
+                const allConversationFileNames = {};
+                for (const d of allConversationDataSources) {
+                    if (d.id && d.name) allConversationFileNames[d.id] = d.name;
+                }
+                if (Object.keys(allConversationFileNames).length > 0) {
+                    body.allConversationFileNames = allConversationFileNames;
+                }
             }
 
 

@@ -232,14 +232,10 @@ const defaultAssistant = {
                 responseStream,
                 {
                     max_tokens: bodyWithMedia.max_tokens || 2000,
-                    imageSources: bodyWithMedia.imageSources,  // ✅ FIX: Pass imageSources through options
-                    videoSources: bodyWithMedia.videoSources,  // ✅ FIX: Pass videoSources through options
-                    // ✅ FIX: Pass tools through so Bedrock's toolConfig isn't built with an
-                    // empty tools list. When message history contains toolUse/toolResult
-                    // blocks (e.g. the code interpreter's second/"answer" call) but tools
-                    // is missing here, bedrock.js falls back to `toolConfig: { tools: [] }`,
-                    // which Bedrock's Converse API rejects with
-                    // "ValidationException: The provided request is not valid".
+                    imageSources: bodyWithMedia.imageSources,
+                    videoSources: bodyWithMedia.videoSources,
+                    // Forward tools so bedrock.js doesn't build an empty toolConfig when
+                    // history contains toolUse/toolResult blocks but tools wasn't passed.
                     tools: bodyWithMedia.tools || bodyWithMedia.options?.tools,
                     disableReasoning: bodyWithMedia.options?.disableReasoning
                 }
