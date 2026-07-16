@@ -46,10 +46,15 @@ const CODE_INTERPRETER_SYSTEM_PROMPT =
     "Rules:\n" +
     "1. Do NOT include the Python code or raw sandbox output in your response.\n" +
     "2. Do NOT emit tool-call syntax (e.g. <function_name>, <invoke>) as visible text — call the tool directly.\n" +
-    "3. Write a natural, helpful response based on what the code produced — explain findings, insights, or results in your own words.\n" +
-    "4. Reference generated files by their filename — do NOT include download links.\n" +
-    "5. Do not attach duplicate files with identical content.\n" +
-    "6. Always include generated files in your response.";
+    "3. Trust the sandbox's output as the final answer. Once execute_code returns a successful " +
+    "result for the user's request, present that result to the user as-is — do NOT decide on your " +
+    "own to run additional code, generate extra plots, or perform further computation the user did " +
+    "not ask for. Only call execute_code again if the user's request genuinely requires multiple " +
+    "steps (e.g. they asked for several distinct things) or the previous call's result was an error.\n" +
+    "4. Write a natural, helpful response based on what the code produced — explain findings, insights, or results in your own words.\n" +
+    "5. Reference generated files by their filename — do NOT include download links.\n" +
+    "6. Do not attach duplicate files with identical content.\n" +
+    "7. Always include generated files in your response.";
 
 const description =
     "Executes Python in a secure sandbox, handling diverse data to craft files and visual graphs. " +
@@ -154,9 +159,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // On any code interpreter failure: show the error status, then let the LLM
             // answer the original question directly as a fallback.
             const fallbackToLLM = async (statusMsg) => {
-                sendStatusMessage(responseStream, statusMsg, false, "Code interpreter failed — falling back to assistant.");
-                sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
-
                 let fallbackMessages = messages;
                 if (isFileRelatedError(statusMsg)) {
                     const reuploadInstruction = {
@@ -211,8 +213,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
             if (codeInterpreterRecordId === null) {
                 if (await isKilled(account.user, responseStream, body)) return;
-
-                sendStatusMessage(responseStream, "Code Interpreter Assistant is starting...");
 
                 const createResponse = await fetchRequest(
                     token, { dataSources: fileKeys, fileNames: fileKeyToName },
@@ -293,7 +293,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     );
                 } catch (err) {
                     logger.error("Code interpreter LLM call failed: %s", err.message);
-                    sendStatusMessage(responseStream, String(err.message), false, "Code interpreter LLM call failed.");
+                    await fallbackToLLM(err.message);
                     return;
                 }
 
@@ -315,7 +315,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 const code = args.code || "";
 
                 if (await isKilled(account.user, responseStream, body)) return;
-                sendStatusMessage(responseStream, "Executing your code...");
+                sendStatusMessage(responseStream, "Executing code...");
 
                 const executionResponse = await fetchRequest(
                     token,
@@ -335,21 +335,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 let toolResultContent;
 
                 if (executionResponse?.success && executionResponse.data) {
-                    // If the backend transparently renewed an expired AgentCore session for
-                    // this execution, surface that explicitly and visibly — not just as an
-                    // ephemeral state field the frontend may or may not render. A dedicated
-                    // sticky status line guarantees the user sees it regardless of frontend
-                    // handling, and the system note ensures the final NL answer also
-                    // acknowledges it (so it survives into the persisted transcript, not
-                    // just a transient stream event).
-                    if (executionResponse.sessionRenewed) {
-                        sendStatusMessage(
-                            responseStream,
-                            "Your code interpreter session had expired — a new session was created and your files were reloaded.",
-                            true,
-                            "Code interpreter session expired — new session created."
-                        );
-                    }
                     const { textContent, content, ...messageData } = executionResponse.data.data;
                     if (content && content.length > 0) {
                         allGeneratedFiles.push(...content);
@@ -407,7 +392,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
 
             if (await isKilled(account.user, responseStream, body)) return;
-            sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
 
             // If the session was renewed this turn, make sure the final NL answer itself
             // mentions it — the status/state events above are ephemeral stream signals the
