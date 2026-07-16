@@ -946,7 +946,9 @@ def create_new_session(user_id, file_keys, account_id="", request_id="", file_na
     return {
         "success": True,
         "message": "Code interpreter session created successfully",
-        "data": {"codeInterpreterRecordId": record_id},
+        "data": {
+            "codeInterpreterRecordId": record_id,
+        },
     }
 
 

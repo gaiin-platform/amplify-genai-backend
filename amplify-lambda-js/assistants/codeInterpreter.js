@@ -136,12 +136,41 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             const messages = body.messages;
             const model = options.model || body.model;
 
+            // Heuristic: does this failure look like it's caused by a problem with the
+            // attached file itself (missing, unreadable, unauthorized, not found in the
+            // sandbox, etc.) rather than an infrastructure/session issue? If so, the
+            // fallback answer should proactively tell the user to re-upload the file
+            // alongside their question, since simply re-asking won't fix a file problem.
+            const isFileRelatedError = (msg) => {
+                const m = String(msg || "").toLowerCase();
+                return (
+                    m.includes("file") ||
+                    m.includes("filenotfounderror") ||
+                    m.includes("not authorized to access the referenced files") ||
+                    m.includes("no such file or directory")
+                );
+            };
+
             // On any code interpreter failure: show the error status, then let the LLM
             // answer the original question directly as a fallback.
             const fallbackToLLM = async (statusMsg) => {
                 sendStatusMessage(responseStream, statusMsg, false, "Code interpreter failed — falling back to assistant.");
                 sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
-                await assistantBase.handler(params, { ...body, messages, options: { ...options, maxTokens: options.maxTokens || 4000 } }, ds, responseStream);
+
+                let fallbackMessages = messages;
+                if (isFileRelatedError(statusMsg)) {
+                    const reuploadInstruction = {
+                        role: "system",
+                        content:
+                            "The code interpreter could not access an attached file for this request " +
+                            "(it may be missing, unreadable, or the sandbox session was reset). " +
+                            "Let the user know this in your response, and ask them to re-upload the file " +
+                            "along with their question so it can be processed again."
+                    };
+                    fallbackMessages = [...messages, reuploadInstruction];
+                }
+
+                await assistantBase.handler(params, { ...body, messages: fallbackMessages, options: { ...options, maxTokens: options.maxTokens || 4000 } }, ds, responseStream);
             };
 
             let codeInterpreterRecordId = options.codeInterpreterRecordId || body.codeInterpreterRecordId || null;
@@ -152,7 +181,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // per-user key is preserved at metadata.userDataSourceId, so prefer that.
             const dsFileKeys = (ds || []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
             const lastMsgFileKeys = (messages[messages.length - 1]?.data?.dataSources ?? []).map(d => d.metadata?.userDataSourceId || d.id).filter(Boolean);
-            const fileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
+            let fileKeys = [...new Set([...dsFileKeys, ...lastMsgFileKeys])];
 
             // Map each file key to its original filename — S3 keys are random UUIDs, not
             // the real filename, so the sandbox needs this to load files under a name the
@@ -163,13 +192,27 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 if (key && d.name) fileKeyToName[key] = d.name;
             }
 
+            // On a follow-up turn with no new attachment, fileKeys/fileKeyToName above are
+            // empty — the LLM then has no textual signal about the real filename (e.g.
+            // "sales_data.csv") and can hallucinate a generic placeholder like 'data.csv',
+            // causing FileNotFoundError even though the file is still in the sandbox.
+            // Fall back to the most recently uploaded file across the WHOLE conversation
+            // (router.js accumulates this in body.allConversationFileKeys/Names, in
+            // message order, so the last entry is the most recent upload) so the file's
+            // real name is always resent/known, every turn.
+            if (fileKeys.length === 0 && Array.isArray(body.allConversationFileKeys) && body.allConversationFileKeys.length > 0) {
+                const mostRecentKey = body.allConversationFileKeys[body.allConversationFileKeys.length - 1];
+                if (mostRecentKey) {
+                    fileKeys = [mostRecentKey];
+                    const mostRecentName = body.allConversationFileNames?.[mostRecentKey];
+                    if (mostRecentName) fileKeyToName[mostRecentKey] = mostRecentName;
+                }
+            }
+
             if (codeInterpreterRecordId === null) {
                 if (await isKilled(account.user, responseStream, body)) return;
 
-                const statusMsg = fileKeys.length > 0
-                    ? "Preparing code interpreter session with your files..."
-                    : "Starting code interpreter session...";
-                sendStatusMessage(responseStream, statusMsg);
+                sendStatusMessage(responseStream, "Code Interpreter Assistant is starting...");
 
                 const createResponse = await fetchRequest(
                     token, { dataSources: fileKeys, fileNames: fileKeyToName },
@@ -199,25 +242,40 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 }
             }
 
+            // Tell the LLM the real filename(s) available in the sandbox, in text, so it
+            // never has to guess a generic placeholder (e.g. 'data.csv') on a follow-up
+            // turn where no file was freshly attached. Without this, the model has no
+            // textual signal about the actual filename at all.
+            const availableFileNames = [...new Set(Object.values(fileKeyToName).filter(Boolean))];
+            const fileNamesHint = availableFileNames.length > 0
+                ? `\n\nFile(s) available in the sandbox for this request: ${availableFileNames.join(", ")}. Use these exact filenames in your code.`
+                : "";
+
             // Inject system prompt so the LLM uses the tool rather than narrating code.
             let llmMessages;
             if (messages.length > 0 && messages[0].role === "system") {
                 llmMessages = [
-                    { ...messages[0], content: messages[0].content + "\n\n" + CODE_INTERPRETER_SYSTEM_PROMPT },
+                    { ...messages[0], content: messages[0].content + "\n\n" + CODE_INTERPRETER_SYSTEM_PROMPT + fileNamesHint },
                     ...messages.slice(1)
                 ];
             } else {
-                llmMessages = [{ role: "system", content: CODE_INTERPRETER_SYSTEM_PROMPT }, ...messages];
+                llmMessages = [{ role: "system", content: CODE_INTERPRETER_SYSTEM_PROMPT + fileNamesHint }, ...messages];
             }
 
             const MAX_TOOL_ITERATIONS = 5;
             let conversationMessages = llmMessages;
             let executedAny = false;
+            let sessionWasRenewed = false;
             const allGeneratedFiles = [];
 
             for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
                 if (await isKilled(account.user, responseStream, body)) return;
-                sendStatusMessage(responseStream, "Code interpreter is analysing your request...");
+
+                // Force tool use on the first turn so the model can never skip straight to
+                // an empty/no-op response — it must call execute_code at least once. Later
+                // turns (after it has already run code) are left on "auto" so it can stop
+                // calling the tool and produce its final text answer.
+                const toolChoice = iteration === 0 ? "required" : "auto";
 
                 let callResult;
                 try {
@@ -227,7 +285,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                         null,
                         {
                             tools: [CODE_INTERPRETER_TOOL_DEFINITION],
-                            tool_choice: "auto",
+                            tool_choice: toolChoice,
                             disableReasoning: true,
                             temperature: options.temperature,
                             max_tokens: options.maxTokens || 4000
@@ -257,7 +315,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 const code = args.code || "";
 
                 if (await isKilled(account.user, responseStream, body)) return;
-                sendStatusMessage(responseStream, "Code interpreter is executing your code...");
+                sendStatusMessage(responseStream, "Executing your code...");
 
                 const executionResponse = await fetchRequest(
                     token,
@@ -277,7 +335,21 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 let toolResultContent;
 
                 if (executionResponse?.success && executionResponse.data) {
-                    sendStatusMessage(responseStream, "Code execution complete — generating response...");
+                    // If the backend transparently renewed an expired AgentCore session for
+                    // this execution, surface that explicitly and visibly — not just as an
+                    // ephemeral state field the frontend may or may not render. A dedicated
+                    // sticky status line guarantees the user sees it regardless of frontend
+                    // handling, and the system note ensures the final NL answer also
+                    // acknowledges it (so it survives into the persisted transcript, not
+                    // just a transient stream event).
+                    if (executionResponse.sessionRenewed) {
+                        sendStatusMessage(
+                            responseStream,
+                            "Your code interpreter session had expired — a new session was created and your files were reloaded.",
+                            true,
+                            "Code interpreter session expired — new session created."
+                        );
+                    }
                     const { textContent, content, ...messageData } = executionResponse.data.data;
                     if (content && content.length > 0) {
                         allGeneratedFiles.push(...content);
@@ -290,6 +362,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
                     forceFlush(responseStream);
                     toolResultContent = buildToolResultContent(executionResponse);
+                    if (executionResponse.sessionRenewed) {
+                        sessionWasRenewed = true;
+                    }
                 } else {
                     const errMsg = String(executionResponse?.error || "Unknown execution error");
                     logger.error("Code execution failed: %s", errMsg);
@@ -334,13 +409,41 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             if (await isKilled(account.user, responseStream, body)) return;
             sendStatusMessage(responseStream, "Amplify Assistant is responding...", true);
 
+            // If the session was renewed this turn, make sure the final NL answer itself
+            // mentions it — the status/state events above are ephemeral stream signals the
+            // frontend might not render or might miss on a fast turn, but text appended to
+            // conversationMessages here is guaranteed to reach the persisted transcript the
+            // user actually reads.
+            let finalMessages = conversationMessages;
+            if (sessionWasRenewed) {
+                finalMessages = [
+                    ...conversationMessages,
+                    {
+                        role: "system",
+                        content:
+                            "Note: the code interpreter session had expired since your last message in this " +
+                            "conversation. A new session was automatically created and your previously uploaded " +
+                            "file(s) were reloaded into it. Begin your response with a brief note telling the user " +
+                            "this happened before answering their question."
+                    }
+                ];
+            }
+
+            // Once code has already executed, this final call is ONLY meant to produce the
+            // natural-language answer from the results already gathered above — it must NOT
+            // re-offer execute_code. assistantBase.handler's plain callUnifiedLLM path has no
+            // tool-execution loop, so if the model responds with a toolUse block instead of
+            // text (which it may do here since nothing constrains it away from the tool),
+            // the stream transform emits zero text deltas and the user sees a blank message,
+            // even though the sandbox already computed the real answer. Dropping `tools`
+            // here removes that possibility entirely.
             await assistantBase.handler(params, {
                 ...body,
-                messages: conversationMessages,
+                messages: finalMessages,
                 max_tokens: options.maxTokens || 4000,
                 dataSources: executedAny ? [] : body.dataSources,
                 imageSources: executedAny ? [] : body.imageSources,
-                tools: executedAny ? [CODE_INTERPRETER_TOOL_DEFINITION] : undefined,
+                tools: undefined,
                 options: { ...options, disableDataSources: executedAny, disableReasoning: true, maxTokens: options.maxTokens || 4000 }
             }, executedAny ? [] : ds, responseStream);
         }
