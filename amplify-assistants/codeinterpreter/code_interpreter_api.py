@@ -21,6 +21,33 @@ SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS"
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
+# Rough AgentCore Code Interpreter compute pricing used to estimate a per-execution
+# charge from the executionTime (seconds) AgentCore reports for each executeCode call.
+# These are approximations of AWS's consumption-based rate (vCPU-hour + GB-hour,
+# billed per-second) — not exact, since AgentCore doesn't expose actual vCPU/memory
+# consumed per execution. Used only when we can't get a better signal.
+AGENTCORE_EXECUTION_VCPU_HOUR_RATE = 0.0895
+AGENTCORE_EXECUTION_MEM_GB_HOUR_RATE = 0.00945
+AGENTCORE_EXECUTION_DEFAULT_MEM_GB = 1
+# Fallback flat estimate (USD) recorded when AgentCore does not report executionTime.
+AGENTCORE_EXECUTION_FLAT_COST_ESTIMATE = 0.01
+
+
+def _estimate_execution_cost(execution_time_seconds):
+    """Estimate the USD cost of a single AgentCore executeCode call.
+
+    Uses the reported executionTime (seconds) against an approximate combined
+    vCPU-hour/GB-hour rate when available, otherwise falls back to a flat estimate.
+    """
+    if execution_time_seconds is None:
+        return AGENTCORE_EXECUTION_FLAT_COST_ESTIMATE
+    hourly_rate = (
+        AGENTCORE_EXECUTION_VCPU_HOUR_RATE
+        + (AGENTCORE_EXECUTION_MEM_GB_HOUR_RATE * AGENTCORE_EXECUTION_DEFAULT_MEM_GB)
+    )
+    per_second_rate = hourly_rate / 3600.0
+    return execution_time_seconds * per_second_rate
+
 # Output file extensions surfaced to the user, detected via listFiles diffing.
 _WATCHED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
 
@@ -312,12 +339,15 @@ def extract_all_file_keys(messages, amplify_messages=True):
     return result
 
 
-def renew_session(record_id, current_user, messages, amplify_messages=True, all_file_keys=None, all_file_names=None):
+def renew_session(record_id, current_user, messages, amplify_messages=True, all_file_keys=None, all_file_names=None, account_id="", request_id=""):
     """Create a fresh AgentCore session, reload all files, and persist the new session_id.
 
     all_file_keys/all_file_names, when provided, are used directly instead of
     extracting from messages, so files from smart-messages-pruned history are
     still reloaded.
+
+    A new AgentCore session is a real, separately billed session — the same
+    per-session charge recorded on initial creation is recorded here too.
     """
     logger.info("Renewing expired AgentCore session for record %s", record_id)
 
@@ -357,10 +387,18 @@ def renew_session(record_id, current_user, messages, amplify_messages=True, all_
         )
         return {"success": False, "error": "Failed to persist renewed session"}
 
+    record_session_charge({
+        "current_user": current_user,
+        "account_id": account_id,
+        "request_id": request_id,
+        "record_id": record_id,
+        "session_id": new_session_id,
+    })
+
     return {"success": True, "session_id": new_session_id}
 
 
-def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed, file_keys=None, all_conversation_file_keys=None, file_names=None, all_conversation_file_names=None):
+def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed, file_keys=None, all_conversation_file_keys=None, file_names=None, all_conversation_file_names=None, account_id=""):
     """Entry point for a chat request. Fetches the session and executes the code.
 
     If the session expired, a new one is created transparently: all file keys
@@ -388,7 +426,7 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
 
     active_session_id = session_id
     session_renewed = False
-    result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed)
+    result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed, account_id=account_id)
 
     if result.get("error") == "session_expired":
         logger.warning(
@@ -400,6 +438,8 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
             amplify_messages=amplify_messages,
             all_file_keys=all_conversation_file_keys or None,
             all_file_names=all_conversation_file_names or None,
+            account_id=account_id,
+            request_id=request_id,
         )
         if not renewed["success"]:
             return {
@@ -409,7 +449,7 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         active_session_id = renewed["session_id"]
         session_renewed = True
         logger.info("Retrying execution on new session %s", active_session_id)
-        result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed)
+        result = chat(current_user, record_id, active_session_id, last_message, request_id, api_accessed=api_accessed, account_id=account_id)
 
         if result.get("error") == "session_expired":
             return {
@@ -631,7 +671,7 @@ def _send_stop_task(session_id, task_id):
         logger.warning("Failed to send stopTask for task %s: %s", task_id, e)
 
 
-def chat(current_user, record_id, session_id, last_message, request_id, api_accessed=False):
+def chat(current_user, record_id, session_id, last_message, request_id, api_accessed=False, account_id=""):
     """Execute code via AgentCore and return structured results.
 
     AgentCore does not maintain conversation history — session_id only keeps
@@ -673,6 +713,7 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     output_files = []
     cancelled = False
     timed_out = False
+    execution_time_seconds = None
     deadline = time.monotonic() + EXECUTION_TIMEOUT_SECONDS
 
     try:
@@ -753,6 +794,8 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
 
             # Capture taskId for potential post-stream stopTask call
             task_id = structured.get("taskId", task_id)
+            # Capture AgentCore-reported execution time (seconds) for cost tracking.
+            execution_time_seconds = structured.get("executionTime", execution_time_seconds)
 
             # Skip collecting output once we have timed out or been cancelled —
             # we only continue iterating to drain the stream and get the taskId.
@@ -813,6 +856,15 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
         else:
             logger.warning("Failed to fetch sandbox file %s: %s", path, file_result.get("error"))
 
+    record_execution_charge({
+        "current_user": current_user,
+        "account_id": account_id,
+        "request_id": request_id,
+        "record_id": record_id,
+        "session_id": session_id,
+        "execution_time_seconds": execution_time_seconds,
+    })
+
     return {
         "success": True,
         "message": "Chat completed successfully",
@@ -852,6 +904,45 @@ def record_session_charge(info):
         logger.debug("Session charge recorded")
     except Exception as e:
         logger.error("Failed to record session charge: %s", e)
+
+
+def record_execution_charge(info):
+    """Record a per-execution charge for a single AgentCore executeCode call.
+
+    Uses the executionTime (seconds) AgentCore reports in structuredContent when
+    available to estimate the cost; falls back to a flat estimate otherwise.
+    """
+    from pycommon.api.accounting import record_additional_charge
+    from datetime import datetime, timezone
+
+    execution_time_seconds = info.get("execution_time_seconds")
+    cost = _estimate_execution_cost(execution_time_seconds)
+    logger.debug(
+        "Recording execution charge: $%.6f (execution_time_seconds=%s)",
+        cost, execution_time_seconds,
+    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    try:
+        record_additional_charge(
+            account={"user": info["current_user"], "account_id": info.get("account_id", "")},
+            model_id=AGENTCORE_MODEL_ID,
+            token_count=0,
+            item_type="agentCoreCodeInterpreterExecution",
+            request_id=info.get("request_id"),
+            details={
+                "execution_timestamp": timestamp,
+                "record_id": info.get("record_id"),
+                "session_id": info.get("session_id"),
+                "execution_time_seconds": execution_time_seconds,
+                "estimated": execution_time_seconds is None,
+            },
+            ttl_days=None,
+            flat_cost=cost,
+        )
+        logger.debug("Execution charge recorded")
+    except Exception as e:
+        logger.error("Failed to record execution charge: %s", e)
 
 
 def get_record(record_id, current_user):

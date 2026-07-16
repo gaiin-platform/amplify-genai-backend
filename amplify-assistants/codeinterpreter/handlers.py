@@ -159,6 +159,7 @@ logger = getLogger("code_interpreter")
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
 })
 @validated(op="chat")
 def chat_with_code_interpreter(event, context, current_user, name, data):
@@ -180,6 +181,7 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
 
     api_accessed = data["api_accessed"]
     request_id = generate_req_id() if api_accessed else data["data"]["requestId"]
+    account_id = data["account"] if api_accessed else data["data"].get("accountId", "")
 
     return codeinterpreter.chat_with_code_interpreter(
         current_user,
@@ -191,6 +193,7 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
         all_conversation_file_keys=all_conversation_file_keys,
         file_names=file_names,
         all_conversation_file_names=all_conversation_file_names,
+        account_id=account_id,
     )
 
 
