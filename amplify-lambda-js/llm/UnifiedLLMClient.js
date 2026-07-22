@@ -582,16 +582,26 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             // Create capturedContent object to accumulate tool calls (same as streaming mode)
             const nonStreamCapturedContent = { fullResponse: '', toolCalls: [] };
 
+            // 💰 BILLING-CRITICAL: must use the same cross-chunk SSE buffering as
+            // createStreamInterceptor. Without it, a usage line that arrives split across
+            // two TCP chunks is silently discarded, leaving usageMarked=false and
+            // triggering the UsageNeverMarkedAfterStream billing-leak alert.
+            let sseBuffer = '';
+
             const bufferStream = new Writable({
                 write(chunk, _encoding, callback) {
-                    const text = chunk.toString();
+                    // Accumulate into buffer — same pattern as createStreamInterceptor
+                    sseBuffer += chunk.toString();
 
-                    // Parse SSE format to extract content
-                    const lines = text.split('\n');
+                    // Process only complete lines; keep the last incomplete fragment
+                    const lines = sseBuffer.split('\n');
+                    sseBuffer = lines.pop() || '';
+
                     for (const line of lines) {
-                        if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+                        if (line.trim() && line.startsWith('data: ')) {
+                            const data = line.slice(6).trim();
+                            if (data === '[DONE]') continue;
                             try {
-                                const data = line.slice(6);
                                 const event = JSON.parse(data);
 
                                 // Apply transform to get content - pass capturedContent for tool call accumulation
@@ -618,6 +628,36 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                                 }
                             } catch (err) {
                                 // Not JSON, skip
+                            }
+                        }
+                    }
+                    callback();
+                },
+                final(callback) {
+                    // Flush any remaining buffered data (mirrors createStreamInterceptor.final)
+                    if (sseBuffer.trim() && sseBuffer.startsWith('data: ')) {
+                        const data = sseBuffer.slice(6).trim();
+                        if (data !== '[DONE]') {
+                            try {
+                                const event = JSON.parse(data);
+                                const transformed = providerConfig.transform(event, null, nonStreamCapturedContent);
+                                if (transformed) {
+                                    requestState.streamReceivedData = true;
+                                    if (typeof transformed === 'string') {
+                                        fullContent += transformed;
+                                        nonStreamCapturedContent.fullResponse += transformed;
+                                    } else if (transformed.d) {
+                                        fullContent += transformed.d;
+                                        nonStreamCapturedContent.fullResponse += transformed.d;
+                                    }
+                                }
+                                const usage = providerConfig.usageTransform(event);
+                                if (usage) {
+                                    requestState.usageMarked = true;
+                                    requestState.totalUsage = { ...requestState.totalUsage, ...usage };
+                                }
+                            } catch (err) {
+                                // Incomplete fragment at end of stream, discard
                             }
                         }
                     }
@@ -820,6 +860,41 @@ function addAdditionalPropertiesFalse(schema) {
 }
 
 /**
+ * Deterministically repair the common STRUCTURAL JSON defects that Azure gpt-4.1-mini
+ * occasionally emits even under a strict json_schema. These are punctuation defects, not
+ * semantic ones, so they can be fixed without changing meaning:
+ *   - double / empty commas:  [0,1,,3]  (model dropped an integer)  -> [0,1,3]
+ *   - trailing commas:        [0,1,]                                -> [0,1]
+ *   - leading commas:         [,0,1]                                -> [0,1]
+ * Only meaningful to call after a real JSON.parse failure.
+ */
+function repairMalformedJson(text) {
+    return text
+        .replace(/,(\s*,)+/g, ',')       // collapse ANY run of commas: [0,1,,,5] -> [0,1,5]
+        .replace(/,\s*([\]}])/g, '$1')   // strip trailing commas:      [0,1,]    -> [0,1]
+        .replace(/([\[{])\s*,/g, '$1');  // strip leading commas:       [,0,1]    -> [0,1]
+}
+
+/**
+ * Parse JSON, attempting a single deterministic repair pass if the first parse fails.
+ * This lets us salvage Azure's malformed structured output WITHOUT paying for a full LLM
+ * retry. It never corrupts valid JSON because the repair only runs after a parse failure,
+ * and if the repair doesn't change the string we rethrow the original error.
+ *
+ * @returns {{parsed: any, repaired: boolean}}
+ * @throws  the original parse error if neither the raw nor repaired text is valid JSON
+ */
+function parseJsonWithRepair(text) {
+    try {
+        return { parsed: JSON.parse(text), repaired: false };
+    } catch (firstErr) {
+        const repaired = repairMalformedJson(text);
+        if (repaired === text) throw firstErr; // nothing to fix — genuinely broken
+        return { parsed: JSON.parse(repaired), repaired: true };
+    }
+}
+
+/**
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
@@ -905,10 +980,15 @@ RULES:
             const testContent = jsonMatch ? jsonMatch[0] : content;
 
             try {
-                JSON.parse(testContent);
-                // Valid JSON, continue
+                // Accept valid JSON OR JSON we can deterministically repair (Azure gpt-4.1-mini
+                // sometimes emits a double/trailing comma). Repairable output is NOT a reason to
+                // burn a second LLM call — only genuinely non-JSON output triggers the retry.
+                const { repaired } = parseJsonWithRepair(testContent);
+                if (repaired) {
+                    logger.warn(`Structured output JSON was malformed but repairable for ${provider}; keeping result and skipping retry.`);
+                }
             } catch (jsonTestError) {
-                // Structured output returned non-JSON, retry without flag
+                // Structured output returned non-JSON (not just a punctuation defect), retry without flag
                 logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
                 usedStructuredOutput = false;
                 retried = true;
@@ -926,16 +1006,51 @@ RULES:
         result = await callUnifiedLLM(params, finalMessages, null, {});
     }
 
-    // Parse JSON response
+    // Parse JSON response (with the same deterministic repair pass used during validation,
+    // so a malformed-but-recoverable structured output is salvaged rather than thrown away).
+    const content = result.content || '';
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const candidate = jsonMatch ? jsonMatch[0] : content;
+
     try {
-        const content = result.content || '';
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
+        const { parsed, repaired } = parseJsonWithRepair(candidate);
+        if (repaired) {
+            logger.warn(`Salvaged malformed structured-output JSON after deterministic repair. Original preview: ${candidate.substring(0, 120)}`);
         }
-        return JSON.parse(content);
+        return parsed;
     } catch (parseError) {
-        logger.error('Failed to parse JSON response:', parseError);
+        // Last-resort: the response has irreparable structural corruption (e.g. Azure gpt-4.1-mini
+        // merging adjacent integers like "46,4750" instead of "46,47,50"). Standard JSON.parse
+        // and our punctuation-repair pass both fail. However, we can still extract a best-effort
+        // result by pulling the individual integers/strings out of the raw text with a regex.
+        // Out-of-range or oversized merged numbers are safely discarded by the caller's own
+        // bounds-checking (e.g. datasources.js filters idx < context.content.length).
+        try {
+            // Try to find all integer values referenced in the response
+            const integerMatches = candidate.match(/\b\d+\b/g);
+            if (integerMatches && integerMatches.length > 0) {
+                // Reconstruct a best-effort object. We can only do this reliably when the
+                // schema is a simple wrapper around an array of integers (the relevantIndexes
+                // pattern). For anything more complex, fall through to the original throw.
+                const ints = [...new Set(integerMatches.map(Number))].sort((a, b) => a - b);
+
+                // Try to identify what key in the outputFormat this array belongs to
+                const arrayKey = outputFormat?.properties
+                    ? Object.keys(outputFormat.properties).find(k =>
+                        outputFormat.properties[k]?.type === 'array' &&
+                        outputFormat.properties[k]?.items?.type === 'integer')
+                    : null;
+
+                if (arrayKey) {
+                    logger.warn(`Regex fallback: extracted ${ints.length} integers for key "${arrayKey}" from irreparably malformed JSON. Preview: ${candidate.substring(0, 120)}`);
+                    return { [arrayKey]: ints };
+                }
+            }
+        } catch (regexError) {
+            // regex fallback itself failed, fall through to original error
+        }
+
+        logger.error('Failed to parse JSON response (repair also failed):', parseError);
         logger.error('Raw response content:', result.content);
         logger.error('Used structured output:', usedStructuredOutput);
         logger.error('Retried without structured output:', retried);

@@ -1156,7 +1156,8 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         }],
         imageSources: [],
         model: model.id,
-        max_tokens: 300, // Lower token limit, we only need the array
+
+        max_tokens: 4000,
         options: {
             ...chatBody.options,
             model,
@@ -1560,6 +1561,37 @@ Be thorough and precise so someone could understand the image content without se
 
 
 
+// 💰 RATE-LIMIT SAFETY: processContextsSeparately() fires one cheapest-model (gpt-4.1-mini)
+// call per context bucket. This runs in the SAME request that just did per-document relevance
+// extraction, so the Azure rate-limit window is already hot. Cap concurrency so the bucket
+// calls (each with a retry) can't add to a 429 cascade. Kept in sync with chatWithData.js's
+// RELEVANCE_EXTRACTION_CONCURRENCY.
+const CONTEXT_BUCKET_CONCURRENCY = 5;
+
+/**
+ * Run an array of async task thunks with a bounded concurrency, preserving result order.
+ * Each task is a zero-arg function returning a promise. Used to throttle parallel LLM calls
+ * so we don't trip provider (Azure) rate limits. (Defined locally rather than imported from
+ * chatWithData.js to avoid a circular dependency — chatWithData.js imports from this module.)
+ *
+ * @param {Array<() => Promise<*>>} tasks - task thunks to execute
+ * @param {number} limit - max number of tasks running at any one time
+ * @returns {Promise<Array<*>>} results in the same order as `tasks`
+ */
+async function mapWithConcurrency(tasks, limit) {
+    const results = new Array(tasks.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < tasks.length) {
+            const current = next++;
+            results[current] = await tasks[current]();
+        }
+    };
+    const workerCount = Math.max(1, Math.min(limit, tasks.length));
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
+}
+
 /**
  * Group context messages into buckets that fit within model's context window.
  * Each bucket can contain parts of multiple documents - we pack efficiently.
@@ -1652,7 +1684,7 @@ If the documents don't contain relevant information, say so clearly.
 Be thorough but concise.`
     };
 
-    const bucketPromises = buckets.map(async (bucket, idx) => {
+    const bucketTasks = buckets.map((bucket, idx) => async () => {
         const bucketPrompt = [
             systemPrompt,
             ...bucket,
@@ -1700,8 +1732,9 @@ Be thorough but concise.`
         }
     });
 
-    // Wait for all bucket calls to complete
-    const results = await Promise.all(bucketPromises);
+    // Wait for all bucket calls to complete — throttled so a high bucket count can't add to
+    // an Azure 429 cascade (each bucket call may also retry once, doubling the burst).
+    const results = await mapWithConcurrency(bucketTasks, CONTEXT_BUCKET_CONCURRENCY);
 
     // Combine successful results
     const successfulResults = results.filter(r => r.success);

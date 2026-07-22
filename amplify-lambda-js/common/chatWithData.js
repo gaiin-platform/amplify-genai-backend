@@ -20,6 +20,36 @@ const logger = getLogger("chatWithData");
 // If contexts use >= 85% of available budget, split them from conversation to avoid overflow
 const CONTEXT_FULLNESS_THRESHOLD = 0.85;
 
+// 💰 RATE-LIMIT SAFETY: Every data source triggers its OWN gpt-4.1-mini relevance-extraction
+// call (getContexts -> getExtractedRelevantContext -> promptUnifiedLLMForData). Firing them all
+// at once via Promise.all (e.g. a user attaching 25 documents = 25 simultaneous Azure calls)
+// bursts past Azure's per-minute request limit and triggers a 429 cascade, retry storm, and
+// ultimately the 3-minute circuit-breaker timeout. Cap how many run concurrently.
+const RELEVANCE_EXTRACTION_CONCURRENCY = 5;
+
+/**
+ * Run an array of async task thunks with a bounded concurrency, preserving result order.
+ * Each task is a zero-arg function that returns a promise. Used to throttle parallel LLM
+ * calls so we don't trip provider (Azure) rate limits while still parallelizing work.
+ *
+ * @param {Array<() => Promise<*>>} tasks - task thunks to execute
+ * @param {number} limit - max number of tasks running at any one time
+ * @returns {Promise<Array<*>>} results in the same order as `tasks`
+ */
+const mapWithConcurrency = async (tasks, limit) => {
+    const results = new Array(tasks.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < tasks.length) {
+            const current = next++;
+            results[current] = await tasks[current]();
+        }
+    };
+    const workerCount = Math.max(1, Math.min(limit, tasks.length));
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
+};
+
 /**
  * ⚡ ULTRA-OPTIMIZED chatWithDataStateless
  * - Parallel context fetching
@@ -185,17 +215,20 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             });
         }
 
-        // ⚡ PARALLEL: Fetch all contexts simultaneously with caching
+        // ⚡ PARALLEL (throttled): Fetch all contexts with caching, but cap concurrency so a
+        // high document count doesn't fire dozens of simultaneous gpt-4.1-mini extraction calls
+        // and trip Azure's rate limit. Build task thunks first, then run them through a bounded
+        // worker pool (see mapWithConcurrency / RELEVANCE_EXTRACTION_CONCURRENCY above).
         const { CacheManager } = await import('./cache.js');
-        const contextResults = await Promise.all([
-            ...categorizedDataSources.map(async ds => {
+        const contextTasks = [
+            ...categorizedDataSources.map(ds => async () => {
                 // Check cache first
                 const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, options);
                 if (cached && Array.isArray(cached) && cached.length > 0) {
                     logger.debug(`Using cached contexts for datasource ${ds.id}`);
                     return cached.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
                 }
-                
+
                 // Not cached, fetch and cache
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options);
                 // Only cache successful results, not null/empty
@@ -204,16 +237,17 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 }
                 return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
             }),
-            ...conversationDataSources.map(async ds => {
-                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
+            ...conversationDataSources.map(ds => async () => {
+                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext
                 // depends on the user's current message! Each query needs fresh extraction.
                 // Only the raw document content should be cached (inside getContent).
-                
+
                 // Always fetch fresh - extraction depends on current user message
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
                 return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
             })
-        ]);
+        ];
+        const contextResults = await mapWithConcurrency(contextTasks, RELEVANCE_EXTRACTION_CONCURRENCY);
 
         contexts = contextResults
             .flat()
