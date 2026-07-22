@@ -1574,7 +1574,61 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
             if template["name"] != template_name:
                 updated_templates.append(template)
 
-        # Update the Configuration in DynamoDB
+        # BACKWARD COMPATIBLE: Delete the PPTX File from S3 (check both buckets)
+        # Do S3 deletes BEFORE updating DynamoDB so that if S3 fails, the config is untouched
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+
+        deleted_from_consolidation = False
+        deleted_from_legacy = False
+        had_real_error = False
+        error_message = None
+
+        # Try to delete from consolidation bucket
+        consolidation_key = f"powerPointTemplates/{template_name}"
+        try:
+            s3_client.head_object(Bucket=consolidation_bucket_name, Key=consolidation_key)
+            s3_client.delete_object(Bucket=consolidation_bucket_name, Key=consolidation_key)
+            logger.info("Deleted PPTX template from consolidation bucket: %s", template_name)
+            deleted_from_consolidation = True
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                logger.debug("Template not found in consolidation bucket: %s", template_name)
+            else:
+                logger.error("Error checking/deleting PPTX from consolidation bucket: %s", str(e))
+                had_real_error = True
+                error_message = str(e)
+
+        # Try to delete from legacy bucket
+        legacy_key = f"conversion/templates/{template_name}"
+        try:
+            s3_client.head_object(Bucket=legacy_bucket_name, Key=legacy_key)
+            s3_client.delete_object(Bucket=legacy_bucket_name, Key=legacy_key)
+            logger.info("Deleted PPTX template from legacy bucket: %s", template_name)
+            deleted_from_legacy = True
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                logger.debug("Template not found in legacy bucket: %s", template_name)
+            else:
+                logger.error("Error checking/deleting PPTX from legacy bucket: %s", str(e))
+                had_real_error = True
+                error_message = str(e)
+
+        # Only proceed to update DynamoDB if at least one S3 delete succeeded
+        if not (deleted_from_consolidation or deleted_from_legacy):
+            if had_real_error:
+                logger.error("Failed to delete template %s: %s", template_name, error_message)
+                return {
+                    "success": False,
+                    "message": f"Error deleting template: {error_message}",
+                }
+            else:
+                logger.warning("Template %s not found in any bucket", template_name)
+                return {
+                    "success": False,
+                    "message": f"Template {template_name} not found in any S3 bucket",
+                }
+
+        # S3 delete(s) succeeded — now safe to update DynamoDB config
         admin_table.put_item(
             Item={
                 "config_id": AdminConfigTypes.PPTX_TEMPLATES.value,
@@ -1582,40 +1636,6 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
                 "last_updated": datetime.now(timezone.utc).isoformat(),
             }
         )
-
-        # BACKWARD COMPATIBLE: Delete the PPTX File from S3 (check both buckets)
-        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
-        
-        # Try to delete from both buckets (file might exist in either)
-        buckets_to_try = [
-            (consolidation_bucket_name, f"powerPointTemplates/{template_name}", "consolidation"),
-            (legacy_bucket_name, f"conversion/templates/{template_name}", "legacy")
-        ]
-        
-        deleted_from_bucket = None
-        for bucket_name, pptx_key, bucket_type in buckets_to_try:
-            try:
-                # First check if file exists in this bucket
-                s3_client.head_object(Bucket=bucket_name, Key=pptx_key)
-                # File exists, delete it
-                s3_client.delete_object(Bucket=bucket_name, Key=pptx_key)
-                deleted_from_bucket = bucket_type
-                logger.info("Deleted PPTX template from %s bucket: %s", bucket_type, template_name)
-                break  # Successfully deleted, don't try other bucket
-            except ClientError as e:
-                if e.response['Error']['Code'] == '404':
-                    logger.debug("Template not found in %s bucket: %s", bucket_type, template_name)
-                    continue  # Try next bucket
-                else:
-                    logger.error("Error checking/deleting PPTX from %s bucket: %s", bucket_type, str(e))
-                    continue  # Try next bucket
-        
-        if not deleted_from_bucket:
-            logger.warning("Template %s not found in any bucket", template_name)
-            return {
-                "success": False,
-                "message": f"Template {template_name} not found in any S3 bucket",
-            }
 
         return {
             "success": True,
