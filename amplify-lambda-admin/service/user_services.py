@@ -133,7 +133,10 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
             return {"success": False, "message": "No Amplify Groups Found"}
         
         affiliated_groups = find_all_user_groups(current_user, all_groups)
-        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
+        # Only return config for the user's own affiliated groups — never expose
+        # other groups' member lists, email addresses, or rate limit configs
+        affiliated_groups_config = {name: all_groups[name] for name in affiliated_groups if name in all_groups}
+        return {"success": True, "data": affiliated_groups, "all_groups": affiliated_groups_config}
     except Exception as e:
         logger.error("Error retrieving user affiliated groups: %s", str(e))
         
