@@ -313,22 +313,26 @@ const internalApiKeyUserCostHandler = async (event, context, callback) => {
         const historyPromises = apiKeys.map(async (apiKey) => {
             const resolvedKey = keyMapping.get(apiKey) || apiKey;
             
-            // For history table, we still need to scan but can optimize
+            // For history table we scan, but the scan MUST be scoped to the
+            // authenticated user. This table is shared across all users, so
+            // filtering only by API key (contains) would return other users'
+            // records and leak their aggregate cost. `userDate` begins with the
+            // caller's identity, so begins_with(userDate, email) constrains the
+            // scan to this user's own records server-side.
             const scanParams = {
                 TableName: historyCostDynamoTableName,
-                FilterExpression: '(contains(#accountInfo, :apiKey) OR contains(#accountInfo, :resolvedKey)) AND attribute_exists(#accountInfo)',
+                FilterExpression: '(contains(#accountInfo, :apiKey) OR contains(#accountInfo, :resolvedKey)) AND attribute_exists(#accountInfo) AND begins_with(#userDate, :userPrefix)',
                 ExpressionAttributeNames: {
-                    '#accountInfo': 'accountInfo'
+                    '#accountInfo': 'accountInfo',
+                    '#userDate': 'userDate',
+                    '#time': 'time'
                 },
                 ExpressionAttributeValues: {
                     ':apiKey': `#${apiKey}`,
-                    ':resolvedKey': `#${resolvedKey}`
+                    ':resolvedKey': `#${resolvedKey}`,
+                    ':userPrefix': email
                 },
-                ProjectionExpression: 'accountInfo, dailyCost, monthlyCost, userDate, #time',
-                ExpressionAttributeNames: {
-                    '#accountInfo': 'accountInfo',
-                    '#time': 'time'
-                }
+                ProjectionExpression: '#accountInfo, dailyCost, monthlyCost, #userDate, #time'
             };
 
             let allItems = [];
@@ -372,18 +376,22 @@ const internalApiKeyUserCostHandler = async (event, context, callback) => {
                 userApiKeyCost += dailyCost + monthlyCost;
             });
             
-            // Process history records
+            // Process history records. The scan is already scoped to this user
+            // via begins_with(userDate, email); the ownership check below is
+            // kept as defense-in-depth so a record that somehow doesn't belong
+            // to the caller can never contribute to EITHER total. Aggregating an
+            // unscoped total here previously leaked other users' billing costs.
             historyData.historyRecords.forEach(record => {
+                if (!record.userDate?.startsWith(email)) {
+                    return;
+                }
                 const dailyCost = parseFloat(record.dailyCost) || 0;
                 const monthlyCost = parseFloat(record.monthlyCost) || 0;
                 const cost = dailyCost + monthlyCost;
-                
+
                 totalApiKeyCost += cost;
-                
-                if (record.userDate?.startsWith(email)) {
-                    userApiKeyCost += cost;
-                }
-                
+                userApiKeyCost += cost;
+
                 if (record.time) {
                     timestamps.push(record.time);
                 }

@@ -27,7 +27,7 @@ import json
 import os
 import ssl
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from pycommon.api.auth_admin import verify_user_as_admin
@@ -111,12 +111,28 @@ _SHARED_CONFIG_PREFIXES = (
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
+def _fully_decode(path: str) -> str:
+    """Repeatedly percent-decode until stable, so multi-layer encodings
+    (e.g. '%252e%252e' -> '%2e%2e' -> '..') collapse to what the upstream
+    server will ultimately resolve. Bounded to a few iterations to avoid any
+    pathological input; the real frontend only ever single-encodes."""
+    prev = path
+    for _ in range(5):
+        decoded = unquote(prev)
+        if decoded == prev:
+            break
+        prev = decoded
+    return prev
+
+
 def _normalise_path(path: str) -> str:
     """Canonicalise a client-supplied path for authorization checks: strip any
-    query/fragment, force a single leading slash, drop the trailing slash, and
-    lowercase (Open Notebook's routes are lowercase). Used only for the
-    auth *decision* — the original path is what gets forwarded upstream."""
-    p = path.split("?", 1)[0].split("#", 1)[0].strip()
+    query/fragment, fully percent-decode (Open Notebook / uvicorn decode the
+    request-target before routing, so the auth decision must see the same thing
+    the router will), force a single leading slash, drop the trailing slash, and
+    lowercase (Open Notebook's routes are lowercase). Used only for the auth
+    *decision* — the original path is what gets forwarded upstream."""
+    p = _fully_decode(path.split("?", 1)[0].split("#", 1)[0]).strip()
     if not p.startswith("/"):
         p = "/" + p
     if len(p) > 1:
@@ -128,8 +144,13 @@ def _has_traversal(path: str) -> bool:
     """True if the path contains a '..' segment or an empty ('//') segment.
     The real frontend never sends these; they are a classic way to smuggle a
     disallowed path past a prefix check (e.g. '/notebooks/../credentials', which
-    uvicorn/ALB may re-normalise to '/credentials' upstream)."""
-    raw = path.split("?", 1)[0].split("#", 1)[0]
+    uvicorn/ALB may re-normalise to '/credentials' upstream).
+
+    The raw path is fully percent-decoded first so URL-encoded traversal
+    ('/notebooks/%2e%2e/credentials', or double-encoded '%252e%252e') is caught
+    — the previous literal-only check let those through, and uvicorn decodes
+    them upstream, re-opening the IDOR / route-escape reports."""
+    raw = _fully_decode(path.split("?", 1)[0].split("#", 1)[0])
     if "//" in raw:
         return True
     return any(segment == ".." for segment in raw.split("/"))
