@@ -60,10 +60,9 @@ provider:
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
-    AGENTCORE_CODE_INTERPRETER_ID: ${ssm:/amplify/${sls:stage}/AGENTCORE_CODE_INTERPRETER_ID}
-    AGENTCORE_SESSION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_SESSION_TIMEOUT_SECONDS}
-    AGENTCORE_EXECUTION_TIMEOUT_SECONDS: ${ssm:/amplify/${sls:stage}/AGENTCORE_EXECUTION_TIMEOUT_SECONDS, '240'}
-    ASSISTANTS_OPENAI_PROVIDER: ${ssm:/amplify/${sls:stage}/ASSISTANTS_OPENAI_PROVIDER} # TO BE DELETED
+    AGENTCORE_CODE_INTERPRETER_ID: "aws.codeinterpreter.v1"
+    AGENTCORE_SESSION_TIMEOUT_SECONDS: "3600"
+    AGENTCORE_EXECUTION_TIMEOUT_SECONDS: "240"
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
@@ -75,8 +74,6 @@ provider:
 
     # Locally Defined Variables
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
-    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs # old-depricated code interpreter
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads # old-depricated code interpreter
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files #Marked for future deletion
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content #Marked for future deletion
     ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
@@ -248,24 +245,6 @@ functions:
     events:
       - http:
           path: assistant/agentcore/session/delete
-          method: delete
-          cors: true
-
-  # TO BE DELETED
-  delete_ast_thread:
-    handler: openaiazure/assistant.delete_assistant_thread
-    events:
-      - http:
-          path: assistant/openai/thread/delete
-          method: delete
-          cors: true
-
-  # TO BE DELETED
-  delete_ast_open_ai:
-    handler: openaiazure/assistant.delete_assistant
-    events:
-      - http:
-          path: assistant/openai/delete
           method: delete
           cors: true
 
