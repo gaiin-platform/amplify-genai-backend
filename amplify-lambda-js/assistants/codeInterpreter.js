@@ -19,7 +19,8 @@ export const CODE_INTERPRETER_TOOL_DEFINITION = {
         description:
             "Execute Python code in a secure sandbox environment. " +
             "Use this tool whenever the user asks you to run code, perform calculations, " +
-            "generate files (CSV, PNG, PDF), create charts or visualisations, or analyse data. " +
+            "generate files (CSV, TSV, XLSX, JSON, TXT, MD, PNG, JPG, GIF, SVG, HTML, PDF, DOCX, PPTX, " +
+            "PARQUET, YAML, GEOJSON, or PY source files), create charts or visualisations, or analyse data. " +
             "Attached files are already loaded into the sandbox by their original filename — " +
             "reference them directly in your code (e.g. pd.read_csv('data.csv')). " +
             "The tool returns stdout/stderr output and any generated files.",
@@ -58,7 +59,8 @@ const CODE_INTERPRETER_SYSTEM_PROMPT =
 
 const description =
     "Executes Python in a secure sandbox, handling diverse data to craft files and visual graphs. " +
-    "Use for complex mathematical operations, coding tasks, and generating PNG, PDF, or CSV files.";
+    "Use for complex mathematical operations, coding tasks, and generating CSV, TSV, XLSX, JSON, TXT, " +
+    "MD, PNG, JPG, GIF, SVG, HTML, PDF, DOCX, PPTX, PARQUET, YAML, GEOJSON, or PY files.";
 
 async function fetchRequest(token, data, url) {
     try {

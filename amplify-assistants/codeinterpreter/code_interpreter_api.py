@@ -49,15 +49,37 @@ def _estimate_execution_cost(execution_time_seconds):
     return execution_time_seconds * per_second_rate
 
 # Output file extensions surfaced to the user, detected via listFiles diffing.
-_WATCHED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx"}
+# Deliberately excludes executable/script types (.sh, .exe, .js, .bat, .ps1) and .zip
+# (unbounded/nested content, zip-bomb risk) — there is no file-size cap on uploads here,
+# so we only allow bounded, user-consumable output types.
+_WATCHED_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".pdf", ".csv", ".xlsx", ".py",
+    ".txt", ".json", ".md", ".svg", ".html",
+    ".docx", ".pptx", ".parquet", ".gif",
+    ".yaml", ".yml", ".tsv", ".geojson",
+}
 
 _EXT_TO_MIME = {
-    ".png":  "image/png",
-    ".jpg":  "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".pdf":  "application/pdf",
-    ".csv":  "text/csv",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".png":     "image/png",
+    ".jpg":     "image/jpeg",
+    ".jpeg":    "image/jpeg",
+    ".pdf":     "application/pdf",
+    ".csv":     "text/csv",
+    ".xlsx":    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".py":      "text/x-python",
+    ".txt":     "text/plain",
+    ".json":    "application/json",
+    ".md":      "text/markdown",
+    ".svg":     "image/svg+xml",
+    ".html":    "text/html",
+    ".docx":    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx":    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".parquet": "application/octet-stream",
+    ".gif":     "image/gif",
+    ".yaml":    "application/x-yaml",
+    ".yml":     "application/x-yaml",
+    ".tsv":     "text/tab-separated-values",
+    ".geojson": "application/geo+json",
 }
 
 
