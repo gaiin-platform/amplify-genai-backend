@@ -30,6 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 
 from pycommon.authz import validated, setup_validated, add_api_access_types
+from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.const import APIAccessType
 from pycommon.decorators import required_env_vars
 from pycommon.logger import getLogger
@@ -43,6 +44,151 @@ add_api_access_types([APIAccessType.API_KEY.value])
 logger = getLogger("notebook_proxy")
 
 _REQUEST_TIMEOUT = 890.0
+
+# --- Authorization for the Open Notebook proxy ----------------------------
+#
+# The proxy forwards an arbitrary (method, path) to Open Notebook, and Open
+# Notebook itself performs NO per-endpoint authorization — it trusts any valid
+# Amplify JWT equally. A subset of its paths back onto a *global/admin*
+# SurrealDB shared by every user (upstream GLOBAL_DB_PREFIXES in
+# open_notebook api/middleware/user_db.py): system LLM credentials, the model
+# registry, system settings, and shared admin templates. Left unguarded, any
+# authenticated user gets full CRUD on these (the reported IDOR).
+#
+# This proxy is the ONLY authorization layer, so rather than enumerate every
+# route, we gate on Open Notebook's own trust boundary. Open Notebook isolates
+# *per-user* data (notebooks, sources, notes, chat, insights, podcasts, …) in a
+# database keyed on the caller's token via UserDatabaseContextMiddleware, so
+# forwarding the user's own token is inherently safe for those paths — they need
+# no allowlisting. Only a small set of *global/shared* prefixes back onto the
+# single admin database (upstream GLOBAL_DB_PREFIXES in
+# open_notebook api/middleware/user_db.py); those are the entire risk surface,
+# so those are all we gate. The rule, applied to the normalised path:
+#
+#   * Not under any global prefix        -> USER  (per-user, token-isolated).
+#   * Secret/system global prefix        -> ADMIN for every method. These expose
+#     (_ADMIN_ONLY_PREFIXES)                provider API keys or system internals
+#                                           and NO notebook UI feature reads them.
+#   * Privileged-read global prefix      -> ADMIN for every method. These are
+#     (_ADMIN_READ_PREFIXES)                GETs that act with system credentials
+#                                           (provider discovery/sync/status).
+#   * Other shared-config global prefix  -> safe methods (GET/HEAD/OPTIONS) = USER
+#     (_SHARED_CONFIG_PREFIXES)             (model/setting/template *reads* the
+#                                           ordinary UI needs); mutating methods
+#                                           = ADMIN (they reconfigure state for
+#                                           every user).
+#
+# This keeps the user surface minimal and implicit — no per-route list to drift
+# from the frontend — while every shared/admin resource stays admin-gated.
+# Maintenance note: if a future upstream release adds a NEW prefix to
+# GLOBAL_DB_PREFIXES, add it to the matching tuple below (otherwise it would
+# fall through to the per-user default and be reachable by any user).
+
+# Global prefixes that are admin-only for EVERY method (secrets / system config).
+_ADMIN_ONLY_PREFIXES = (
+    "/credentials",  # raw provider API keys
+    "/config",       # system configuration/version internals
+    "/auth",         # auth/session endpoints
+)
+
+# Global prefixes whose GETs perform privileged work (reach providers using
+# system credentials), so they are admin-only for every method too.
+_ADMIN_READ_PREFIXES = (
+    "/models/discover",
+    "/models/sync",
+    "/models/providers",
+)
+
+# Global prefixes that are safe to READ for any user but admin-only to MUTATE.
+_SHARED_CONFIG_PREFIXES = (
+    "/models",
+    "/settings",
+    "/transformations",
+    "/episode-profiles",
+    "/speaker-profiles",
+)
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _normalise_path(path: str) -> str:
+    """Canonicalise a client-supplied path for authorization checks: strip any
+    query/fragment, force a single leading slash, drop the trailing slash, and
+    lowercase (Open Notebook's routes are lowercase). Used only for the
+    auth *decision* — the original path is what gets forwarded upstream."""
+    p = path.split("?", 1)[0].split("#", 1)[0].strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    if len(p) > 1:
+        p = p.rstrip("/")
+    return p.lower()
+
+
+def _has_traversal(path: str) -> bool:
+    """True if the path contains a '..' segment or an empty ('//') segment.
+    The real frontend never sends these; they are a classic way to smuggle a
+    disallowed path past a prefix check (e.g. '/notebooks/../credentials', which
+    uvicorn/ALB may re-normalise to '/credentials' upstream)."""
+    raw = path.split("?", 1)[0].split("#", 1)[0]
+    if "//" in raw:
+        return True
+    return any(segment == ".." for segment in raw.split("/"))
+
+
+def _matches_prefix(norm_path: str, prefixes: tuple[str, ...]) -> bool:
+    """True if norm_path equals a prefix or is a sub-path of it."""
+    return any(
+        norm_path == prefix or norm_path.startswith(prefix + "/")
+        for prefix in prefixes
+    )
+
+
+def _required_level(method: str, norm_path: str) -> str:
+    """Return the privilege required for (method, normalised-path): 'user' or
+    'admin'. Order matters: the admin prefixes are checked before the broader
+    shared-config prefixes so a privileged sub-path (e.g. /models/discover) is
+    not shadowed by its parent (/models)."""
+    if _matches_prefix(norm_path, _ADMIN_ONLY_PREFIXES):
+        return "admin"
+    if _matches_prefix(norm_path, _ADMIN_READ_PREFIXES):
+        return "admin"
+    if _matches_prefix(norm_path, _SHARED_CONFIG_PREFIXES):
+        return "user" if method in _SAFE_METHODS else "admin"
+    # Not a global/shared resource -> per-user data, isolated upstream by token.
+    return "user"
+
+
+def _reject_if_unauthorized(
+    method: str, path: str, access_token: str, current_user: str,
+) -> dict | None:
+    """Enforce authorization for the proxied call. Return an error response dict
+    if the call is not permitted for the caller — a path-traversal attempt, or a
+    global/admin resource without admin privileges; otherwise return None. Admin
+    status is only checked (a network round-trip) when the path is admin-gated,
+    so the regular-user hot path adds no latency."""
+    if _has_traversal(path):
+        logger.warning(
+            "notebook_proxy: rejected path traversal user=%s method=%s path=%s",
+            current_user, method, path,
+        )
+        return {"success": False, "message": "Invalid path", "data": None}
+
+    norm_path = _normalise_path(path)
+    if _required_level(method, norm_path) == "user":
+        return None
+
+    if verify_user_as_admin(access_token, "Notebook Proxy Admin Resource Access"):
+        return None
+
+    logger.warning(
+        "notebook_proxy: blocked non-admin user=%s method=%s path=%s",
+        current_user, method, norm_path,
+    )
+    return {
+        "success": False,
+        "message": "Forbidden: this resource requires admin privileges",
+        "data": None,
+    }
 
 
 def _notebook_url(path: str, query_params: dict | None = None) -> str:
@@ -147,6 +293,10 @@ def notebook_proxy(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
+    admin_rejection = _reject_if_unauthorized(method, path, access_token, current_user)
+    if admin_rejection is not None:
+        return admin_rejection
+
     url = _notebook_url(path, query_params)
     logger.info("notebook_proxy: %s %s user=%s", method, url, current_user)
 
@@ -196,6 +346,10 @@ def notebook_proxy_raw(event, context, current_user, name, data):
 
     if not path:
         return {"success": False, "message": "path is required"}
+
+    admin_rejection = _reject_if_unauthorized(method, path, access_token, current_user)
+    if admin_rejection is not None:
+        return admin_rejection
 
     # Rewrite /audio -> /audio-url so we get a JSON presigned URL response
     # instead of streaming the full MP3 binary through Lambda/API-Gateway.
