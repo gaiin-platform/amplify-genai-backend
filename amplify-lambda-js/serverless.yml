@@ -159,16 +159,6 @@ functions:
           method: post
           cors: true
 
-  api_key_user_cost:
-    handler: billing/mtd.apiKeyUserCostHandler
-    timeout: 30
-    memorySize: 128
-    events:
-      - http:
-          path: billing/api-key-user-cost
-          method: post
-          cors: true
-
   billing_groups_costs:
     handler: billing/mtd.billingGroupsCostsHandler
     memorySize: 256
