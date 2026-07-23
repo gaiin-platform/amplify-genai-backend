@@ -60,9 +60,6 @@ provider:
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
-    AGENTCORE_CODE_INTERPRETER_ID: "aws.codeinterpreter.v1"
-    AGENTCORE_SESSION_TIMEOUT_SECONDS: "3600"
-    AGENTCORE_EXECUTION_TIMEOUT_SECONDS: "240"
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
@@ -621,64 +618,6 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
-
-    # TO BE DELETED
-    AssistantThreadsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: user
-            AttributeType: S
-          - AttributeName: name
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: UserIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          - IndexName: UserNameIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: name
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}
-
-    # TO BE DELETED
-    AssistantThreadRunsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: user
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: UserIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
 
     GroupAssistantConversationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

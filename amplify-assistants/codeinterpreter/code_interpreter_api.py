@@ -16,9 +16,9 @@ logger = getLogger("code_interpreter")
 
 
 agentcore_client = boto3.client("bedrock-agentcore")
-CODE_INTERPRETER_ID = os.environ.get("AGENTCORE_CODE_INTERPRETER_ID", "")
-SESSION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_SECONDS", "3600"))
-EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("AGENTCORE_EXECUTION_TIMEOUT_SECONDS", "240"))
+CODE_INTERPRETER_ID = "aws.codeinterpreter.v1"
+SESSION_TIMEOUT_SECONDS = 3600
+EXECUTION_TIMEOUT_SECONDS = 240
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
 # Rough AgentCore Code Interpreter compute pricing used to estimate a per-execution
