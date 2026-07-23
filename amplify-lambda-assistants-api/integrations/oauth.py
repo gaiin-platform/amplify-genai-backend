@@ -1369,6 +1369,11 @@ def regiser_secret(event, context, current_user, name, data):
     client_id = data["client_id"]
     client_secret = data["client_secret"]
     tenant_id = data.get("tenant_id", None)
+
+    missing = [f for f, v in [("Client ID", client_id), ("Client Secret", client_secret)] if not v or not v.strip()]
+    if missing:
+        return {"success": False, "error": f"{' and '.join(missing)} {'are' if len(missing) > 1 else 'is'} required"}
+
     if not tenant_id:
         tenant_id = "amplifygenai"
 

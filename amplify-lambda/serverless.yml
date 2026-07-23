@@ -90,7 +90,6 @@ provider:
     ENV_VARS_TRACKING_TABLE: ${self:service}-${sls:stage}-env-vars-tracking
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
-    DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
@@ -513,36 +512,6 @@ functions:
               - RagChunkDocumentQueue
               - Arn
 
-  test_db_connection:
-    handler: utilities/test_db_connection.lambda_handler
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: db/test-connection
-          method: post
-          cors: true
-
-  save_db_connection:
-    handler: utilities/save_db_connection.lambda_handler
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: db/save-connection
-          method: post
-          cors: true
-
-  get_db_connections:
-    handler: utilities/get_db_connections.lambda_handler
-    timeout: 30
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: db/get-connections
-          method: post
-          cors: true
 
   process_images_for_chat:
     handler: images/core.process_images_for_chat
@@ -732,7 +701,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
@@ -1392,31 +1360,7 @@ resources:
                 StringEquals:
                   'aws:SourceAccount': ${aws:accountId}
 
-    DbConnectionsTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        SSESpecification:
-          SSEEnabled: false
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: user
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.DB_CONNECTIONS_TABLE}
-        GlobalSecondaryIndexes:
-          - IndexName: UserIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-
+  
     EnvironmentVariablesTrackingTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:

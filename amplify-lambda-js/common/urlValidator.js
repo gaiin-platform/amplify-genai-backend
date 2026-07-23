@@ -39,6 +39,15 @@ export const validateUrl = (url, options = {}) => {
         return { valid: false, reason: `Blocked internal/private address: ${hostname}` };
     }
 
+    // Block single-label hostnames (no dots) to prevent split-domain SSRF bypass attacks.
+    // Valid internet hostnames always contain at least one dot (e.g., "example.com").
+    // A single-label hostname like "http://attacker-prefix" can be abused by concatenating
+    // path components (e.g., ".evil.com") to form a valid external domain after string join.
+    if (!hostname.includes(".")) {
+        logger.warn(`SSRF blocked: single-label hostname without dots: ${hostname}`);
+        return { valid: false, reason: `Blocked single-label hostname (no dots): ${hostname}` };
+    }
+
     // When forwarding credentials, enforce HTTPS and allowlist
     if (allowCredentialForwarding) {
         if (parsed.protocol !== "https:") {

@@ -77,6 +77,16 @@ def validate_url(url, allow_credential_forwarding=False, allowed_hosts=None):
     if _is_private_ip(hostname):
         return False, f"Blocked private/reserved IP: {hostname}"
 
+    # Block single-label hostnames (no dots) to prevent split-domain SSRF bypass attacks.
+    # Valid internet hostnames always contain at least one dot (e.g., "example.com").
+    # A single-label hostname like "http://attacker-prefix" can be abused by concatenating
+    # path components (e.g., ".evil.com") to form a valid external domain after string join.
+    if "." not in hostname:
+        logger.warning(
+            "SSRF blocked: single-label hostname without dots: %s", hostname
+        )
+        return False, f"Blocked single-label hostname (no dots): {hostname}"
+
     # Stricter validation when forwarding credentials
     if allow_credential_forwarding:
         if parsed.scheme != "https":
