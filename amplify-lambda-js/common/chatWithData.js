@@ -561,7 +561,11 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             // Pass smart messages filter flag for safe caching
             smartMessagesFiltered: smartMessagesFiltered,
             // Pass conversationId for cache management in overflow handler
-            conversationId: conversationId
+            conversationId: conversationId,
+            // Forward tools so bedrock.js doesn't build an empty toolConfig when
+            // history contains toolUse/toolResult blocks but tools wasn't passed.
+            tools: chatRequestOrig.tools || chatRequestOrig.options?.tools,
+            disableReasoning: chatRequestOrig.options?.disableReasoning
         }
     );
 };

@@ -232,8 +232,12 @@ const defaultAssistant = {
                 responseStream,
                 {
                     max_tokens: bodyWithMedia.max_tokens || 2000,
-                    imageSources: bodyWithMedia.imageSources,  // ✅ FIX: Pass imageSources through options
-                    videoSources: bodyWithMedia.videoSources   // ✅ FIX: Pass videoSources through options
+                    imageSources: bodyWithMedia.imageSources,
+                    videoSources: bodyWithMedia.videoSources,
+                    // Forward tools so bedrock.js doesn't build an empty toolConfig when
+                    // history contains toolUse/toolResult blocks but tools wasn't passed.
+                    tools: bodyWithMedia.tools || bodyWithMedia.options?.tools,
+                    disableReasoning: bodyWithMedia.options?.disableReasoning
                 }
             );
 

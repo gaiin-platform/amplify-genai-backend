@@ -127,7 +127,11 @@ export const chatBedrock = async (chatBody, writable) => {
                 };
                 logger.info(`Extended thinking enabled with temperature=1.0, budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
             }
-        } else if (currentModel.supportsReasoning && disableReasoning) {
+        } else if (currentModel.supportsReasoning && disableReasoning && !hasTools) {
+            // Only set reasoning_config:disabled when there are no tools involved.
+            // Bedrock rejects any additionalModelRequestFields alongside toolConfig, and
+            // code interpreter's follow-up call sets disableReasoning=true while also
+            // passing tools, so this guard is required to avoid that conflict.
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
             input.additionalModelRequestFields = {
                 "reasoning_config": {
@@ -159,7 +163,24 @@ export const chatBedrock = async (chatBody, writable) => {
 
         // Add tool configuration if tools are provided OR if messages contain tool content
         if ((body.tools && body.tools.length > 0) || hasToolRelatedContent) {
-            const tools = body.tools && body.tools.length > 0 ? body.tools : [];
+            let tools = body.tools && body.tools.length > 0 ? body.tools : [];
+
+            // Bedrock rejects toolConfig: { tools: [] } — reconstruct minimal toolSpecs
+            // from toolUse names in history if body.tools wasn't forwarded.
+            if (tools.length === 0 && hasToolRelatedContent) {
+                const toolNames = new Set();
+                sanitizedMessages.forEach(msg => {
+                    if (Array.isArray(msg.content)) {
+                        msg.content.forEach(block => {
+                            if (block.toolUse?.name) toolNames.add(block.toolUse.name);
+                        });
+                    }
+                });
+                if (toolNames.size > 0) {
+                    logger.warn(`body.tools missing but tool-related content found in history — reconstructing minimal toolConfig for: ${[...toolNames].join(', ')}`);
+                    tools = [...toolNames].map(name => ({ function: { name, description: name, parameters: { type: "object", properties: {} } } }));
+                }
+            }
 
             input.toolConfig = {
                 tools: tools.map(tool => {
@@ -177,10 +198,40 @@ export const chatBedrock = async (chatBody, writable) => {
                 })
             };
 
+            // Translate OpenAI-style body.tool_choice into Bedrock's toolConfig.toolChoice
+            // shape. Only Claude 3+ and Mistral Large support toolChoice — others reject it.
+            const supportsToolChoice = /claude|mistral-large/i.test(currentModel.id || "");
+            if (tools.length > 0 && body.tool_choice && supportsToolChoice) {
+                const choice = body.tool_choice;
+                if (choice === "required" || choice === "any") {
+                    input.toolConfig.toolChoice = { any: {} };
+                } else if (choice === "auto") {
+                    input.toolConfig.toolChoice = { auto: {} };
+                } else if (choice && typeof choice === "object") {
+                    // OpenAI shape: { type: "function", function: { name: "..." } }
+                    const toolName = choice.function?.name || choice.name;
+                    if (toolName) {
+                        input.toolConfig.toolChoice = { tool: { name: toolName } };
+                    }
+                } else if (typeof choice === "string" && choice !== "none") {
+                    // A bare tool name string.
+                    input.toolConfig.toolChoice = { tool: { name: choice } };
+                }
+                if (input.toolConfig.toolChoice) {
+                    logger.info(`Set Bedrock toolChoice: ${JSON.stringify(input.toolConfig.toolChoice)}`);
+                }
+            } else if (tools.length > 0 && body.tool_choice && !supportsToolChoice) {
+                logger.warn(`body.tool_choice=${JSON.stringify(body.tool_choice)} requested but model ${currentModel.id} does not support toolChoice — ignoring (model will decide freely whether to call a tool)`);
+            }
+
             if (tools.length > 0) {
                 logger.info(`Added ${tools.length} tools to Bedrock request`);
             } else {
-                logger.info('Added empty toolConfig (required for tool-related content in history)');
+                // No tool definitions available and none could be reconstructed from
+                // history — omit toolConfig entirely rather than sending an empty
+                // tools array, which Bedrock rejects as an invalid request.
+                delete input.toolConfig;
+                logger.warn('Tool-related content found in history but no tools available to build toolConfig — omitting toolConfig to avoid an invalid request');
             }
         }
 
