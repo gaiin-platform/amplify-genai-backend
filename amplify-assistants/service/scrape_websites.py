@@ -4,6 +4,8 @@
 from datetime import datetime, timedelta
 import os
 import re
+import socket
+import ipaddress
 import boto3
 import json
 import requests
@@ -181,7 +183,22 @@ def sanitize_and_validate_url(url):
                 return False, None, "Invalid domain - contains empty parts"
             if len(part) > 63:  # DNS label length limit
                 return False, None, "Invalid domain - label too long"
-        
+
+        # SSRF protection: resolve hostname and block private/reserved IP ranges
+        try:
+            resolved_ip = socket.gethostbyname(domain)
+            ip_obj = ipaddress.ip_address(resolved_ip)
+            if (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_reserved
+                or ip_obj.is_multicast
+            ):
+                return False, None, f"URL resolves to a disallowed IP address: {resolved_ip}"
+        except socket.gaierror:
+            return False, None, f"Unable to resolve domain: {domain}"
+
         # Reconstruct the URL to ensure it's properly formatted
         sanitized_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         if parsed.query:
@@ -338,7 +355,7 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=None, exclusions=None):
         response.raise_for_status()
 
         sitemap_content = response.content
-        sitemap_dict = xmltodict.parse(sitemap_content)
+        sitemap_dict = xmltodict.parse(sitemap_content, disable_entities=True)
 
         # Handle nested sitemaps
         if "sitemapindex" in sitemap_dict:
