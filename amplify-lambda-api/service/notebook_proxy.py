@@ -221,22 +221,41 @@ def _required_level(method: str, norm_path: str) -> str:
 # These are structured endpoint fields (never free-text note/content bodies), so
 # no legitimate frontend request ever puts a private/internal/metadata URL in
 # one.  Maintenance note: when a new upstream endpoint is found to fetch a
-# body-supplied URL, add its (prefix, field) pair here.
+# body-supplied URL, add its (prefix, field, require_https) triple here.
+#
+# The third element requires the field's URL to be HTTPS. It is set for
+# credential ``base_url`` because Open Notebook later sends the stored provider
+# API key as a Bearer token to that URL when the credential is tested/used; a
+# plaintext-HTTP base_url would expose that key to passive network capture (and
+# a public-HTTP base_url is a credential-exfiltration vector). Source ``url`` is
+# left HTTP-allowed because ordinary public web pages legitimately use HTTP and
+# no secret is attached when fetching them.
 _URL_SINK_FIELDS = (
-    ("/sources", "url"),
-    ("/credentials", "base_url"),
+    ("/sources", "url", False),
+    ("/credentials", "base_url", True),
 )
 
 
-def _validate_url_field(value, log_prefix: str) -> dict | None:
+def _validate_url_field(value, log_prefix: str, require_https: bool = False) -> dict | None:
     """Validate a single candidate URL value against the SSRF rules.
+
+    When *require_https* is True the URL must additionally use the HTTPS scheme
+    (used for credential ``base_url``, which later carries a provider API key).
+    ``allowed_hosts=[]`` keeps ``allow_credential_forwarding`` from also imposing
+    the API_BASE_URL host allowlist — that allowlist is meant for Amplify's own
+    API, not third-party LLM provider endpoints, so applying it here would reject
+    every legitimate provider URL.
 
     Returns a blocked-response dict if *value* is a non-empty string that fails
     validation, otherwise None (empty / non-string values are nothing for the
     upstream to fetch, so they are left alone)."""
     if not value or not isinstance(value, str):
         return None
-    is_valid, reason = validate_url(value)
+    is_valid, reason = validate_url(
+        value,
+        allow_credential_forwarding=require_https,
+        allowed_hosts=[] if require_https else None,
+    )
     if not is_valid:
         logger.warning(
             "%s: blocked SSRF attempt url=%s reason=%s", log_prefix, value, reason
@@ -263,10 +282,12 @@ def _check_body_for_ssrf(method: str, norm_path: str, body) -> dict | None:
     if not isinstance(body, dict):
         return None
 
-    for prefix, field in _URL_SINK_FIELDS:
+    for prefix, field, require_https in _URL_SINK_FIELDS:
         if not _matches_prefix(norm_path, (prefix,)):
             continue
-        rejection = _validate_url_field(body.get(field), "notebook_proxy")
+        rejection = _validate_url_field(
+            body.get(field), "notebook_proxy", require_https=require_https
+        )
         if rejection is not None:
             return rejection
     return None
@@ -307,6 +328,99 @@ def _check_multipart_for_ssrf(content_type: str, raw_body: bytes) -> dict | None
     Returns an error response dict if a url is present and blocked, else None."""
     url = _extract_multipart_url(content_type, raw_body)
     return _validate_url_field(url, "notebook_upload")
+
+
+# --- Upload file-type validation (defense-in-depth for the legacy Lambda path) -
+#
+# The primary upload chokepoint is Open Notebook's own /sources endpoint (the
+# frontend uploads there directly, and ON neutralises render-unsafe content
+# types + forces attachment download). This proxy's notebook_upload is a legacy
+# fallback that also forwards to /sources, so we add matching validation here so
+# neither path can store active/executable content.
+#
+# Denylist rationale: a strict allowlist would break the many legitimate
+# document types users attach to notebooks (pdf/docx/csv/md/images/…). We
+# instead reject the file classes that are actually dangerous — executables,
+# server-side scripts, and browser-render-capable active content (HTML/SVG/JS)
+# that could yield stored XSS if ever served inline.
+_DANGEROUS_UPLOAD_EXTENSIONS = frozenset({
+    # Server-side / interpreted scripts
+    "php", "php3", "php4", "php5", "phtml", "phar",
+    "jsp", "jspx", "asp", "aspx", "cgi", "pl", "py", "rb", "sh", "bash",
+    # Native executables / libraries
+    "exe", "dll", "so", "dylib", "bin", "msi", "com", "scr",
+    # Browser-render-capable active content (stored-XSS vector)
+    "html", "htm", "xhtml", "shtml", "svg", "js", "mjs", "xml", "xht",
+    # Other active/executable formats
+    "jar", "war", "bat", "cmd", "ps1", "vbs", "wsf", "hta",
+})
+
+# Content types that a browser will render (and thus execute embedded script)
+# if ever served inline. Mirrors Open Notebook's _RENDER_UNSAFE_CONTENT_TYPES.
+_DANGEROUS_UPLOAD_CONTENT_TYPES = frozenset({
+    "text/html",
+    "application/xhtml+xml",
+    "image/svg+xml",
+    "application/xml",
+    "text/xml",
+    "text/javascript",
+    "application/javascript",
+    "application/x-httpd-php",
+    "application/x-sh",
+})
+
+
+def _extract_multipart_file_parts(content_type: str, raw_body: bytes):
+    """Yield (filename, part_content_type) for each file part in a multipart body.
+
+    A "file part" is any part whose Content-Disposition carries a ``filename``.
+    Best-effort: a malformed body yields nothing (the SSRF/type checks then have
+    nothing to act on, and the upstream will reject a truly broken body)."""
+    if "multipart/form-data" not in (content_type or "").lower():
+        return
+    try:
+        header = f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+        msg = BytesParser().parsebytes(header + raw_body)
+        if not msg.is_multipart():
+            return
+        for part in msg.get_payload():
+            filename = part.get_filename()
+            if filename:
+                yield filename, (part.get_content_type() or "").lower()
+    except Exception:
+        logger.exception("notebook_upload: multipart parse failed during type check")
+        return
+
+
+def _check_multipart_file_type(content_type: str, raw_body: bytes) -> dict | None:
+    """Reject an upload whose file part is a dangerous (executable/active) type.
+
+    Checks both the declared filename extension and the part's Content-Type.
+    Returns an error response dict if blocked, otherwise None."""
+    for filename, part_ct in _extract_multipart_file_parts(content_type, raw_body):
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in _DANGEROUS_UPLOAD_EXTENSIONS:
+            logger.warning(
+                "notebook_upload: blocked dangerous file extension filename=%s ext=%s",
+                filename, ext,
+            )
+            return {
+                "success": False,
+                "message": f"Blocked: file type '.{ext}' is not allowed",
+                "data": None,
+            }
+        base_ct = part_ct.split(";", 1)[0].strip()
+        if base_ct in _DANGEROUS_UPLOAD_CONTENT_TYPES:
+            logger.warning(
+                "notebook_upload: blocked dangerous content-type filename=%s ct=%s",
+                filename, base_ct,
+            )
+            return {
+                "success": False,
+                "message": f"Blocked: content type '{base_ct}' is not allowed",
+                "data": None,
+            }
+    return None
 
 
 def _reject_if_unauthorized(
@@ -565,6 +679,10 @@ def notebook_upload(event, context, current_user, name, data):
     ssrf_rejection = _check_multipart_for_ssrf(content_type, raw_body)
     if ssrf_rejection is not None:
         return ssrf_rejection
+
+    filetype_rejection = _check_multipart_file_type(content_type, raw_body)
+    if filetype_rejection is not None:
+        return filetype_rejection
 
     url = _notebook_url("/sources")
     logger.info("notebook_upload: POST %s user=%s content_type=%s bytes=%d",
