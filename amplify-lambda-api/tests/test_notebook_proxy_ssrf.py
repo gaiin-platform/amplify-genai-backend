@@ -38,6 +38,7 @@ if _PKG_ROOT not in sys.path:
 
 from service.notebook_proxy import (
     _check_body_for_ssrf,
+    _check_multipart_file_type,
     _check_multipart_for_ssrf,
     _extract_multipart_url,
     _normalise_path,
@@ -98,7 +99,11 @@ class TestMethodFiltering(unittest.TestCase):
                     _check_body_for_ssrf(
                         method, "/sources", {"url": "https://ok.example.com"}
                     )
-                m.assert_called_once_with("https://ok.example.com")
+                m.assert_called_once_with(
+                    "https://ok.example.com",
+                    allow_credential_forwarding=False,
+                    allowed_hosts=None,
+                )
 
 
 class TestPathFiltering(unittest.TestCase):
@@ -194,6 +199,30 @@ class TestCredentialsBaseUrl(unittest.TestCase):
             _fake_getaddrinfo("93.184.216.34"),
         ):
             self.assertIsNone(self._post_credential("https://api.openai.com/v1"))
+
+    def test_plain_http_base_url_blocked(self):
+        # base_url later carries the provider API key as a Bearer token, so a
+        # plaintext-HTTP endpoint (even a public one) is rejected: it would
+        # expose the key to passive capture / a credential-exfil target.
+        with mock.patch(
+            "service.url_validator.socket.getaddrinfo",
+            _fake_getaddrinfo("93.184.216.34"),
+        ):
+            result = self._post_credential("http://api.openai.com/v1")
+        _assert_blocked(self, result)
+        self.assertIn("HTTPS", result["message"])
+
+    def test_plain_http_source_url_still_allowed(self):
+        # Contrast: a source "url" carries no secret, so ordinary public HTTP
+        # pages remain allowed — the HTTPS requirement is base_url-specific.
+        with mock.patch(
+            "service.url_validator.socket.getaddrinfo",
+            _fake_getaddrinfo("93.184.216.34"),
+        ):
+            result = _check_body_for_ssrf(
+                "POST", "/sources/json", {"type": "link", "url": "http://example.com/a"}
+            )
+        self.assertIsNone(result)
 
     def test_credentials_without_base_url_allowed(self):
         # Provider credentials that don't set a custom base_url are common.
@@ -458,6 +487,79 @@ class TestMultipartUploadSsrf(unittest.TestCase):
             _fake_getaddrinfo("93.184.216.34"),
         ):
             self.assertIsNone(_check_multipart_for_ssrf(ct, body))
+
+
+def _multipart_file(filename, content_type, data="BYTES"):
+    """Build a (content_type, raw_body) multipart body with a single file part
+    carrying an explicit per-part Content-Type."""
+    body = (
+        f"--{_BOUNDARY}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+        f"{data}\r\n"
+        f"--{_BOUNDARY}--\r\n"
+    ).encode("utf-8")
+    return f"multipart/form-data; boundary={_BOUNDARY}", body
+
+
+class TestMultipartUploadFileType(unittest.TestCase):
+    """The upload handler blocks dangerous (executable/active-content) files."""
+
+    def _assert_blocked(self, result):
+        self.assertIsNotNone(result, "expected the upload to be blocked")
+        self.assertIs(result["success"], False)
+        self.assertIsNone(result["data"])
+        self.assertTrue(result["message"].startswith("Blocked:"))
+
+    def test_php_extension_blocked(self):
+        ct, body = _multipart([("file", ("shell.php", "<?php echo 1; ?>"))])
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_html_extension_blocked(self):
+        ct, body = _multipart([("file", ("x.html", "<script>alert(1)</script>"))])
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_svg_extension_blocked(self):
+        ct, body = _multipart([("file", ("x.svg", "<svg onload=alert(1)>"))])
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_exe_extension_blocked(self):
+        ct, body = _multipart([("file", ("malware.exe", "MZ..."))])
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_uppercase_extension_blocked(self):
+        # Extension check is case-insensitive.
+        ct, body = _multipart([("file", ("Shell.PHP", "x"))])
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_dangerous_content_type_blocked_even_with_safe_name(self):
+        # A benign-looking filename but a render-capable Content-Type is blocked.
+        ct, body = _multipart_file("report", "text/html")
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_svg_content_type_blocked(self):
+        ct, body = _multipart_file("image", "image/svg+xml")
+        self._assert_blocked(_check_multipart_file_type(ct, body))
+
+    def test_pdf_allowed(self):
+        ct, body = _multipart([("file", ("report.pdf", "%PDF-1.7"))])
+        self.assertIsNone(_check_multipart_file_type(ct, body))
+
+    def test_docx_allowed(self):
+        ct, body = _multipart([("file", ("notes.docx", "PK..."))])
+        self.assertIsNone(_check_multipart_file_type(ct, body))
+
+    def test_png_allowed(self):
+        ct, body = _multipart_file("pic.png", "image/png")
+        self.assertIsNone(_check_multipart_file_type(ct, body))
+
+    def test_no_file_part_allowed(self):
+        # A link/text source carries no file part; nothing to reject.
+        ct, body = _multipart([("type", "link"), ("url", "https://x.example.com")])
+        self.assertIsNone(_check_multipart_file_type(ct, body))
+
+    def test_non_multipart_allowed(self):
+        self.assertIsNone(_check_multipart_file_type("application/json", b"{}"))
 
 
 if __name__ == "__main__":
