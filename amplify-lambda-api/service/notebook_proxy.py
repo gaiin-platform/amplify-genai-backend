@@ -26,6 +26,7 @@ import io
 import json
 import os
 import ssl
+from email.parser import BytesParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlencode, urlparse
 
@@ -37,6 +38,8 @@ from pycommon.logger import getLogger
 
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+
+from service.url_validator import validate_url
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.API_KEY.value])
@@ -201,6 +204,111 @@ def _required_level(method: str, norm_path: str) -> str:
     return "user"
 
 
+# Open Notebook endpoints whose request body carries a URL that the server then
+# fetches server-side — the SSRF sinks.  Each is mapped to the body field that
+# holds that URL, and every such field must be validated before the request is
+# forwarded, because the proxy is the only security layer (Open Notebook trusts
+# any valid JWT equally and performs NO URL validation of its own):
+#
+#   /sources     — a link-type source's "url" is fetched on create/update,
+#                  immediately when async_processing is not set or is "false".
+#   /credentials — an LLM provider credential's "base_url" is stored on
+#                  create/update and then fetched server-side when the
+#                  /credentials/{id}/test endpoint is invoked.  Validating it at
+#                  store time is the correct interception point: a malicious
+#                  base_url never gets persisted, so /test can never fetch it.
+#
+# These are structured endpoint fields (never free-text note/content bodies), so
+# no legitimate frontend request ever puts a private/internal/metadata URL in
+# one.  Maintenance note: when a new upstream endpoint is found to fetch a
+# body-supplied URL, add its (prefix, field) pair here.
+_URL_SINK_FIELDS = (
+    ("/sources", "url"),
+    ("/credentials", "base_url"),
+)
+
+
+def _validate_url_field(value, log_prefix: str) -> dict | None:
+    """Validate a single candidate URL value against the SSRF rules.
+
+    Returns a blocked-response dict if *value* is a non-empty string that fails
+    validation, otherwise None (empty / non-string values are nothing for the
+    upstream to fetch, so they are left alone)."""
+    if not value or not isinstance(value, str):
+        return None
+    is_valid, reason = validate_url(value)
+    if not is_valid:
+        logger.warning(
+            "%s: blocked SSRF attempt url=%s reason=%s", log_prefix, value, reason
+        )
+        return {
+            "success": False,
+            "message": f"Blocked: {reason}",
+            "data": None,
+        }
+    return None
+
+
+def _check_body_for_ssrf(method: str, norm_path: str, body) -> dict | None:
+    """Validate every URL-bearing field in a JSON request body to prevent SSRF.
+
+    For a mutating request (POST/PUT/PATCH) whose normalised path is one of the
+    known SSRF-sink prefixes, the corresponding body field (see
+    ``_URL_SINK_FIELDS``) is validated with ``validate_url``.
+
+    Returns an error response dict if any such field is blocked, otherwise None.
+    """
+    if method not in ("POST", "PUT", "PATCH"):
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    for prefix, field in _URL_SINK_FIELDS:
+        if not _matches_prefix(norm_path, (prefix,)):
+            continue
+        rejection = _validate_url_field(body.get(field), "notebook_proxy")
+        if rejection is not None:
+            return rejection
+    return None
+
+
+def _extract_multipart_url(content_type: str, raw_body: bytes) -> str | None:
+    """Return the value of a ``url`` form field in a multipart/form-data body,
+    or None if there is no multipart body or no ``url`` field.
+
+    Open Notebook's multipart /sources endpoint accepts link-type sources with a
+    ``url`` field, which it then fetches server-side — the same SSRF sink as the
+    JSON path. We parse the body just enough to find that field so it can be
+    validated before forwarding. Parsing is best-effort: any malformed body
+    yields None (there is nothing to fetch, so nothing to block)."""
+    if "multipart/form-data" not in (content_type or "").lower():
+        return None
+    try:
+        header = f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+        msg = BytesParser().parsebytes(header + raw_body)
+        if not msg.is_multipart():
+            return None
+        for part in msg.get_payload():
+            name = part.get_param("name", header="content-disposition")
+            if name == "url":
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    continue
+                return payload.decode("utf-8", errors="replace").strip()
+    except Exception:
+        logger.exception("notebook_proxy: multipart parse failed during SSRF check")
+        return None
+    return None
+
+
+def _check_multipart_for_ssrf(content_type: str, raw_body: bytes) -> dict | None:
+    """Validate any ``url`` form field in a multipart upload to prevent SSRF.
+
+    Returns an error response dict if a url is present and blocked, else None."""
+    url = _extract_multipart_url(content_type, raw_body)
+    return _validate_url_field(url, "notebook_upload")
+
+
 def _reject_if_unauthorized(
     method: str, path: str, access_token: str, current_user: str,
 ) -> dict | None:
@@ -340,6 +448,10 @@ def notebook_proxy(event, context, current_user, name, data):
     if admin_rejection is not None:
         return admin_rejection
 
+    ssrf_rejection = _check_body_for_ssrf(method, _normalise_path(path), body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
+
     url = _notebook_url(path, query_params)
     logger.info("notebook_proxy: %s %s user=%s", method, url, current_user)
 
@@ -394,6 +506,10 @@ def notebook_proxy_raw(event, context, current_user, name, data):
     if admin_rejection is not None:
         return admin_rejection
 
+    ssrf_rejection = _check_body_for_ssrf(method, _normalise_path(path), body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
+
     # Rewrite /audio -> /audio-url so we get a JSON presigned URL response
     # instead of streaming the full MP3 binary through Lambda/API-Gateway.
     if path.endswith("/audio") and not path.endswith("/audio-url"):
@@ -445,6 +561,10 @@ def notebook_upload(event, context, current_user, name, data):
         raw_body = base64.b64decode(body_b64)
     except Exception:
         return {"success": False, "message": "Invalid base64 in body_b64"}
+
+    ssrf_rejection = _check_multipart_for_ssrf(content_type, raw_body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
 
     url = _notebook_url("/sources")
     logger.info("notebook_upload: POST %s user=%s content_type=%s bytes=%d",
