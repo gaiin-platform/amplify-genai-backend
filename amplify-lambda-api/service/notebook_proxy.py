@@ -84,11 +84,31 @@ _REQUEST_TIMEOUT = 890.0
 # GLOBAL_DB_PREFIXES, add it to the matching tuple below (otherwise it would
 # fall through to the per-user default and be reachable by any user).
 
-# Global prefixes that are admin-only for EVERY method (secrets / system config).
+# Global/system prefixes that are admin-only for EVERY method (secrets, system
+# config, service-internal surfaces). These are NOT per-user data — no notebook
+# UI feature reads them — so gating them admin-only removes them from the
+# regular-user surface.
+#
+# NOTE: the last four entries are an interim hardening. Unlike the entries above
+# them, they do not back onto GLOBAL_DB_PREFIXES; they are service-level
+# endpoints (API self-description, interactive docs, the command
+# registry/executor) that were reachable by any authenticated user because they
+# fell through the default -> "user" branch of _required_level(). The durable
+# fix is to invert this whole module to a positive allowlist of the exact
+# (method, path) routes the Notebook UI actually calls, so unknown and
+# service-internal paths fail closed by default instead of having to be
+# enumerated here one prefix at a time. Tracked as follow-up.
 _ADMIN_ONLY_PREFIXES = (
     "/credentials",  # raw provider API keys
     "/config",       # system configuration/version internals
     "/auth",         # auth/session endpoints
+    "/settings",     # shared system/processing settings (global-DB-backed):
+                     # exposes internal service configuration, so even reads
+                     # are admin-only (writes were already admin-gated below)
+    "/openapi.json", # full OpenAPI spec — enumerates all internal endpoints
+    "/docs",         # interactive Swagger UI (and /docs/oauth2-redirect, …)
+    "/redoc",        # interactive ReDoc UI
+    "/commands",     # command registry/debug + command execution (embed, podcast, …)
 )
 
 # Global prefixes whose GETs perform privileged work (reach providers using
@@ -100,9 +120,11 @@ _ADMIN_READ_PREFIXES = (
 )
 
 # Global prefixes that are safe to READ for any user but admin-only to MUTATE.
+# NOTE: /settings intentionally lives in _ADMIN_ONLY_PREFIXES (above), not here —
+# it exposes internal service configuration, so its reads are admin-only, not
+# user-readable like /models (needed by the model picker) and the profile lists.
 _SHARED_CONFIG_PREFIXES = (
     "/models",
-    "/settings",
     "/transformations",
     "/episode-profiles",
     "/speaker-profiles",
