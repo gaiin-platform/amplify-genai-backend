@@ -106,6 +106,16 @@ if str(_SVC_DIR) not in sys.path:
 
 import notebook_proxy as _nb  # noqa: E402
 
+# Force the non-admin stub onto the imported module's binding. notebook_proxy
+# does ``from pycommon.api.auth_admin import verify_user_as_admin``, so it holds
+# its OWN module-level reference; patching sys.modules is not enough. This also
+# makes the suite import-order independent: if another test file imported the
+# REAL pycommon first, _install_mocks() above early-returns and the real
+# verify_user_as_admin (which reads os.environ['API_BASE_URL'] and raises
+# KeyError offline) would otherwise leak in. Every test here expects a
+# non-admin caller, so binding False unconditionally is correct.
+_nb.verify_user_as_admin = lambda *a, **kw: False
+
 _normalise = _nb._normalise_path
 _traversal = _nb._has_traversal
 _level = _nb._required_level
