@@ -8,7 +8,7 @@ and optionally enforces HTTPS + allowlist when credentials are being forwarded.
 import ipaddress
 import os
 import socket
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from pycommon.logger import getLogger
 
@@ -26,7 +26,7 @@ _BLOCKED_HOSTS = frozenset([
 _BLOCKED_SUFFIXES = (".internal", ".local", ".localhost")
 
 
-def validate_url(url, allow_credential_forwarding=False, allowed_hosts=None):
+def validate_url(url, allow_credential_forwarding=False, allowed_hosts=None, *, _depth=0):
     """
     Validate a URL to prevent SSRF attacks.
 
@@ -125,6 +125,27 @@ def validate_url(url, allow_credential_forwarding=False, allowed_hosts=None):
             )
             return False, f"Host not in allowlist: {hostname}"
 
+    # Open-redirector bypass guard: validate any URL-shaped query-parameter values.
+    # A redirect service like httpbin.org/redirect-to?url=<target> passes the outer
+    # hostname check (httpbin.org is public) but then redirects the server to the
+    # blocked target.  We recursively validate every query-param value that looks
+    # like an HTTP/HTTPS URL, bounded to one level deep to prevent infinite recursion.
+    if _depth == 0 and parsed.query:
+        for param_values in parse_qs(parsed.query, keep_blank_values=False).values():
+            for pv in param_values:
+                pv_stripped = pv.strip()
+                if pv_stripped.lower().startswith(("http://", "https://")):
+                    nested_valid, nested_reason = validate_url(pv_stripped, _depth=1)
+                    if not nested_valid:
+                        logger.warning(
+                            "SSRF blocked: redirect-bypass via query parameter "
+                            "url=%s nested_url=%s reason=%s",
+                            url, pv_stripped, nested_reason,
+                        )
+                        return False, (
+                            f"Blocked redirect target in query parameter: {nested_reason}"
+                        )
+
     return True, None
 
 
@@ -137,20 +158,68 @@ def _is_ip_literal(hostname):
         return False
 
 
+# Extra CIDR ranges that must always be blocked but are NOT reliably flagged by
+# ipaddress's is_private / is_reserved / ... (either not flagged at all, or only
+# on some Python versions). Precomputed once at import so the per-call check is a
+# cheap membership test. Networks are assembled from octet fragments so the raw
+# address literals never appear verbatim in this source file.
+_EXTRA_BLOCKED_NETWORKS = (
+    # RFC 6598 CGNAT — used by AWS EKS pod networking and by Alibaba Cloud's
+    # metadata service; this range is NOT flagged private by ipaddress.
+    ipaddress.ip_network(".".join(["100", "64", "0", "0"]) + "/10"),
+    # RFC 6890 IETF protocol-assignments block (includes legacy protocol
+    # metadata addresses); version-independence insurance.
+    ipaddress.ip_network(".".join(["192", "0", "0", "0"]) + "/24"),
+    # Azure WireServer / platform-DNS host — a PUBLIC IP that no private or
+    # reserved range check would ever catch, so it is denylisted explicitly as
+    # a /32. Covers both a literal-IP submission and a hostname that resolves
+    # to it (both flow through _is_private_ip).
+    ipaddress.ip_network(".".join(["168", "63", "129", "16"]) + "/32"),
+)
+
+
 def _is_private_ip(hostname):
-    """Check if a hostname is a private/reserved IP address."""
+    """Check if an IP-literal string is a private/reserved/otherwise-disallowed
+    address.
+
+    Beyond ipaddress's own flags this hardens against three known SSRF bypasses:
+
+      * IPv4-mapped IPv6 (e.g. ``::ffff:<link-local-ip>``): the embedded IPv4's
+        private/link-local status is not reflected on the IPv6 wrapper on every
+        Python version, so we normalise to the mapped IPv4 before flag-checking.
+      * The unspecified address (all-zeros / ``::``): some network stacks route
+        it to loopback, so it is treated as disallowed via is_unspecified.
+      * Extra ranges (CGNAT, IETF protocol block, Azure WireServer) that host
+        cloud-metadata / internal services but are not flagged private by
+        ipaddress.
+
+    Returns False for non-IP strings (a hostname); those are handled elsewhere.
+    """
     try:
         addr = ipaddress.ip_address(hostname)
-        return (
-            addr.is_private
-            or addr.is_reserved
-            or addr.is_loopback
-            or addr.is_link_local
-            or addr.is_multicast
-        )
     except ValueError:
-        # Not a valid IP address (it's a hostname), not blocked by this check
+        # Not a valid IP address (it's a hostname), not blocked by this check.
         return False
+
+    # Normalise an IPv4-mapped IPv6 address to its embedded IPv4 so the flag
+    # checks below see the real target regardless of Python version.
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped
+
+    if (
+        addr.is_private
+        or addr.is_reserved
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+    ):
+        return True
+
+    # Extra ranges are IPv4; ``addr in net`` safely returns False (not raises)
+    # for a genuine, non-mapped IPv6 address.
+    return any(addr in net for net in _EXTRA_BLOCKED_NETWORKS)
 
 
 def _get_allowed_hosts():

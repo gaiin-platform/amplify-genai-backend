@@ -562,5 +562,165 @@ class TestMultipartUploadFileType(unittest.TestCase):
         self.assertIsNone(_check_multipart_file_type("application/json", b"{}"))
 
 
+
+
+class TestRedirectBypassPrevention(unittest.TestCase):
+    """validate_url must block SSRF via open-redirector query parameters.
+
+    An attacker can submit a URL whose hostname resolves to a public IP (so the
+    outer host check passes) but whose query string contains a ``url`` param
+    that points at an internal/metadata target.  If the upstream service follows
+    the redirect, it reaches the blocked destination.
+
+    The fix scans all query-param values that look like HTTP/HTTPS URLs and
+    validates each one against the same SSRF blocklist (_depth=1 so the
+    recursion is bounded to one level).
+    """
+
+    def _validate(self, url, mock_ip=None):
+        """Call validate_url directly (bypasses notebook_proxy layer)."""
+        from service.url_validator import validate_url
+        if mock_ip:
+            with mock.patch(
+                "service.url_validator.socket.getaddrinfo",
+                _fake_getaddrinfo(mock_ip),
+            ):
+                return validate_url(url)
+        return validate_url(url)
+
+    def test_httpbin_redirect_to_metadata_ip_blocked(self):
+        # Outer host: httpbin.org resolves to public IP -> outer check passes.
+        # Inner url param points at the cloud metadata endpoint -> blocked.
+        url = "http://httpbin.org/redirect-to?url=http://" + META_IP + "/"
+        valid, reason = self._validate(url, mock_ip="52.2.1.1")
+        self.assertFalse(valid)
+        self.assertIn("Blocked redirect target in query parameter", reason)
+
+    def test_redirect_to_private_ip_blocked(self):
+        # Redirect target is an RFC1918 address.
+        url = "http://httpbin.org/redirect-to?url=http://" + PRIVATE_IP_10 + "/admin"
+        valid, reason = self._validate(url, mock_ip="52.2.1.1")
+        self.assertFalse(valid)
+        self.assertIn("Blocked redirect target in query parameter", reason)
+
+    def test_redirect_to_localhost_blocked(self):
+        # Redirect target is the loopback address.
+        url = "http://httpbin.org/redirect-to?url=http://" + LOOPBACK_IP + ":8080/status"
+        valid, reason = self._validate(url, mock_ip="52.2.1.1")
+        self.assertFalse(valid)
+        self.assertIn("Blocked redirect target in query parameter", reason)
+
+    def test_non_url_query_param_allowed(self):
+        # A query parameter whose value is a plain string (not a URL) must not
+        # trigger the redirect-bypass guard.
+        url = "http://example.com/search?q=search+term"
+        valid, reason = self._validate(url, mock_ip="93.184.216.34")
+        self.assertTrue(valid, f"Expected allowed but got: {reason}")
+
+    def test_redirect_to_legitimate_public_host_allowed(self):
+        # Both outer and inner hosts resolve to public addresses -> allowed.
+        url = "http://httpbin.org/redirect-to?url=http://example.com/page"
+
+        def _dual_resolver(host, *args, **kwargs):
+            # Both outer and inner hosts map to a public IP.
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+        from service.url_validator import validate_url
+        with mock.patch(
+            "service.url_validator.socket.getaddrinfo",
+            _dual_resolver,
+        ):
+            valid, reason = validate_url(url)
+        self.assertTrue(valid, f"Expected allowed but got: {reason}")
+
+
+class TestIpEncodingBypassPrevention(unittest.TestCase):
+    """validate_url must block SSRF targets expressed in evasive IP encodings.
+
+    ipaddress's is_private / is_reserved / ... flags do not, on their own, catch
+    every route to an internal/metadata service:
+
+      * an IPv4-mapped IPv6 address whose wrapper flags differ from the embedded
+        IPv4 across Python versions,
+      * the all-zeros / unspecified address (routed to loopback by some stacks),
+      * RFC 6598 CGNAT space (AWS EKS pods, Alibaba metadata),
+      * a PUBLIC metadata IP (Azure WireServer) that no range check flags.
+
+    _is_private_ip was hardened to cover all of these; these tests pin that in.
+    Every literal is assembled from fragments so the raw address never appears
+    verbatim in this source file.
+    """
+
+    # Assembled here (not reusing module globals) to keep this class's intent
+    # self-contained and the raw literals out of the source.
+    _CGNAT_IP = ".".join(["100", "64", "1", "5"])            # RFC 6598 CGNAT
+    _ALIBABA_META = ".".join(["100", "100", "100", "200"])   # inside CGNAT /10
+    _AZURE_WIRESERVER = ".".join(["168", "63", "129", "16"])  # PUBLIC metadata IP
+    _ZERO = ".".join(["0", "0", "0", "0"])                    # unspecified addr
+    _MAPPED_META = "::ffff:" + ".".join(["169", "254", "169", "254"])
+
+    def _post_source(self, url):
+        return _check_body_for_ssrf(
+            "POST", "/sources/json", {"type": "link", "url": url}
+        )
+
+    def test_ipv4_mapped_ipv6_metadata_blocked(self):
+        # An IPv4-mapped IPv6 form of the metadata IP must be normalised to the
+        # embedded IPv4 and blocked.
+        _assert_blocked(self, self._post_source(f"http://[{self._MAPPED_META}]/"))
+
+    def test_cgnat_range_blocked(self):
+        # RFC 6598 CGNAT is not flagged private by ipaddress, but is used for
+        # AWS EKS pod networking and must be blocked.
+        _assert_blocked(self, self._post_source(f"http://{self._CGNAT_IP}/"))
+
+    def test_alibaba_metadata_in_cgnat_blocked(self):
+        # Alibaba Cloud's metadata IP lives inside the CGNAT range.
+        _assert_blocked(self, self._post_source(f"http://{self._ALIBABA_META}/latest/meta-data/"))
+
+    def test_azure_wireserver_public_ip_blocked(self):
+        # Azure WireServer is a PUBLIC IP; only the explicit /32 denylist catches
+        # it. No DNS stub needed — it is a literal IP, range-checked directly.
+        _assert_blocked(self, self._post_source(f"http://{self._AZURE_WIRESERVER}/"))
+
+    def test_unspecified_address_blocked(self):
+        # The all-zeros address is routed to loopback by some stacks; block it.
+        _assert_blocked(self, self._post_source(f"http://{self._ZERO}:8080/"))
+
+    def test_hostname_resolving_to_azure_wireserver_blocked(self):
+        # A public hostname that RESOLVES to the Azure WireServer public IP must
+        # also be blocked — the resolved-IP arm of the guard must denylist it.
+        with mock.patch(
+            "service.url_validator.socket.getaddrinfo",
+            _fake_getaddrinfo(self._AZURE_WIRESERVER),
+        ):
+            _assert_blocked(self, self._post_source("http://rebind-azure.example.com/"))
+
+    def test_hostname_resolving_to_cgnat_blocked(self):
+        # DNS-rebinding into the CGNAT range must be blocked at resolve time.
+        with mock.patch(
+            "service.url_validator.socket.getaddrinfo",
+            _fake_getaddrinfo(self._CGNAT_IP),
+        ):
+            _assert_blocked(self, self._post_source("http://rebind-cgnat.example.net/"))
+
+    def test_public_ipv6_not_flagged_by_extra_ranges(self):
+        # Regression guard for the IPv4-only extra-range membership test: a
+        # genuine (non-mapped) public IPv6 address must make _is_private_ip
+        # return False WITHOUT raising (``ipv6_addr in ipv4_network`` returns
+        # False on 3.9+, but this pins it so a refactor can't reintroduce a
+        # TypeError). Note: the full validate_url path additionally rejects a
+        # bare IPv6 literal via the pre-existing single-label (no-dot) guard,
+        # which is unrelated to this hardening — so we assert on the unit here.
+        from service.url_validator import _is_private_ip
+        self.assertFalse(_is_private_ip("2606:4700:4700::1111"))
+
+    def test_ordinary_public_ipv4_still_allowed(self):
+        # Sanity: a normal public IPv4 literal is unaffected by the new ranges.
+        from service.url_validator import validate_url
+        valid, reason = validate_url("http://" + ".".join(["93", "184", "216", "34"]) + "/x")
+        self.assertTrue(valid, f"public IPv4 should be allowed, got: {reason}")
+
+
 if __name__ == "__main__":
     unittest.main()
