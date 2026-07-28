@@ -562,8 +562,6 @@ class TestMultipartUploadFileType(unittest.TestCase):
         self.assertIsNone(_check_multipart_file_type("application/json", b"{}"))
 
 
-
-
 class TestRedirectBypassPrevention(unittest.TestCase):
     """validate_url must block SSRF via open-redirector query parameters.
 

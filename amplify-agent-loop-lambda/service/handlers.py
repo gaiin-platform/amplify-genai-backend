@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import traceback
 import copy
 
@@ -15,8 +16,6 @@ import agent.tools.prompt_tools
 import agent.tools.shell
 import agent.tools.structured_editing
 import agent.tools.markdown_converter
-import agent.tools.database_tool
-
 from agent.agents import actions_agent, workflow_agent
 from agent.capabilities.workflow_model import Workflow
 from agent.components.agent_registry import AgentRegistry
@@ -785,7 +784,23 @@ def handle_event(
         return {"handled": False, "error": "Error handling event"}
 
 
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+
+def _validate_session_id(session_id):
+    """Reject session IDs that contain path traversal or injection characters."""
+    if not isinstance(session_id, str):
+        raise ValueError("sessionId must be a string")
+    if len(session_id) > 256:
+        raise ValueError("sessionId exceeds maximum length")
+    if not _SESSION_ID_RE.match(session_id):
+        raise ValueError(
+            "sessionId contains invalid characters (only letters, digits, dash, underscore allowed)"
+        )
+
+
 def get_working_directory(session_id):
+    _validate_session_id(session_id)
     work_directory = os.environ.get("WORK_DIRECTORY", None)
     if not work_directory:
         work_directory = f"/tmp/{session_id}"
