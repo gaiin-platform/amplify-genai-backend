@@ -103,9 +103,11 @@ export const chatBedrock = async (chatBody, writable) => {
         }
 
         if (isReasoningEnabled) {
-            if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
-                // Opus 4.6+ and Opus 5+ — effort-based reasoning. Honor the user's selected
-                // reasoning level. This mirrors how azure/openai.js and litellmClient.js map
+            if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
+                // Opus 4.6+, Opus 5+, Sonnet 5+ — effort-based adaptive reasoning.
+                // These models use thinking.type.adaptive + output_config.effort instead of
+                // the older thinking.type.enabled + budget_tokens API.
+                // This mirrors how azure/openai.js and litellmClient.js map
                 // options.reasoningLevel -> effort (low | medium | high).
                 const effort = options.reasoningLevel ?? "low";
                 input.additionalModelRequestFields = {

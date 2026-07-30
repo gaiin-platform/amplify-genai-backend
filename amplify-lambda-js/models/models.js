@@ -48,7 +48,7 @@ export const getUserAvailableModels = async (accessToken) => {
     });
 
     if (!response.ok) {
-        logger.error("Error fetching ops: ", response.statusText);
+        logger.error("Error fetching models: ", response.statusText);
         return [];
     }
 
