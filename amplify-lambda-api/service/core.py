@@ -248,7 +248,7 @@ def create_api_key_for_user(user, api_key):
                 "api_owner_id": id,
                 "owner": user,
                 "apiKey": hash_to_store,
-                "account": api_key["account"],
+                "account": {**api_key["account"], "rateLimit": formatRateLimit(api_key["account"]["rateLimit"])} if api_key["account"].get("rateLimit") else api_key["account"],
                 "delegate": delegate,
                 "systemId": sys_id,
                 "active": True,
@@ -538,7 +538,7 @@ def generate_presigned_url(file):
 
 
 def formatRateLimit(rateLimit):
-    if rateLimit.get("rate", None):
+    if rateLimit.get("rate") is not None:
         rateLimit["rate"] = Decimal(str(rateLimit["rate"]))
     return rateLimit
 
