@@ -26,12 +26,17 @@ const constructGeminiUrl = () => {
 }
 
 export const chat = async (chatBody, writable) => {
+    // Hoisted to function scope so the catch block can access them for error logging
+    let options = {};
+    let data = {};
+    let modelId = "gemini-1.5-pro";
+
     try {
         let body = { ...chatBody };
-        const options = { ...body.options };
+        options = { ...body.options };
         delete body.options;
         const model = options.model;
-        const modelId = (model && model.id) || "gemini-1.5-pro";
+        modelId = (model && model.id) || "gemini-1.5-pro";
         const maxTokens = body.max_tokens || 2000;
 
         // Check for tools in both body (from UnifiedLLMClient) and options (legacy)
@@ -55,7 +60,7 @@ export const chat = async (chatBody, writable) => {
 
         // Removed debug logging for performance
 
-        let data = {
+        data = {
             ...body,
             "model": modelId,
             "stream": true,
