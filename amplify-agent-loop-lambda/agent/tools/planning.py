@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 
 from agent.components.tool import register_tool
 from agent.core import Memory, ActionRegistry
@@ -130,7 +131,7 @@ def create_plan(action_context, _memory: Memory, action_registry: ActionRegistry
         "content": f"""   
 Available Actions:    
 ------------------
-{json.dumps([a.todict() for a in action_registry.get_actions()])}
+{json.dumps([a.todict() for a in action_registry.get_actions()], default=lambda o: int(o) if isinstance(o, Decimal) else str(o))}
 """,
     }
 

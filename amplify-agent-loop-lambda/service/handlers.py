@@ -26,6 +26,7 @@ from agent.core import Action, UnknownActionError
 from agent.prompt import create_llm
 from agent.tools.ops import ops_to_tools, get_default_ops_as_tools
 from pycommon.api.ops import api_tool
+from pycommon.encoders import SmartDecimalEncoder
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SecretsManagerOperation
@@ -78,7 +79,7 @@ def save_conversation_state(
             s3.put_object(
                 Bucket=consolidation_bucket,
                 Key=s3_key,
-                Body=json.dumps(conversation_results, indent=2),
+                Body=json.dumps(conversation_results, indent=2, cls=SmartDecimalEncoder),
                 ContentType="application/json",
             )
         except ClientError as e:
