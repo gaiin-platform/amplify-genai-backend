@@ -368,7 +368,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             finalizeSuccess();
                           } catch (err) {
                             // handle JSON parse error
-                            logger.error("O1 model error:", err);
+                            logger.error("model error:", err);
                             streamError(err);
                           }
                         });
