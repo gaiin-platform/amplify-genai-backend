@@ -929,6 +929,16 @@ RULES:
         { role: 'system', content: jsonPrompt }
     ];
 
+    // Override the conversational system prompt so the model doesn't get
+    // "respond in markdown" instructions fighting against our JSON requirement
+    const dataParams = {
+        ...params,
+        options: {
+            ...(params.options || {}),
+            prompt: 'You are a data extraction assistant. Respond only with valid JSON.'
+        }
+    };
+
     // Prepare structured output options based on provider (additional enforcement if supported)
     const provider = model?.provider;
     let structuredOutputOptions = {};
@@ -972,7 +982,7 @@ RULES:
     if (Object.keys(structuredOutputOptions).length > 0) {
         try {
             usedStructuredOutput = true;
-            result = await callUnifiedLLM(params, finalMessages, null, structuredOutputOptions);
+            result = await callUnifiedLLM(dataParams, finalMessages, null, structuredOutputOptions);
 
             // Check if response is actually JSON (some models ignore structured output config)
             const content = result.content || '';
@@ -992,18 +1002,18 @@ RULES:
                 logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
                 usedStructuredOutput = false;
                 retried = true;
-                result = await callUnifiedLLM(params, finalMessages, null, {});
+                result = await callUnifiedLLM(dataParams, finalMessages, null, {});
             }
         } catch (structuredError) {
             logger.warn(`Structured output call failed for ${provider}, retrying without structured output flag:`, structuredError.message);
             usedStructuredOutput = false;
             retried = true;
             // Fallback: retry without structured output
-            result = await callUnifiedLLM(params, finalMessages, null, {});
+            result = await callUnifiedLLM(dataParams, finalMessages, null, {});
         }
     } else {
         // No structured output support, call directly
-        result = await callUnifiedLLM(params, finalMessages, null, {});
+        result = await callUnifiedLLM(dataParams, finalMessages, null, {});
     }
 
     // Parse JSON response (with the same deterministic repair pass used during validation,
