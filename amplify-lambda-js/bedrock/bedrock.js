@@ -26,8 +26,8 @@ const getBedrockClient = () => {
 export const chatBedrock = async (chatBody, writable) => {
 
     let body = {...chatBody};
-    const options = {...body.options}; 
-    delete body.options; 
+    const options = {...body.options};
+    delete body.options;
     const currentModel = options.model;
 
     const prompt = typeof options.prompt === 'string' ? options.prompt : '';
@@ -37,7 +37,7 @@ export const chatBedrock = async (chatBody, writable) => {
     }
 
     const withoutSystemMessages = [];
-    // options.prompt is a match for the first message in messages 
+    // options.prompt is a match for the first message in messages
     for (const msg of body.messages) {
         if (msg.role === "system") {
                                       // avoid duplicate system prompts
@@ -63,8 +63,8 @@ export const chatBedrock = async (chatBody, writable) => {
         // Initiating call to Bedrock
 
         const maxModelTokens = options.model.outputTokenLimit;
-
-        const maxTokens = body.max_tokens || 2000;
+        const requestedMaxTokens = body.max_tokens || 2000;
+        const maxTokens = requestedMaxTokens < 16 ? 16 : requestedMaxTokens;
 
         // Note: Disable reasoning when tools are present because Bedrock requires thinking blocks
         // in assistant messages when using extended thinking with tools, which complicates the tool loop
@@ -76,8 +76,10 @@ export const chatBedrock = async (chatBody, writable) => {
         // https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
         const temperature = isReasoningEnabled ? 1.0 : options.temperature;
 
+        const isOpenAIGpt56 = /^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id);
         const inferenceConfigs = {
-            "temperature": temperature,
+            // GPT-5.6 rejects temperature entirely; other Bedrock models retain it.
+            ...(isOpenAIGpt56 ? {} : { "temperature": temperature }),
             "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens,
         };
 
@@ -103,7 +105,14 @@ export const chatBedrock = async (chatBody, writable) => {
         }
 
         if (isReasoningEnabled) {
-            if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
+            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+                // OpenAI GPT-5.6 on Bedrock expects a string effort value.
+                const effort = options.reasoningLevel ?? "low";
+                input.additionalModelRequestFields = {
+                    "reasoning": { "effort": effort }
+                };
+                logger.info(`GPT-5.6 reasoning enabled (effort=${effort}) with maxTokens=${maxTokens}`);
+            } else if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
                 // Opus 4.6+, Opus 5+, Sonnet 5+ — effort-based adaptive reasoning.
                 // These models use thinking.type.adaptive + output_config.effort instead of
                 // the older thinking.type.enabled + budget_tokens API.
@@ -130,16 +139,21 @@ export const chatBedrock = async (chatBody, writable) => {
                 logger.info(`Extended thinking enabled with temperature=1.0, budget_tokens=${budget_tokens}, maxTokens=${maxTokens}`);
             }
         } else if (currentModel.supportsReasoning && disableReasoning && !hasTools) {
-            // Only set reasoning_config:disabled when there are no tools involved.
-            // Bedrock rejects any additionalModelRequestFields alongside toolConfig, and
-            // code interpreter's follow-up call sets disableReasoning=true while also
-            // passing tools, so this guard is required to avoid that conflict.
+            // GPT-5.6 uses the OpenAI reasoning shape on Bedrock Converse. Its
+            // effort value must be a string, including when reasoning is disabled.
+            // Other reasoning-capable Bedrock models retain the legacy shape.
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
-            input.additionalModelRequestFields = {
-                "reasoning_config": {
-                    "type": "disabled"
-                }
-            };
+            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+                input.additionalModelRequestFields = {
+                    "reasoning": { "effort": "none" }
+                };
+            } else {
+                input.additionalModelRequestFields = {
+                    "reasoning_config": {
+                        "type": "disabled"
+                    }
+                };
+            }
         }
 
         if (currentModel.supportsSystemPrompts) {
