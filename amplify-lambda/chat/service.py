@@ -7,6 +7,7 @@ import os
 import boto3
 from decimal import Decimal
 from pycommon.api.ops import api_tool
+from pycommon.api.models import get_default_models
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -95,7 +96,7 @@ logger = getLogger("chat_endpoint")
                     "model": {
                         "type": "object",
                         "properties": {"id": {"type": "string"}},
-                        "description": "Object containing model-specific configurations, including 'id'. Example: {'id': 'gpt-4o'}. Must match the model id under the model attribute",
+                        "description": "Object containing model-specific configurations, including 'id'. Example: {'id': 'gpt-4o'}. Must match the model id under the model attribute. Alternatively, use the aliases 'SIMPLE' (resolves to the cheapest available model) or 'COMPLEX' (resolves to the most capable/advanced available model).",
                     },
                     "prompt": {
                         "type": "string",
@@ -157,7 +158,9 @@ def chat_endpoint(event, context, current_user, name, data):
 
         payload["dataSources"] = get_data_source_details(payload["dataSources"])
         payload_options = payload["options"]
-        payload["model"] = payload_options["model"]["id"]
+        model_id = resolve_model_alias(payload_options["model"]["id"], access_token)
+        payload_options["model"]["id"] = model_id
+        payload["model"] = model_id
         messages = payload["messages"]
 
         SYSTEM_ROLE = "system"
@@ -187,6 +190,44 @@ def convert_decimal(obj):
     elif isinstance(obj, list):
         return [convert_decimal(item) for item in obj]
     return obj
+
+MODEL_ALIAS_SIMPLE = "SIMPLE"
+MODEL_ALIAS_COMPLEX = "COMPLEX"
+_MODEL_ALIASES = {MODEL_ALIAS_SIMPLE, MODEL_ALIAS_COMPLEX}
+
+
+def resolve_model_alias(model_id, access_token):
+    """Resolve SIMPLE/COMPLEX aliases to their actual model IDs.
+
+    SIMPLE  -> cheapest_model (low-cost, fast model)
+    COMPLEX -> advanced_model (highest-capability model)
+
+    If model_id is not a known alias it is returned unchanged.
+    If the default-models call fails the original alias string is returned so
+    the downstream router can surface the error rather than silently using a
+    wrong model.
+    """
+    if model_id not in _MODEL_ALIASES:
+        return model_id
+
+    models = get_default_models(access_token)
+    if not models:
+        logger.error(
+            "Could not resolve model alias '%s': failed to fetch default models",
+            model_id,
+        )
+        return model_id
+
+    if model_id == MODEL_ALIAS_SIMPLE:
+        resolved = models.get("cheapest_model") or model_id
+    elif model_id == MODEL_ALIAS_COMPLEX:
+        resolved = models.get("advanced_model") or model_id
+    else:
+        logger.error("Unknown model alias '%s'", model_id)
+        return {"success": False, "message": f"Unknown model alias '{model_id}'"}
+
+    logger.debug("Resolved model alias '%s' -> '%s'", model_id, resolved)
+    return resolved
 
 
 def get_data_source_details(data_sources):
