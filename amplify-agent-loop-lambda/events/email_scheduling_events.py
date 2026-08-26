@@ -1,6 +1,7 @@
 
 import json
 import base64
+import re
 from typing import Dict, Any
 from events.event_handler import MessageHandler, SPECIALIZED_EMAILS
 from events.ses_message_functions import (
@@ -300,9 +301,13 @@ class SESSchedulingMessageHandler(MessageHandler):
             # Get API Gateway base URL from environment
             stage = os.environ.get('STAGE', 'dev')
             amp_base_url = os.environ.get('API_BASE_URL')
-           
+
             # TARGET  #dev-scheduling.dev-amplify.vanderbilt.ai
+            # Derive scheduling URL: replace -api. then strip trailing digits from subdomain
+            # e.g. prod2-api.vanderbilt.ai → prod2-scheduling.vanderbilt.ai → prod-scheduling.vanderbilt.ai
             api_base_url = amp_base_url.replace("-api.", "-scheduling.") if amp_base_url else None
+            if api_base_url:
+                api_base_url = re.sub(r'(?<=[a-z])\d+(?=-scheduling\.)', '', api_base_url)
 
             if not api_base_url:
                 logger.error("API_BASE_URL is not configured in environment variables")
