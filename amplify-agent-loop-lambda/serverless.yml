@@ -103,6 +103,7 @@ provider:
     S3_NOTES_RAW_FILES_BUCKET: ${ssm:/amplify/${sls:stage}/S3_NOTES_RAW_FILES_BUCKET, ""}
     # AI Scheduler Configuration (SES Email Forwarding)
     AI_SCHEDULER_STORAGE_TABLE: ${ssm:/amplify/${sls:stage}/AI_SCHEDULER_STORAGE_TABLE, ""}
+    SCHEDULER_EMAIL: ${ssm:/amplify/${sls:stage}/SCHEDULER_EMAIL, ""}
 
 
   iam:
