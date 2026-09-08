@@ -19,6 +19,7 @@ from integrations.o365.calendar import (
     delete_event,
     find_meeting_times,
     get_calendar_permissions,
+    get_shared_calendar_schedule,
     get_event_details,
     get_events_between_dates,
     list_calendar_events,
@@ -2780,6 +2781,67 @@ def list_calendar_events_handler(current_user, data):
 )
 def list_calendars_handler(current_user, data):
     return common_handler(list_calendars, include_shared=False)(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_shared_calendar_schedule",
+    tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
+    name="microsoftGetCalendarSchedule",
+    description=(
+        "Gets free/busy availability for one or more calendars shared with you, "
+        "including personal calendars and shared mailboxes, identified by email address. "
+        "Provide start_time and end_time as ISO datetimes. The availability_view_interval "
+        "sets the size of each availability slot in minutes (30 is recommended). "
+        "availabilityView codes are 0=free, 1=tentative, 2=busy, 3=out of office, "
+        "and 4=working elsewhere. Event titles may be unavailable when the owner only "
+        "granted free/busy access."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "schedule_emails": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": "Email addresses for people or shared mailboxes to check",
+            },
+            "start_time": {
+                "type": "string",
+                "description": "Beginning of the availability window in ISO format",
+            },
+            "end_time": {
+                "type": "string",
+                "description": "End of the availability window in ISO format",
+            },
+            "time_zone": {
+                "type": "string",
+                "description": "Windows timezone (optional)",
+                "default": "Central Standard Time",
+            },
+            "availability_view_interval": {
+                "type": "integer",
+                "minimum": 1,
+                "description": (
+                    "Size of each availabilityView slot in minutes. Use 30 for "
+                    "half-hour slots; each character then represents 30 minutes. "
+                    "Codes: 0 free, 1 tentative, 2 busy, 3 out of office, "
+                    "4 working elsewhere."
+                ),
+                "default": 30,
+            },
+        },
+        "required": ["schedule_emails", "start_time", "end_time"],
+    },
+)
+def get_shared_calendar_schedule_handler(current_user, data):
+    return common_handler(
+        get_shared_calendar_schedule,
+        schedule_emails=None,
+        start_time=None,
+        end_time=None,
+        time_zone=None,
+        availability_view_interval=30,
+    )(current_user, data)
 
 
 @api_tool(

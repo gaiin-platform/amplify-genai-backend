@@ -518,6 +518,85 @@ def list_calendars(
         raise CalendarError(f"Network error while fetching calendars: {str(e)}")
 
 
+def get_shared_calendar_schedule(
+    current_user: str,
+    schedule_emails: List[str],
+    start_time: str,
+    end_time: str,
+    time_zone: str = None,
+    availability_view_interval: int = 30,
+    access_token: str = None,
+) -> Dict:
+    """Get free/busy information for people or shared mailboxes.
+
+    Microsoft Graph's getSchedule endpoint accepts either user addresses or
+    shared-mailbox addresses. It is therefore useful for calendars shown in
+    Outlook's People's calendars even when they are not returned by
+    ``/me/calendars``.
+    """
+    if not isinstance(schedule_emails, list) or not schedule_emails:
+        raise CalendarError("schedule_emails must contain at least one email address")
+
+    schedules = [email.strip() for email in schedule_emails if isinstance(email, str) and email.strip()]
+    if not schedules:
+        raise CalendarError("schedule_emails must contain at least one valid email address")
+
+    if availability_view_interval <= 0:
+        raise CalendarError("availability_view_interval must be greater than zero")
+
+    try:
+        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise CalendarError("start_time and end_time must be valid ISO datetimes") from exc
+
+    if end_dt <= start_dt:
+        raise CalendarError("end_time must be after start_time")
+
+    if time_zone is None:
+        time_zone = get_default_timezone_windows()
+
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        url = f"{GRAPH_ENDPOINT}/me/calendar/getSchedule"
+        request_body = {
+            "schedules": schedules,
+            "startTime": {"dateTime": start_time, "timeZone": time_zone},
+            "endTime": {"dateTime": end_time, "timeZone": time_zone},
+            "availabilityViewInterval": availability_view_interval,
+        }
+        response = session.post(url, json=request_body)
+        if not response.ok:
+            handle_graph_error(response)
+
+        response_data = response.json()
+        schedule_results = []
+        for index, schedule in enumerate(response_data.get("value", [])):
+            schedule_id = schedule.get("scheduleId") or (
+                schedules[index] if index < len(schedules) else ""
+            )
+            schedule_results.append(
+                {
+                    "scheduleId": schedule_id,
+                    "availabilityView": schedule.get("availabilityView", ""),
+                    "scheduleItems": schedule.get("scheduleItems", []),
+                    "workingHours": schedule.get("workingHours", {}),
+                    "error": schedule.get("error"),
+                }
+            )
+
+        return {
+            "startTime": start_time,
+            "endTime": end_time,
+            "timeZone": time_zone,
+            "availabilityViewInterval": availability_view_interval,
+            "schedules": schedule_results,
+        }
+
+    except requests.RequestException as e:
+        raise CalendarError(f"Network error while fetching calendar schedule: {str(e)}")
+
+
 def create_calendar(
     current_user: str, name: str, color: Optional[str] = None, access_token: str = None
 ) -> Dict:
