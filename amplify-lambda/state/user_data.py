@@ -12,6 +12,7 @@ from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation
 )
 from pycommon.authz import validated, setup_validated
+from pycommon.exceptions import HTTPBadRequest
 from schemata.schema_validation_rules import rules
 from schemata import permissions
 
@@ -26,6 +27,86 @@ from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
 import traceback
 logger = getLogger("user-data")
+
+# ── Security constants ──────────────────────────────────────────────────────
+# Allowed characters for entityType: letters, digits, dash, underscore, dot
+_ENTITY_TYPE_RE = re.compile(r"^[a-zA-Z0-9_.\-]+$")
+# Control character detection for itemId
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# HTML tag detection for XSS sanitization
+_HTML_TAG_RE = re.compile(r"<[^>]+>", re.DOTALL)
+# Max field lengths
+_MAX_APP_ID_LEN = 512
+_MAX_ENTITY_TYPE_LEN = 256
+_MAX_ITEM_ID_LEN = 2048
+# DynamoDB internal keys that must never be stored in user-supplied data blobs
+_RESERVED_DYNAMO_KEYS = frozenset({"PK", "SK", "hash_key"})
+# Internal system appIds excluded from list-apps results
+_INTERNAL_APP_IDS = frozenset({
+    "action-sets",
+    "scheduled-task-logs",
+    "artifact-content",
+    "received",
+    "user-settings",
+    "workflow-templates",
+})
+
+
+def _sanitize_html(value):
+    """Recursively strip HTML tags from string values to prevent stored XSS."""
+    if isinstance(value, str):
+        return _HTML_TAG_RE.sub("", value)
+    if isinstance(value, dict):
+        return {k: _sanitize_html(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_html(item) for item in value]
+    return value
+
+
+def _strip_reserved_keys(data):
+    """Remove DynamoDB internal keys from a user-supplied data blob to prevent key pollution."""
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k not in _RESERVED_DYNAMO_KEYS}
+    return data
+
+
+def _validate_user_data_inputs(inner_data):
+    """Validate user-supplied field values to prevent injection and path traversal."""
+    app_id = inner_data.get("appId")
+    if app_id is not None:
+        if not isinstance(app_id, str):
+            raise ValueError("appId must be a string")
+        if len(app_id) > _MAX_APP_ID_LEN:
+            raise ValueError(f"appId exceeds maximum length of {_MAX_APP_ID_LEN}")
+
+    entity_type = inner_data.get("entityType")
+    if entity_type is not None:
+        if not isinstance(entity_type, str):
+            raise ValueError("entityType must be a string")
+        if len(entity_type) > _MAX_ENTITY_TYPE_LEN:
+            raise ValueError("entityType exceeds maximum length")
+        if not _ENTITY_TYPE_RE.match(entity_type):
+            raise ValueError(
+                "entityType contains invalid characters "
+                "(only letters, digits, dash, underscore, dot allowed)"
+            )
+
+    item_id = inner_data.get("itemId")
+    if item_id is not None:
+        if not isinstance(item_id, str):
+            raise ValueError("itemId must be a string")
+        if len(item_id) > _MAX_ITEM_ID_LEN:
+            raise ValueError("itemId exceeds maximum length")
+        if _CONTROL_CHAR_RE.search(item_id):
+            raise ValueError("itemId contains invalid control characters")
+
+    range_key = inner_data.get("rangeKey")
+    if range_key is not None:
+        if not isinstance(range_key, str):
+            raise ValueError("rangeKey must be a string")
+        if "#" in range_key:
+            raise ValueError("rangeKey cannot contain '#' character")
+
 
 USER_DATA_TABLE = os.environ["USER_STORAGE_TABLE"]
 table_name = os.getenv("USER_STORAGE_TABLE")
@@ -80,6 +161,13 @@ def common_handler(operation, func_schema, **optional_params):
                 logger.error("Validation error: %s", str(e))
                 raise ValueError(f"Invalid request: {str(e)}")
 
+            # Validate input fields against injection and path traversal attacks
+            if isinstance(data.get("data"), dict):
+                try:
+                    _validate_user_data_inputs(data["data"])
+                except ValueError as e:
+                    raise HTTPBadRequest(str(e))
+
             logger.debug("Converting parameters to snake case")
             # build a keyword argument dictionary from the data based on the schema
             args = {
@@ -132,6 +220,8 @@ def common_handler(operation, func_schema, **optional_params):
             tracker.record_metrics(metrics)
 
             return result
+        except HTTPBadRequest:
+            raise
         except Exception as e:
             # Track failed operation
             if op_tracking_context:
@@ -199,6 +289,8 @@ def route(event, context, current_user, name, data):
         return common_handler(handler_func, func_schema)(
             event, context, current_user, name, data
         )
+    except HTTPBadRequest:
+        raise
     except Exception as e:
         logger.error("Error in route handler: %s", str(e), exc_info=True)
         return {"success": False, "error": str(e)}
@@ -299,7 +391,8 @@ def _remove_keys(item):
 def handle_put_item(current_user, app_id, entity_type, item_id, data, range_key=None):
     """Handler to store an item in DynamoDB"""
     hash_key = _create_hash_key(current_user, app_id)
-    return {"uuid": storage.put_item(hash_key, entity_type, item_id, data, range_key)}
+    sanitized_data = _sanitize_html(_strip_reserved_keys(data))
+    return {"uuid": storage.put_item(hash_key, entity_type, item_id, sanitized_data, range_key)}
 
 
 @api_tool(
@@ -959,7 +1052,11 @@ def handle_list_user_apps(current_user, prefix=None):
 
     logger.debug("AppIds %s", app_ids)
 
-    # Decode the app IDs to remove the user prefix
-    decoded_app_ids = [_decode_app_id(app_id) for app_id in app_ids]
+    # Decode the app IDs to remove the user prefix, filtering out internal system IDs
+    decoded_app_ids = [
+        _decode_app_id(app_id)
+        for app_id in app_ids
+        if _decode_app_id(app_id) not in _INTERNAL_APP_IDS
+    ]
 
     return {"appIds": decoded_app_ids}

@@ -904,7 +904,7 @@ export const processSmartMessages = async ({
                     model,
                     options: {
                         temperature: 0.8,
-                        max_tokens: 500,
+                        max_tokens: 2000,
                         disableReasoning: true
                     }
                 },

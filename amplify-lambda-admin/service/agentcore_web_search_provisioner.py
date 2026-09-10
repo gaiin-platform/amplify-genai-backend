@@ -97,12 +97,16 @@ def _build_authorizer_configuration():
     Inbound JWT authorizer pointing at the existing Cognito user pool, accepting
     the app's Cognito app client. Cognito access tokens carry `client_id`
     (not `aud`), so we match on allowedClients.
+
+    COGNITO_CLIENT_ID may be a comma-separated list (e.g. "id1,id2") to support
+    multiple Cognito app clients (e.g. main app + scheduler app).
     """
     discovery_url = _discovery_url()
-    client_id = os.environ.get("COGNITO_CLIENT_ID")
+    client_id_raw = os.environ.get("COGNITO_CLIENT_ID", "")
     config = {"customJWTAuthorizer": {"discoveryUrl": discovery_url}}
-    if client_id:
-        config["customJWTAuthorizer"]["allowedClients"] = [client_id]
+    if client_id_raw:
+        allowed = [cid.strip() for cid in client_id_raw.split(",") if cid.strip()]
+        config["customJWTAuthorizer"]["allowedClients"] = allowed
     return config
 
 

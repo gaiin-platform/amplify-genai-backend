@@ -251,35 +251,6 @@ export const getCacheStats = () => {
 };
 
 /**
- * Defensive model selection with fallbacks
- */
-export const selectModelWithFallback = (models, preferredModelId, userModelData = null, userId = null) => {
-    const fallbackChain = [
-        preferredModelId,
-        userModelData?.cheapest?.id,
-        userModelData?.advanced?.id,
-        'gpt-3.5-turbo', // Common fallback
-        'claude-3-haiku-20240307', // Another fallback
-        Object.keys(models)[0] // Last resort: first available model
-    ].filter(Boolean);
-
-    for (const modelId of fallbackChain) {
-        try {
-            return validateModelConfiguration(models, modelId, null, userId);
-        } catch (error) {
-            logger.warn(`Fallback failed for model ${modelId}:`, error.message);
-            continue;
-        }
-    }
-
-    // No fallback worked
-    const error = new Error("No valid model available in configuration");
-    error.code = "NO_VALID_MODELS";
-    error.statusCode = 500;
-    throw error;
-};
-
-/**
  * Validate request body structure to prevent downstream errors
  */
 export const validateRequestBody = (body) => {

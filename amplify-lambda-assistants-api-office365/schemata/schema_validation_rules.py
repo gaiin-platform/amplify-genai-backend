@@ -1,3 +1,3 @@
 validators = {"/microsoft/integrations": {"get": {}}}
 
-rules = {"validators": validators, "api_validators": validators}
+rules = {"validators": validators, "api_validators": {} }

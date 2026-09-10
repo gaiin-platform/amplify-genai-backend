@@ -22,7 +22,12 @@ config({ path: join(__dirname, '../../.env.local') });
 
 // Read environment variables
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
-const clientId = process.env.COGNITO_CLIENT_ID;
+// Support comma-separated list of client IDs (e.g. "id1,id2") so multiple
+// Cognito app clients (e.g. main app + scheduler) can share the same verifier.
+const clientIdRaw = process.env.COGNITO_CLIENT_ID;
+const clientId = clientIdRaw?.includes(',')
+    ? clientIdRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : clientIdRaw;
 const idpPrefix = (process.env.IDP_PREFIX || '').toLowerCase();
 
 // Ensure the environment variables are defined

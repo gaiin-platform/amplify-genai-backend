@@ -1,3 +1,5 @@
+import re
+from pycommon.exceptions import HTTPBadRequest
 from scheduled_tasks_events.scheduled_tasks_registry import (
     create_scheduled_task,
     get_scheduled_task,
@@ -14,6 +16,50 @@ from pycommon.dal.providers.aws.resource_perms import (
 )
 from pycommon.logger import getLogger
 logger = getLogger("scheduled_task_handlers")
+
+# Cron expression: raw 5-or-6-field format (used by croniter) OR AWS EventBridge cron(…) wrapper
+# Each field: only digits, *, /, ,, -, ?, L, W, # — no shell metacharacters allowed
+_CRON_RE = re.compile(
+    r'^(?:'
+    r'cron\(\s*[\d*/,\-?LW#]+(?:\s+[\d*/,\-?LW#]+){5}\s*\)'  # AWS cron(…) format
+    r'|'
+    r'[\d*/,\-?LW#]+(?:\s+[\d*/,\-?LW#]+){4,5}'  # raw 5-or-6-field cron format
+    r')$'
+)
+# Also allow simple rate expressions: rate(N minutes|hours|days)
+_RATE_RE = re.compile(r'^rate\(\d+\s+(minute|minutes|hour|hours|day|days)\)$')
+_HTML_TAG_RE = re.compile(r'<[^>]+>', re.DOTALL)
+_MAX_INSTRUCTIONS_LEN = 10000
+_MAX_TASK_NAME_LEN = 256
+
+
+def _validate_scheduled_task_inputs(task_name, task_instructions, cron_expression):
+    """Validate scheduled task fields to prevent injection attacks."""
+    if task_name is not None:
+        if not isinstance(task_name, str):
+            raise HTTPBadRequest("taskName must be a string")
+        if len(task_name) > _MAX_TASK_NAME_LEN:
+            raise HTTPBadRequest(f"taskName exceeds maximum length of {_MAX_TASK_NAME_LEN}")
+    if task_instructions is not None:
+        if not isinstance(task_instructions, str):
+            raise HTTPBadRequest("taskInstructions must be a string")
+        if len(task_instructions) > _MAX_INSTRUCTIONS_LEN:
+            raise HTTPBadRequest(f"taskInstructions exceeds maximum length of {_MAX_INSTRUCTIONS_LEN}")
+    if cron_expression is not None:
+        if not isinstance(cron_expression, str):
+            raise HTTPBadRequest("cronExpression must be a string")
+        expr = cron_expression.strip()
+        if not (_CRON_RE.match(expr) or _RATE_RE.match(expr)):
+            raise HTTPBadRequest(
+                "cronExpression is invalid. Use AWS cron(…) or rate(…) format."
+            )
+
+
+def _sanitize_instructions(value):
+    """Strip HTML tags from task instructions to prevent stored XSS."""
+    if isinstance(value, str):
+        return _HTML_TAG_RE.sub('', value)
+    return value
 
 
 @required_env_vars({
@@ -82,6 +128,30 @@ logger = getLogger("scheduled_task_handlers")
                 "description": "Email addresses to notify (optional)",
             },
             "timeZone": {"type": "string", "description": "Time zone for scheduling"},
+            "exclusionsEnabled": {
+                "type": "boolean",
+                "description": "Whether the exclusion rules panel is enabled",
+            },
+            "excludedDaysOfWeek": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Days of the week to skip (e.g. ['MON', 'FRI'])",
+            },
+            "excludedWeeksOfMonth": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Weeks of the month to skip (1-5)",
+            },
+            "excludedMonths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Months to skip (e.g. ['JAN', 'JUL'])",
+            },
+            "excludedDates": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific dates to skip (ISO format)",
+            },
         },
         "required": [
             "taskName",
@@ -125,8 +195,15 @@ def create_scheduled_task_handler(
     notify_on_failure=False,
     notify_email_addresses=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     try:
+        _validate_scheduled_task_inputs(task_name, task_instructions, cron_expression)
+        task_instructions = _sanitize_instructions(task_instructions)
         logger.info("Creating scheduled task with object_info: %s", object_info)
         task_id = create_scheduled_task(
             current_user=current_user,
@@ -145,6 +222,11 @@ def create_scheduled_task_handler(
             access_token=access_token,
             account=account_id,
             time_zone=time_zone,
+            exclusions_enabled=exclusions_enabled,
+            excluded_days_of_week=excluded_days_of_week,
+            excluded_weeks_of_month=excluded_weeks_of_month,
+            excluded_months=excluded_months,
+            excluded_dates=excluded_dates,
         )
         return {
             "success": True,
@@ -336,6 +418,30 @@ def list_scheduled_tasks_handler(current_user, access_token):
                 "description": "Email addresses to notify (optional)",
             },
             "timeZone": {"type": "string", "description": "Time zone for scheduling"},
+            "exclusionsEnabled": {
+                "type": "boolean",
+                "description": "Whether the exclusion rules panel is enabled",
+            },
+            "excludedDaysOfWeek": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Days of the week to skip (e.g. ['MON', 'FRI'])",
+            },
+            "excludedWeeksOfMonth": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Weeks of the month to skip (1-5)",
+            },
+            "excludedMonths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Months to skip (e.g. ['JAN', 'JUL'])",
+            },
+            "excludedDates": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific dates to skip (ISO format)",
+            },
         },
         "required": ["taskId"],
     },
@@ -368,8 +474,15 @@ def update_scheduled_task_handler(
     notify_on_failure=None,
     notify_email_addresses=None,
     time_zone=None,
+    exclusions_enabled=None,
+    excluded_days_of_week=None,
+    excluded_weeks_of_month=None,
+    excluded_months=None,
+    excluded_dates=None,
 ):
     try:
+        _validate_scheduled_task_inputs(task_name, task_instructions, cron_expression)
+        task_instructions = _sanitize_instructions(task_instructions)
         result = update_scheduled_task(
             current_user=current_user,
             task_id=task_id,
@@ -386,6 +499,11 @@ def update_scheduled_task_handler(
             notify_on_failure=notify_on_failure,
             notify_email_addresses=notify_email_addresses,
             time_zone=time_zone,
+            exclusions_enabled=exclusions_enabled,
+            excluded_days_of_week=excluded_days_of_week,
+            excluded_weeks_of_month=excluded_weeks_of_month,
+            excluded_months=excluded_months,
+            excluded_dates=excluded_dates,
         )
         return result
     except Exception as e:

@@ -139,8 +139,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             maxCostPerHour: 30,  // $30/hour cost threshold
             cooldownPeriod: 300  // 5-minute cooldown
         })(async (_event, _context, params) => {
-            // 🛡️ TIMEOUT PROTECTION: Main routing with 3-minute timeout (down from 15 min)
-            return await withTimeout(180000)(routeRequest(params, returnResponse, effectiveStream));
+            // 🛡️ TIMEOUT PROTECTION: Main routing with 5-minute timeout
+            return await withTimeout(300000)(routeRequest(params, returnResponse, effectiveStream));
         });
         
         // Execute the protected routing with user context

@@ -1072,6 +1072,37 @@ def find_tasks_to_execute():
                             f"Note: {len(due_instances_utc) - 1} additional instance(s) pending"
                         )
 
+                    # 5a. Check exclusion rules
+                    if task.get("exclusionsEnabled"):
+                        excluded_days   = task.get("excludedDaysOfWeek", []) or []
+                        excluded_weeks  = [int(w) for w in (task.get("excludedWeeksOfMonth", []) or [])]
+                        excluded_months = task.get("excludedMonths", []) or []
+                        excluded_dates  = task.get("excludedDates", []) or []
+
+                        run_dt = earliest_due_instance_user_tz
+                        day_name = run_dt.strftime("%a").upper()  # MON, TUE, ...
+
+                        # Week-of-month (1 = first week, 5 = fifth/last)
+                        week_of_month = (run_dt.day - 1) // 7 + 1
+
+                        month_name = run_dt.strftime("%b").upper()  # JAN, FEB, ...
+                        date_str = run_dt.strftime("%Y-%m-%d")
+
+                        is_excluded = (
+                            day_name in excluded_days
+                            or week_of_month in excluded_weeks
+                            or month_name in excluded_months
+                            or date_str in excluded_dates
+                        )
+
+                        if is_excluded:
+                            logger.info(
+                                f"Task {task_id} instance {run_dt.strftime('%Y-%m-%d %H:%M %Z')} "
+                                f"skipped by exclusion rules (day={day_name}, week={week_of_month}, "
+                                f"month={month_name}, date={date_str})"
+                            )
+                            continue
+
                 except Exception as e:
                     logger.error(f"Error with croniter for task {task_id}: {e}. Skipping.", exc_info=True)
                     continue
