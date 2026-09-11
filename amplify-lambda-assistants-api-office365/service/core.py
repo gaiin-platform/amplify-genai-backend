@@ -928,7 +928,10 @@ def update_range_handler(current_user, data):
                 "description": "Number of messages to skip",
                 "default": 0,
             },
-            "filter_query": {"type": "string", "description": "OData filter query"},
+            "filter_query": {
+                "type": "string",
+                "description": "Advanced: raw OData filter query. If start_date, end_date, and/or focused_only are also set, their clauses are combined with this filter using 'and', so existing callers that already build their own filter_query (e.g. \"inferenceClassification eq 'focused' and receivedDateTime ge ...\") keep working unchanged as long as they don't also pass the new parameters.",
+            },
             "include_body": {
                 "type": "boolean",
                 "description": "Whether to include message body and bodyPreview",
@@ -938,12 +941,34 @@ def update_range_handler(current_user, data):
                 "type": "string",
                 "description": "User's preferred timezone in Windows format (e.g., 'Central Standard Time', 'Eastern Standard Time') (optional, defaults to system-configured timezone)",
             },
+            "start_date": {
+                "type": "string",
+                "description": "Only return messages received on or after this date (YYYY-MM-DD, or a full ISO 8601 datetime for an exact cutoff).",
+            },
+            "end_date": {
+                "type": "string",
+                "description": "Only return messages received on or before this date (YYYY-MM-DD, or a full ISO 8601 datetime for an exact cutoff).",
+            },
+            "focused_only": {
+                "type": "boolean",
+                "description": "When true, only returns messages from the Focused inbox, excluding Other/clutter messages.",
+                "default": False,
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False, user_timezone=None
+        list_messages,
+        folder_id="Inbox",
+        top=10,
+        skip=0,
+        filter_query=None,
+        include_body=False,
+        user_timezone=None,
+        start_date=None,
+        end_date=None,
+        focused_only=False,
     )(current_user, data)
 
 

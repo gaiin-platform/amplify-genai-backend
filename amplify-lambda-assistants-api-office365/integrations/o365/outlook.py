@@ -59,6 +59,27 @@ def handle_graph_error(response: requests.Response) -> None:
     )
 
 
+def _normalize_date_boundary(value: str, end_of_day: bool = False) -> str:
+    """
+    Normalizes a user-supplied start/end date into an ISO 8601 UTC datetime
+    string suitable for a Graph API `receivedDateTime` filter clause.
+
+    A bare date (e.g. "2025-01-30") is expanded to the start or end of that
+    day. A value that already looks like a datetime (contains "T") is passed
+    through unchanged so callers can supply an exact timestamp.
+    """
+    value = value.strip()
+    if "T" in value:
+        return value
+    return f"{value}T23:59:59Z" if end_of_day else f"{value}T00:00:00Z"
+
+
+def _is_complex_filter_error(error_message: str) -> bool:
+    """Detects the Graph API's "query too complex" family of errors."""
+    message = (error_message or "").lower()
+    return "too complex" in message or "inefficientfilter" in message
+
+
 def list_messages(
     current_user: str,
     folder_id: str = "Inbox",
@@ -67,6 +88,9 @@ def list_messages(
     filter_query: Optional[str] = None,
     include_body: bool = False,
     user_timezone: str = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    focused_only: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -77,16 +101,30 @@ def list_messages(
         folder_id: Folder ID or well-known name (default: "Inbox")
         top: Maximum number of messages to retrieve
         skip: Number of messages to skip
-        filter_query: OData filter query
+        filter_query: Optional raw OData filter query. If start_date, end_date,
+            and/or focused_only are also supplied, their generated clauses are
+            combined with this filter using "and" (each side parenthesized),
+            so an existing filter_query keeps working unmodified when the new
+            parameters are left unset.
         include_body: Whether to include message body and bodyPreview (default: False)
         user_timezone: User's preferred timezone in Windows format (default: "UTC")
+        start_date: Only return messages received on/after this date
+            (YYYY-MM-DD or a full ISO 8601 datetime). Translates to a
+            `receivedDateTime ge <date>` filter clause.
+        end_date: Only return messages received on/before this date
+            (YYYY-MM-DD or a full ISO 8601 datetime). Translates to a
+            `receivedDateTime le <date>` filter clause.
+        focused_only: When True, restricts results to the Focused inbox,
+            excluding Other/clutter messages. Translates to an
+            `inferenceClassification eq 'focused'` filter clause.
 
     Returns:
         List of message details
 
     Raises:
         FolderNotFoundError: If folder doesn't exist
-        OutlookError: For other failures
+        OutlookError: For other failures, including when the resulting filter
+            is rejected by Graph as too complex.
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
@@ -97,11 +135,33 @@ def list_messages(
         base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
         select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
 
+        # Build any filter clauses derived from the higher-level convenience
+        # parameters, then combine them with a caller-supplied filter_query
+        # (if any) so pre-existing integrations that already pass a fully
+        # formed filter_query keep working unchanged.
+        auto_clauses = []
+        if start_date:
+            auto_clauses.append(
+                f"receivedDateTime ge {_normalize_date_boundary(start_date)}"
+            )
+        if end_date:
+            auto_clauses.append(
+                f"receivedDateTime le {_normalize_date_boundary(end_date, end_of_day=True)}"
+            )
+        if focused_only:
+            auto_clauses.append("inferenceClassification eq 'focused'")
+        auto_filter = " and ".join(auto_clauses) if auto_clauses else None
+
+        if filter_query and auto_filter:
+            combined_filter = f"({filter_query}) and ({auto_filter})"
+        else:
+            combined_filter = filter_query or auto_filter
+
         # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
-        if filter_query:
+        if combined_filter:
             # When filtering, use minimal parameters to avoid complexity error
             params = {
-                "$filter": filter_query,
+                "$filter": combined_filter,
                 "$top": top,
                 "$select": select_fields
                 # Skip $skip, $orderby, and $expand to avoid "too complex" error
@@ -124,8 +184,39 @@ def list_messages(
 
         response = session.get(url, params=params, headers=headers)
 
+        if not response.ok and combined_filter:
+            # Graph API can reject a filter as "too complex" once several
+            # clauses are combined (e.g. a caller-supplied filter_query plus
+            # our generated date/focused clauses). Retry once using the
+            # ConsistencyLevel: eventual + $count workaround Microsoft
+            # recommends for complex/non-indexed filters before giving up.
+            error_message = ""
+            try:
+                error_message = response.json().get("error", {}).get("message", "")
+            except (ValueError, json.JSONDecodeError):
+                error_message = response.text
+
+            if response.status_code == 400 and _is_complex_filter_error(error_message):
+                logger.warning(
+                    "Graph API rejected filter as too complex, retrying with ConsistencyLevel=eventual: %s",
+                    combined_filter,
+                )
+                retry_headers = {**headers, "ConsistencyLevel": "eventual"}
+                retry_params = {**params, "$count": "true"}
+                response = session.get(url, params=retry_params, headers=retry_headers)
+
         if not response.ok:
-            handle_graph_error(response)
+            try:
+                handle_graph_error(response)
+            except OutlookError as e:
+                if filter_query and auto_filter:
+                    raise OutlookError(
+                        f"{str(e)} The combined filter query (your filter_query plus "
+                        "start_date/end_date/focused_only) may be too complex for "
+                        "Microsoft Graph. Try using either filter_query or the "
+                        "start_date/end_date/focused_only parameters, not both."
+                    )
+                raise
 
         messages = response.json().get("value", [])
         return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
