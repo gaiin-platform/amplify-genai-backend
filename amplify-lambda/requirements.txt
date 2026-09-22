@@ -7,27 +7,27 @@ git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 #
 beautifulsoup4==4.13.4
     # via -r requirements.in
-cffi==1.17.1
+cffi==2.1.1
     # via cryptography
 chardet==5.2.0
     # via -r requirements.in
 click==8.2.1
     # via nltk
-cryptography==45.0.3
+cryptography==50.0.0
     # via -r requirements.in
 et-xmlfile==2.0.0
     # via openpyxl
 joblib==1.5.1
     # via nltk
-lxml==6.0.2
+lxml==6.1.0
     # via
     #   python-docx
     #   python-pptx
-nltk==3.9.2
+nltk==3.10.3
     # via -r requirements.in
 openpyxl==3.1.5
     # via -r requirements.in
-pillow==11.3.0
+pillow==12.3.0
     # via
     #   -r requirements.in
     #   python-pptx
@@ -45,7 +45,7 @@ regex==2025.9.18
     # via
     #   nltk
     #   tiktoken
-soupsieve==2.7
+soupsieve==2.9.0
     # via beautifulsoup4
 tiktoken==0.11.0
     # via -r requirements.in
