@@ -165,7 +165,9 @@ async function calcIsRateLimited(limit, rateData, params, precomputedLifetimeCos
     const period = limit.period;
     let spent = 0;
 
-    if (period === 'Total') {
+    if (limit.modelId) {
+        spent = parseFloat(rateData.modelCosts?.[limit.modelId]) || 0;
+    } else if (period === 'Total') {
         // Use precomputed cost if available, otherwise calculate
         spent = precomputedLifetimeCost !== null ?
             precomputedLifetimeCost :
@@ -253,7 +255,8 @@ async function getUserGroupRateLimits(accessToken) {
                 groupRateLimits.push({
                     groupName,
                     isGroupLimit: true,
-                    limits: normalizeRateLimits(groupData.rateLimit)
+                    limits: normalizeRateLimits(groupData.rateLimit),
+                    modelRateLimits: groupData.modelRateLimits || {}
                 });
             }
         }
@@ -586,9 +589,20 @@ export async function isRateLimited(params) {
         });
 
         logger.debug(`   Group limits fetched: ${groupRateLimits.length} group(s)`);
+        const requestedModelIdForLog = params.body.options?.model?.id;
         groupRateLimits.forEach(g => {
             const activeLimits = g.limits.filter(l => l && l.period?.toLowerCase() !== 'unlimited');
-            logger.debug(`     Group "${g.groupName}": ${activeLimits.length} limit(s) — ${activeLimits.map(l => `$${l.rate}/${l.period}`).join(', ') || 'none'}`);
+            const modelLimits = Object.entries(g.modelRateLimits || {});
+            const modelLimitSummary = modelLimits.length > 0
+                ? modelLimits.map(([modelId, limit]) => `${modelId}: $${limit.rate}/${limit.period}`).join(', ')
+                : 'none';
+            if (modelLimits.length > 0) {
+                logger.debug(`     Group "${g.groupName}": ${activeLimits.length} group-wide limit(s) — ${activeLimits.map(l => `$${l.rate}/${l.period}`).join(', ') || 'none'}; model limits — ${modelLimitSummary}`);
+            } else if (activeLimits.length > 0) {
+                logger.debug(`     Group "${g.groupName}": ${activeLimits.length} group-wide limit(s) — ${activeLimits.map(l => `$${l.rate}/${l.period}`).join(', ')}`);
+            } else {
+                logger.debug(`     Group "${g.groupName}": no limits configured`);
+            }
         });
 
         // ── Pre-compute lifetime cost if any Total limits exist ───────────────
@@ -604,13 +618,28 @@ export async function isRateLimited(params) {
             }
         }
 
-        // ── Step 3: Build pool and check ─────────────────────────────────────
+        // ── Step 3: Build pool and collect mandatory model limits ─────────────
+        // Model-specific group limits are MANDATORY and checked separately.
+        // They cannot be bypassed by another group/admin entry passing.
+        // Ordinary group-wide limits keep the existing OR-pool behavior.
         const limitPool = [];
+        const requestedModelId = params.body.options?.model?.id;
+        const mandatoryModelLimits = []; // { groupName, limit }
 
         for (const groupEntry of groupRateLimits) {
+            const matchingModelLimit = requestedModelId ? groupEntry.modelRateLimits?.[requestedModelId] : null;
             const activeLimits = groupEntry.limits.filter(l => l && l.period?.toLowerCase() !== 'unlimited' && l.rate !== null);
+
+            // Collect mandatory model limits separately — these must pass regardless of pool outcome
+            if (matchingModelLimit) {
+                mandatoryModelLimits.push({ groupName: groupEntry.groupName, limit: { ...matchingModelLimit, modelId: requestedModelId } });
+            }
+
+            // Only include group-wide limits in the OR pool
             if (activeLimits.length === 0) {
-                logger.info(`   ⏭️  Skipping group "${groupEntry.groupName}" — no active limits configured`);
+                if (!matchingModelLimit) {
+                    logger.info(`   ⏭️  Skipping group "${groupEntry.groupName}" — no active limits configured`);
+                }
                 continue;
             }
             limitPool.push({
@@ -670,6 +699,48 @@ export async function isRateLimited(params) {
                 const result = await checkPoolEntry(entry.limits, rateData, params, precomputedLifetimeCost);
 
                 if (result.passed) {
+                    // Admin utilization notice — pick the limit with the highest utilization
+                    if (entry.isAdminSet) {
+                        let highestUtil = 0;
+                        let highestPeriod = null;
+                        for (const limit of entry.limits) {
+                            if (!limit || limit.period?.toLowerCase() === 'unlimited' || !limit.rate) continue;
+                            const { spent } = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
+                            const util = Number.isFinite(limit.rate) && limit.rate > 0
+                                ? Math.min(100, Math.round((spent / limit.rate) * 100))
+                                : 0;
+                            if (util > highestUtil) { highestUtil = util; highestPeriod = limit.period; }
+                        }
+                        if (highestUtil >= 60) {
+                            params.body.options.adminRateLimitNotice = {
+                                utilizationPercent: highestUtil,
+                                period: highestPeriod
+                            };
+                        } else {
+                            delete params.body.options.adminRateLimitNotice;
+                        }
+                    }
+
+                    const modelLimit = entry.limits.find(limit => limit?.modelId);
+                    if (modelLimit) {
+                        const modelSpent = Number(rateData.modelCosts?.[modelLimit.modelId]) || 0;
+                        const modelRate = Number(modelLimit.rate);
+                        const utilizationPercent = Number.isFinite(modelRate) && modelRate > 0
+                            ? Math.min(100, Math.round((modelSpent / modelRate) * 100))
+                            : 0;
+                        // Only send a non-blocked notice once the user reaches
+                        // the configured 60% warning threshold.
+                        if (utilizationPercent >= 60) {
+                            params.body.options.modelRateLimitNotice = {
+                                modelId: modelLimit.modelId,
+                                utilizationPercent,
+                                reachedLimit: false,
+                                                message: `You have used ${utilizationPercent}% of your allowed usage for this model.`
+                            };
+                        } else {
+                            delete params.body.options.modelRateLimitNotice;
+                        }
+                    }
                     passedAny = true;
                     lastPassedLimitCache.set(params.user, {
                         limitType: entry.limitType,
@@ -700,6 +771,17 @@ export async function isRateLimited(params) {
                     currentSpent: mostGenerous.currentSpent,
                     ...(mostGenerous.groupName && { groupName: mostGenerous.groupName })
                 };
+                if (mostGenerous.failedLimit?.modelId) {
+                    const modelId = mostGenerous.failedLimit.modelId;
+                    const modelRate = Number(mostGenerous.failedLimit.rate);
+                    const modelSpent = Number(mostGenerous.currentSpent) || 0;
+                    params.body.options.modelRateLimitNotice = {
+                        modelId,
+                        utilizationPercent: Number.isFinite(modelRate) && modelRate > 0 ? Math.min(100, Math.round((modelSpent / modelRate) * 100)) : 100,
+                        reachedLimit: true,
+                        message: "You have reached the rate limit for this model. Please use another model. This limit resets at the beginning of next month."
+                    };
+                }
                 recordRateLimitViolation(params.user);
                 logger.warn(`\n🚫 [RATE-LIMIT-CHECK] RESULT: BLOCKED`);
                 logger.warn(`   All ${failedEntries.length} pool entr${failedEntries.length === 1 ? 'y' : 'ies'} failed.`);
@@ -711,6 +793,57 @@ export async function isRateLimited(params) {
             logger.debug(`\n✅ [RATE-LIMIT-CHECK] RESULT: ALLOWED — passed pool check`);
         } else {
             logger.debug(`\n⚠️  [RATE-LIMIT-CHECK] No admin or group limits configured — ALLOWED by default`);
+        }
+
+        // ── Step 4: Mandatory model-specific group limit checks ───────────────
+        // These run after the OR pool and cannot be bypassed by any passing pool entry.
+        // The most restrictive applicable model limit (lowest rate) is enforced.
+        if (mandatoryModelLimits.length > 0) {
+            logger.debug(`\n📋 [RATE-LIMIT-CHECK] STEP 4 — Checking ${mandatoryModelLimits.length} mandatory model limit(s) for model "${requestedModelId}"`);
+
+            let strictestFailed = null;
+
+            for (const { groupName, limit } of mandatoryModelLimits) {
+                const { isRateLimited: modelExceeded, spent: modelSpent } = await calcIsRateLimited(limit, rateData, params, null);
+                const modelRate = Number(limit.rate);
+                const utilizationPercent = Number.isFinite(modelRate) && modelRate > 0
+                    ? Math.min(100, Math.round((modelSpent / modelRate) * 100))
+                    : 100;
+                const status = modelExceeded ? '❌ EXCEEDED' : '✅ OK      ';
+                logger.debug(`   ${status} — Group "${groupName}" model limit: spent $${modelSpent.toFixed(4)} vs $${modelRate} (${utilizationPercent}%)`);
+
+                if (modelExceeded) {
+                    if (!strictestFailed || (limit.rate || 0) < (strictestFailed.limit.rate || 0)) {
+                        strictestFailed = { groupName, limit, spent: modelSpent, utilizationPercent };
+                    }
+                } else if (!strictestFailed && utilizationPercent >= 60) {
+                    params.body.options.modelRateLimitNotice = {
+                        modelId: requestedModelId,
+                        utilizationPercent,
+                        reachedLimit: false,
+                        message: `You have used ${utilizationPercent}% of your allowed usage for this model.`
+                    };
+                }
+            }
+
+            if (strictestFailed) {
+                params.body.options.rateLimit = {
+                    ...strictestFailed.limit,
+                    limitType: 'group',
+                    adminSet: false,
+                    currentSpent: strictestFailed.spent,
+                    groupName: strictestFailed.groupName
+                };
+                params.body.options.modelRateLimitNotice = {
+                    modelId: requestedModelId,
+                    utilizationPercent: strictestFailed.utilizationPercent,
+                    reachedLimit: true,
+                    message: "You have reached the rate limit for this model. Please use another model. This limit resets at the beginning of next month."
+                };
+                recordRateLimitViolation(params.user);
+                logger.warn(`🚫 [RATE-LIMIT-CHECK] BLOCKED by model limit — Group "${strictestFailed.groupName}" model "${requestedModelId}" exceeded ($${strictestFailed.spent.toFixed(4)} / $${strictestFailed.limit.rate})`);
+                return true;
+            }
         }
 
         return false;
