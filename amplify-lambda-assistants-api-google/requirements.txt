@@ -1,12 +1,12 @@
 git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 jose==1.0.0
-Pillow==11.3.0
+Pillow==12.3.0
 pyyaml==6.0.2
 tiktoken==0.11.0
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
-cryptography>=36.0.0,<46.0.0 #as per the dependencies requirements
-cffi==1.17.1
-requests==2.32.4
+cryptography>=36.0.0,<51.0.0 #as per the dependencies requirements
+cffi==2.1.1
+requests==2.33.0

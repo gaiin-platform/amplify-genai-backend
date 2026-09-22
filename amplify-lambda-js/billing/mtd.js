@@ -230,187 +230,16 @@ const processAccountInfo = async (accountInfo) => {
     return `${newAccount}#${id}`;
 };
 
-const internalApiKeyUserCostHandler = async (event, context, callback) => {
-    let params = null;
+// Helper function to resolve an amp- API key (or api_owner_id) to its api_owner_id.
+// Returns the resolved id, or the original identifier if it cannot be resolved.
+// Never throws — callers rely on graceful fallback behaviour.
+const resolveApiKeyToId = async (identifier) => {
     try {
-        params = await extractParams(event);
-        if (params.statusCode) return params;
-
-        const { body, user } = params;
-        if (!body?.data?.apiKeys || !Array.isArray(body.data.apiKeys) || !user) {
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ error: 'API keys array and email are required' }),
-            };
-        }
-
-        const apiKeys = body.data.apiKeys;
-        const email = user;
-
-        if (!historyCostDynamoTableName || !costDynamoTableName) {
-            logger.error("Missing required table names");
-            return {
-                statusCode: 500,
-                body: JSON.stringify({ error: 'Server configuration error' }),
-            };
-        }
-
-        // Resolve all amp- keys to their IDs in parallel
-        const resolvedKeys = await Promise.all(
-            apiKeys.map(async (key) => ({
-                original: key,
-                resolved: await resolveApiKeyToId(key)
-            }))
-        );
-
-        // Build key mapping for efficient lookup
-        const keyMapping = new Map();
-        resolvedKeys.forEach(({ original, resolved }) => {
-            keyMapping.set(original, resolved);
-            keyMapping.set(resolved, original);
-        });
-
-        // Query current costs efficiently using GSI if available
-        const currentCostPromises = apiKeys.map(async (apiKey) => {
-            const resolvedKey = keyMapping.get(apiKey) || apiKey;
-            
-            // Query by user email to get all their cost records
-            const queryParams = {
-                TableName: costDynamoTableName,
-                KeyConditionExpression: 'id = :email',
-                ExpressionAttributeValues: {
-                    ':email': email,
-                },
-                ProjectionExpression: 'accountInfo, dailyCost, monthlyCost, hourlyCost, record_type'
-            };
-
-            const result = await dynamoDB.send(new QueryCommand(queryParams));
-            
-            // Filter for records matching this API key
-            const matchingRecords = result.Items?.filter(item => {
-                if (!item.accountInfo) return false;
-                const [, access] = item.accountInfo.split('#');
-                return access === apiKey || access === resolvedKey;
-            }) || [];
-
-            return { apiKey, records: matchingRecords };
-        });
-
-        // Process history table more efficiently using parallel queries if possible
-        const historyPromises = apiKeys.map(async (apiKey) => {
-            const resolvedKey = keyMapping.get(apiKey) || apiKey;
-            
-            // For history table, we still need to scan but can optimize
-            const scanParams = {
-                TableName: historyCostDynamoTableName,
-                FilterExpression: '(contains(#accountInfo, :apiKey) OR contains(#accountInfo, :resolvedKey)) AND attribute_exists(#accountInfo)',
-                ExpressionAttributeNames: {
-                    '#accountInfo': 'accountInfo'
-                },
-                ExpressionAttributeValues: {
-                    ':apiKey': `#${apiKey}`,
-                    ':resolvedKey': `#${resolvedKey}`
-                },
-                ProjectionExpression: 'accountInfo, dailyCost, monthlyCost, userDate, #time',
-                ExpressionAttributeNames: {
-                    '#accountInfo': 'accountInfo',
-                    '#time': 'time'
-                }
-            };
-
-            let allItems = [];
-            let lastEvaluatedKey = null;
-            
-            do {
-                if (lastEvaluatedKey) {
-                    scanParams.ExclusiveStartKey = lastEvaluatedKey;
-                }
-                
-                const result = await dynamoDB.send(new ScanCommand(scanParams));
-                allItems = allItems.concat(result.Items || []);
-                lastEvaluatedKey = result.LastEvaluatedKey;
-            } while (lastEvaluatedKey);
-
-            return { apiKey, historyRecords: allItems };
-        });
-
-        // Wait for all queries to complete
-        const [currentCostResults, historyResults] = await Promise.all([
-            Promise.all(currentCostPromises),
-            Promise.all(historyPromises)
-        ]);
-
-        // Aggregate results
-        const results = {};
-        
-        apiKeys.forEach((apiKey, index) => {
-            const currentData = currentCostResults[index];
-            const historyData = historyResults[index];
-            
-            let totalApiKeyCost = 0;
-            let userApiKeyCost = 0;
-            let timestamps = [];
-            
-            // Process current cost records
-            currentData.records.forEach(record => {
-                const dailyCost = parseFloat(record.dailyCost) || 0;
-                const monthlyCost = parseFloat(record.monthlyCost) || 0;
-                totalApiKeyCost += dailyCost + monthlyCost;
-                userApiKeyCost += dailyCost + monthlyCost;
-            });
-            
-            // Process history records
-            historyData.historyRecords.forEach(record => {
-                const dailyCost = parseFloat(record.dailyCost) || 0;
-                const monthlyCost = parseFloat(record.monthlyCost) || 0;
-                const cost = dailyCost + monthlyCost;
-                
-                totalApiKeyCost += cost;
-                
-                if (record.userDate?.startsWith(email)) {
-                    userApiKeyCost += cost;
-                }
-                
-                if (record.time) {
-                    timestamps.push(record.time);
-                }
-            });
-            
-            results[apiKey] = {
-                totalApiKeyCost,
-                userApiKeyCost,
-                resolvedApiKeyId: keyMapping.get(apiKey),
-                recordCount: currentData.records.length + historyData.historyRecords.length,
-                latestTimestamp: timestamps.length > 0 ? 
-                    timestamps.sort().reverse()[0] : null
-            };
-        });
-
-        return {
-            statusCode: 200,
-            body: JSON.stringify({
-                email,
-                results,
-                timestamp: new Date().toISOString()
-            }),
-        };
+        const { id } = await getApiKeyDetails(identifier);
+        return id || identifier;
     } catch (error) {
-        logger.error("Error processing request:", error);
-        await logCriticalError({
-            functionName: 'internalApiKeyUserCostHandler',
-            errorType: 'ApiKeyUserCostFailure',
-            errorMessage: `API key user cost query failed: ${error.message}`,
-            currentUser: params?.user || 'unknown',
-            severity: 'HIGH',
-            stackTrace: error.stack || '',
-            context: {
-                email: params?.user || 'unknown'
-            }
-        });
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ error: 'Internal server error' }),
-        };
+        logger.warn(`resolveApiKeyToId: could not resolve '${identifier}': ${error.message}`);
+        return identifier;
     }
 };
 
@@ -816,7 +645,7 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
 
             // Parse the groups data
             allGroups = groupsResult.Item.data;
-            logger.info("Successfully fetched amplify groups", { 
+            logger.info("Successfully fetched amplify groups", {
                 groupCount: Object.keys(allGroups).length,
                 firstFewGroups: Object.keys(allGroups).slice(0, 3),
                 dataStructure: typeof allGroups
@@ -1116,12 +945,32 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
             
             // Get group configuration
             const groupConfig = allGroups[groupName];
-            
+
+            // Extract rate limit - handle both document and raw DynamoDB formats
+            let rateLimitInfo = null;
+            const rawRateLimit = groupConfig.rateLimit || groupConfig.M?.rateLimit;
+            if (rawRateLimit) {
+                if (Array.isArray(rawRateLimit)) {
+                    // Direct array format: [{ rate: 9999.99, period: 'daily' }, ...]
+                    rateLimitInfo = rawRateLimit;
+                } else if (rawRateLimit.L) {
+                    // DynamoDB List format
+                    rateLimitInfo = rawRateLimit.L.map(item => {
+                        const obj = {};
+                        if (item.M) {
+                            if (item.M.rate && item.M.rate.N) obj.rate = parseFloat(item.M.rate.N);
+                            if (item.M.period && item.M.period.S) obj.period = item.M.period.S;
+                        }
+                        return obj;
+                    });
+                }
+            }
+
             billingGroupsData[groupName] = {
                 groupInfo: {
                     name: groupName,
                     createdBy: groupConfig.createdBy || groupConfig.M?.createdBy?.S || 'Unknown',
-                    rateLimit: groupConfig.rateLimit || groupConfig.M?.rateLimit || null,
+                    rateLimit: rateLimitInfo,
                     directMemberCount: affiliation.summary.directCount,
                     indirectMemberCount: affiliation.summary.indirectCount,
                     totalMemberCount: affiliation.summary.totalCount
@@ -1146,10 +995,11 @@ const internalBillingGroupsCostsHandler = async (event, context, callback) => {
         
         // Calculate percentage of platform costs for each group
         for (const groupData of Object.values(billingGroupsData)) {
-            groupData.costs.percentOfPlatform = platformTotalCost > 0 ? 
+            groupData.costs.percentOfPlatform = platformTotalCost > 0 ?
                 (groupData.costs.total / platformTotalCost) * 100 : 0;
         }
-        
+
+
         const totalDuration = Date.now() - startTime;
         
         const response = {
@@ -1784,7 +1634,6 @@ const withTracking = (envConfig, operationName, handler) => {
 
 // Export all handlers with environment variable tracking AND usage tracking
 export const handler = withTracking(EnvConfig, 'mtd_cost', mtdHandler);
-export const apiKeyUserCostHandler = withTracking(EnvConfig, 'api_key_user_cost', internalApiKeyUserCostHandler);
 export const listAllUserMtdCostsHandler = withTracking(EnvConfig, 'list_all_user_mtd_costs', internalListAllUserMtdCostsHandler);
 export const billingGroupsCostsHandler = withTracking(EnvConfig, 'billing_groups_costs', internalBillingGroupsCostsHandler);
 export const listUserMtdCostsHandler = withTracking(EnvConfig, 'list_user_mtd_costs', internalListUserMtdCostsHandler);

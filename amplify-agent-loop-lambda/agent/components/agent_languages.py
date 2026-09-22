@@ -10,6 +10,7 @@ from agent.core import (
     UnknownActionError,
 )
 from agent.prompt import Prompt
+from pycommon.encoders import SmartDecimalEncoder
 from pycommon.logger import getLogger
 logger = getLogger("agent_language")
 
@@ -242,7 +243,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                     "name": action.name,
                     # Include up to 1024 characters of the description
                     "description": action.description[:1024],
-                    "parameters": action.parameters,
+                    "parameters": json.loads(json.dumps(action.parameters, cls=SmartDecimalEncoder)),
                 },
             }
             for action in actions

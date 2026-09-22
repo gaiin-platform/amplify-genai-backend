@@ -4,8 +4,9 @@ Lambda handlers that proxy requests from the Amplify frontend to the Open
 Notebook service running inside the ai-pod VPC. Three endpoints:
 
   POST /notebook/proxy       — JSON requests/responses
-  POST /notebook/proxy/raw   — Binary responses (e.g. podcast audio), returned
-                               as base64-encoded data in a JSON envelope
+  POST /notebook/proxy/raw   — Audio presigned-URL resolution; rewrites /audio
+                               to /audio-url and returns the S3 presigned URL as
+                               JSON so large audio blobs never pass through Lambda
   POST /notebook/upload      — Multipart file uploads forwarded to /api/sources
 
 The Lambda is VPC-attached to vpc-0da53fc9ca1356120 so it can reach the Open
@@ -25,10 +26,12 @@ import io
 import json
 import os
 import ssl
+from email.parser import BytesParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 from pycommon.authz import validated, setup_validated, add_api_access_types
+from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.const import APIAccessType
 from pycommon.decorators import required_env_vars
 from pycommon.logger import getLogger
@@ -36,12 +39,421 @@ from pycommon.logger import getLogger
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
+from service.url_validator import validate_url
+
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.API_KEY.value])
 
 logger = getLogger("notebook_proxy")
 
 _REQUEST_TIMEOUT = 890.0
+
+# --- Authorization for the Open Notebook proxy ----------------------------
+#
+# The proxy forwards an arbitrary (method, path) to Open Notebook, and Open
+# Notebook itself performs NO per-endpoint authorization — it trusts any valid
+# Amplify JWT equally. A subset of its paths back onto a *global/admin*
+# SurrealDB shared by every user (upstream GLOBAL_DB_PREFIXES in
+# open_notebook api/middleware/user_db.py): system LLM credentials, the model
+# registry, system settings, and shared admin templates. Left unguarded, any
+# authenticated user gets full CRUD on these (the reported IDOR).
+#
+# This proxy is the ONLY authorization layer, so rather than enumerate every
+# route, we gate on Open Notebook's own trust boundary. Open Notebook isolates
+# *per-user* data (notebooks, sources, notes, chat, insights, podcasts, …) in a
+# database keyed on the caller's token via UserDatabaseContextMiddleware, so
+# forwarding the user's own token is inherently safe for those paths — they need
+# no allowlisting. Only a small set of *global/shared* prefixes back onto the
+# single admin database (upstream GLOBAL_DB_PREFIXES in
+# open_notebook api/middleware/user_db.py); those are the entire risk surface,
+# so those are all we gate. The rule, applied to the normalised path:
+#
+#   * Not under any global prefix        -> USER  (per-user, token-isolated).
+#   * Secret/system global prefix        -> ADMIN for every method. These expose
+#     (_ADMIN_ONLY_PREFIXES)                provider API keys or system internals
+#                                           and NO notebook UI feature reads them.
+#   * Privileged-read global prefix      -> ADMIN for every method. These are
+#     (_ADMIN_READ_PREFIXES)                GETs that act with system credentials
+#                                           (provider discovery/sync/status).
+#   * Other shared-config global prefix  -> safe methods (GET/HEAD/OPTIONS) = USER
+#     (_SHARED_CONFIG_PREFIXES)             (model/setting/template *reads* the
+#                                           ordinary UI needs); mutating methods
+#                                           = ADMIN (they reconfigure state for
+#                                           every user).
+#
+# This keeps the user surface minimal and implicit — no per-route list to drift
+# from the frontend — while every shared/admin resource stays admin-gated.
+# Maintenance note: if a future upstream release adds a NEW prefix to
+# GLOBAL_DB_PREFIXES, add it to the matching tuple below (otherwise it would
+# fall through to the per-user default and be reachable by any user).
+
+# Global/system prefixes that are admin-only for EVERY method (secrets, system
+# config, service-internal surfaces). These are NOT per-user data — no notebook
+# UI feature reads them — so gating them admin-only removes them from the
+# regular-user surface.
+#
+# NOTE: the last four entries are an interim hardening. Unlike the entries above
+# them, they do not back onto GLOBAL_DB_PREFIXES; they are service-level
+# endpoints (API self-description, interactive docs, the command
+# registry/executor) that were reachable by any authenticated user because they
+# fell through the default -> "user" branch of _required_level(). The durable
+# fix is to invert this whole module to a positive allowlist of the exact
+# (method, path) routes the Notebook UI actually calls, so unknown and
+# service-internal paths fail closed by default instead of having to be
+# enumerated here one prefix at a time. Tracked as follow-up.
+_ADMIN_ONLY_PREFIXES = (
+    "/credentials",  # raw provider API keys
+    "/config",       # system configuration/version internals
+    "/auth",         # auth/session endpoints
+    "/settings",     # shared system/processing settings (global-DB-backed):
+                     # exposes internal service configuration, so even reads
+                     # are admin-only (writes were already admin-gated below)
+    "/openapi.json", # full OpenAPI spec — enumerates all internal endpoints
+    "/docs",         # interactive Swagger UI (and /docs/oauth2-redirect, …)
+    "/redoc",        # interactive ReDoc UI
+    "/commands",     # command registry/debug + command execution (embed, podcast, …)
+)
+
+# Global prefixes whose GETs perform privileged work (reach providers using
+# system credentials), so they are admin-only for every method too.
+_ADMIN_READ_PREFIXES = (
+    "/models/discover",
+    "/models/sync",
+    "/models/providers",
+)
+
+# Global prefixes that are safe to READ for any user but admin-only to MUTATE.
+# NOTE: /settings intentionally lives in _ADMIN_ONLY_PREFIXES (above), not here —
+# it exposes internal service configuration, so its reads are admin-only, not
+# user-readable like /models (needed by the model picker) and the profile lists.
+_SHARED_CONFIG_PREFIXES = (
+    "/models",
+    "/transformations",
+    "/episode-profiles",
+    "/speaker-profiles",
+)
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _fully_decode(path: str) -> str:
+    """Repeatedly percent-decode until stable, so multi-layer encodings
+    (e.g. '%252e%252e' -> '%2e%2e' -> '..') collapse to what the upstream
+    server will ultimately resolve. Bounded to a few iterations to avoid any
+    pathological input; the real frontend only ever single-encodes."""
+    prev = path
+    for _ in range(5):
+        decoded = unquote(prev)
+        if decoded == prev:
+            break
+        prev = decoded
+    return prev
+
+
+def _normalise_path(path: str) -> str:
+    """Canonicalise a client-supplied path for authorization checks: strip any
+    query/fragment, fully percent-decode (Open Notebook / uvicorn decode the
+    request-target before routing, so the auth decision must see the same thing
+    the router will), force a single leading slash, drop the trailing slash, and
+    lowercase (Open Notebook's routes are lowercase). Used only for the auth
+    *decision* — the original path is what gets forwarded upstream."""
+    p = _fully_decode(path.split("?", 1)[0].split("#", 1)[0]).strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    if len(p) > 1:
+        p = p.rstrip("/")
+    return p.lower()
+
+
+def _has_traversal(path: str) -> bool:
+    """True if the path contains a '..' segment or an empty ('//') segment.
+    The real frontend never sends these; they are a classic way to smuggle a
+    disallowed path past a prefix check (e.g. '/notebooks/../credentials', which
+    uvicorn/ALB may re-normalise to '/credentials' upstream).
+
+    The raw path is fully percent-decoded first so URL-encoded traversal
+    ('/notebooks/%2e%2e/credentials', or double-encoded '%252e%252e') is caught
+    — the previous literal-only check let those through, and uvicorn decodes
+    them upstream, re-opening the IDOR / route-escape reports."""
+    raw = _fully_decode(path.split("?", 1)[0].split("#", 1)[0])
+    if "//" in raw:
+        return True
+    return any(segment == ".." for segment in raw.split("/"))
+
+
+def _matches_prefix(norm_path: str, prefixes: tuple[str, ...]) -> bool:
+    """True if norm_path equals a prefix or is a sub-path of it."""
+    return any(
+        norm_path == prefix or norm_path.startswith(prefix + "/")
+        for prefix in prefixes
+    )
+
+
+def _required_level(method: str, norm_path: str) -> str:
+    """Return the privilege required for (method, normalised-path): 'user' or
+    'admin'. Order matters: the admin prefixes are checked before the broader
+    shared-config prefixes so a privileged sub-path (e.g. /models/discover) is
+    not shadowed by its parent (/models)."""
+    if _matches_prefix(norm_path, _ADMIN_ONLY_PREFIXES):
+        return "admin"
+    if _matches_prefix(norm_path, _ADMIN_READ_PREFIXES):
+        return "admin"
+    if _matches_prefix(norm_path, _SHARED_CONFIG_PREFIXES):
+        return "user" if method in _SAFE_METHODS else "admin"
+    # Not a global/shared resource -> per-user data, isolated upstream by token.
+    return "user"
+
+
+# Open Notebook endpoints whose request body carries a URL that the server then
+# fetches server-side — the SSRF sinks.  Each is mapped to the body field that
+# holds that URL, and every such field must be validated before the request is
+# forwarded, because the proxy is the only security layer (Open Notebook trusts
+# any valid JWT equally and performs NO URL validation of its own):
+#
+#   /sources     — a link-type source's "url" is fetched on create/update,
+#                  immediately when async_processing is not set or is "false".
+#   /credentials — an LLM provider credential's "base_url" is stored on
+#                  create/update and then fetched server-side when the
+#                  /credentials/{id}/test endpoint is invoked.  Validating it at
+#                  store time is the correct interception point: a malicious
+#                  base_url never gets persisted, so /test can never fetch it.
+#
+# These are structured endpoint fields (never free-text note/content bodies), so
+# no legitimate frontend request ever puts a private/internal/metadata URL in
+# one.  Maintenance note: when a new upstream endpoint is found to fetch a
+# body-supplied URL, add its (prefix, field, require_https) triple here.
+#
+# The third element requires the field's URL to be HTTPS. It is set for
+# credential ``base_url`` because Open Notebook later sends the stored provider
+# API key as a Bearer token to that URL when the credential is tested/used; a
+# plaintext-HTTP base_url would expose that key to passive network capture (and
+# a public-HTTP base_url is a credential-exfiltration vector). Source ``url`` is
+# left HTTP-allowed because ordinary public web pages legitimately use HTTP and
+# no secret is attached when fetching them.
+_URL_SINK_FIELDS = (
+    ("/sources", "url", False),
+    ("/credentials", "base_url", True),
+)
+
+
+def _validate_url_field(value, log_prefix: str, require_https: bool = False) -> dict | None:
+    """Validate a single candidate URL value against the SSRF rules.
+
+    When *require_https* is True the URL must additionally use the HTTPS scheme
+    (used for credential ``base_url``, which later carries a provider API key).
+    ``allowed_hosts=[]`` keeps ``allow_credential_forwarding`` from also imposing
+    the API_BASE_URL host allowlist — that allowlist is meant for Amplify's own
+    API, not third-party LLM provider endpoints, so applying it here would reject
+    every legitimate provider URL.
+
+    Returns a blocked-response dict if *value* is a non-empty string that fails
+    validation, otherwise None (empty / non-string values are nothing for the
+    upstream to fetch, so they are left alone)."""
+    if not value or not isinstance(value, str):
+        return None
+    is_valid, reason = validate_url(
+        value,
+        allow_credential_forwarding=require_https,
+        allowed_hosts=[] if require_https else None,
+    )
+    if not is_valid:
+        logger.warning(
+            "%s: blocked SSRF attempt url=%s reason=%s", log_prefix, value, reason
+        )
+        return {
+            "success": False,
+            "message": f"Blocked: {reason}",
+            "data": None,
+        }
+    return None
+
+
+def _check_body_for_ssrf(method: str, norm_path: str, body) -> dict | None:
+    """Validate every URL-bearing field in a JSON request body to prevent SSRF.
+
+    For a mutating request (POST/PUT/PATCH) whose normalised path is one of the
+    known SSRF-sink prefixes, the corresponding body field (see
+    ``_URL_SINK_FIELDS``) is validated with ``validate_url``.
+
+    Returns an error response dict if any such field is blocked, otherwise None.
+    """
+    if method not in ("POST", "PUT", "PATCH"):
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    for prefix, field, require_https in _URL_SINK_FIELDS:
+        if not _matches_prefix(norm_path, (prefix,)):
+            continue
+        rejection = _validate_url_field(
+            body.get(field), "notebook_proxy", require_https=require_https
+        )
+        if rejection is not None:
+            return rejection
+    return None
+
+
+def _extract_multipart_url(content_type: str, raw_body: bytes) -> str | None:
+    """Return the value of a ``url`` form field in a multipart/form-data body,
+    or None if there is no multipart body or no ``url`` field.
+
+    Open Notebook's multipart /sources endpoint accepts link-type sources with a
+    ``url`` field, which it then fetches server-side — the same SSRF sink as the
+    JSON path. We parse the body just enough to find that field so it can be
+    validated before forwarding. Parsing is best-effort: any malformed body
+    yields None (there is nothing to fetch, so nothing to block)."""
+    if "multipart/form-data" not in (content_type or "").lower():
+        return None
+    try:
+        header = f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+        msg = BytesParser().parsebytes(header + raw_body)
+        if not msg.is_multipart():
+            return None
+        for part in msg.get_payload():
+            name = part.get_param("name", header="content-disposition")
+            if name == "url":
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    continue
+                return payload.decode("utf-8", errors="replace").strip()
+    except Exception:
+        logger.exception("notebook_proxy: multipart parse failed during SSRF check")
+        return None
+    return None
+
+
+def _check_multipart_for_ssrf(content_type: str, raw_body: bytes) -> dict | None:
+    """Validate any ``url`` form field in a multipart upload to prevent SSRF.
+
+    Returns an error response dict if a url is present and blocked, else None."""
+    url = _extract_multipart_url(content_type, raw_body)
+    return _validate_url_field(url, "notebook_upload")
+
+
+# --- Upload file-type validation (defense-in-depth for the legacy Lambda path) -
+#
+# The primary upload chokepoint is Open Notebook's own /sources endpoint (the
+# frontend uploads there directly, and ON neutralises render-unsafe content
+# types + forces attachment download). This proxy's notebook_upload is a legacy
+# fallback that also forwards to /sources, so we add matching validation here so
+# neither path can store active/executable content.
+#
+# Denylist rationale: a strict allowlist would break the many legitimate
+# document types users attach to notebooks (pdf/docx/csv/md/images/…). We
+# instead reject the file classes that are actually dangerous — executables,
+# server-side scripts, and browser-render-capable active content (HTML/SVG/JS)
+# that could yield stored XSS if ever served inline.
+_DANGEROUS_UPLOAD_EXTENSIONS = frozenset({
+    # Server-side / interpreted scripts
+    "php", "php3", "php4", "php5", "phtml", "phar",
+    "jsp", "jspx", "asp", "aspx", "cgi", "pl", "py", "rb", "sh", "bash",
+    # Native executables / libraries
+    "exe", "dll", "so", "dylib", "bin", "msi", "com", "scr",
+    # Browser-render-capable active content (stored-XSS vector)
+    "html", "htm", "xhtml", "shtml", "svg", "js", "mjs", "xml", "xht",
+    # Other active/executable formats
+    "jar", "war", "bat", "cmd", "ps1", "vbs", "wsf", "hta",
+})
+
+# Content types that a browser will render (and thus execute embedded script)
+# if ever served inline. Mirrors Open Notebook's _RENDER_UNSAFE_CONTENT_TYPES.
+_DANGEROUS_UPLOAD_CONTENT_TYPES = frozenset({
+    "text/html",
+    "application/xhtml+xml",
+    "image/svg+xml",
+    "application/xml",
+    "text/xml",
+    "text/javascript",
+    "application/javascript",
+    "application/x-httpd-php",
+    "application/x-sh",
+})
+
+
+def _extract_multipart_file_parts(content_type: str, raw_body: bytes):
+    """Yield (filename, part_content_type) for each file part in a multipart body.
+
+    A "file part" is any part whose Content-Disposition carries a ``filename``.
+    Best-effort: a malformed body yields nothing (the SSRF/type checks then have
+    nothing to act on, and the upstream will reject a truly broken body)."""
+    if "multipart/form-data" not in (content_type or "").lower():
+        return
+    try:
+        header = f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+        msg = BytesParser().parsebytes(header + raw_body)
+        if not msg.is_multipart():
+            return
+        for part in msg.get_payload():
+            filename = part.get_filename()
+            if filename:
+                yield filename, (part.get_content_type() or "").lower()
+    except Exception:
+        logger.exception("notebook_upload: multipart parse failed during type check")
+        return
+
+
+def _check_multipart_file_type(content_type: str, raw_body: bytes) -> dict | None:
+    """Reject an upload whose file part is a dangerous (executable/active) type.
+
+    Checks both the declared filename extension and the part's Content-Type.
+    Returns an error response dict if blocked, otherwise None."""
+    for filename, part_ct in _extract_multipart_file_parts(content_type, raw_body):
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in _DANGEROUS_UPLOAD_EXTENSIONS:
+            logger.warning(
+                "notebook_upload: blocked dangerous file extension filename=%s ext=%s",
+                filename, ext,
+            )
+            return {
+                "success": False,
+                "message": f"Blocked: file type '.{ext}' is not allowed",
+                "data": None,
+            }
+        base_ct = part_ct.split(";", 1)[0].strip()
+        if base_ct in _DANGEROUS_UPLOAD_CONTENT_TYPES:
+            logger.warning(
+                "notebook_upload: blocked dangerous content-type filename=%s ct=%s",
+                filename, base_ct,
+            )
+            return {
+                "success": False,
+                "message": f"Blocked: content type '{base_ct}' is not allowed",
+                "data": None,
+            }
+    return None
+
+
+def _reject_if_unauthorized(
+    method: str, path: str, access_token: str, current_user: str,
+) -> dict | None:
+    """Enforce authorization for the proxied call. Return an error response dict
+    if the call is not permitted for the caller — a path-traversal attempt, or a
+    global/admin resource without admin privileges; otherwise return None. Admin
+    status is only checked (a network round-trip) when the path is admin-gated,
+    so the regular-user hot path adds no latency."""
+    if _has_traversal(path):
+        logger.warning(
+            "notebook_proxy: rejected path traversal user=%s method=%s path=%s",
+            current_user, method, path,
+        )
+        return {"success": False, "message": "Invalid path", "data": None}
+
+    norm_path = _normalise_path(path)
+    if _required_level(method, norm_path) == "user":
+        return None
+
+    if verify_user_as_admin(access_token, "Notebook Proxy Admin Resource Access"):
+        return None
+
+    logger.warning(
+        "notebook_proxy: blocked non-admin user=%s method=%s path=%s",
+        current_user, method, norm_path,
+    )
+    return {
+        "success": False,
+        "message": "Forbidden: this resource requires admin privileges",
+        "data": None,
+    }
 
 
 def _notebook_url(path: str, query_params: dict | None = None) -> str:
@@ -54,14 +466,25 @@ def _notebook_url(path: str, query_params: dict | None = None) -> str:
     return url
 
 
+def _is_ip(hostname: str) -> bool:
+    """Return True if hostname is a bare IP address (v4 or v6)."""
+    import re
+    return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", hostname or "") or
+                re.match(r"^\[?[0-9a-fA-F:]+\]?$", hostname or ""))
+
+
 def _forward_headers(access_token: str) -> dict:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
-    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
-    if host:
-        headers["Host"] = host
+    # Only inject an explicit Host header when connecting to a bare IP address.
+    # For proper hostnames (e.g. the public ALB DNS), let http.client derive
+    # the Host header automatically — overriding it breaks TLS SNI matching.
+    raw_url = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL", "")
+    parsed = urlparse(raw_url)
+    if _is_ip(parsed.hostname):
+        headers["Host"] = parsed.hostname
     return headers
 
 
@@ -135,6 +558,14 @@ def notebook_proxy(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
+    admin_rejection = _reject_if_unauthorized(method, path, access_token, current_user)
+    if admin_rejection is not None:
+        return admin_rejection
+
+    ssrf_rejection = _check_body_for_ssrf(method, _normalise_path(path), body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
+
     url = _notebook_url(path, query_params)
     logger.info("notebook_proxy: %s %s user=%s", method, url, current_user)
 
@@ -156,16 +587,24 @@ def notebook_proxy(event, context, current_user, name, data):
 
 
 # ---------------------------------------------------------------------------
-# POST /notebook/proxy/raw  — Binary proxy (audio blobs)
+# POST /notebook/proxy/raw  — Audio presigned-URL proxy
 # ---------------------------------------------------------------------------
 
 @required_env_vars({"OPEN_NOTEBOOK_INTERNAL_URL": []})
 @validated("proxy")
 def notebook_proxy_raw(event, context, current_user, name, data):
-    """Forward a request to Open Notebook and return binary content as base64.
+    """Forward an audio-URL request to Open Notebook and return the presigned URL.
+
+    The frontend calls this with path /podcasts/episodes/{id}/audio.  We rewrite
+    that to /podcasts/episodes/{id}/audio-url so Open Notebook returns a short-lived
+    S3 presigned URL (or a fallback streaming path) as JSON instead of streaming
+    the entire MP3 binary through Lambda (which is capped at ~6 MB / 10 MB and
+    would break for large audio files).
 
     Response shape:
-      { "success": true, "data": { "content_type": "audio/mpeg", "data_b64": "<base64>" } }
+      { "success": true, "data": { "url": "<presigned-url>", "type": "presigned" } }
+    or for non-S3 backends:
+      { "success": true, "data": { "url": "/api/...", "type": "stream" } }
     """
     payload = data.get("data", {})
     method = (payload.get("method") or "GET").upper()
@@ -177,21 +616,28 @@ def notebook_proxy_raw(event, context, current_user, name, data):
     if not path:
         return {"success": False, "message": "path is required"}
 
+    admin_rejection = _reject_if_unauthorized(method, path, access_token, current_user)
+    if admin_rejection is not None:
+        return admin_rejection
+
+    ssrf_rejection = _check_body_for_ssrf(method, _normalise_path(path), body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
+
+    # Rewrite /audio -> /audio-url so we get a JSON presigned URL response
+    # instead of streaming the full MP3 binary through Lambda/API-Gateway.
+    if path.endswith("/audio") and not path.endswith("/audio-url"):
+        path = path + "-url"
+
     url = _notebook_url(path, query_params)
     logger.info("notebook_proxy_raw: %s %s user=%s", method, url, current_user)
 
     body_bytes = json.dumps(body).encode("utf-8") if body is not None else None
 
     try:
-        _, content, content_type = _do_request(method, url, _forward_headers(access_token), body_bytes)
-        data_b64 = base64.b64encode(content).decode("utf-8")
-        return {
-            "success": True,
-            "data": {
-                "content_type": content_type,
-                "data_b64": data_b64,
-            },
-        }
+        _, content, _ = _do_request(method, url, _forward_headers(access_token), body_bytes)
+        result = json.loads(content) if content else {}
+        return {"success": True, "data": result}
     except HTTPError as e:
         logger.error("notebook_proxy_raw upstream error: %s", e.code)
         return {"success": False, "message": f"Upstream error {e.code}", "data": None}
@@ -230,6 +676,14 @@ def notebook_upload(event, context, current_user, name, data):
     except Exception:
         return {"success": False, "message": "Invalid base64 in body_b64"}
 
+    ssrf_rejection = _check_multipart_for_ssrf(content_type, raw_body)
+    if ssrf_rejection is not None:
+        return ssrf_rejection
+
+    filetype_rejection = _check_multipart_file_type(content_type, raw_body)
+    if filetype_rejection is not None:
+        return filetype_rejection
+
     url = _notebook_url("/sources")
     logger.info("notebook_upload: POST %s user=%s content_type=%s bytes=%d",
                 url, current_user, content_type, len(raw_body))
@@ -238,9 +692,10 @@ def notebook_upload(event, context, current_user, name, data):
         "Authorization": f"Bearer {access_token}",
         "Content-Type": content_type,
     }
-    host = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL")
-    if host:
-        headers["Host"] = host
+    raw_url = os.getenv("OPEN_NOTEBOOK_INTERNAL_URL", "")
+    parsed_url = urlparse(raw_url)
+    if _is_ip(parsed_url.hostname):
+        headers["Host"] = parsed_url.hostname
 
     try:
         _, content, _ = _do_request("POST", url, headers, raw_body)

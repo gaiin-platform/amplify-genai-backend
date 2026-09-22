@@ -355,89 +355,130 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 @required_env_vars({
     "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "USER_STORAGE_TABLE": [DynamoDBOperation.PUT_ITEM],
     # "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
 })
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
-    access_token = data["access_token"]
-    data = data["data"]
+    """Share user data with other users - stores in S3 and tracks in USER_STORAGE_TABLE"""
+    try:
+        logger.info("=== SHARE_WITH_USERS START === User: %s", current_user)
+        
+        access_token = data["access_token"]
+        data = data["data"]
+        
+        # Validate requested users
+        logger.debug("Validating users to share with: %s", data.get("sharedWith", []))
+        valid_users, invalid_users = are_valid_amplify_users(access_token, data["sharedWith"])
+        
+        logger.info("Valid users: %s, Invalid users: %s", valid_users, invalid_users)
 
-    valid_users, _ = are_valid_amplify_users(access_token, data["sharedWith"])
+        if len(valid_users) == 0:
+            logger.warning("No valid users to share with")
+            return {"success": False, "message": "No valid users to share with."}
+        
+        note = data.get("note", "")
+        new_data = data.get("sharedData", {})
+        
+        # Check payload size BEFORE storing in S3
+        import sys
+        payload_size = sys.getsizeof(json.dumps(new_data))
+        logger.info("Payload size: %d bytes", payload_size)
+        
+        if payload_size > 350000:
+            logger.warning("Payload exceeds 350KB limit: %d bytes - may fail DynamoDB item size limit", payload_size)
+        
+        new_data["sharedBy"] = current_user.lower()
 
-    if len(valid_users) == 0:
-        return {"success": False, "message": "No valid users to share with."}
-    
+        conversations = remove_code_interpreter_details(new_data.get("history", []))
+        logger.debug("Processing %d conversations", len(conversations))
 
-    note = data["note"]
-    new_data = data["sharedData"]
-    new_data["sharedBy"] = current_user.lower()
-
-    conversations = remove_code_interpreter_details(
-        new_data.get("history", [])
-    )  # if it has any, else it just returns the conv back
-
-    # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
-    if len(conversations) > 0 and len(valid_users) > 0 and current_user != valid_users[0]:
-
-        object_permissions = handle_conversation_datasource_permissions(
-            access_token, valid_users, conversations
-        )
-        if not object_permissions["success"]:
-            return object_permissions
-    prompts = new_data.get("prompts", [])
-
-    # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
-    if len(prompts) > 0 and len(valid_users) > 0 and current_user != valid_users[0]:
-        try:
-            shared_assistants = handle_share_assistant(access_token, prompts, valid_users)
-            if not shared_assistants["success"]:
-                # We need to continue because workspaces still need to be saved
-                logger.warning("Error sharing assistants: %s", shared_assistants["error"])
-        except Exception as e:
-            logger.error("Error sharing assistants: %s", e)
-
-    succesful_shares = []
-
-    for user in valid_users:
-        try:
-            # Generate a unique file key for each user
-            dt_string = datetime.now().strftime("%Y-%m-%d")
-            s3_key = "{}/{}/{}/{}.json".format(
-                user, current_user, dt_string, str(uuid.uuid4())
+        # Handle datasource permissions for conversations
+        if len(conversations) > 0 and len(valid_users) > 0 and current_user != valid_users[0]:
+            logger.debug("Handling conversation datasource permissions")
+            object_permissions = handle_conversation_datasource_permissions(
+                access_token, valid_users, conversations
             )
+            if not object_permissions["success"]:
+                logger.error("Failed to handle datasource permissions: %s", object_permissions)
+                return object_permissions
+                
+        prompts = new_data.get("prompts", [])
+        logger.debug("Processing %d prompts/assistants", len(prompts))
 
-            stored_key = put_s3_data(s3_key, new_data)
-            timestamp = int(time.time() * 1000)
+        # Handle assistant sharing
+        if len(prompts) > 0 and len(valid_users) > 0 and current_user != valid_users[0]:
+            try:
+                logger.debug("Sharing %d assistants with users", len(prompts))
+                shared_assistants = handle_share_assistant(access_token, prompts, valid_users)
+                if not shared_assistants["success"]:
+                    logger.warning("Error sharing assistants: %s", shared_assistants.get("error"))
+            except Exception as e:
+                logger.error("Exception while sharing assistants: %s", str(e), exc_info=True)
 
-            # Store in USER_STORAGE_TABLE using new schema
-            # PK: "{user_id}#amplify-shares#received"  
-            # SK: "{sharer_id}#{date}#{uuid}"
-            share_id = f"{current_user}#{dt_string}#{str(uuid.uuid4())}"
-            
-            share_data = {
-                "sharedBy": current_user,
-                "note": note,
-                "sharedAt": timestamp,
-                "key": stored_key,
-            }
+        succesful_shares = []
 
-            # Use handle_put_item from user_data.py (same service)
-            result = handle_put_item(
-                current_user=user,
-                app_id="amplify-shares", 
-                entity_type="received",
-                item_id=share_id,
-                data=share_data
-            )
-            
-            if result.get("uuid"):
-                succesful_shares.append(user)
+        # Share with each user
+        for user in valid_users:
+            try:
+                logger.debug("Processing share for user: %s", user)
+                
+                # Generate a unique file key for each user
+                dt_string = datetime.now().strftime("%Y-%m-%d")
+                s3_key = "{}/{}/{}/{}.json".format(
+                    user, current_user, dt_string, str(uuid.uuid4())
+                )
+                logger.debug("Generated S3 key: %s", s3_key)
 
-        except Exception as e:
-            logging.error(e)
-            continue
+                # Store in S3
+                logger.debug("Storing shared data in S3...")
+                stored_key = put_s3_data(s3_key, new_data)
+                logger.info("Successfully stored in S3: %s", stored_key)
+                
+                timestamp = int(time.time() * 1000)
 
-    return {"success": True, "items": succesful_shares}
+                # Prepare share record for USER_STORAGE_TABLE
+                share_id = f"{current_user}#{dt_string}#{str(uuid.uuid4())}"
+                
+                share_data = {
+                    "sharedBy": current_user,
+                    "note": note,
+                    "sharedAt": timestamp,
+                    "key": stored_key,
+                }
+                
+                logger.debug("Saving share record to USER_STORAGE_TABLE for user %s with share_id: %s", user, share_id)
+                logger.debug("Share data: %s", share_data)
+
+                # Use handle_put_item from user_data.py
+                result = handle_put_item(
+                    current_user=user,
+                    app_id="amplify-shares", 
+                    entity_type="received",
+                    item_id=share_id,
+                    data=share_data
+                )
+                
+                logger.debug("handle_put_item result: %s", result)
+                
+                if result.get("uuid"):
+                    succesful_shares.append(user)
+                    logger.info("Successfully shared with user: %s (UUID: %s)", user, result.get("uuid"))
+                else:
+                    logger.warning("handle_put_item returned no UUID for user: %s, result: %s", user, result)
+
+            except Exception as e:
+                logger.error("Error processing share for user %s: %s", user, str(e), exc_info=True)
+                continue
+
+        logger.info("Share operation completed. Successful shares: %s", succesful_shares)
+        return {"success": True, "items": succesful_shares}
+        
+    except Exception as e:
+        logger.error("=== CRITICAL ERROR in share_with_users === %s", str(e), exc_info=True)
+        import traceback
+        logger.error("Stack trace: %s", traceback.format_exc())
+        return {"success": False, "message": f"Error sharing: {str(e)}"}
 
 
 def remove_code_interpreter_details(conversations):

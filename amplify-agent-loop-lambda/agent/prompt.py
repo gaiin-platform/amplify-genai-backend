@@ -50,11 +50,15 @@ def generate_response(
             result = response.choices[0].message.content
         else:
             logger.debug("Prompting with tools.")
+            # allowed_openai_params tells LiteLLM to pass 'tools' through even for
+            # models it doesn't have a capability map for (e.g. new Bedrock-hosted
+            # OpenAI models like us.openai.gpt-5.6-*).
             response = completion(
                 model=model,
                 messages=messages,
                 tools=tools,
                 max_completion_tokens=4096,
+                allowed_openai_params=["tools"],
             )
 
             if response.choices[0].message.tool_calls:
@@ -76,7 +80,7 @@ def generate_response(
                 result = response.choices[0].message.content
 
         logger.debug(f"Recording usage for litellm response id: {response.id}")
-        model_id = model.split("/")[1]
+        model_id = model.split("/")[-1]
 
         usage = response.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
@@ -206,11 +210,22 @@ def get_llm_config(model_name):
 
 
 def is_openai_model(model):
-    return model and ("gpt" in model or re.match(r'^o\d', model))
+    # Bedrock cross-region inference profiles for OpenAI models look like
+    # "us.openai.gpt-5.6-*" or "global.openai.gpt-5.6-*" — those are Bedrock,
+    # not direct OpenAI/Azure, so exclude them here.
+    if not model:
+        return False
+    if re.match(r'^(us|global)\.openai\.', model):
+        return False
+    return "gpt" in model or bool(re.match(r'^o\d', model))
 
 
 def is_bedrock_model(model):
     # Common Bedrock models include anthropic.claude, amazon.titan, ai21, etc.
+    # Also covers cross-region inference profiles for OpenAI models on Bedrock
+    # (e.g. us.openai.gpt-5.6-luna, global.openai.gpt-5.6-sol).
+    if model and re.match(r'^(us|global)\.openai\.', model):
+        return True
     return any(
         provider in model
         for provider in [
@@ -300,7 +315,12 @@ def litellm_model_str(model):
         # Create a boto3 client for your bedrock interactions if needed
         bedrock_client = boto3.client("bedrock-runtime", region_name=region)
         litellm.bedrock_config = {"client": bedrock_client}
-        provider_prefix = "bedrock"
+        # OpenAI cross-region inference profiles on Bedrock (us.openai.* / global.openai.*)
+        # must use the Converse route — LiteLLM's invoke route doesn't recognise the provider.
+        if re.match(r'^(us|global)\.openai\.', model):
+            provider_prefix = "bedrock/converse"
+        else:
+            provider_prefix = "bedrock"
     elif is_gemini_model(model):
         secret_name = os.environ.get("SECRETS_ARN_NAME")
         secret_data = get_secret_value(secret_name)

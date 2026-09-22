@@ -166,13 +166,14 @@ def process_and_invoke_agent(event: dict):
     """
     try:
         logger.info(f"Processing event prompt: {event.get('prompt')}")
-        logger.info(f"Processing event metadata: {event.get('metadata')}")
+        metadata = event.get("metadata", {})
+        request_content = metadata.get("requestContent", {})
+        logger.info(f"Processing scheduled task: user={request_content.get('user')} task={request_content.get('taskName')} taskId={request_content.get('taskId')} source={metadata.get('source')} eventId={metadata.get('eventId')}")
 
         # Extract required fields
         current_user = event.get("currentUser")
         session_id = event.get("sessionId")
         prompt = event.get("prompt", [])
-        metadata = event.get("metadata", {})
         apiKey = metadata.get("accessToken")
 
         if not apiKey:

@@ -1,4 +1,5 @@
-from .rate_limit_schema import rate_limits_schema, admin_rate_limit_config_schema
+from .rate_limit_schema import rate_limits_schema, admin_rate_limit_config_schema, model_rate_limits_schema
+
 
 update_admin_config_schema = {
     "type": "object",
@@ -294,6 +295,7 @@ update_admin_config_schema = {
                                                 }
                                             },
                                             "rateLimit" : rate_limits_schema,
+                                            "modelRateLimits": model_rate_limits_schema,
                                             "isBillingGroup": {
                                                 "type": "boolean"
                                             }

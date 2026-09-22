@@ -124,6 +124,45 @@ def upload_conversation(event, context, current_user, name, data):
     return result
 
 
+@required_env_vars({
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
+@validated("conversation_upload")
+def get_conversation_upload_url(event, context, current_user, name, data):
+    """Return a short-lived presigned S3 PUT URL so the frontend can upload a
+    large conversation directly to S3, bypassing the API Gateway 10 MB limit.
+
+    The object written by the client must have the same shape as upload_to_s3:
+        { "conversation": <lzw-compressed number[]>, "folder": <folder|null> }
+    All existing read paths work identically once the object is at the key.
+    """
+    query_params = event.get("queryStringParameters", {}) or {}
+    conversation_id = query_params.get("conversationId", "")
+
+    if not conversation_id or not is_valid_uuidv4(conversation_id):
+        return {"success": False, "message": "Invalid or missing conversationId"}
+
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    s3 = boto3.client("s3")
+    key = f"conversations/{current_user}/{conversation_id}"
+
+    try:
+        presigned_url = s3.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": consolidation_bucket,
+                "Key": key,
+                "ContentType": "application/json",
+            },
+            ExpiresIn=300,  # 5 minutes — plenty for any reasonable upload
+        )
+        logger.info("Generated presigned upload URL for conversation %s", conversation_id)
+        return {"success": True, "presignedUrl": presigned_url}
+    except (BotoCoreError, ClientError) as e:
+        logger.error("Error generating presigned upload URL: %s", str(e))
+        return {"success": False, "message": "Failed to generate presigned upload URL"}
+
+
 @api_tool(
     path="/state/conversation/register",
     name="registerConversation",

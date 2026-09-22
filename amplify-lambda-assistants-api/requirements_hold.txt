@@ -23,7 +23,7 @@ certifi==2024.12.14
     # via requests
 charset-normalizer==3.4.4
     # via requests
-ecdsa==0.19.1
+ecdsa==0.19.2
     # via python-jose
 google-api-core==2.24.0
     # via google-api-python-client
@@ -44,11 +44,11 @@ google-auth-oauthlib==1.2.1
     # via -r requirements.in
 googleapis-common-protos==1.66.0
     # via google-api-core
-httplib2==0.22.0
+httplib2==0.32.0
     # via
     #   google-api-python-client
     #   google-auth-httplib2
-idna==3.10
+idna==3.15
     # via requests
 jmespath==1.0.1
     # via
@@ -64,11 +64,11 @@ jsonschema-specifications==2024.10.1
     #   jsonschema
 oauthlib==3.2.2
     # via requests-oauthlib
-pillow==11.3.0
+pillow==12.3.0
     # via -r requirements.in
 proto-plus==1.25.0
     # via google-api-core
-protobuf==6.31.1
+protobuf==6.33.5
     # via
     #   google-api-core
     #   googleapis-common-protos
@@ -88,7 +88,7 @@ pyparsing==3.2.1
     # via httplib2
 python-dateutil==2.9.0.post0
     # via botocore
-python-dotenv==1.0.1
+python-dotenv==1.2.2
     # via -r requirements.in
 python-jose==3.4.0
     # via -r requirements.in
@@ -98,7 +98,7 @@ referencing==0.35.1
     #   jsonschema-specifications
 regex==2025.9.18
     # via tiktoken
-requests==2.32.4
+requests==2.33.0
     # via
     #   -r requirements.in
     #   google-api-core
@@ -128,9 +128,10 @@ typing-extensions==4.12.2
     #   pydantic-core
 uritemplate==4.1.1
     # via google-api-python-client
-urllib3==2.3.1
+urllib3==2.7.0
     # via
     #   botocore
     #   requests
-msal==1.26.0
-cryptography>=36.0.0,<46.0.0 #as per the dependencies requirements
+msal==1.39.0
+cryptography>=36.0.0,<51.0.0 #as per the dependencies requirements
+cffi>=2.0.0 #cryptography>=50.0.0 requires cffi>=2.0.0 on non-PyPy

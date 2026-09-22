@@ -6,6 +6,7 @@ from .integrationsList import integrations_list
 from auth.oauth_encryption import decrypt_oauth_data
 from auth.oauth import refresh_integration_token, get_user_integrations
 from pycommon.api.secrets import get_secret_parameter
+from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SSMOperation
@@ -119,6 +120,10 @@ def check_credentials_expired(expires_at: int) -> bool:
 })
 @validated("get")
 def get_integrations(event, context, current_user, name, data):
+    access_token = data["access_token"]
+    if not verify_user_as_admin(access_token, "get_integrations"):
+        return {"success": False, "message": "User is not authorized to access integrations"}
+
     stage = os.environ.get("INTEGRATION_STAGE")
     secret_param = f"integrations/{PROVIDER}/{stage}"
 
@@ -134,7 +139,6 @@ def get_integrations(event, context, current_user, name, data):
         secrets_json = json.loads(secrets_value)
         secrets_data = secrets_json["client_config"]["web"]
         secrets["client_id"] = secrets_data["client_id"]
-        secrets["client_secret"] = secrets_data["client_secret"]
         secrets["tenant_id"] = secrets_data["project_id"]
 
     # get secrets from param store

@@ -32,6 +32,7 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "COGNITO_USERS_DYNAMODB_TABLE": f"amplify-{dep_name}-object-access-{stage}-cognito-users",
         "CONVERSATION_METADATA_TABLE": f"amplify-{dep_name}-lambda-{stage}-conversation-metadata",
         "COST_CALCULATIONS_DYNAMO_TABLE": f"amplify-{dep_name}-lambda-{stage}-cost-calculations",
+        "MODEL_RATE_TABLE": f"amplify-{dep_name}-chat-billing-{stage}-model-rates",
         # "DATASOURCE_REGISTRY_DYNAMO_TABLE": f"amplify-{dep_name}-amplify-js-{stage}-datasource-registry",
         "DATA_DISCLOSURE_ACCEPTANCE_TABLE": f"amplify-{dep_name}-data-disclosure-{stage}-acceptance",
         "DATA_DISCLOSURE_VERSIONS_TABLE": f"amplify-{dep_name}-data-disclosure-{stage}-versions",

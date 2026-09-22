@@ -5,7 +5,7 @@ import { getLogger } from "./common/logging.js";
 import { buildAccount } from "./common/accountInfo.js";
 import { ModelTypes, getModelByType } from "./common/params.js"
 import { createRequestState, deleteRequestState, updateKillswitch, localKill } from "./requests/requestState.js";
-import { sendStateEventToStream, TraceStream, sendStatusEventToStream, forceFlush } from "./common/streams.js";
+import { sendStateEventToStream, sendDeltaToStream, endStream, TraceStream, sendStatusEventToStream, forceFlush } from "./common/streams.js";
 import { resolveDataSources, getDataSourcesByUse } from "./datasource/datasources.js";
 import { handleDatasourceRequest } from "./datasource/datasourceEndpoint.js";
 import { saveTrace, trace } from "./common/trace.js";
@@ -236,7 +236,9 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 let errorMessage = "Current request exceeds allowed rate limit.";
                 if (rateLimitInfo) {
 
-                    if (rateLimitInfo.adminSet) {
+                    if (rateLimitInfo.modelId) {
+                        errorMessage = "You have reached the rate limit for this model. Please use another model.";
+                    } else if (rateLimitInfo.adminSet) {
                         // Keep admin rate limit message concise to avoid exposing internal limits
                         errorMessage = `Amplify Admin ${rateLimitInfo?.period?.toLowerCase() || ""} rate limit exceeded`;
                     } else {
@@ -247,6 +249,44 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     
                 }
                 logger.warn(`🚫 Rate limit exceeded for user ${params.user}: ${errorMessage}`);
+                if (responseStream && typeof responseStream.write === 'function' && !responseStream.writableEnded) {
+                    if (rateLimitInfo?.modelId) {
+                        const configuredRate = Number(rateLimitInfo.rate);
+                        const spent = Number(rateLimitInfo.currentSpent) || 0;
+                        const utilizationPercent = Number.isFinite(configuredRate) && configuredRate > 0
+                            ? Math.min(100, Math.round((spent / configuredRate) * 100))
+                            : 100;
+                        sendStateEventToStream(responseStream, {
+                            modelRateLimit: {
+                                modelId: rateLimitInfo.modelId,
+                                utilizationPercent,
+                                reachedLimit: true,
+                                message: "You have reached the rate limit for this model. Please use another model. This limit resets at the beginning of next month."
+                            }
+                        });
+                        sendDeltaToStream(responseStream, "answer", { delta: { text: "You have reached the rate limit for this model. Please use another model. This limit resets at the beginning of next month." } });
+                    } else {
+                        const period = rateLimitInfo?.period?.toLowerCase() || '';
+                        let message;
+                        if (period === 'hourly') {
+                            message = "You have reached your hourly usage limit. Please try again next hour.";
+                        } else if (period === 'daily') {
+                            message = "You have reached your daily usage limit. Please try again tomorrow.";
+                        } else if (period === 'monthly') {
+                            message = "You have reached your monthly usage limit. This will reset at the beginning of next month.";
+                        } else if (period === 'total') {
+                            message = "You have reached your total usage limit.";
+                        } else {
+                            message = "You have reached your usage limit. Please try again later.";
+                        }
+                        sendStateEventToStream(responseStream, {
+                            rateLimitNotice: { reachedLimit: true, message, period }
+                        });
+                        sendDeltaToStream(responseStream, "answer", { delta: { text: message } });
+                    }
+                    endStream(responseStream);
+                    return;
+                }
                 return returnResponse(responseStream, {
                     statusCode: 429,
                     statusText: "Request limit reached.",
@@ -272,6 +312,17 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         logger.info(`📎 [Media] Extracted from message data: ${imgSources.length} images, ${vidSources.length} videos`);
                     }
                 }
+            }
+
+            if (params.body.options?.modelRateLimitNotice) {
+                sendStateEventToStream(responseStream, {
+                    modelRateLimit: params.body.options.modelRateLimitNotice
+                });
+            }
+            if (params.body.options?.adminRateLimitNotice) {
+                sendStateEventToStream(responseStream, {
+                    adminRateLimit: params.body.options.adminRateLimitNotice
+                });
             }
 
             // Update params.body.dataSources with the filtered list from resolveDataSources
@@ -377,13 +428,34 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             options.advancedModel = getModelByType(params, ModelTypes.ADVANCED);
             options.documentCachingModel = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
 
-            // ensure the model id in the body and options is consitent with the changes 
+            // ensure the model id in the body and options is consitent with the changes
             let body = { ...params.body, options: options, model: model.id };
             logger.debug("Checking access on data sources");
             logger.info("Request options.", options);
             logger.info("Request data sources", dataSources);
 
             delete body.dataSources;
+
+            // Collect every file key across all conversation messages before smart-messages
+            // may prune body.messages, so renew_session can still restore pruned files.
+            const allConversationDataSources = (body.messages || []).flatMap(m => m.data?.dataSources ?? []);
+            const allConversationFileKeys = [
+                ...new Set(
+                    allConversationDataSources
+                        .map(d => d.id)
+                        .filter(Boolean)
+                )
+            ];
+            if (allConversationFileKeys.length > 0) {
+                body.allConversationFileKeys = allConversationFileKeys;
+                const allConversationFileNames = {};
+                for (const d of allConversationDataSources) {
+                    if (d.id && d.name) allConversationFileNames[d.id] = d.name;
+                }
+                if (Object.keys(allConversationFileNames).length > 0) {
+                    body.allConversationFileNames = allConversationFileNames;
+                }
+            }
 
 
             // ⚡ Create request state 

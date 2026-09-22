@@ -64,6 +64,7 @@ rules = {
         "/state/conversation/register": {
             "conversation_upload": register_conversation_schema
         },
+        "/state/conversation/get-upload-url": {"conversation_upload": {}},
         "/state/conversation/get/multiple": {
             "get_multiple_conversations": conversation_ids_schema
         },

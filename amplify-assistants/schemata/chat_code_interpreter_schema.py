@@ -1,7 +1,7 @@
-chat_assistant_schema = {
+chat_code_interpreter_schema = {
     "type": "object",
     "properties": {
-        "assistantId": {"type": "string"},
+        "codeInterpreterRecordId": {"type": "string"},
         "accountId": {"type": "string"},
         "requestId": {"type": "string"},
         "messages": {
@@ -88,5 +88,5 @@ chat_assistant_schema = {
             ]
         },
     },
-    "required": ["assistantId", "messages"],
+    "required": ["codeInterpreterRecordId", "messages"],
 }

@@ -292,6 +292,7 @@ export const sendStatusEventToStream = (resultStream, statusEvent) => {
 }
 
 export const sendStateEventToStream = (resultStream, state) => {
+    if (!resultStream || resultStream.writableEnded) return;
     resultStream.write(`data: ${JSON.stringify({ s: "meta", state: state })}\n\n`);
 }
 
@@ -316,13 +317,22 @@ export const sendResultToStream = (resultStream, result) => {
 }
 
 export const endStream = (resultStream) => {
-    if (!resultStream || resultStream.writableEnded || !resultStream.writable) {
+    if (!resultStream || resultStream.writableEnded) {
         return;
     }
     try {
         resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
     } catch (err) {
         // Stream may have been closed between check and write - ignore
+    }
+    // Ensure the underlying HTTP response is actually closed.
+    // SSEWrapper and Lambda stream wrappers both expose `.end()`.
+    try {
+        if (typeof resultStream.end === 'function' && !resultStream.writableEnded) {
+            resultStream.end();
+        }
+    } catch (err) {
+        // ignore
     }
 }
 

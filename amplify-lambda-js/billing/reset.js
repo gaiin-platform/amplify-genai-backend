@@ -137,7 +137,8 @@ async function handleMonthlyReset(item) {
                 Item: marshall({
                     userDate: `${item.id}#${lastMonth}`,
                     accountInfo: item.accountInfo,
-                    monthlyCost: parseFloat(item.monthlyCost),
+                    monthlyCost: parseFloat(item.monthlyCost || 0) + parseFloat(item.dailyCost || 0),
+                    ...(item.modelCosts && { modelCosts: item.modelCosts }),
                     timestamp: new Date().toISOString()
                 })
             }));
@@ -148,9 +149,10 @@ async function handleMonthlyReset(item) {
                     id: { S: item.id },
                     accountInfo: { S: item.accountInfo }
                 },
-                UpdateExpression: "SET monthlyCost = :zero, record_type = if_not_exists(record_type, :recordType)",
+                UpdateExpression: "SET monthlyCost = :zero, modelCosts = :emptyMap, record_type = if_not_exists(record_type, :recordType)",
                 ExpressionAttributeValues: {
                     ":zero": { N: "0" },
+                    ":emptyMap": { M: {} },
                     ":recordType": { S: "cost" }
                 }
             }));

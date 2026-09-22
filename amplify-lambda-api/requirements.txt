@@ -5,7 +5,7 @@ git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 #
 #    pip-compile requirements.in
 #
-pillow==11.3.0
+pillow==12.3.0
     # via -r requirements.in
 pyyaml==6.0.2
     # via -r requirements.in

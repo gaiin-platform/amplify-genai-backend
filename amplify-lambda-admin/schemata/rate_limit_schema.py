@@ -54,3 +54,23 @@ admin_rate_limit_config_schema = {
         rate_limits_schema
     ]
 }
+
+
+
+# Per-model Amplify Group limits are intentionally monthly-only. The model ID is
+# the map key so policies remain independent from the supported-model config.
+model_rate_limits_schema = {
+    "type": "object",
+    "patternProperties": {
+        "^.*$": {
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "const": "Monthly"},
+                "rate": {"type": "number", "minimum": 0}
+            },
+            "required": ["period", "rate"],
+            "additionalProperties": False
+        }
+    },
+    "additionalProperties": False
+}

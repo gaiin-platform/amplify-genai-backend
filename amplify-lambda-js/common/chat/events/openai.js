@@ -222,7 +222,8 @@ export const openaiUsageTransform = (event) => {
             usage.reasoning_tokens = usage.output_tokens_details?.reasoning_tokens ?? 0;
         } else {
             // Handle legacy completions endpoint format
-            const reasoningTokens = usage.reasoning_tokens ?? 0;
+            // reasoning_tokens lives inside completion_tokens_details, not at the top level
+            const reasoningTokens = (usage.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens) ?? 0;
             usage.completion_tokens += reasoningTokens;
             // Extract reasoning tokens for separate tracking
             usage.reasoning_tokens = reasoningTokens;

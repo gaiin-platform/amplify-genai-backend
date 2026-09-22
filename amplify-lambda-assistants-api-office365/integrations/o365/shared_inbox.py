@@ -1,14 +1,26 @@
 import base64
 import json
+import os
+import uuid
+import boto3
 import requests
 from typing import Dict, List, Optional
 from integrations.oauth import get_ms_graph_session
 from integrations.o365.html_utils import html_to_plain_text
 
+from pycommon.logger import getLogger
+
 integration_name = "microsoft_exchange"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
-from pycommon.logger import getLogger
+# Graph message IDs are mutable — they change when a message is moved to a
+# different folder (by anyone, including other users of the shared mailbox).
+# Requesting the immutable ID type makes Graph return stable IDs that survive
+# moves, preventing spurious 404s when acting on a previously-fetched message ID.
+# Applied per-call on message operations only; folder IDs are already stable.
+# See: https://learn.microsoft.com/en-us/graph/outlook-immutable-id
+_IMMUTABLE_ID_HEADER = {"Prefer": 'IdType="ImmutableId"'}
+
 logger = getLogger(integration_name)
 
 
@@ -127,7 +139,7 @@ def list_shared_mailbox_messages(
                 "$orderby": "receivedDateTime desc",
             }
 
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -168,7 +180,7 @@ def get_shared_mailbox_message(
             select_fields = "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,importance,isRead,isDraft,conversationId,bodyPreview"
 
         params = {"$select": select_fields}
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -200,7 +212,7 @@ def get_shared_mailbox_attachments(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments"
         params = {"$select": "id,name,contentType,size,isInline,lastModifiedDateTime"}
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -232,9 +244,10 @@ def download_shared_mailbox_attachment(
     Downloads a specific attachment from a message in a shared Exchange mailbox.
 
     For files under 7MB, returns base64-encoded content directly in the response.
-    For larger files, returns a temporary download URL to avoid API Gateway limits
-    (API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
-    so 7MB is the safe threshold).
+    For larger files, fetches the bytes server-side (using the Lambda's own Graph
+    session), stages them in S3, and returns a short-lived presigned URL.
+    API Gateway has a 10MB response limit; base64 encoding adds ~33% overhead,
+    so 7MB is the safe threshold for inline delivery.
 
     Handles three Graph API attachment types:
     - fileAttachment: Returns base64 contentBytes or a download URL
@@ -260,7 +273,7 @@ def download_shared_mailbox_attachment(
         metadata_url = (
             f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/attachments/{attachment_id}"
         )
-        metadata_response = session.get(metadata_url)
+        metadata_response = session.get(metadata_url, headers=_IMMUTABLE_ID_HEADER)
 
         if not metadata_response.ok:
             if metadata_response.status_code == 404:
@@ -291,7 +304,7 @@ def download_shared_mailbox_attachment(
                     f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
                     f"/attachments/{attachment_id}/$value"
                 )
-                content_response = session.get(content_url)
+                content_response = session.get(content_url, headers=_IMMUTABLE_ID_HEADER)
 
                 if content_response.ok:
                     result["contentBytes"] = base64.b64encode(content_response.content).decode("utf-8")
@@ -301,15 +314,45 @@ def download_shared_mailbox_attachment(
                     result["contentBytes"] = attachment_metadata.get("contentBytes")
                     result["deliveryMethod"] = "metadata_content"
             else:
-                # Large file — caller must fetch using the download URL with auth headers
-                result["downloadUrl"] = (
+                # Large file — fetch bytes server-side (Lambda has the Graph session),
+                # stage in S3, and return a short-lived presigned URL.
+                # Returning a raw Graph URL would require the caller to hold a Graph
+                # OAuth token, which they do not — they only have an Amplify API key.
+                content_url = (
                     f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}"
                     f"/attachments/{attachment_id}/$value"
                 )
-                result["deliveryMethod"] = "download_url"
+                content_response = session.get(content_url, headers=_IMMUTABLE_ID_HEADER)
+                if not content_response.ok:
+                    _handle_graph_error(content_response)
+
+                bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+                safe_filename = attachment_metadata.get("name", "attachment")
+                s3_key = f"sharedMailboxAttachments/{current_user}/{uuid.uuid4().hex}/{safe_filename}"
+
+                s3_client = boto3.client("s3")
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=content_response.content,
+                    ContentType=attachment_metadata.get("contentType", "application/octet-stream"),
+                )
+
+                # Presigned URLs embed auth in the query string — 1-hour TTL is
+                # enough for any downstream processing pipeline.
+                presigned_url = s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": bucket_name, "Key": s3_key},
+                    ExpiresIn=3600,
+                )
+
+                result["downloadUrl"] = presigned_url
+                result["deliveryMethod"] = "presigned_url"
                 result["note"] = (
                     f"File too large ({file_size:,} bytes) for direct API response. "
-                    f"Use downloadUrl with an Authorization: Bearer header."
+                    f"Fetch downloadUrl directly — do NOT add an Authorization header. "
+                    f"S3 presigned URLs embed credentials in the query string; attaching "
+                    f"a second auth mechanism will cause S3 to reject the request."
                 )
 
             return result
@@ -380,7 +423,7 @@ def search_shared_mailbox_messages(
             "$select": select_fields,
         }
 
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -521,7 +564,7 @@ def create_shared_mailbox_draft(
                 {"emailAddress": {"address": addr}} for addr in bcc_recipients
             ]
 
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -602,7 +645,7 @@ def move_shared_mailbox_message(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{mailbox_email}/messages/{message_id}/move"
         payload = {"destinationId": destination_folder_id}
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 
@@ -651,7 +694,7 @@ def add_shared_mailbox_draft_attachment(
             "contentBytes": content_bytes,
             "isInline": is_inline,
         }
-        response = session.post(url, json=payload)
+        response = session.post(url, json=payload, headers=_IMMUTABLE_ID_HEADER)
         if not response.ok:
             _handle_graph_error(response)
 

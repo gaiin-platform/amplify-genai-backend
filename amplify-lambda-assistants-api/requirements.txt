@@ -5,22 +5,22 @@ git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 #
 #    pip-compile
 #
-aiohttp==3.11.11
+aiohttp==3.14.3
     # via -r requirements.in (for async HTTP requests)
 cachetools==5.5.2
     # via google-auth
 certifi==2025.6.15
     # via requests
-cffi==1.17.1
+cffi==2.1.1
     # via cryptography
 charset-normalizer==3.4.4
     # via requests
-cryptography==45.0.5
+cryptography==50.0.0
     # via
     #   -r requirements.in
     #   msal
     #   pyjwt
-ecdsa==0.19.1
+ecdsa==0.19.2
     # via python-jose
 google-api-core==2.25.1
     # via google-api-python-client
@@ -38,19 +38,19 @@ google-auth-oauthlib==1.2.2
     # via -r requirements.in
 googleapis-common-protos==1.70.0
     # via google-api-core
-httplib2==0.22.0
+httplib2==0.32.0
     # via
     #   google-api-python-client
     #   google-auth-httplib2
 jose==1.0.0
     # via -r requirements.in
-msal==1.32.3
+msal==1.39.0
     # via -r requirements.in
 oauthlib==3.3.1
     # via requests-oauthlib
 proto-plus==1.26.1
     # via google-api-core
-protobuf==6.31.1
+protobuf==6.33.5
     # via
     #   -r requirements.in
     #   google-api-core
@@ -60,7 +60,7 @@ pyasn1-modules==0.4.2
     # via google-auth
 pycparser==2.22
     # via cffi
-pyjwt[crypto]==2.10.1
+pyjwt[crypto]==2.13.0
     # via
     #   msal
     #   pyjwt

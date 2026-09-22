@@ -75,6 +75,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             inputTokens: {N: "" + inputTokens},
             outputTokens: {N: "" + outputTokens},
             modelId: { S: model.id },
+            inputCachedTokens: {N: "" + (inputCachedTokens || 0)},
+            inputWriteCachedTokens: {N: "" + (inputWriteCachedTokens || 0)},
             details: { M: marshall(details || {}, { removeUndefinedValues: true })}
         };
 
@@ -175,8 +177,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         // same buildAccountInfo() helper — if they ever diverge, limits never enforce.
         logger.info(`📊 [ACCOUNTING] Writing cost $${totalCost.toFixed(6)} to accountInfo="${accountInfo}" for user="${account.user}" (requestId=${requestId || 'UNDEFINED'}, model=${model?.id || 'UNDEFINED'})`);
 
-        // First update: Ensure dailyCost and hourlyCost are initialized
-        const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), record_type = if_not_exists(record_type, :recordType)`;
+        // First update: Ensure aggregate fields and the model-cost map exist.
+        const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), modelCosts = if_not_exists(modelCosts, :emptyMap), record_type = if_not_exists(record_type, :recordType)`;
 
         const initializeCommand = new UpdateItemCommand({
             TableName: costDynamoTableName,
@@ -188,6 +190,7 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             ExpressionAttributeValues: {
                 ":zero": { N: "0" },
                 ":emptyList": { L: Array(24).fill({ N: "0" }) },
+                ":emptyMap": { M: {} },
                 ":recordType": { S: "cost" }
             }
         });
@@ -196,7 +199,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         await dynamodbClient.send(initializeCommand);
 
         // Second update: Update dailyCost and the specific hourlyCost index
-        const updateExpression = `SET dailyCost = dailyCost + :totalCost
+        const updateExpression = `SET dailyCost = dailyCost + :totalCost,
+        #modelCosts.#modelId = if_not_exists(#modelCosts.#modelId, :zero) + :totalCost
         ADD hourlyCost[${currentHour}] :totalCost`;
 
         const updateCommand = new UpdateItemCommand({
@@ -206,8 +210,13 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
                 accountInfo: { S: accountInfo }
             },
             UpdateExpression: updateExpression,
+            ExpressionAttributeNames: {
+                "#modelCosts": "modelCosts",
+                "#modelId": model.id
+            },
             ExpressionAttributeValues: {
-                ":totalCost": { N: totalCost.toString() }
+                ":totalCost": { N: totalCost.toString() },
+                ":zero": { N: "0" }
             }
         });
 
