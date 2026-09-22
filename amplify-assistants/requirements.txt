@@ -1,9 +1,9 @@
 git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 jose==1.0.0
-pillow==11.3.0
+pillow==12.3.0
 xmltodict==0.14.2
 beautifulsoup4==4.13.4
 pyyaml==6.0.2
-lxml==6.0.2
+lxml==6.1.0
 pytz==2024.1
 # via -r requirements.in
