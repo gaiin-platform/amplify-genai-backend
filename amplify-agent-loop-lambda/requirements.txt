@@ -1,11 +1,11 @@
-git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.2
 beautifulsoup4
 aws-xray-sdk==2.14.0
 litellm==1.84.0
 pydantic>=2.10.4
-requests==2.33.0
+requests==2.34.2
 jsonschema>=4.24.0
-boto3==1.38.32
+boto3==1.43.100
 python-jose>=3.5.0
 Pillow==12.2.0
 python-dotenv>=1.1.0

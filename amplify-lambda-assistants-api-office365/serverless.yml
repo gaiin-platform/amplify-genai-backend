@@ -101,7 +101,7 @@ functions:
   microsoftAdminConfigOpsTrigger:
     handler: service/register_ops.integration_config_trigger
     memorySize: 1024
-    timeout: 300 
+    timeout: 300
     events:
       - stream:
           type: dynamodb
@@ -196,14 +196,21 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
 
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
-              
+
             - Effect: Allow
               Action:
                 - dynamodb:PutItem
