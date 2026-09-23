@@ -194,10 +194,6 @@ resources:
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
-            # - Effect: Allow
-            #   Action:
-            #     - lambda:InvokeFunction
-            #   Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -212,8 +208,6 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
