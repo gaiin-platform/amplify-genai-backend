@@ -298,6 +298,31 @@ def handle_share_assistant(access_token, prompts, recipient_users):
     }
 
 
+def detect_content_type(data):
+    """Classify a share bundle by its dominant content type."""
+    history = data.get("history", [])
+    prompts = data.get("prompts", [])
+    if history and len(history) > 0:
+        return "conversation"
+    for prompt in prompts:
+        if prompt.get("data", {}).get("assistant", {}).get("definition"):
+            return "assistant"
+    if prompts and len(prompts) > 0:
+        return "prompt-template"
+    return "unknown"
+
+
+def get_source_name(data):
+    """Extract a human-readable name from a share bundle for display in 'sent' history."""
+    prompts = data.get("prompts", [])
+    history = data.get("history", [])
+    if prompts:
+        return prompts[0].get("name", "")
+    if history:
+        return history[0].get("name", "")
+    return ""
+
+
 @api_tool(
     path="/state/share",
     name="viewSharedState",
@@ -416,6 +441,9 @@ def share_with_users(event, context, current_user, name, data):
             except Exception as e:
                 logger.error("Exception while sharing assistants: %s", str(e), exc_info=True)
 
+        content_type = detect_content_type(new_data)
+        source_name = get_source_name(new_data)
+
         succesful_shares = []
 
         # Share with each user
@@ -445,6 +473,7 @@ def share_with_users(event, context, current_user, name, data):
                     "note": note,
                     "sharedAt": timestamp,
                     "key": stored_key,
+                    "contentType": content_type,
                 }
                 
                 logger.debug("Saving share record to USER_STORAGE_TABLE for user %s with share_id: %s", user, share_id)
@@ -472,6 +501,30 @@ def share_with_users(event, context, current_user, name, data):
                 continue
 
         logger.info("Share operation completed. Successful shares: %s", succesful_shares)
+
+        if succesful_shares:
+            try:
+                sent_timestamp = int(time.time() * 1000)
+                sent_id = f"sent#{current_user}#{datetime.now().strftime('%Y-%m-%d')}#{str(uuid.uuid4())}"
+                sent_data = {
+                    "recipients": succesful_shares,
+                    "note": note,
+                    "sharedAt": sent_timestamp,
+                    "contentType": content_type,
+                    "sourceName": source_name,
+                }
+                handle_put_item(
+                    current_user=current_user,
+                    app_id="amplify-shares",
+                    entity_type="sent",
+                    item_id=sent_id,
+                    data=sent_data,
+                )
+                logger.info("Stored sent record for user %s", current_user)
+            except Exception as e:
+                logger.error("Error storing sent record: %s", str(e))
+                # Non-fatal — don't fail the share
+
         return {"success": True, "items": succesful_shares}
         
     except Exception as e:
@@ -525,6 +578,7 @@ def get_share_data_for_user(event, context, current_user, name, data):
                     "note": share_data.get("note", ""),
                     "sharedAt": share_data.get("sharedAt", 0),
                     "key": share_data.get("key", ""),
+                    "contentType": share_data.get("contentType", ""),
                 }
                 all_shares.append(formatted_share)
                 
@@ -579,3 +633,51 @@ def get_share_data_for_user(event, context, current_user, name, data):
     except Exception as e:
         logging.error(e)
         return {"success": False}
+
+
+@api_tool(
+    path="/state/share/sent",
+    name="getSentShares",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="Returns all items the current user has shared with others.",
+    parameters={"type": "object", "properties": {}, "required": []},
+    output={
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean"},
+            "items": {"type": "array"},
+        },
+        "required": ["success"],
+    },
+)
+@required_env_vars({
+    "USER_STORAGE_TABLE": [DynamoDBOperation.QUERY],
+})
+@validated("read")
+def get_sent_shares_for_user(event, context, current_user, name, data):
+    access = data["allowed_access"]
+    if APIAccessType.SHARE.value not in access and APIAccessType.FULL_ACCESS.value not in access:
+        return {"success": False, "message": "API key does not have access to share functionality"}
+    try:
+        sent_shares = handle_query_by_type(
+            current_user=current_user,
+            app_id="amplify-shares",
+            entity_type="sent",
+        )
+        items = []
+        for share in sent_shares:
+            d = share.get("data", {})
+            items.append({
+                "recipients": d.get("recipients", []),
+                "note": d.get("note", ""),
+                "sharedAt": d.get("sharedAt", 0),
+                "contentType": d.get("contentType", ""),
+                "sourceName": d.get("sourceName", ""),
+            })
+        # Sort newest first
+        items.sort(key=lambda x: x.get("sharedAt", 0), reverse=True)
+        return {"success": True, "items": items}
+    except Exception as e:
+        logger.error("Error fetching sent shares: %s", str(e))
+        return {"success": False, "message": "Error fetching sent shares"}

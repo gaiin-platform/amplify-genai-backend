@@ -46,6 +46,7 @@ rules = {
     "validators": {
         "/state/share": {"append": share_schema, "read": {}},
         "/state/share/load": {"load": share_load_schema},
+        "/state/share/sent": {"read": {}},
         "/datasource/metadata/set": {"set": set_metadata_schema},
         "/files/upload": {"upload": file_upload_schema},
         "/files/download": {"download": key_request_schema},
@@ -88,6 +89,7 @@ rules = {
     "api_validators": {
         "/state/share": {"read": {}},
         "/state/share/load": {"load": share_load_schema},
+        "/state/share/sent": {"read": {}},
         "/files/upload": {"upload": file_upload_schema},
         "/files/set_tags": {"set_tags": file_set_tags_schema},
         "/files/tags/delete": {"delete": user_delete_tag_schema},

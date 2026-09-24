@@ -67,6 +67,7 @@ def can_delete_file(user, data):
 permissions_by_state_type = {
     "/state/share": {"append": can_share, "read": can_share},
     "/state/share/load": {"load": can_share},
+    "/state/share/sent": {"read": can_share},
     "/datasource/metadata/set": {"set": can_upload},
     "/files/upload": {"upload": can_upload},
     "/files/set_tags": {"set_tags": can_upload},
