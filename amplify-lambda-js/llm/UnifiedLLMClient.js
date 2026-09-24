@@ -1087,6 +1087,12 @@ export function cancelRequest(requestId) {
         if (state.statusTimer) {
             clearTimeout(state.statusTimer);
         }
+        // Stop keepalive immediately so Lambda stops writing to the stream
+        // and the invocation can be GC'd rather than running to 900s.
+        if (state.keepAliveInterval) {
+            clearInterval(state.keepAliveInterval);
+            state.keepAliveInterval = null;
+        }
         if (state.responseStream && !state.responseStream.writableEnded) {
             sendErrorMessage(state.responseStream, 'Request cancelled');
             endStream(state.responseStream);

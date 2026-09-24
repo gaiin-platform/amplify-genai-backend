@@ -4,6 +4,7 @@ import {logCriticalError} from "../common/criticalLogger.js";
 import { getBudgetTokens } from "../common/params.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
@@ -17,8 +18,19 @@ let cachedBedrockClient = null;
 const getBedrockClient = () => {
     if (!cachedBedrockClient) {
         const region = process.env.DEP_REGION ?? 'us-east-1';
-        cachedBedrockClient = new BedrockRuntimeClient({ region });
-        // Created and cached Bedrock client
+        cachedBedrockClient = new BedrockRuntimeClient({
+            region,
+            requestHandler: new NodeHttpHandler({
+                // Abort the HTTP socket if no bytes arrive for 4 minutes.
+                // This is the primary guard against stalled Bedrock streams that
+                // would otherwise keep Lambda alive for the full 900s hard timeout.
+                // 4 minutes is generous enough for models with extended thinking pauses
+                // (Claude Opus 5 reasoning) while still terminating truly stalled streams.
+                socketTimeout: 240000,
+                // Fail fast on initial connection — Bedrock endpoint should be reachable immediately.
+                connectionTimeout: 5000,
+            }),
+        });
     }
     return cachedBedrockClient;
 };
