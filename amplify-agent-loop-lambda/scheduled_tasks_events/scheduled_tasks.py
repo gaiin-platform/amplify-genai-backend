@@ -517,31 +517,34 @@ def email_task_details(api_key, email_subject, email_body, email_addresses):
 def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive, access_token):
     """
     Archive logs from USER_DATA_STORAGE_TABLE to consolidation bucket.
-    
+
     Args:
         current_user (str): User ID owning the task
         task_id (str): Task ID
         logs_to_archive (dict): Dictionary of {execution_id: compressed_data} to archive
         access_token (str): Access token for authentication
-    
+
     Returns:
-        dict: Result with success status and archived count
+        dict: Result with "success" (True only if every entry archived), "archived_count",
+            and "archived_ids" — the execution_ids CONFIRMED written to the consolidation
+            bucket. Callers must only drop entries whose IDs appear in "archived_ids";
+            "success" alone does not indicate which individual items succeeded or failed.
     """
     try:
         # Get consolidation bucket from environment
         consolidation_bucket = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME")
         if not consolidation_bucket:
             logger.error("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
-            return {"success": False, "archived_count": 0, "error": "Consolidation bucket not configured"}
-        
+            return {"success": False, "archived_count": 0, "archived_ids": [], "error": "Consolidation bucket not configured"}
+
         s3 = boto3.client("s3")
-        archived_count = 0
-        
+        archived_ids = []
+
         for execution_id, compressed_data in logs_to_archive.items():
             try:
                 # Archive path: scheduledTaskLogs/{user_id}/{task_id}/{execution_id}.json
                 archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
-                
+
                 # Decompress data before archiving to S3 (S3 stores uncompressed)
                 if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
                     # Already decompressed data
@@ -553,7 +556,7 @@ def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive,
                         log_data = lzw_uncompress(compressed_data)
                     else:
                         log_data = compressed_data
-                
+
                 # Store in consolidation bucket
                 s3.put_object(
                     Bucket=consolidation_bucket,
@@ -561,20 +564,27 @@ def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive,
                     Body=safe_json_dumps(log_data),
                     ContentType="application/json"
                 )
-                
-                archived_count += 1
+
+                archived_ids.append(execution_id)
                 logger.debug(f"Archived execution {execution_id} to consolidation bucket: {archive_key}")
-                
+
             except Exception as e:
+                # Intentionally not re-raised: one bad execution shouldn't block the rest
+                # from archiving. The caller uses "archived_ids" to know exactly which
+                # entries are now safely archived and only removes those from the
+                # primary store, so a failure here never causes data loss.
                 logger.error(f"Failed to archive execution {execution_id}: {e}")
                 continue
-        
-        logger.info(f"Archived {archived_count} logs for task {task_id} to consolidation bucket")
-        return {"success": True, "archived_count": archived_count}
-        
+
+        all_succeeded = len(archived_ids) == len(logs_to_archive)
+        logger.info(
+            f"Archived {len(archived_ids)}/{len(logs_to_archive)} logs for task {task_id} to consolidation bucket"
+        )
+        return {"success": all_succeeded, "archived_count": len(archived_ids), "archived_ids": archived_ids}
+
     except Exception as e:
         logger.error(f"Error archiving logs to consolidation bucket: {e}")
-        return {"success": False, "archived_count": 0, "error": str(e)}
+        return {"success": False, "archived_count": 0, "archived_ids": [], "error": str(e)}
 
 
 def calculate_logs_size(logs_dict):
@@ -595,40 +605,52 @@ def calculate_logs_size(logs_dict):
         return 0
 
 
-def select_logs_for_archival(logs_dict, target_size):
+def select_logs_for_archival(logs_dict, target_size, timestamps=None):
     """
     Select oldest logs for archival to reach target size.
-    
+
     Args:
         logs_dict (dict): Dictionary of {execution_id: compressed_data}
         target_size (int): Target size to keep in bytes
-        
+        timestamps (dict, optional): Mapping of {execution_id: executedAt ISO string},
+            sourced from the task's logs metadata array. execution_id is a random UUID
+            and carries no time information of its own, so this mapping is required to
+            correctly tell "newest" apart from "oldest". Entries missing from this
+            mapping are treated as oldest (archived first) as a safe fallback.
+
     Returns:
         tuple: (logs_to_keep, logs_to_archive) as dictionaries
     """
     try:
-        # Sort by execution_id (which contains timestamp) to get chronological order
-        # execution_id format: "execution-{uuid}" or "scheduled-task-{task_id}-{timestamp}"
-        sorted_executions = sorted(logs_dict.items(), key=lambda x: x[0], reverse=True)  # Newest first
-        
+        timestamps = timestamps or {}
+
+        # Sort by the actual executedAt timestamp (from logs metadata) to get true
+        # chronological order. Sorting by execution_id itself (as before) produced an
+        # effectively random order, since execution_id is just a random UUID.
+        sorted_executions = sorted(
+            logs_dict.items(),
+            key=lambda x: timestamps.get(x[0], ""),
+            reverse=True,
+        )  # Newest first
+
         logs_to_keep = {}
         logs_to_archive = {}
         current_size = 0
-        
+
         # Keep newest logs until we reach target size
         for execution_id, log_data in sorted_executions:
             log_size = len(safe_json_dumps(log_data).encode('utf-8'))
-            
+
             if current_size + log_size <= target_size:
                 logs_to_keep[execution_id] = log_data
                 current_size += log_size
             else:
                 logs_to_archive[execution_id] = log_data
-        
+
         logger.debug(f"Selected {len(logs_to_keep)} logs to keep ({current_size} bytes), {len(logs_to_archive)} logs to archive")
-        
+
         return logs_to_keep, logs_to_archive
-        
+
     except Exception as e:
         logger.error(f"Failed to select logs for archival: {e}")
         # Return all logs to keep as fallback
@@ -736,23 +758,55 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                         # Check if we need to archive old logs (350KB threshold)
                         current_size = calculate_logs_size(logs_dict)
                         logger.debug(f"Current logs size for task {task_id}: {current_size} bytes")
-                        
+
                         if current_size > MAX_LOGS_SIZE_BYTES:
                             logger.info(f"Logs size ({current_size} bytes) exceeds threshold ({MAX_LOGS_SIZE_BYTES} bytes), archiving old logs for task {task_id}")
-                            
+
+                            # Build a timestamp lookup from the logs metadata array so
+                            # archival can determine true chronological order —
+                            # execution_id is a random UUID and carries no time info.
+                            timestamps_by_execution_id = {
+                                entry.get("executionId"): entry.get("executedAt")
+                                for entry in logs
+                                if entry.get("executionId")
+                            }
+                            # The metadata record for THIS execution hasn't been
+                            # inserted into `logs` yet (that happens further below),
+                            # so without this it would look "unknown" and be treated
+                            # as oldest even though it's the entry being written right
+                            # now. We already know its timestamp — use it.
+                            timestamps_by_execution_id[execution_id] = executed_at
+
                             # Select logs to keep (200KB) and archive the rest
-                            logs_to_keep, logs_to_archive = select_logs_for_archival(logs_dict, TARGET_SIZE_AFTER_ARCHIVAL)
-                            
+                            logs_to_keep, logs_to_archive = select_logs_for_archival(
+                                logs_dict, TARGET_SIZE_AFTER_ARCHIVAL, timestamps_by_execution_id
+                            )
+
                             if logs_to_archive:
                                 # Archive old logs to consolidation bucket
                                 archive_result = archive_logs_to_consolidation_bucket(
                                     current_user, task_id, logs_to_archive, access_token
                                 )
-                                
+
+                                # Only drop entries CONFIRMED written to the archive
+                                # bucket. Anything that failed to archive stays in the
+                                # primary store so a partial failure never loses data.
+                                archived_ids = set(archive_result.get("archived_ids", []))
+                                not_archived = {
+                                    eid: data
+                                    for eid, data in logs_to_archive.items()
+                                    if eid not in archived_ids
+                                }
+                                logs_dict = {**logs_to_keep, **not_archived}
+
                                 if archive_result["success"]:
-                                    # Use the reduced logs dictionary
-                                    logs_dict = logs_to_keep
-                                    logger.info(f"Archived {archive_result['archived_count']} logs, keeping {len(logs_dict)} recent logs for task {task_id}")
+                                    logger.info(f"Archived {len(archived_ids)} logs, keeping {len(logs_dict)} recent logs for task {task_id}")
+                                elif archived_ids:
+                                    logger.warning(
+                                        f"Partially archived logs for task {task_id}: "
+                                        f"{len(archived_ids)}/{len(logs_to_archive)} succeeded; "
+                                        f"{len(not_archived)} kept in primary store after failed archival"
+                                    )
                                 else:
                                     logger.warning(f"Failed to archive logs, keeping all logs in USER_DATA_STORAGE_TABLE: {archive_result.get('error', 'Unknown error')}")
                         
