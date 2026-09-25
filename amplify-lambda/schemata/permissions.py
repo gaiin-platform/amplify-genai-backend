@@ -71,6 +71,7 @@ permissions_by_state_type = {
     "/datasource/metadata/set": {"set": can_upload},
     "/files/upload": {"upload": can_upload},
     "/files/set_tags": {"set_tags": can_upload},
+    "/files/rename": {"rename": can_upload},
     "/files/tags/create": {"create": can_save},
     "/files/tags/delete": {"delete": can_delete_item},
     "/files/tags/list": {"list": can_read},

@@ -1275,6 +1275,49 @@ def update_file_tags(current_user, item_id, tags):
 
 
 @api_tool(
+    path="/files/rename",
+    name="renameFile",
+    method="POST",
+    tags=["files"],
+    description="Rename an uploaded file without changing its storage key.",
+    parameters={"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"}}, "required": ["id", "name"]},
+    output={"type": "object", "properties": {"success": {"type": "boolean"}, "message": {"type": "string"}}, "required": ["success", "message"]},
+)
+@required_env_vars({"FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM]})
+@validated("rename")
+def rename_file(event, context, current_user, name, data):
+    try:
+        payload = data["data"]
+        item_id = payload["id"]
+        new_name = payload["name"].strip()
+        if not item_id or not current_user:
+            return {"success": False, "message": "File id is required"}
+        if not new_name or len(new_name) > 255 or any(char in new_name for char in "/\\\\") or any(ord(char) < 32 for char in new_name):
+            return {"success": False, "message": "Invalid file name"}
+        table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
+        item = table.get_item(Key={"id": item_id}).get("Item")
+        if not item or item.get("createdBy") != current_user:
+            return {"success": False, "message": "File not found or not authorized"}
+        original_name = item.get("name") or ""
+        original_extension = os.path.splitext(original_name)[1].lower()
+        new_extension = os.path.splitext(new_name)[1].lower()
+        if original_extension != new_extension:
+            return {"success": False, "message": "File extension cannot be changed"}
+        table.update_item(
+            Key={"id": item_id},
+            UpdateExpression="SET #name = :name, updatedAt = :updatedAt, updatedBy = :updatedBy",
+            ExpressionAttributeNames={"#name": "name"},
+            ExpressionAttributeValues={":name": new_name, ":updatedAt": datetime.utcnow().isoformat(), ":updatedBy": current_user},
+        )
+        return {"success": True, "message": "File renamed successfully"}
+    except ClientError:
+        logger.exception("Unable to rename file")
+        return {"success": False, "message": "Unable to rename file"}
+    except (KeyError, TypeError, AttributeError):
+        return {"success": False, "message": "Invalid rename request"}
+
+
+@api_tool(
     path="/files/query",
     name="queryUploadedFiles",
     method="POST",

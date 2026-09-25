@@ -351,6 +351,16 @@ functions:
           method: post
           cors: true
 
+  rename_user_file:
+    handler: files/file.rename_file
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/rename
+          method: post
+          cors: true
+
   query_user_files:
     handler: files/file.query_user_files
     layers:

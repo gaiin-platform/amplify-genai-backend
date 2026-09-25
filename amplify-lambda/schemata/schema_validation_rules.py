@@ -5,6 +5,7 @@ from .file_upload_schema import file_upload_schema
 from .key_request_schema import key_request_schema
 from .file_delete_schema import file_delete_schema
 from .file_set_tags_schema import file_set_tags_schema
+from .file_rename_schema import file_rename_schema
 from .user_delete_tag_schema import user_delete_tag_schema
 from .create_tags_schema import create_tags_schema
 from .file_query_schema import file_query_schema
@@ -52,6 +53,7 @@ rules = {
         "/files/download": {"download": key_request_schema},
         "/files/delete": {"delete": file_delete_schema},
         "/files/set_tags": {"set_tags": file_set_tags_schema},
+        "/files/rename": {"rename": file_rename_schema},
         "/files/tags/delete": {"delete": user_delete_tag_schema},
         "/files/tags/create": {"create": create_tags_schema},
         "/files/tags/list": {"list": {}},
@@ -92,6 +94,7 @@ rules = {
         "/state/share/sent": {"read": {}},
         "/files/upload": {"upload": file_upload_schema},
         "/files/set_tags": {"set_tags": file_set_tags_schema},
+        "/files/rename": {"rename": file_rename_schema},
         "/files/tags/delete": {"delete": user_delete_tag_schema},
         "/files/tags/create": {"create": create_tags_schema},
         "/files/tags/list": {"list": {}},
