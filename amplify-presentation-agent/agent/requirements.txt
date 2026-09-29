@@ -1,0 +1,9 @@
+bedrock-agentcore==1.24.0
+strands-agents==1.57.1
+python-pptx==1.0.2
+pdf2image==1.17.0
+pillow==12.2.0
+pydantic==2.13.5
+boto3>=1.40.0
+aws-opentelemetry-distro>=0.10.0
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.2

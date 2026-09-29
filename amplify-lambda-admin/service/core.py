@@ -85,6 +85,7 @@ class AdminConfigTypes(Enum):
     USER_DOCUMENTATION_URL = "userDocumentationUrl"
     DEFAULT_TIMEZONE = "defaultTimezone"
     DEFAULT_SMART_MESSAGES = "defaultSmartMessages"
+    PRESENTATION_AGENT = "presentationAgent"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -741,7 +742,8 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.DEFAULT_MODELS
             | AdminConfigTypes.USER_DOCUMENTATION_URL
             | AdminConfigTypes.DEFAULT_TIMEZONE
-            | AdminConfigTypes.DEFAULT_SMART_MESSAGES ):
+            | AdminConfigTypes.DEFAULT_SMART_MESSAGES
+            | AdminConfigTypes.PRESENTATION_AGENT ):
             logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
 
@@ -1032,6 +1034,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.USER_DOCUMENTATION_URL,
             AdminConfigTypes.DEFAULT_TIMEZONE,
             AdminConfigTypes.DEFAULT_SMART_MESSAGES,
+            AdminConfigTypes.PRESENTATION_AGENT,
         ]
 
         for config_type in dynamo_config_types:
@@ -1290,6 +1293,13 @@ def initialize_config(config_type):
         item["data"] = "UTC"
     elif config_type == AdminConfigTypes.DEFAULT_SMART_MESSAGES:
         item["data"] = True
+    elif config_type == AdminConfigTypes.PRESENTATION_AGENT:
+        item["data"] = {
+            "modelId": "us.anthropic.claude-opus-5",
+            "visionModelId": "",
+            "imageModelId": "",
+            "maxReviewPasses": 2,
+        }
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:

@@ -1,0 +1,19 @@
+{
+  "title": "Expanding Amplify Across Campus",
+  "subtitle": "FY27 adoption plan",
+  "audience": "University IT leadership",
+  "objective": "Approve funding for the campus-wide rollout",
+  "narrative": ["Adoption is growing fast", "Costs stay predictable", "Rollout in three phases", "Decision needed"],
+  "slides": [
+    {"function": "opening", "layout": 0, "title": "Expanding Amplify Across Campus", "subtitle": "FY27 adoption plan · IT Leadership Review", "notes": "Welcome and purpose."},
+    {"function": "agenda", "layout": 1, "title": "Today we will decide whether to fund the rollout", "bullets": [{"text": "Where adoption stands"}, {"text": "What it costs"}, {"text": "How we would roll it out"}, {"text": "The decision we need"}], "notes": "Walk through agenda."},
+    {"function": "section", "layout": 2, "title": "Where adoption stands", "subtitle": "Usage since launch"},
+    {"function": "data", "layout": 5, "title": "Monthly active users tripled in six months", "chart": {"type": "column", "categories": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"], "series": [{"name": "Active users", "values": [1200, 1650, 2100, 2600, 3100, 3700]}], "number_format": "#,##0"}, "source": "Amplify usage logs, Jan–Jun", "notes": "Growth is organic."},
+    {"function": "big_number", "layout": 5, "title": "Faculty report saving hours every week", "big_number": {"value": "4.2 hrs", "label": "median weekly time saved per faculty user"}, "source": "Spring faculty survey (n=412)"},
+    {"function": "comparison", "layout": 4, "title": "Central hosting beats departmental licenses on cost and control", "columns": [{"heading": "Central Amplify", "bullets": [{"text": "One contract, pooled usage"}, {"text": "Data stays in university AWS"}, {"text": "Admin-managed models"}]}, {"heading": "Departmental licenses", "bullets": [{"text": "Duplicate seats"}, {"text": "Data leaves campus"}, {"text": "No central oversight"}]}]},
+    {"function": "process", "layout": 5, "title": "We roll out in three phases over one year", "diagram": {"kind": "process", "steps": [{"label": "Pilot", "detail": "Two colleges, Q1"}, {"label": "Expand", "detail": "All faculty, Q2–Q3"}, {"label": "Campus", "detail": "Students and staff, Q4"}]}},
+    {"function": "data", "layout": 1, "title": "Costs stay under budget at full scale", "bullets": [{"text": "Model spend scales with usage"}, {"text": "Hosting cost is flat"}], "table": {"headers": ["Phase", "Users", "Annual cost"], "rows": [["Pilot", "4,000", "$120K"], ["Expand", "12,000", "$310K"], ["Campus", "30,000", "$640K"]]}},
+    {"function": "process", "layout": 5, "title": "Key milestones", "diagram": {"kind": "timeline", "steps": [{"label": "Q1", "detail": "Pilot live"}, {"label": "Q2", "detail": "Faculty onboarding"}, {"label": "Q3", "detail": "Integrations"}, {"label": "Q4", "detail": "Campus launch"}]}},
+    {"function": "closing", "layout": 2, "title": "Decision: approve $640K for the FY27 rollout", "subtitle": "Next step: pilot kickoff in January"}
+  ]
+}

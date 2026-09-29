@@ -136,6 +136,7 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
         - !Ref LambdaIAMPolicyAPIGateway
+        - !Ref LambdaIAMPolicyPresentationAgent
 
 functions:
 
@@ -474,6 +475,9 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 180
     memorySize: 512
+    environment:
+      # Optional amplify-presentation-agent service; skipped when not deployed.
+      PRESENTATION_TEMPLATE_ANALYSIS_FUNCTION: amplify-${self:custom.depName}-presentation-agent-${sls:stage}-analyzeTemplateUpload
     events: []
 
   process_document_for_rag:
@@ -805,6 +809,20 @@ resources:
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources/*
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/integrations/*
+
+    # Lets handlePptxUpload start layout analysis in the presentation agent service.
+    LambdaIAMPolicyPresentationAgent:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-presentation-agent
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.depName}-presentation-agent-${sls:stage}-analyzeTemplateUpload
 
     # ---- Lambda invoke permissions for S3 → Lambda ----
     ConvertInvokePermissionFromS3:

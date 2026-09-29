@@ -1,0 +1,413 @@
+service: amplify-${self:custom.depName}-presentation-agent
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - .venv/**
+    - agent/**
+    - scripts/**
+    - tests/**
+    - .pytest_cache/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-cloudformation-changesets-v3
+
+custom:
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
+  stages:
+    - dev
+    - staging
+    - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
+
+  # ECR image built and pushed by scripts/build_push_agent.sh. Leave empty to deploy
+  # the API without the AgentCore runtime (start requests then fail gracefully).
+  agentImageUri: ${self:custom.stageVars.PRESENTATION_AGENT_IMAGE_URI, ''}
+  # AgentCore runtime names allow only letters, digits and underscores.
+  agentRuntimeName: amplify_${self:custom.depName}_presentations_${sls:stage}
+
+  pythonRequirements:
+    dockerizePip: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 5
+
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.stageVars.DEP_REGION}
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+    restApiRootResourceId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+
+  environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
+    PRESENTATION_JOBS_TABLE: ${self:service}-${sls:stage}-jobs
+    PRESENTATION_AGENT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
+    PRESENTATION_AGENT_RUNTIME_ARN:
+      Fn::If:
+        - HasAgentImage
+        - !GetAtt PresentationAgentRuntime.AgentRuntimeArn
+        - ""
+
+    # Imported Variables from Parameter Store
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME} #Marked for future deletion
+
+  iam:
+    role:
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Ref PresentationAgentLambdaPolicy
+
+functions:
+
+  start_presentation:
+    handler: service/core.start_presentation
+    timeout: 60
+    events:
+      - http:
+          path: presentation/start
+          method: post
+          cors: true
+
+  presentation_status:
+    handler: service/core.get_presentation_status
+    timeout: 30
+    events:
+      - http:
+          path: presentation/status
+          method: get
+          cors: true
+
+  analyze_template:
+    handler: service/core.analyze_template
+    timeout: 60
+    events:
+      - http:
+          path: presentation/template/analyze
+          method: post
+          cors: true
+
+  template_analysis_status:
+    handler: service/core.get_template_analysis_status
+    timeout: 30
+    events:
+      - http:
+          path: presentation/template/status
+          method: get
+          cors: true
+
+  # Invoked asynchronously by amplify-lambda's handle_pptx_upload (by name, no HTTP event).
+  analyzeTemplateUpload:
+    handler: service/core.analyze_uploaded_template
+    timeout: 60
+
+  # Parameter Store auto-populator Lambda (syncs locally defined env vars to SSM)
+  presentation_param_populator:
+    handler: populate_env_vars.lambda_handler
+    timeout: 60
+    environment:
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+
+resources:
+  Conditions:
+    HasAgentImage:
+      Fn::Not:
+        - Fn::Equals:
+            - "${self:custom.agentImageUri}"
+            - ""
+
+  Resources:
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
+      Properties:
+        ServiceToken: !GetAtt PresentationUnderscoreparamUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}
+
+    PresentationJobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.PRESENTATION_JOBS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: jobId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: user-createdAt-index
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    # Execution role assumed by the AgentCore Runtime microVMs.
+    PresentationAgentRuntimeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${sls:stage}-runtime
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: bedrock-agentcore.amazonaws.com
+              Action: sts:AssumeRole
+              Condition:
+                StringEquals:
+                  aws:SourceAccount: !Ref AWS::AccountId
+                ArnLike:
+                  aws:SourceArn: !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*"
+        Policies:
+          - PolicyName: presentation-agent-runtime
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchGetImage
+                    - ecr:GetDownloadUrlForLayer
+                  Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/amplify-presentation-agent*"
+                - Effect: Allow
+                  Action:
+                    - ecr:GetAuthorizationToken
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogStreams
+                    - logs:DescribeLogGroups
+                  Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+                - Effect: Allow
+                  Action:
+                    - xray:PutTraceSegments
+                    - xray:PutTelemetryRecords
+                    - xray:GetSamplingRules
+                    - xray:GetSamplingTargets
+                  Resource: "*"
+                - Effect: Allow
+                  Action: cloudwatch:PutMetricData
+                  Resource: "*"
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: bedrock-agentcore
+                - Effect: Allow
+                  Action:
+                    - bedrock-agentcore:GetWorkloadAccessToken
+                    - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                    - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                  Resource:
+                    - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default"
+                    - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/*"
+                # Planner/reviewer models (cross-region inference profiles need both ARNs).
+                - Effect: Allow
+                  Action:
+                    - bedrock:InvokeModel
+                    - bedrock:InvokeModelWithResponseStream
+                  Resource:
+                    - "arn:aws:bedrock:*::foundation-model/*"
+                    - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource:
+                    - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/powerPointTemplates/*"
+                    - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/presentationAgent/*"
+                    - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/templates/*"
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/presentations/*"
+                    - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/presentationAgent/*"
+                - Effect: Allow
+                  Action:
+                    - dynamodb:UpdateItem
+                    - dynamodb:GetItem
+                  Resource:
+                    - !GetAtt PresentationJobsTable.Arn
+                # Billing via pycommon.api.accounting
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:GetItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource:
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                    - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+    PresentationAgentRuntime:
+      Type: AWS::BedrockAgentCore::Runtime
+      Condition: HasAgentImage
+      Properties:
+        AgentRuntimeName: ${self:custom.agentRuntimeName}
+        Description: Amplify PowerPoint generation agent (plan, build, render, review)
+        RoleArn: !GetAtt PresentationAgentRuntimeRole.Arn
+        AgentRuntimeArtifact:
+          ContainerConfiguration:
+            ContainerUri: ${self:custom.agentImageUri}
+        NetworkConfiguration:
+          NetworkMode: PUBLIC
+        ProtocolConfiguration: HTTP
+        LifecycleConfiguration:
+          IdleRuntimeSessionTimeout: 900
+          MaxLifetime: 7200
+        EnvironmentVariables:
+          LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+          AWS_DEFAULT_REGION: ${self:provider.region}
+          PRESENTATION_JOBS_TABLE: ${self:provider.environment.PRESENTATION_JOBS_TABLE}
+          S3_CONSOLIDATION_BUCKET_NAME: ${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
+          S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+          MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+          CHAT_USAGE_DYNAMO_TABLE: ${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}
+          COST_CALCULATIONS_DYNAMO_TABLE: ${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}
+          ENV_VARS_TRACKING_TABLE: ${self:provider.environment.ENV_VARS_TRACKING_TABLE}
+          CRITICAL_ERRORS_SQS_QUEUE_NAME: ${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}
+
+    PresentationAgentLambdaPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.PRESENTATION_AGENT_LAMBDA_MANAGED_POLICY}
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:BatchGetItem
+                - dynamodb:Query
+              Resource:
+                - !GetAtt PresentationJobsTable.Arn
+                - !Sub "${PresentationJobsTable.Arn}/index/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            # Presigned download URLs for finished decks and slide previews.
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/presentations/*"
+            - Effect: Allow
+              Action:
+                - bedrock-agentcore:InvokeAgentRuntime
+              Resource:
+                - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${self:custom.agentRuntimeName}-*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+  Outputs:
+    PresentationAgentRuntimeArn:
+      Condition: HasAgentImage
+      Value: !GetAtt PresentationAgentRuntime.AgentRuntimeArn

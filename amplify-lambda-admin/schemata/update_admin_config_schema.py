@@ -562,6 +562,29 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'presentationAgent'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "presentationAgent"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "modelId": {"type": "string"},
+                                    "visionModelId": {"type": "string"},
+                                    "imageModelId": {"type": "string"},
+                                    "maxReviewPasses": {"type": "integer", "minimum": 0, "maximum": 4},
+                                },
+                                "required": ["modelId"],
+                                "additionalProperties": False
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'defaultSmartMessages'
                         "type": "object",
                         "properties": {
