@@ -71,7 +71,7 @@ test('explicit modes remain disabled by deployment policy and unavailable interp
     assert.equal((await routeToAssistant({ clientOptions: { codeInterpreterOnly: true }, interpreterAvailable: false })).name, 'default');
 });
 
-test('ordinary classifier results and safe fallback select only deployment-enabled automatic modes', async () => {
+test('automatic artifact decisions select the artifact-mode assistant', async () => {
     assert.equal((await routeToAssistant({ decision: { artifacts: true, codeInterpreter: false } })).name, 'default');
     assert.equal((await routeToAssistant({ decision: { artifacts: false, codeInterpreter: true }, policy: { ...availability, codeInterpreter: false } })).name, 'default');
     assert.equal((await routeToAssistant({ decision: { artifacts: true, codeInterpreter: false }, policy: { ...availability, artifacts: false } })).name, 'default');

@@ -36,7 +36,6 @@ const doTrace = false; // Enable or disable tracing
 
 const logger = getLogger("router");
 
-
 function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }

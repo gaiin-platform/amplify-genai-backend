@@ -3,9 +3,22 @@ import { getLogger } from './logging.js';
 const logger = getLogger('ordinaryChatRouter');
 
 export const ROUTING_SCHEMA_VERSION = 1;
-export const ROUTING_TIMEOUT_MS = 1_500;
+export const ROUTING_TIMEOUT_MS = 5_000;
 export const MAX_ROUTING_CONTEXT_CHARS = 6_000;
 export const MAX_ROUTING_CONTEXT_TURNS = 6;
+
+// Dedicated internal classifier model. Keep this independent of user model defaults
+// and availability; the catalog entry is intentionally unavailable for direct chat.
+const ROUTING_MODEL = Object.freeze({
+    id: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    name: 'Claude Haiku 4.5',
+    provider: 'Bedrock',
+    inputContextWindow: 200_000,
+    outputTokenLimit: 64_000,
+    supportsReasoning: true,
+    supportsSystemPrompts: true,
+    systemPrompt: ''
+});
 
 const REASON_CODES = Object.freeze(new Set([
     'current_information',
@@ -47,6 +60,24 @@ const SAFE_FEATURES = Object.freeze({
     artifacts: false,
     codeInterpreter: false
 });
+
+const ROUTING_MODEL_PROVIDERS = new Set(['openai', 'azure', 'gemini', 'bedrock']);
+
+function hasSupportedProvider(model) {
+    return typeof model?.provider === 'string' && ROUTING_MODEL_PROVIDERS.has(model.provider.toLowerCase());
+}
+
+/** Prefer the configured cheap model, but fall back to the validated chat model
+ * if the model catalog entry is missing provider metadata or has an unsupported provider.
+ */
+export function resolveRoutingModel(params = {}, body = {}) {
+    const candidates = [params.options?.cheapestModel, params.cheapestModel];
+    const configured = candidates.find(hasSupportedProvider);
+    if (configured) return configured;
+
+    const requestModel = params.options?.model || params.model || body.options?.model || body.model;
+    return hasSupportedProvider(requestModel) ? requestModel : null;
+}
 
 const textFromMessage = (message) => {
     if (!message || (message.role !== 'user' && message.role !== 'assistant')) return '';
@@ -179,7 +210,8 @@ export function applyRoutingPolicy(decision, availability = {}, messages = []) {
     const downloadableFileIntent = hasDownloadableFileIntent(messages);
     const effective = {
         webSearch: safeDecision.webSearch === true && availability.webSearch !== false,
-        // Downloadable documents require file generation, not an in-app artifact block.
+        // Ordinary automatic artifacts are parsed from autoArtifacts fenced blocks.
+        // Downloadable documents stay on the dedicated Code Interpreter route.
         artifacts: !downloadableFileIntent && safeDecision.artifacts === true && availability.artifacts !== false,
         codeInterpreter: (safeDecision.codeInterpreter === true || downloadableFileIntent) && availability.codeInterpreter === true
     };
@@ -209,11 +241,21 @@ function routingPrompt(context, availability) {
 }
 
 /**
+ * Real classifier implementation used in production. Kept as the exported default
+ * value for `routeOrdinaryChat`'s `classify` parameter so the production call path
+ * (which never passes an override) cannot silently fall through to `undefined`.
+ */
+export async function defaultClassifier(classifierParams, classifierMessages, schema, responseStream, callOptions) {
+    const { promptUnifiedLLMForData } = await import('../llm/UnifiedLLMClient.js');
+    return promptUnifiedLLMForData(classifierParams, classifierMessages, schema, responseStream, callOptions);
+}
+
+/**
  * Execute one bounded classifier call. Failures are intentionally converted to
  * a safe decision so a routing outage cannot take ordinary chat down.
  */
 export async function routeOrdinaryChat(params, body, deploymentConfig, {
-    classify,
+    classify = defaultClassifier,
     timeoutMs = ROUTING_TIMEOUT_MS,
     now = () => Date.now()
 } = {}) {
@@ -232,28 +274,29 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         return { decision: fallback('routing_disabled'), metadata: baseMeta };
     }
 
-    const cheapestModel = params.options?.cheapestModel || params.cheapestModel;
-    if (!cheapestModel) {
-        return { decision: fallback('router_error'), metadata: { ...baseMeta, fallback: 'router_error' } };
-    }
+    const routingModel = ROUTING_MODEL;
 
     const context = buildRoutingContext(body.messages);
-    const classifier = classify || (async (classifierParams, classifierMessages, schema, responseStream, callOptions) => {
-        const { promptUnifiedLLMForData } = await import('../llm/UnifiedLLMClient.js');
-        return promptUnifiedLLMForData(classifierParams, classifierMessages, schema, responseStream, callOptions);
-    });
     const classifierParams = {
         ...params,
         requestId: params.options?.requestId || params.requestId,
-        model: cheapestModel,
+        model: routingModel,
+        cheapestModel: routingModel,
         options: {
             ...(params.options || {}),
-            model: cheapestModel,
+            model: routingModel,
+            cheapestModel: routingModel,
             isOrdinaryChatRequest: false,
             _isInternalCall: true,
+            // Extended thinking/reasoning adds multiple seconds of latency and is
+            // unnecessary for a small boolean classification decision. Without this,
+            // a reasoning-capable routing model reliably exceeds ROUTING_TIMEOUT_MS,
+            // so every classification call falls back to all-features-off.
+            disableReasoning: true,
             options: { ...(params.options?.options || {}), artifacts: false }
         }
     };
+    const routingModelId = routingModel.id || routingModel;
     const startedAt = now();
     let timeout;
     let requestCancelled = false;
@@ -300,14 +343,14 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         if (!validated) {
             return {
                 decision: fallback('invalid_schema'),
-                metadata: { ...baseMeta, modelId: cheapestModel.id || cheapestModel, latencyMs: now() - startedAt, fallback: 'invalid_schema' }
+                metadata: { ...baseMeta, modelId: routingModelId, latencyMs: now() - startedAt, fallback: 'invalid_schema' }
             };
         }
         ensureRequestActive();
         const decision = applyRoutingPolicy(validated, availability, body.messages);
         return {
             decision,
-            metadata: { ...baseMeta, modelId: cheapestModel.id || cheapestModel, latencyMs: now() - startedAt, fallback: null }
+            metadata: { ...baseMeta, modelId: routingModelId, latencyMs: now() - startedAt, fallback: null }
         };
     } catch (error) {
         if (requestCancelled || error?.code === 'REQUEST_CANCELLED' ||
@@ -319,12 +362,12 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         const reason = error?.code === 'ROUTER_TIMEOUT' ? 'router_timeout' : 'router_error';
         logger.warn('Ordinary chat routing fell back safely', {
             reason,
-            modelId: cheapestModel.id || cheapestModel,
+            modelId: routingModelId,
             latencyMs: now() - startedAt
         });
         return {
             decision: fallback(reason),
-            metadata: { ...baseMeta, modelId: cheapestModel.id || cheapestModel, latencyMs: now() - startedAt, fallback: reason }
+            metadata: { ...baseMeta, modelId: routingModelId, latencyMs: now() - startedAt, fallback: reason }
         };
     } finally {
         if (timeout) clearTimeout(timeout);

@@ -6,6 +6,7 @@
  */
 
 import { getLogger } from '../common/logging.js';
+import { hasConfiguredWebSearchProvider, resolveWebSearchAvailability, webSearchProviderNames } from './webSearchAvailability.js';
 import { sendStatusEventToStream, sendStateEventToStream, sendDeltaToStream, endStream, forceFlush } from '../common/streams.js';
 import { newStatus } from '../common/status.js';
 import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
@@ -38,6 +39,13 @@ async function presignDataSource(ds, bucket) {
 const logger = getLogger('toolLoop');
 
 const MAX_TOOL_ITERATIONS = 5;
+
+export function sendToolLoopFallback(responseStream, content = 'Maximum tool iterations reached. Please try rephrasing your request.') {
+    if (responseStream && !responseStream.writableEnded) {
+        sendDeltaToStream(responseStream, 'answer', content);
+    }
+    return { content };
+}
 
 /**
  * Extract tool calls from LLM result
@@ -85,34 +93,30 @@ export async function executeToolLoop(params, messages, model, responseStream, o
 
     // Get user's tool API keys
     let apiKeys = await getUserToolApiKeys(userId);
-     // Also check for admin-configured web search (auto-enable ONLY if frontend didn't explicitly set a preference)
-    let adminKey = null;
-    // AgentCore can be authorized without a stored key (user_token / IAM gateway).
-    let webSearchKeylessAvailable = false;
-
+    // A user-provided key remains usable if no deployment-wide provider is configured.
     const webSearchAllowed = params.options?.deploymentFeatures?.webSearch !== false;
+    let webSearchKeylessAvailable = false;
+    let adminKey = null;
     options.webSearchEnabled = options.webSearchEnabled === true && webSearchAllowed;
     if (options.webSearchEnabled) {
         try {
             adminKey = await getAdminWebSearchApiKey();
-            if (adminKey && adminKey.provider && adminKey.api_key) {
-                logger.info(`Admin web search available (${adminKey.provider}), auto-enabling tool loop`);
-                apiKeys = {
-                ...apiKeys,
-                    [adminKey.provider]: adminKey.api_key
-                };
-            } else if (adminKey && adminKey.provider && adminKey.config?.gatewayUrl) {
-                // AgentCore gateway authorized via the caller's token (no stored secret).
-                logger.info(`Admin web search available (${adminKey.provider}, keyless), auto-enabling tool loop`);
-                webSearchKeylessAvailable = true;
-            } else {
-                logger.warn("→ Web search enabled for this request but no admin API key configured");
-                options.webSearchEnabled = false;
-            }
         } catch (error) {
             logger.debug('Failed to check admin web search config:', error.message);
         }
-    } 
+        const resolvedAvailability = resolveWebSearchAvailability({
+            requested: options.webSearchEnabled,
+            allowed: webSearchAllowed,
+            apiKeys,
+            adminKey
+        });
+        apiKeys = resolvedAvailability.apiKeys;
+        webSearchKeylessAvailable = resolvedAvailability.keylessAvailable;
+        options.webSearchEnabled = resolvedAvailability.enabled;
+        if (!resolvedAvailability.enabled) {
+            logger.warn('Web search requested but no permitted provider is configured');
+        }
+    }
 
     logger.info("🔍 Tool loop check:", {
         adminWebSearchAvailable: !!adminKey,
@@ -122,13 +126,14 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     });
 
 
-    logger.info(`Tool API keys available: ${Object.keys(apiKeys).join(', ') || 'none'}`);
+    const configuredSearchProviders = webSearchProviderNames.filter(provider => Boolean(apiKeys[provider]));
+    logger.info(`Configured web-search providers available: ${configuredSearchProviders.join(', ') || 'none'}`);
 
     // Collect all available tools
     const allTools = [];
 
     // Add web search only when the deployment allows it and API keys are available.
-    if (webSearchAllowed && options.webSearchEnabled && (Object.keys(apiKeys).length > 0 || webSearchKeylessAvailable)) {
+    if (webSearchAllowed && options.webSearchEnabled && (hasConfiguredWebSearchProvider(apiKeys) || webSearchKeylessAvailable)) {
         allTools.push(WEB_SEARCH_TOOL_DEFINITION);
     }
 
@@ -519,7 +524,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     }
 
     logger.warn('Max tool iterations reached');
-    return { content: 'Maximum tool iterations reached. Please try rephrasing your request.' };
+    return sendToolLoopFallback(responseStream);
 }
 
 /**

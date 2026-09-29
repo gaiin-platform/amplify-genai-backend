@@ -12,7 +12,13 @@ const PROMPT_KEYS = [
     'amplifyHelper.base'
 ];
 const AVAILABILITY_KEYS = ['promptHighlighter', 'artifacts', 'webSearch', 'codeInterpreter', 'memory'];
-const DEFAULT_AVAILABILITY = Object.freeze(Object.fromEntries(AVAILABILITY_KEYS.map(key => [key, true])));
+const DEFAULT_AVAILABILITY = Object.freeze({
+    promptHighlighter: false,
+    artifacts: true,
+    webSearch: true,
+    codeInterpreter: true,
+    memory: false
+});
 const MAX_PROMPT_BYTES = 16 * 1024;
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_READ_TIMEOUT_MS = 2_500;

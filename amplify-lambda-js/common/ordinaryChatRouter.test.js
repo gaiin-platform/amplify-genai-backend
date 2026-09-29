@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+// Required before the default classifier's dynamic import of UnifiedLLMClient.js (and its
+// transitive secrets/provider modules) runs for the first time in this test process, or
+// module-load-time secret fetching crashes the whole test file instead of rejecting normally.
+process.env.LOCAL_DEVELOPMENT = 'true';
+process.env.LOCAL_SECRET_ = '{"models":[]}';
+process.env.API_BASE_URL = 'https://test.invalid';
+
 import {
     ROUTING_SCHEMA_VERSION,
+    ROUTING_TIMEOUT_MS,
     applyRoutingPolicy,
+    resolveRoutingModel,
     buildRoutingContext,
+    defaultClassifier,
     hasDownloadableFileIntent,
     resolveRoutingOptions,
     resolveSpecializedAssistantMode,
@@ -13,6 +24,18 @@ import {
 } from './ordinaryChatRouter.js';
 
 const valid = { schemaVersion: 1, webSearch: true, artifacts: false, codeInterpreter: true };
+
+test('deployment config defaults memory and prompt highlighter off and other features on', async () => {
+    const { normalizeDeploymentConfig } = await import('./adminConfig.js');
+    const normalized = normalizeDeploymentConfig(null, null);
+    assert.deepEqual(normalized.availability, {
+        promptHighlighter: false,
+        artifacts: true,
+        webSearch: true,
+        codeInterpreter: true,
+        memory: false
+    });
+});
 
 test('validates strict versioned boolean decisions', () => {
     assert.deepEqual(validateRoutingDecision(valid), valid);
@@ -120,6 +143,99 @@ test('admin availability always wins over classifier output', () => {
 
 const params = { options: { cheapestModel: { id: 'cheap', provider: 'OpenAI' } } };
 const body = { messages: [{ role: 'user', content: 'hello' }] };
+
+test('routing model uses supported configured cheapest model and falls back from provider-less records', () => {
+    const requestModel = { id: 'request-model', provider: 'Bedrock' };
+    assert.equal(resolveRoutingModel({ options: { cheapestModel: { id: 'cheap', provider: 'OpenAI' }, model: requestModel } }).id, 'cheap');
+    assert.equal(resolveRoutingModel({ options: { cheapestModel: { id: 'cheap', provider: '' }, model: requestModel } }), requestModel);
+    assert.equal(resolveRoutingModel({ cheapestModel: { id: 'cheap' }, model: requestModel }), requestModel);
+    assert.equal(resolveRoutingModel({ options: { cheapestModel: { id: 'unknown', provider: 'unsupported' } } }), null);
+});
+
+test('classifier always uses the internal Haiku 4.5 model instead of user-selected models', async () => {
+    let classifierParams;
+    const requestModel = { id: 'user-selected-model', provider: 'Bedrock' };
+    const userCheapestModel = { id: 'user-cheapest-model', provider: 'OpenAI' };
+    const result = await routeOrdinaryChat({
+        model: requestModel,
+        options: { cheapestModel: userCheapestModel, model: requestModel }
+    }, body, { routingEnabled: true, availability: { webSearch: true, artifacts: true, codeInterpreter: true } }, {
+        classify: async (params) => {
+            classifierParams = params;
+            return { schemaVersion: 1, webSearch: true, artifacts: true, codeInterpreter: false };
+        }
+    });
+    assert.equal(classifierParams.model.id, 'us.anthropic.claude-haiku-4-5-20251001-v1:0');
+    assert.equal(classifierParams.model.name, 'Claude Haiku 4.5');
+    assert.equal(classifierParams.model.provider, 'Bedrock');
+    assert.equal(classifierParams.model.outputTokenLimit, 64_000);
+    assert.equal(classifierParams.options.model, classifierParams.model);
+    assert.equal(classifierParams.cheapestModel, classifierParams.model);
+    assert.equal(classifierParams.options.cheapestModel, classifierParams.model);
+    assert.notEqual(classifierParams.options.model.id, requestModel.id);
+    assert.notEqual(classifierParams.options.cheapestModel.id, userCheapestModel.id);
+    assert.equal(requestModel.id, 'user-selected-model');
+    assert.equal(userCheapestModel.id, 'user-cheapest-model');
+    assert.equal(result.decision.webSearch, true);
+    assert.equal(result.metadata.fallback, null);
+});
+
+test('classifier call disables extended reasoning and allows up to five seconds for classification', async () => {
+    // Regression test: a reasoning-capable routing model with reasoning left enabled
+    // took multiple seconds per classification call, always exceeding the old
+    // 1500ms timeout and forcing every request to the safe all-off fallback.
+    // disableReasoning must reach the classifier options, and the slightly larger
+    // timeout leaves room for model warmup or temporary provider latency after thinking
+    // has been disabled.
+    let classifierParams;
+    await routeOrdinaryChat(params, body,
+        { routingEnabled: true, availability: { webSearch: true, artifacts: true, codeInterpreter: true } },
+        { classify: async (p) => { classifierParams = p; return { schemaVersion: 1, webSearch: false, artifacts: false, codeInterpreter: false }; } }
+    );
+    assert.equal(classifierParams.options.disableReasoning, true);
+    assert.equal(ROUTING_TIMEOUT_MS, 5_000);
+});
+
+test('classification completing between old and new timeouts keeps enabled feature decisions', async () => {
+    const result = await routeOrdinaryChat(params, body,
+        { routingEnabled: true, availability: { webSearch: true, artifacts: true, codeInterpreter: true } },
+        { classify: async () => {
+            await new Promise(resolve => setTimeout(resolve, 2_000));
+            return { schemaVersion: 1, webSearch: true, artifacts: false, codeInterpreter: false };
+        } }
+    );
+    assert.equal(result.metadata.fallback, null);
+    assert.equal(result.decision.webSearch, true);
+});
+
+test('the exported default classifier is a real delegate, not an unbound reference', async () => {
+    // Deterministic, no-network failure mode (promptUnifiedLLMForData throws before any
+    // provider call when no model is supplied), which proves the dynamic import and
+    // delegation wiring actually run rather than silently resolving to `undefined`.
+    await assert.rejects(
+        defaultClassifier({ options: {} }, [{ role: 'user', content: 'x' }], { type: 'object' }),
+        /Model not specified/
+    );
+});
+
+test('routeOrdinaryChat resolves a real classifier when no override is passed, matching the production call shape', async () => {
+    // Regression test for the exact production bug: router.js calls
+    // routeOrdinaryChat(params, body, deploymentConfig) with no 4th argument at all, so
+    // `classify` must default to a real function. Previously it silently defaulted to
+    // `undefined` while an unused local variable held the real implementation, so every
+    // call threw "classify is not a function" synchronously — a single microtask that
+    // Date.now() always measures as latencyMs: 0 — before ever reaching a provider.
+    // A real classifier attempt crosses multiple awaited operations (dynamic import,
+    // secrets/provider lookup) and always measures a non-zero latency, even when it
+    // ultimately fails fast in this test environment (no configured secrets/network).
+    const result = await routeOrdinaryChat(
+        { options: { cheapestModel: { id: 'cheap', provider: 'OpenAI' } } },
+        { messages: [{ role: 'user', content: 'hello' }] },
+        { routingEnabled: true, availability: { webSearch: true, artifacts: true, codeInterpreter: true } }
+    );
+    assert.equal(result.metadata.fallback, 'router_error');
+    assert.ok(result.metadata.latencyMs > 0, `expected non-zero latency proving the classifier ran, got ${result.metadata.latencyMs}`);
+});
 
 test('routing fallback is safe on disabled and malformed classifier calls', async () => {
     const disabled = await routeOrdinaryChat(params, body, { routingEnabled: false, availability: { webSearch: true, artifacts: true, codeInterpreter: true } });

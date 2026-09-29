@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { BUILTIN_PROMPTS, addModelSystemPrompt, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from './systemPrompts.js';
 import { createDeploymentConfigLoader, normalizeDeploymentConfig } from './adminConfig.js';
 
-test('normalizes missing prompts to safe runtime defaults and defaults missing feature values on', () => {
+test('normalizes missing prompts to safe runtime defaults and defaults highlighter/memory off', () => {
     const config = normalizeDeploymentConfig(null, null);
     assert.deepEqual(config.availability, {
-        promptHighlighter: true, artifacts: true, webSearch: true, codeInterpreter: true, memory: true
+        promptHighlighter: false, artifacts: true, webSearch: true, codeInterpreter: true, memory: false
     });
     assert.equal(config.prompts['ordinaryChat.base'], '');
     assert.equal(config.allowClassicUiSwitch, true);

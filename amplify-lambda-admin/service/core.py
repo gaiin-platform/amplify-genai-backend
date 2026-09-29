@@ -1289,7 +1289,7 @@ def initialize_config(config_type):
             "embeddings": None
         }
     elif config_type == AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE:
-        item["data"] = "future-local"
+        item["data"] = "future-cloud"
     elif config_type == AdminConfigTypes.EMAIL_SUPPORT:
         item["data"] = {"isActive": False, "email": ""}
     elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
@@ -1321,11 +1321,11 @@ def initialize_config(config_type):
         item["data"] = {
             "schemaVersion": 1,
             "availability": {
-                "promptHighlighter": True,
+                "promptHighlighter": False,
                 "artifacts": True,
                 "webSearch": True,
                 "codeInterpreter": True,
-                "memory": True,
+                "memory": False,
             },
             "allowClassicUiSwitch": True,
             "routingEnabled": False,
