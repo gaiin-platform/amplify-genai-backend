@@ -90,6 +90,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // AgentCore can be authorized without a stored key (user_token / IAM gateway).
     let webSearchKeylessAvailable = false;
 
+    const webSearchAllowed = params.options?.deploymentFeatures?.webSearch !== false;
+    options.webSearchEnabled = options.webSearchEnabled === true && webSearchAllowed;
     if (options.webSearchEnabled) {
         try {
             adminKey = await getAdminWebSearchApiKey();
@@ -125,8 +127,8 @@ export async function executeToolLoop(params, messages, model, responseStream, o
     // Collect all available tools
     const allTools = [];
 
-    // Add web search tool if API keys are available, or AgentCore is keyless-authorized
-    if (Object.keys(apiKeys).length > 0 || webSearchKeylessAvailable) {
+    // Add web search only when the deployment allows it and API keys are available.
+    if (webSearchAllowed && options.webSearchEnabled && (Object.keys(apiKeys).length > 0 || webSearchKeylessAvailable)) {
         allTools.push(WEB_SEARCH_TOOL_DEFINITION);
     }
 
@@ -423,7 +425,9 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     // Pass the caller's access token so the AgentCore gateway can
                     // authorize the request in user_token mode.
                     toolResult = await executeToolCall(toolCall, apiKeys, {
-                        accessToken: params.account?.accessToken
+                        accessToken: params.account?.accessToken,
+                        deploymentFeatures: params.options?.deploymentFeatures,
+                        promptSettings: params.options?.deploymentPromptSettings
                     });
 
                     // Collect web search sources for display

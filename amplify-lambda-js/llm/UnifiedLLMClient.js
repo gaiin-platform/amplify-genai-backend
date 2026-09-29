@@ -24,7 +24,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
-import { ARTIFACTS_PROMPT } from "../common/conversations.js";
+import { getFeaturePrompt, addModelSystemPrompt, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from "../common/systemPrompts.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
@@ -268,6 +268,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
  */
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
+    const abortSignal = params.signal || options.signal;
+    if (abortSignal?.aborted) throw abortSignal.reason || Object.assign(new Error('LLM call aborted'), { name: 'AbortError' });
     // 💰 BILLING-CRITICAL: a single user request can trigger MANY LLM calls (e.g. each
     // tool-loop iteration calls callUnifiedLLM again with the SAME parent requestId).
     // `llmCallId` uniquely identifies THIS one LLM call so that usage tracking, billing,
@@ -415,6 +417,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         requestId,
         llmCallId,
         cancelled: false,
+        abortController: new AbortController(),
         startTime: Date.now(),
         responseStream,
         statusTimer: null,
@@ -437,6 +440,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         }
     };
     activeRequests.set(requestId, requestState);
+    const abortFromSignal = () => requestState.abortController.abort(abortSignal?.reason);
+    if (abortSignal?.aborted) abortFromSignal();
+    else abortSignal?.addEventListener('abort', abortFromSignal, { once: true });
 
     try {
         // Starting UnifiedLLM call
@@ -464,19 +470,48 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             smartMessagesFiltered,  // Internal: cache safety flag
             conversationId,         // Internal: cache key
             disableReasoning,       // Internal: controls extended thinking (Bedrock only)
+            signal: _providerSignal,
             ...providerOptions
         } = options;
 
+        const deploymentConfig = params.options?.deploymentPromptSettings;
+        const isOrdinaryChatCall = params.options?.isOrdinaryChatRequest === true && options._isInternalCall !== true;
+        const toolNames = (options.tools || []).map(tool => tool.function?.name || tool.name);
+        const activeFeatures = {
+            webSearch: (options.webSearchEnabled === true || toolNames.includes('web_search')) && deploymentConfig?.availability?.webSearch !== false,
+            artifacts: params.options?.options?.artifacts === true && deploymentConfig?.availability?.artifacts !== false,
+            codeInterpreter: toolNames.includes('execute_code') && deploymentConfig?.availability?.codeInterpreter !== false
+        };
+        // Ordinary chat composes the model prompt alongside deployment/request prompts.
+        // Internal and specialized calls still need the historical model-level prompt,
+        // but should not inherit ordinary-chat instructions or duplicate that prompt.
+        const composedMessages = isOrdinaryChatCall
+            ? composeOrdinaryChatMessages(finalMessages, {
+                promptSettings: deploymentConfig,
+                modelSystemPrompt: model.systemPrompt,
+                requestPrompt: params.options?.prompt,
+                activeFeatures
+            })
+            : addModelSystemPrompt(finalMessages, model.systemPrompt);
+        const callOptions = {
+            ...params.options,
+            isOrdinaryChatRequest: isOrdinaryChatCall,
+            options: { ...(params.options?.options || {}) }
+        };
+        let canonicalMessages = normalizeSystemMessagesForProvider(composedMessages, model.supportsSystemPrompts !== false);
+
         const chatBody = {
-            messages: finalMessages,
+            ...(requestState.abortController.signal ? { abortSignal: requestState.abortController.signal } : {}),
+            messages: canonicalMessages,
             model: model.id || model,
             stream: !!responseStream,
             max_tokens: providerOptions.max_tokens || 2000,
             temperature: providerOptions.temperature || 1.0,
             ...providerOptions,
             options: {
-                ...params.options,
+                ...callOptions,
                 model,
+                abortSignal: requestState.abortController.signal,
                 requestId,
                 user: params?.account?.user || params.user || "unknown",
                 disableReasoning: disableReasoning ?? params.options?.disableReasoning
@@ -492,9 +527,15 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             chatBody.videoSources = options.videoSources;
         }
 
-        // Handle tools/functions
+        // Handle tools/functions, enforcing deployment policy before provider dispatch.
         if (options.tools) {
-            chatBody.tools = options.tools;
+            chatBody.tools = options.tools.filter(tool => {
+                const name = tool.function?.name || tool.name;
+                if (name === 'web_search' && deploymentConfig?.availability?.webSearch === false) return false;
+                if (name === 'execute_code' && deploymentConfig?.availability?.codeInterpreter === false) return false;
+                return true;
+            });
+            if (chatBody.tools.length === 0) delete chatBody.tools;
         }
         if (options.tool_choice) {
             chatBody.tool_choice = options.tool_choice;
@@ -506,23 +547,15 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             chatBody.function_call = options.function_call;
         }
 
-        // Handle artifact instructions - add as system message at the front
-        if (params.options?.options?.artifacts) {
-            // Insert system message at the beginning (after any existing system messages)
-            const firstNonSystemIndex = chatBody.messages.findIndex(m => m.role !== 'system');
-            const insertIndex = firstNonSystemIndex === -1 ? chatBody.messages.length : firstNonSystemIndex;
-
-            chatBody.messages = [
-                ...chatBody.messages.slice(0, insertIndex),
-                {
-                    role: 'system',
-                    content: ARTIFACTS_PROMPT
-                },
-                ...chatBody.messages.slice(insertIndex)
-            ];
-
-            logger.info("✅ [Artifacts] Instructions added as system message");
+        if (isOrdinaryChatCall && activeFeatures.artifacts && !canonicalMessages.some(message => message.role === 'system' && message.content === getFeaturePrompt(deploymentConfig, 'artifacts'))) {
+            canonicalMessages = composeOrdinaryChatMessages(canonicalMessages, {
+                promptSettings: deploymentConfig,
+                modelSystemPrompt: '',
+                activeFeatures: { artifacts: true },
+                includeBase: false
+            });
         }
+        chatBody.messages = canonicalMessages;
 
         let result;
 
@@ -550,10 +583,10 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             // Call provider with appropriate arguments
             if (providerConfig.needsEndpointProvider) {
                 // OpenAI needs getLLMConfig as first argument
-                result = await providerConfig.chatFn(getLLMConfig, chatBody, interceptor);
+                result = await providerConfig.chatFn(getLLMConfig, chatBody, interceptor, requestState.abortController.signal);
             } else {
                 // Bedrock and Gemini just need chatBody and stream
-                result = await providerConfig.chatFn(chatBody, interceptor);
+                result = await providerConfig.chatFn(chatBody, interceptor, requestState.abortController.signal);
             }
 
             // Clear keep-alive interval
@@ -667,9 +700,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 
             // Call provider
             if (providerConfig.needsEndpointProvider) {
-                result = await providerConfig.chatFn(getLLMConfig, chatBody, bufferStream);
+                result = await providerConfig.chatFn(getLLMConfig, chatBody, bufferStream, requestState.abortController.signal);
             } else {
-                result = await providerConfig.chatFn(chatBody, bufferStream);
+                result = await providerConfig.chatFn(chatBody, bufferStream, requestState.abortController.signal);
             }
 
             // Use the extracted content and tool_calls
@@ -826,6 +859,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         throw error;
     } finally {
         // Cleanup
+        abortSignal?.removeEventListener('abort', abortFromSignal);
         if (requestState.statusTimer) {
             clearTimeout(requestState.statusTimer);
         }
@@ -901,7 +935,8 @@ export async function promptUnifiedLLMForData(
     params,
     messages,
     outputFormat,
-    _responseStream = null // Currently unused, kept for API compatibility
+    _responseStream = null, // Currently unused, kept for API compatibility
+    { signal } = {}
 ) {
     const model = params.options?.model || params.model;
 
@@ -933,6 +968,7 @@ RULES:
     // "respond in markdown" instructions fighting against our JSON requirement
     const dataParams = {
         ...params,
+        signal,
         options: {
             ...(params.options || {}),
             prompt: 'You are a data extraction assistant. Respond only with valid JSON.'
@@ -982,7 +1018,7 @@ RULES:
     if (Object.keys(structuredOutputOptions).length > 0) {
         try {
             usedStructuredOutput = true;
-            result = await callUnifiedLLM(dataParams, finalMessages, null, structuredOutputOptions);
+            result = await callUnifiedLLM(dataParams, finalMessages, null, { ...structuredOutputOptions, signal });
 
             // Check if response is actually JSON (some models ignore structured output config)
             const content = result.content || '';
@@ -1002,18 +1038,19 @@ RULES:
                 logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
                 usedStructuredOutput = false;
                 retried = true;
-                result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+                result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
             }
         } catch (structuredError) {
+            if (signal?.aborted || ['AbortError', 'CanceledError'].includes(structuredError?.name)) throw structuredError;
             logger.warn(`Structured output call failed for ${provider}, retrying without structured output flag:`, structuredError.message);
             usedStructuredOutput = false;
             retried = true;
             // Fallback: retry without structured output
-            result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+            result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
         }
     } else {
         // No structured output support, call directly
-        result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+        result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
     }
 
     // Parse JSON response (with the same deterministic repair pass used during validation,
@@ -1084,6 +1121,7 @@ export function cancelRequest(requestId) {
     const state = activeRequests.get(requestId);
     if (state) {
         state.cancelled = true;
+        if (!state.abortController.signal.aborted) state.abortController.abort(Object.assign(new Error('Request cancelled'), { name: 'AbortError' }));
         if (state.statusTimer) {
             clearTimeout(state.statusTimer);
         }

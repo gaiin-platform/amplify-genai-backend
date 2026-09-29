@@ -16,13 +16,12 @@ import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
+import { resolveSpecializedAssistantMode } from "../common/ordinaryChatRouter.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import * as skillsService from "../skills/skillsService.js";
 
 
 const logger = getLogger("assistants");
-
-
 
 const defaultAssistant = {
     name: "default",
@@ -187,8 +186,11 @@ const defaultAssistant = {
             // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources/videoSources from resolveDataSources()
             const bodyWithMedia = { ...body, imageSources: params.body?.imageSources || undefined, videoSources: params.body?.videoSources || undefined };
 
-            // Check if web search or MCP is enabled
-            let webSearchEnabled = shouldEnableWebSearch(body);
+            // The router owns automatic web-search routing. Preserve explicit
+            // MCP detection independently so MCP is never suppressed by it.
+            let webSearchEnabled = body?.options?.routingDecision
+                ? body.options.routingDecision.webSearch === true
+                : shouldEnableWebSearch(body);
             // mcpEnabled can be at top level OR in options (frontend sends it in options via vendorProps)
             const mcpEnabled = body?.mcpEnabled === true || body?.options?.mcpEnabled === true;
 
@@ -199,6 +201,7 @@ const defaultAssistant = {
                         account: params.account,
                         options: {
                             ...bodyWithMedia.options,
+                            ...params.options,
                             model,
                             requestId: params.options?.requestId
                         }
@@ -224,6 +227,7 @@ const defaultAssistant = {
                     account: params.account,
                     options: {
                         ...bodyWithMedia.options,  // Include all options from body (including trackConversations)
+                        ...params.options,
                         model,
                         requestId: params.options?.requestId
                     }
@@ -232,6 +236,7 @@ const defaultAssistant = {
                 responseStream,
                 {
                     max_tokens: bodyWithMedia.max_tokens || 2000,
+                    webSearchEnabled,
                     imageSources: bodyWithMedia.imageSources,
                     videoSources: bodyWithMedia.videoSources,
                     // Forward tools so bedrock.js doesn't build an empty toolConfig when
@@ -273,6 +278,8 @@ export const buildDataSourceDescriptionMessages = (dataSources) => {
     `;
 }
 
+export const defaultAssistantForRouting = defaultAssistant;
+
 export const buildAssistantDescriptionMessages = (assistants) => {
     if (!assistants || assistants.length === 0) {
         return [];
@@ -299,9 +306,19 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     logger.info(`Choose Assistant for Request `);
 
     const clientSelectedAssistant = body.options?.assistantId ?? null;
+    const specializedMode = resolveSpecializedAssistantMode({
+        ...body.options,
+        deploymentFeatures: body.options?.deploymentFeatures,
+        codeInterpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0
+    });
 
     let selectedAssistant = null;
-    if (clientSelectedAssistant) {
+    if (specializedMode === 'codeInterpreter') {
+        selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
+    } else if (specializedMode === 'artifacts') {
+        selectedAssistant = ArtifactModeAssistant;
+        logger.info("ARTIFACT MODE DETERMINED");
+    } else if (clientSelectedAssistant) {
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group assistants
         const user = account.user;
@@ -389,12 +406,6 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
             defaultAssistant
         )
 
-    } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
-        selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
-        //codeInterpreterAssistant;
-    } else if (body.options.artifactsMode && (!body.options.api_accessed)) {
-        selectedAssistant = ArtifactModeAssistant;
-        logger.info("ARTIFACT MODE DETERMINED")
     }
 
 
@@ -441,7 +452,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     logger.info("Sending State Event to Stream ", selectedAssistant.name);
     let stateInfo = {
         currentAssistant: selectedAssistant.name,
-        currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
+        currentAssistantId: specializedMode ? selectedAssistant.name : (clientSelectedAssistant || selectedAssistant.name),
     }
     if (selectedAssistant.disclaimer) stateInfo = { ...stateInfo, currentAssistantDisclaimer: selectedAssistant.disclaimer };
     sendStateEventToStream(responseStream, stateInfo);

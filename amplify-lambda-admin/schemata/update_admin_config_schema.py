@@ -617,6 +617,72 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    # ── systemPrompts ──────────────────────────────────────
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "systemPrompts"},
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "schemaVersion": {"type": "integer"},
+                                    "prompts": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^[a-zA-Z0-9_.]+$": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "version": {"type": "integer"},
+                                                    "text": {
+                                                        "type": "string",
+                                                        # Secondary character bound; service validation enforces UTF-8 bytes.
+                                                        "maxLength": 16384
+                                                    }
+                                                },
+                                                "required": ["version", "text"],
+                                                "additionalProperties": False
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "required": ["schemaVersion", "prompts"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    # ── deploymentFeatures ─────────────────────────────────
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "deploymentFeatures"},
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "schemaVersion": {"type": "integer"},
+                                    "availability": {
+                                        "type": "object",
+                                        "properties": {
+                                            "promptHighlighter": {"type": "boolean"},
+                                            "artifacts": {"type": "boolean"},
+                                            "webSearch": {"type": "boolean"},
+                                            "codeInterpreter": {"type": "boolean"},
+                                            "memory": {"type": "boolean"}
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "allowClassicUiSwitch": {"type": "boolean"},
+                                    "routingEnabled": {"type": "boolean"}
+                                },
+                                "required": ["schemaVersion", "availability", "allowClassicUiSwitch"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }

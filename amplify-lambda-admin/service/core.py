@@ -13,6 +13,10 @@ from decimal import Decimal
 from enum import Enum
 
 from service.supported_models import update_supported_models, get_supported_models
+try:
+    from .system_prompt_validation import update_system_prompts
+except ImportError:
+    from service.system_prompt_validation import update_system_prompts
 from pycommon.api.ast_admin_groups import (
     get_all_ast_admin_groups,
     update_ast_admin_groups,
@@ -85,6 +89,8 @@ class AdminConfigTypes(Enum):
     USER_DOCUMENTATION_URL = "userDocumentationUrl"
     DEFAULT_TIMEZONE = "defaultTimezone"
     DEFAULT_SMART_MESSAGES = "defaultSmartMessages"
+    SYSTEM_PROMPTS = "systemPrompts"
+    DEPLOYMENT_FEATURES = "deploymentFeatures"
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -741,9 +747,17 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.DEFAULT_MODELS
             | AdminConfigTypes.USER_DOCUMENTATION_URL
             | AdminConfigTypes.DEFAULT_TIMEZONE
-            | AdminConfigTypes.DEFAULT_SMART_MESSAGES ):
+            | AdminConfigTypes.DEFAULT_SMART_MESSAGES
+            | AdminConfigTypes.DEPLOYMENT_FEATURES ):
             logger.info("Updating %s - %s", config_type.value, update_data)
             return update_admin_config_data(config_type.value, update_data)
+
+        case AdminConfigTypes.SYSTEM_PROMPTS:
+            logger.info("Validating system prompt configuration before persistence")
+            return update_system_prompts(
+                update_data,
+                lambda valid_data: update_admin_config_data(config_type.value, valid_data),
+            )
 
         case AdminConfigTypes.AVAILABLE_MODELS:
             return update_supported_models(token, {"models": update_data})
@@ -1032,6 +1046,8 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.USER_DOCUMENTATION_URL,
             AdminConfigTypes.DEFAULT_TIMEZONE,
             AdminConfigTypes.DEFAULT_SMART_MESSAGES,
+            AdminConfigTypes.SYSTEM_PROMPTS,
+            AdminConfigTypes.DEPLOYMENT_FEATURES,
         ]
 
         for config_type in dynamo_config_types:
@@ -1290,6 +1306,30 @@ def initialize_config(config_type):
         item["data"] = "UTC"
     elif config_type == AdminConfigTypes.DEFAULT_SMART_MESSAGES:
         item["data"] = True
+    elif config_type == AdminConfigTypes.SYSTEM_PROMPTS:
+        item["data"] = {
+            "schemaVersion": 1,
+            "prompts": {
+                "ordinaryChat.base": {"version": 1, "text": ""},
+                "webSearch.use": {"version": 1, "text": ""},
+                "artifacts.generate": {"version": 1, "text": ""},
+                "codeInterpreter.use": {"version": 1, "text": ""},
+                "amplifyHelper.base": {"version": 1, "text": ""},
+            },
+        }
+    elif config_type == AdminConfigTypes.DEPLOYMENT_FEATURES:
+        item["data"] = {
+            "schemaVersion": 1,
+            "availability": {
+                "promptHighlighter": True,
+                "artifacts": True,
+                "webSearch": True,
+                "codeInterpreter": True,
+                "memory": True,
+            },
+            "allowClassicUiSwitch": True,
+            "routingEnabled": False,
+        }
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     try:
@@ -1446,6 +1486,33 @@ def get_user_feature_flags(event, context, current_user, name, data):
 
     # Add Admin Interface Access
     user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
+
+    # Include deployment features so clients can enforce deployment policy.
+    # Defaults are safe (all enabled, classic switch allowed) when config is absent.
+    try:
+        dep_response = admin_table.get_item(
+            Key={"config_id": AdminConfigTypes.DEPLOYMENT_FEATURES.value}
+        )
+        if "Item" in dep_response:
+            dep_data = dep_response["Item"].get("data", {})
+        else:
+            dep_data = initialize_config(AdminConfigTypes.DEPLOYMENT_FEATURES)
+        user_feature_flags["deploymentFeatures"] = dep_data
+    except Exception as dep_err:
+        logger.warning("Could not load deploymentFeatures config: %s", dep_err)
+        user_feature_flags["deploymentFeatures"] = {
+            "schemaVersion": 1,
+            "availability": {
+                "promptHighlighter": True,
+                "artifacts": True,
+                "webSearch": True,
+                "codeInterpreter": True,
+                "memory": True,
+            },
+            "allowClassicUiSwitch": True,
+            "routingEnabled": False,
+        }
+
     logger.debug("users: %s", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 

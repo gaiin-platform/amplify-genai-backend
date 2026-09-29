@@ -144,13 +144,17 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             // The socketTimeout on BedrockRuntimeClient handles actual stream cancellation.
             // If the 5-minute timeout fires before Bedrock's 2-minute socket timeout,
             // mark the request as cancelled so the keepalive interval stops writing.
-            let routeTimeoutFired = false;
-            const routePromise = routeRequest(params, returnResponse, effectiveStream);
+            const routeController = new AbortController();
+            const routeParams = { ...params, signal: routeController.signal };
+            const routePromise = routeRequest(routeParams, returnResponse, effectiveStream);
             try {
                 return await withTimeout(300000)(routePromise);
             } catch (timeoutErr) {
                 if (timeoutErr.message && timeoutErr.message.includes('timed out after 300000ms')) {
-                    routeTimeoutFired = true;
+                    timeoutErr.code = 'REQUEST_TIMEOUT';
+                    routeController.abort(timeoutErr);
+                    routePromise.catch(() => {});
+                    if (!effectiveStream.writableEnded) effectiveStream.end();
                     // Mark the in-flight request's keepalive as cancelled so it stops writing.
                     if (params && params.body && params.body.options && params.body.options.requestId) {
                         const { cancelRequest } = await import('./llm/UnifiedLLMClient.js');
@@ -170,7 +174,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
         }
     } catch (e) {
         logger.error("Error processing request: " + e.message, e);
-        
+        if (e.code === 'CLIENT_DISCONNECTED') return;
+
         // Enhanced error response with debugging info
         const errorResponse = {
             statusCode: 500,

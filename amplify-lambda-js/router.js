@@ -14,6 +14,9 @@ import { getUserAvailableModels } from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import { requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation } from "./common/envVarsTracking.js";
 import { logCriticalError } from "./common/criticalLogger.js";
+import { loadDeploymentConfig } from "./common/adminConfig.js";
+import { routeOrdinaryChat, resolveRoutingOptions, resolveSpecializedAssistantMode, hasDownloadableFileIntent } from "./common/ordinaryChatRouter.js";
+import { createRequestCancellation } from "./common/requestCancellation.js";
 import { CacheManager } from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
 import { chooseAssistantForRequest } from "./assistants/assistants.js";
@@ -43,6 +46,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
     // Check if running locally
     const isLocal = process.env.LOCAL_DEVELOPMENT === 'true';
+    let requestCancellation;
 
     try {
 
@@ -458,7 +462,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             }
 
 
-            // ⚡ Create request state 
+            // ⚡ Create request state
             await createRequestState(params.user, requestId);
 
 
@@ -472,6 +476,116 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             logger.debug("Calling chat with data");
 
+            const deploymentConfig = await loadDeploymentConfig();
+            // Admin policy always takes precedence over client options. On a config read
+            // failure with no last-known-good value optional features fail closed.
+            const effectiveOptions = {
+                ...(options || {}),
+                deploymentFeatures: deploymentConfig.availability,
+                deploymentPromptSettings: deploymentConfig,
+                isOrdinaryChatRequest: true,
+                // Smart focused messages are permanently disabled; artifact routing
+                // uses the ordinary artifact contract without the legacy context-analysis call.
+                options: { ...(options?.options || {}), smartMessages: false }
+            };
+
+            const cancellation = createRequestCancellation({
+                user: params.user,
+                requestId,
+                responseStream,
+                requestOptions: effectiveOptions,
+                parentSignal: params.signal,
+                onAbort: error => {
+                    if (error?.code === 'KILLSWITCH_CANCELLED' && responseStream && !responseStream.writableEnded) {
+                        responseStream.end();
+                    }
+                }
+            });
+            requestCancellation = cancellation;
+            let routingResult;
+            try {
+                await cancellation.ready;
+                if (cancellation.signal.aborted) throw cancellation.signal.reason;
+                routingResult = await routeOrdinaryChat(
+                    { ...params, signal: cancellation.signal, options: effectiveOptions },
+                    { ...body, options: effectiveOptions },
+                    deploymentConfig
+                );
+                if (cancellation.signal.aborted) throw cancellation.signal.reason;
+            } catch (error) {
+                if (['KILLSWITCH_CANCELLED', 'CLIENT_DISCONNECTED', 'REQUEST_CANCELLED', 'REQUEST_TIMEOUT'].includes(error?.code)) {
+                    logger.info('Stopping request before assistant selection after cancellation', { requestId, reason: error.code });
+                    return;
+                }
+                throw error;
+            }
+            effectiveOptions.isOrdinaryChatRequest = routingResult.metadata.eligible === true;
+            const routingDecision = routingResult.decision;
+            effectiveOptions.routingDecision = routingDecision;
+            effectiveOptions.routingMetadata = routingResult.metadata;
+
+            // Specialized modes retain explicit requests; ordinary automatic routing
+            // remains classifier-owned. Every requested/automatic mode is availability-gated.
+            const downloadableFileIntent = hasDownloadableFileIntent(body.messages);
+            const specializedModeEligible = !options.workflowId && !options.workflow && !options.configuredTools && !options.agentId && !options._isInternalCall;
+            const resolvedRouting = resolveRoutingOptions(routingDecision, deploymentConfig.availability, {
+                explicitModes: {
+                    artifactsMode: options.artifactsMode === true && specializedModeEligible,
+                    codeInterpreterOnly: options.codeInterpreterOnly === true && specializedModeEligible,
+                    notEligible: !specializedModeEligible || (routingResult.metadata.notEligible === true && !(
+                        downloadableFileIntent || options.artifactsMode === true || options.codeInterpreterOnly === true
+                    ))
+                },
+                interpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0,
+                downloadableFileIntent: downloadableFileIntent && specializedModeEligible
+            });
+            const explicitSpecializedMode = resolveSpecializedAssistantMode({
+                ...options,
+                downloadableFileIntent: resolvedRouting.downloadableFileIntent,
+                deploymentFeatures: deploymentConfig.availability,
+                codeInterpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0,
+                notEligible: !specializedModeEligible,
+                downloadableFileIntent: downloadableFileIntent && specializedModeEligible
+            });
+            if (resolvedRouting.fileGenerationUnavailable) {
+                effectiveOptions.fileGenerationUnavailable = true;
+            }
+            effectiveOptions.enableWebSearch = resolvedRouting.enableWebSearch;
+            effectiveOptions.downloadableFileIntent = resolvedRouting.downloadableFileIntent;
+            effectiveOptions.routingDecision.codeInterpreter = resolvedRouting.codeInterpreterOnly;
+            effectiveOptions.options.artifacts = resolvedRouting.artifacts;
+            effectiveOptions.artifactsMode = resolvedRouting.artifactsMode;
+            effectiveOptions.codeInterpreterOnly = resolvedRouting.codeInterpreterOnly;
+            if (deploymentConfig.availability.webSearch === false) {
+                effectiveOptions.options.webSearch = false;
+            }
+            if (effectiveOptions.codeInterpreterOnly === true) {
+                effectiveOptions.isOrdinaryChatRequest = false;
+            }
+            if (resolvedRouting.notEligible) {
+                // Classifier output is never allowed to switch a non-ordinary request.
+                effectiveOptions.options.artifacts = explicitSpecializedMode === 'artifacts';
+                effectiveOptions.artifactsMode = explicitSpecializedMode === 'artifacts';
+                effectiveOptions.codeInterpreterOnly = explicitSpecializedMode === 'codeInterpreter';
+            }
+            if (resolvedRouting.fileGenerationUnavailable) {
+                const limitationNotice = {
+                    role: 'system',
+                    content: 'The user requested a downloadable file, but file generation is unavailable for this deployment or its service is not configured. Do not claim a file was created, saved, attached, or is downloadable. Continue helpfully with text-only content and briefly explain this limitation.'
+                };
+                body.messages = [...(body.messages || []), limitationNotice];
+                params.body.messages = body.messages;
+                body.fileGenerationUnavailable = true;
+                params.body.fileGenerationUnavailable = true;
+            }
+            options = effectiveOptions;
+
+            params.options = effectiveOptions;
+            body.options = effectiveOptions;
+            params.body.options = effectiveOptions;
+            params.body.enableWebSearch = effectiveOptions.enableWebSearch;
+            params.body.routingDecision = routingDecision;
+
             const assistantParams = {
                 // 🔒 Canonical account object (single constructor shared with skills + accounting).
                 account: buildAccount({
@@ -479,11 +593,12 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     username: params.username,  // Clean username for services like tool API key lookup
                     accessToken: params.accessToken,
                     apiKeyId: params.apiKeyId,
-                    options
+                    options: effectiveOptions
                 }),
                 model,
                 requestId,
-                options,
+                signal: cancellation.signal,
+                options: effectiveOptions,
                 preResolvedDataSourcesByUse,  // Pass pre-resolved data sources for performance optimization
                 body: params.body  // ✅ INCLUDE MODIFIED BODY: Contains imageSources from resolveDataSources()
             };
@@ -493,12 +608,13 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             let processingError = false;
 
             try {
-                // 🚀 ASYNC OPTIMIZATION: Start smart messages processing while assistant loads
+                // Smart focused-message analysis and its extra model call are
+                // intentionally disabled for ordinary chat.
                 let smartMessagesPromise = null;
 
                 // Log what we're checking
 
-                if (options.options?.smartMessages || options.options?.artifacts) {
+                if (false && options.options?.smartMessages === true) {
 
                     sendStatusEventToStream(responseStream, newStatus({
                         summary: "Analyzing conversation context...",
@@ -554,7 +670,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         assistantParams.body.messages = smartMessagesResult.filteredMessages;
                         logger.info(`✅ [Processing] Complete:`, smartMessagesResult._internal || {});
 
-                        options.options.artifacts = smartMessagesResult.includeArtifactInstructions;
+                        // Smart-message analysis is disabled for ordinary chat;
+                        // never let a legacy result override server routing.
 
                         // Update status to show completion
                         sendStatusEventToStream(responseStream, newStatus({
@@ -633,6 +750,10 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     processingTime,
                     error: processingError,
                 });
+
+                // Cancellation monitoring spans selection and assistant execution; release it only when
+                // the full request path completes.
+                requestCancellation?.cleanup();
 
                 // 🛡️ DEFENSIVE CLEANUP: Ensure stream is closed in all cases
                 ensureStreamClosed(responseStream, "finally-block");

@@ -7,6 +7,7 @@ import {sendStateEventToStream} from "../common/streams.js";
 import {getInternalLLM} from "../llm/InternalLLM.js";
 import {getLogger} from "../common/logging.js";
 import {isKilled} from "../requests/requestState.js";
+import { getFeaturePrompt } from "../common/systemPrompts.js";
 
 const logger = getLogger("assistants.ArtifactModeAssistant");
 
@@ -220,7 +221,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         // Build the appropriate prompt based on retry count
         const messages = [{
             role: "system",
-            content: additional_instructions
+            content: [getFeaturePrompt(originalLLM.params?.options?.deploymentPromptSettings, 'artifacts'), additional_instructions].filter(Boolean).join("\n\n")
         }];
         if (retryCount > 0) {
             // Calculate max chars based on model's context window
@@ -322,7 +323,7 @@ export const ArtifactModeAssistant = new StateBasedAssistant(
         return true
     },
     (m) => {
-        return true 
+        return true
     },
     // This is the state machine that the assistant will use to process requests.
     States,

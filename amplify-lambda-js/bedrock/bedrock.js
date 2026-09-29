@@ -35,34 +35,38 @@ const getBedrockClient = () => {
     return cachedBedrockClient;
 };
 
-export const chatBedrock = async (chatBody, writable) => {
+export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abortSignal) => {
 
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
+    delete body.abortSignal;
     const currentModel = options.model;
 
     const prompt = typeof options.prompt === 'string' ? options.prompt : '';
-    const systemPrompts = [{"text": prompt.trim() || BLANK_MSG}];
-    if (currentModel.systemPrompt?.trim()) {
-        systemPrompts.push({ "text": currentModel.systemPrompt });
-    }
-
+    const systemPrompts = [];
     const withoutSystemMessages = [];
-    // options.prompt is a match for the first message in messages
+    const seenSystemPrompts = new Set();
+    const addSystemPrompt = text => {
+        if (typeof text !== 'string' || !text.trim() || seenSystemPrompts.has(text.trim())) return;
+        seenSystemPrompts.add(text.trim());
+        systemPrompts.push({ text: text.trim() });
+    };
+    addSystemPrompt(prompt);
     for (const msg of body.messages) {
-        if (msg.role === "system") {
-                                      // avoid duplicate system prompts
-            if (msg.content.trim() && msg.content !== prompt) systemPrompts.push({ "text": msg.content });
-        } else {
-            withoutSystemMessages.push(msg);
-        }
+        if (msg.role === "system") addSystemPrompt(typeof msg.content === 'string' ? msg.content : '');
+        else withoutSystemMessages.push(msg);
     }
-    const imageSources =  !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
+    const existingSystemText = systemPrompts.map(system => system.text).join('\n\n');
+    if (!currentModel.systemPrompt?.trim() || !existingSystemText.includes(currentModel.systemPrompt.trim())) {
+        addSystemPrompt(currentModel.systemPrompt);
+    }
+    if (systemPrompts.length === 0) systemPrompts.push({ text: BLANK_MSG });
+    const imageSources = !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
 
     // Parallelize ALL processing for faster execution
     const client = getBedrockClient();  // Get client immediately (already cached)
-    const combinedMessages = combineMessages(withoutSystemMessages, prompt || BLANK_MSG);
+    const combinedMessages = combineMessages(withoutSystemMessages, BLANK_MSG);
     const sanitizedMessages = await sanitizeMessages(combinedMessages, imageSources, currentModel, writable);
 
     // Declare input at function scope so it's available in catch block
@@ -171,15 +175,17 @@ export const chatBedrock = async (chatBody, writable) => {
         if (currentModel.supportsSystemPrompts) {
             input.system = systemPrompts;
         } else {
-            // Gather all text values from the system prompts list
+            // Some Bedrock models reject the system field. Preserve the canonical
+            // instructions by attaching them to the first user turn instead of dropping them.
             const systemPromptsText = systemPrompts.map(sp => sp.text).join("\n\n");
-            const sanitizedMessagesCopy = [...sanitizedMessages];
-
-            // May not need anymore, testing for a while
-            // sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
-            // `Recall your custom instructions are: ${systemPromptsText}`;
-
-            input.messages = sanitizedMessagesCopy;
+            input.messages = [...sanitizedMessages];
+            const firstUserIndex = input.messages.findIndex(message => message.role === 'user');
+            if (firstUserIndex >= 0 && Array.isArray(input.messages[firstUserIndex].content)) {
+                input.messages[firstUserIndex] = {
+                    ...input.messages[firstUserIndex],
+                    content: [{ text: systemPromptsText }, ...input.messages[firstUserIndex].content]
+                };
+            }
         }
 
         // Check if messages contain tool-related content (toolUse or toolResult)
@@ -279,7 +285,10 @@ export const chatBedrock = async (chatBody, writable) => {
             }
         });
 
-        const response = await client.send( new ConverseStreamCommand(input) );
+        const response = await client.send(
+            new ConverseStreamCommand(input),
+            abortSignal ? { abortSignal } : undefined
+        );
 
         // Process stream events (SDK v3.1000+ returns parsed event objects directly)
         for await (const event of response.stream) {
