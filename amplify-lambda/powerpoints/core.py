@@ -106,5 +106,27 @@ def handle_pptx_upload(event, context):
             logger.info("Template '%s' registered successfully in DynamoDB.", template_name)
         except Exception as e:
             logger.error("Error registering template '%s': %s", template_name, str(e))
+            continue
+
+        start_template_analysis(template_name)
 
     return {"status": "done"}
+
+
+def start_template_analysis(template_name):
+    """Ask the presentation agent to learn the template's layouts (best effort)."""
+    function_name = os.environ.get("PRESENTATION_TEMPLATE_ANALYSIS_FUNCTION")
+    if not function_name:
+        return
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=function_name,
+            InvocationType="Event",
+            Payload=json.dumps({"templateName": template_name}).encode(),
+        )
+        logger.info("Requested layout analysis for template '%s'", template_name)
+    except ClientError as e:
+        # The presentation agent service is optional; a missing function is expected.
+        logger.info("Template analysis not started for '%s': %s", template_name, e.response["Error"]["Code"])
+    except Exception as e:
+        logger.warning("Template analysis not started for '%s': %s", template_name, str(e))

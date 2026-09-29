@@ -52,6 +52,15 @@ services:
     path: ./object-access
     dependsOn:
       - amplify-lambda
+
+  amplify-presentation-agent:
+    path: ./amplify-presentation-agent
+    dependsOn:
+      - amplify-lambda
+      - amplify-lambda-admin
+      - amplify-lambda-js
+      - amplify-object-access
+      - chat-billing
   
 
 

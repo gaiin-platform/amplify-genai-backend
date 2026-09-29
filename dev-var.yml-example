@@ -53,4 +53,9 @@ WEB_SEARCH_AGENTCORE_ENABLED: false #true to auto-provision the AgentCore web se
 WEB_SEARCH_AGENTCORE_AUTOENABLE: false #true to make bedrock_agentcore the active provider when none is configured
 WEB_SEARCH_AGENTCORE_REGION: "us-east-1" #region for the AgentCore gateway/web search connector
 
+# Presentation agent (Amazon Bedrock AgentCore Runtime)
+# Image URI printed by amplify-presentation-agent/scripts/build_push_agent.sh. Leave empty to
+# deploy the presentation API without the runtime (users then see "not available").
+PRESENTATION_AGENT_IMAGE_URI: ""
+
 LOG_LEVEL: "INFO" # Valid Values Include: DEBUG | INFO | WARNING | ERROR | CRITICAL

@@ -1,0 +1,4 @@
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.2
+# The Lambda runtime's bundled boto3 predates the bedrock-agentcore data-plane API.
+boto3>=1.40.0
+botocore>=1.40.0
