@@ -59,6 +59,41 @@ def handle_graph_error(response: requests.Response) -> None:
     )
 
 
+def _normalize_date_boundary(value: Optional[str], is_end: bool) -> Optional[str]:
+    """
+    Normalize a caller-supplied date/datetime string into a Graph-friendly ISO 8601
+    UTC string suitable for a receivedDateTime OData comparison.
+
+    - None/empty input returns None.
+    - Date-only input (no "T"), e.g. "2024-01-01", is expanded to cover the whole
+      day: "T00:00:00Z" for the start boundary, "T23:59:59Z" for the end boundary.
+    - Datetime input with no timezone designator gets "Z" appended (assume UTC).
+    - Anything that still fails to parse raises a clear OutlookError instead of
+      letting Microsoft Graph reject it with an opaque error later.
+    """
+    if not value:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    if "T" not in normalized:
+        normalized = f"{normalized}T{'23:59:59' if is_end else '00:00:00'}Z"
+    elif normalized[-1] != "Z" and "+" not in normalized[10:] and "-" not in normalized[10:]:
+        normalized = f"{normalized}Z"
+
+    try:
+        datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        raise OutlookError(
+            f"Invalid date format: {value!r}. Use ISO 8601, e.g. '2024-01-01' or "
+            "'2024-01-01T00:00:00Z'."
+        )
+
+    return normalized
+
+
 def list_messages(
     current_user: str,
     folder_id: str = "Inbox",
@@ -67,6 +102,9 @@ def list_messages(
     filter_query: Optional[str] = None,
     include_body: bool = False,
     user_timezone: str = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    focused_only: bool = False,
     access_token: str = None,
 ) -> List[Dict]:
     """
@@ -77,16 +115,26 @@ def list_messages(
         folder_id: Folder ID or well-known name (default: "Inbox")
         top: Maximum number of messages to retrieve
         skip: Number of messages to skip
-        filter_query: OData filter query
+        filter_query: OData filter query. If start_date/end_date/focused_only are
+            also provided, this is ANDed together with the clauses they generate
+            (existing filter_query is parenthesized first if it contains "and"/"or"
+            to preserve operator precedence).
         include_body: Whether to include message body and bodyPreview (default: False)
         user_timezone: User's preferred timezone in Windows format (default: "UTC")
+        start_date: Inclusive lower bound on receivedDateTime, ISO 8601 date or
+            datetime (e.g. "2024-01-01" or "2024-01-01T00:00:00Z")
+        end_date: Inclusive upper bound on receivedDateTime, ISO 8601 date or
+            datetime
+        focused_only: If True, restrict results to Outlook's "Focused" inbox
+            classification, excluding "Other" (promotions/clutter)
 
     Returns:
         List of message details
 
     Raises:
         FolderNotFoundError: If folder doesn't exist
-        OutlookError: For other failures
+        OutlookError: For other failures, including an invalid date format or a
+            filter that Microsoft Graph rejects as too complex
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
@@ -97,11 +145,38 @@ def list_messages(
         base_select = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories,conversationId"
         select_fields = f"{base_select},bodyPreview,body" if include_body else f"{base_select},bodyPreview"
 
+        # Compile start_date/end_date/focused_only into OData clauses and AND them
+        # with any caller-supplied filter_query.
+        normalized_start = _normalize_date_boundary(start_date, is_end=False)
+        normalized_end = _normalize_date_boundary(end_date, is_end=True)
+
+        extra_filter_parts = []
+        if normalized_start:
+            extra_filter_parts.append(f"receivedDateTime ge {normalized_start}")
+        if normalized_end:
+            extra_filter_parts.append(f"receivedDateTime le {normalized_end}")
+        if focused_only:
+            extra_filter_parts.append("inferenceClassification eq 'focused'")
+
+        combined_from_multiple_sources = bool(filter_query) and bool(extra_filter_parts)
+        if combined_from_multiple_sources:
+            base_query = filter_query.strip()
+            if " and " in base_query.lower() or " or " in base_query.lower():
+                base_query = f"({base_query})"
+            combined_filter = " and ".join([base_query] + extra_filter_parts)
+        elif filter_query:
+            # No new params used — identical to prior behavior.
+            combined_filter = filter_query
+        elif extra_filter_parts:
+            combined_filter = " and ".join(extra_filter_parts)
+        else:
+            combined_filter = None
+
         # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
-        if filter_query:
+        if combined_filter:
             # When filtering, use minimal parameters to avoid complexity error
             params = {
-                "$filter": filter_query,
+                "$filter": combined_filter,
                 "$top": top,
                 "$select": select_fields
                 # Skip $skip, $orderby, and $expand to avoid "too complex" error
@@ -125,7 +200,19 @@ def list_messages(
         response = session.get(url, params=params, headers=headers)
 
         if not response.ok:
-            handle_graph_error(response)
+            try:
+                handle_graph_error(response)
+            except OutlookError as e:
+                if combined_from_multiple_sources and response.status_code == 400:
+                    error_text = str(e).lower()
+                    if "too complex" in error_text or "inefficientfilter" in error_text:
+                        raise OutlookError(
+                            "Your filter_query combined with start_date/end_date/"
+                            "focused_only is too complex for Microsoft Graph. Try "
+                            "removing filter_query and using start_date/end_date/"
+                            "focused_only on their own, or simplify filter_query."
+                        )
+                raise
 
         messages = response.json().get("value", [])
         return [format_message(msg, detailed=include_body, include_body=include_body) for msg in messages]
