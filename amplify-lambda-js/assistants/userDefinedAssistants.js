@@ -740,6 +740,19 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
             }
 
 
+            // Project instructions / approved memory arrive as tagged system messages.
+            // User-defined assistants replace incoming system messages with their own
+            // instructions, so merge this context before filtering. The tags are safe
+            // to honor because router.js strips every client-supplied message of these
+            // types and re-adds only server-built, owner-validated ones (projectContext.js).
+            const projectInstructions = body.messages
+                .filter((message) =>
+                    ["project-context", "project-memory-context"].includes(message.type) &&
+                    message.role === "system"
+                )
+                .map((message) => message.content)
+                .filter(Boolean)
+                .join("\n\n");
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
             );
@@ -769,12 +782,16 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                 logger.info('ℹ️ [User Defined Assistant] Skipping tracking config override — router-managed tracking is active for:', body.options.assistantName);
             }
 
+            const effectiveAssistantInstructions = projectInstructions
+                ? `${assistant.instructions || ""}\n\nProject context:\n${projectInstructions}`.trim()
+                : assistant.instructions;
+
             const instructions = await fillInTemplate(
                 responseStream,
                 params,
                 body,
                 ds,
-                assistant.instructions,
+                effectiveAssistantInstructions,
                 {
                     assistant: assistant,
                     operations: assistant.data?.operations || []

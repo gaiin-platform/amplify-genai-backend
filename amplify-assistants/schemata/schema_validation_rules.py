@@ -17,9 +17,34 @@ from .scrape_website_schema import scrape_website_schema
 from .tools_op_schema import tools_op_schema
 from .rescan_websites_schema import rescan_websites_schema
 from .extract_sitemap_urls_schema import extract_sitemap_urls_schema
+from .create_project_schema import create_project_schema
+from .update_project_schema import update_project_schema
+from .project_id_schema import project_id_schema
+from .add_project_memory_schema import add_project_memory_schema
+from .list_project_memories_schema import list_project_memories_schema
+from .edit_project_memory_schema import edit_project_memory_schema
+from .project_memory_id_schema import project_memory_id_schema
+from .delete_project_schema import delete_project_schema
+from .add_project_file_schema import add_project_file_schema
+from .update_project_file_schema import update_project_file_schema
+from .project_file_ref_schema import project_file_ref_schema
+from .list_project_files_schema import list_project_files_schema
 
 rules = {
     "validators": {
+        "/project/create": {"create": create_project_schema},
+        "/project/list": {"list": {}},
+        "/project/get": {"get": project_id_schema},
+        "/project/update": {"update": update_project_schema},
+        "/project/delete": {"delete": delete_project_schema},
+        "/project/memory/add": {"add": add_project_memory_schema},
+        "/project/memory/list": {"list": list_project_memories_schema},
+        "/project/memory/edit": {"edit": edit_project_memory_schema},
+        "/project/memory/delete": {"delete": project_memory_id_schema},
+        "/project/files/add": {"add": add_project_file_schema},
+        "/project/files/list": {"list": list_project_files_schema},
+        "/project/files/update": {"update": update_project_file_schema},
+        "/project/files/remove": {"remove": project_file_ref_schema},
         "/assistant/create": {"create": create_assistant_schema},
         "/assistant/delete": {"delete": delete_assistant_schema},
         "/assistant/share": {"share_assistant": share_assistant_schema},

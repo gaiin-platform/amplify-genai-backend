@@ -831,14 +831,16 @@ export const processSmartMessages = async ({
         };
     }
 
-    // Extract cross-conversation context injection messages so they are never
-    // filtered out by smart messages range analysis.  They are re-inserted
-    // at the front of filteredMessages after all processing is complete.
+    // Extract trusted context injection messages so they are never filtered
+    // out by smart-message range analysis. They are re-inserted at the front
+    // after processing.
     const ctxInjectedMessages = messages.filter(
-        m => m.type === 'context' || (typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
+        m => m.type === 'context' || m.type === 'project-context' || m.type === 'project-memory-context' ||
+            (typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
     );
     const workingMessages = messages.filter(
-        m => m.type !== 'context' && !(typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
+        m => m.type !== 'context' && m.type !== 'project-context' && m.type !== 'project-memory-context' &&
+            !(typeof m.id === 'string' && m.id.startsWith('ctx-inject-'))
     );
 
     if (ctxInjectedMessages.length > 0) {
