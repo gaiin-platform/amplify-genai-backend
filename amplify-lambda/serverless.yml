@@ -6,6 +6,7 @@ package:
   exclude:
     - node_modules/**
     - venv/**
+    - tests/**
 
 plugins:
   - serverless-offline

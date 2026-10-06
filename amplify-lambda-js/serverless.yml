@@ -85,6 +85,9 @@ provider:
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
     ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    PROJECTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/PROJECTS_DYNAMODB_TABLE, 'projects-not-deployed'} # falls back to a placeholder until amplify-assistants (Projects) is deployed
+    PROJECT_MEMORIES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/PROJECT_MEMORIES_DYNAMODB_TABLE, 'project-memories-not-deployed'} # falls back to a placeholder until amplify-assistants (Projects) is deployed
+    PROJECT_FILES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/PROJECT_FILES_DYNAMODB_TABLE, 'project-files-not-deployed'} # falls back to a placeholder until amplify-assistants (Projects) is deployed
     LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/LAYERED_ASSISTANTS_DYNAMODB_TABLE}
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
@@ -288,6 +291,17 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECTS_DYNAMODB_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECT_MEMORIES_DYNAMODB_TABLE}/index/ProjectIdIndex"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECT_FILES_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

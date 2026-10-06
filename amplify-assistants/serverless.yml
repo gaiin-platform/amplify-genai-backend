@@ -6,6 +6,14 @@ package:
   exclude:
     - node_modules/**
     - venv/**
+    # Local-only Projects test harness — never ship to Lambda.
+    - .venv*/**
+    - local/**
+    - tests/**
+    - run-projects-local.sh
+    - docker-compose.*.yml
+    - requirements-local.txt
+    - LOCAL_PROJECTS.md
 
 plugins:
   - serverless-offline
@@ -77,6 +85,9 @@ provider:
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    PROJECTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-projects
+    PROJECT_MEMORIES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-project-memories
+    PROJECT_FILES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-project-files
     LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-layered-assistants
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
 
@@ -109,6 +120,123 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.ASSISTANT_LAMBDA_MANAGED_POLICY}
        
 functions:
+
+  create_project:
+    handler: service/projects.create_project
+    timeout: 30
+    events:
+      - http:
+          path: project/create
+          method: post
+          cors: true
+
+  list_projects:
+    handler: service/projects.list_projects
+    timeout: 30
+    events:
+      - http:
+          path: project/list
+          method: get
+          cors: true
+
+  get_project:
+    handler: service/projects.get_project
+    timeout: 30
+    events:
+      - http:
+          path: project/get
+          method: post
+          cors: true
+
+  update_project:
+    handler: service/projects.update_project
+    timeout: 30
+    events:
+      - http:
+          path: project/update
+          method: post
+          cors: true
+
+  delete_project:
+    handler: service/projects.delete_project
+    timeout: 30
+    events:
+      - http:
+          path: project/delete
+          method: post
+          cors: true
+
+  add_project_memory:
+    handler: service/project_memory.add_project_memory
+    timeout: 30
+    events:
+      - http:
+          path: project/memory/add
+          method: post
+          cors: true
+
+  list_project_memories:
+    handler: service/project_memory.list_project_memories
+    timeout: 30
+    events:
+      - http:
+          path: project/memory/list
+          method: post
+          cors: true
+
+  edit_project_memory:
+    handler: service/project_memory.edit_project_memory
+    timeout: 30
+    events:
+      - http:
+          path: project/memory/edit
+          method: post
+          cors: true
+
+  delete_project_memory:
+    handler: service/project_memory.delete_project_memory
+    timeout: 30
+    events:
+      - http:
+          path: project/memory/delete
+          method: post
+          cors: true
+
+  add_project_file:
+    handler: service/project_files.add_project_file
+    timeout: 30
+    events:
+      - http:
+          path: project/files/add
+          method: post
+          cors: true
+
+  list_project_files:
+    handler: service/project_files.list_project_files
+    timeout: 30
+    events:
+      - http:
+          path: project/files/list
+          method: post
+          cors: true
+
+  update_project_file:
+    handler: service/project_files.update_project_file
+    timeout: 30
+    events:
+      - http:
+          path: project/files/update
+          method: post
+          cors: true
+
+  remove_project_file:
+    handler: service/project_files.remove_project_file
+    timeout: 30
+    events:
+      - http:
+          path: project/files/remove
+          method: post
+          cors: true
 
   remove_astp_perms:
     handler: service/core.remove_shared_ast_permissions
@@ -424,6 +552,78 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}
 
+    ProjectMemoriesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: projectId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ProjectIdIndex
+            KeySchema:
+              - AttributeName: projectId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.PROJECT_MEMORIES_DYNAMODB_TABLE}
+
+    ProjectFilesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: projectId
+            AttributeType: S
+          - AttributeName: fileId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: projectId
+            KeyType: HASH
+          - AttributeName: fileId
+            KeyType: RANGE
+        TableName: ${self:provider.environment.PROJECT_FILES_DYNAMODB_TABLE}
+
+    ProjectsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdBy
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: CreatedByIndex
+            KeySchema:
+              - AttributeName: createdBy
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.PROJECTS_DYNAMODB_TABLE}
+
     AssistantsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -656,6 +856,22 @@ resources:
                 - lambda:InvokeFunction
               Resource:
                 - "arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-api-${sls:stage}-uploadIntegrationFiles"
+
+            # Projects: only the actions the project handlers use (no Scan).
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+                - dynamodb:BatchWriteItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECT_MEMORIES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECT_MEMORIES_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PROJECT_FILES_DYNAMODB_TABLE}"
 
             - Effect: Allow
               Action:

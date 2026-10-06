@@ -13,6 +13,61 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
+def can_create_project(user, data):
+    return True
+
+
+def can_list_project(user, data):
+    # Ownership is enforced per-item inside the handler (project.createdBy
+    # == current_user), same pattern as can_delete_assistant below — this
+    # gate just confirms the caller is an authenticated user.
+    return True
+
+
+def can_read_project(user, data):
+    return True
+
+
+def can_update_project(user, data):
+    return True
+
+
+def can_delete_project(user, data):
+    return True
+
+
+def can_add_project_memory(user, data):
+    return True
+
+
+def can_list_project_memory(user, data):
+    return True
+
+
+def can_edit_project_memory(user, data):
+    return True
+
+
+def can_delete_project_memory(user, data):
+    return True
+
+
+def can_add_project_file(user, data):
+    return True
+
+
+def can_list_project_file(user, data):
+    return True
+
+
+def can_update_project_file(user, data):
+    return True
+
+
+def can_remove_project_file(user, data):
+    return True
+
+
 def can_create_assistant(user, data):
     return True
 
@@ -94,6 +149,19 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
+    "/project/create": {"create": can_create_project},
+    "/project/list": {"list": can_list_project},
+    "/project/get": {"get": can_read_project},
+    "/project/update": {"update": can_update_project},
+    "/project/delete": {"delete": can_delete_project},
+    "/project/memory/add": {"add": can_add_project_memory},
+    "/project/memory/list": {"list": can_list_project_memory},
+    "/project/memory/edit": {"edit": can_edit_project_memory},
+    "/project/memory/delete": {"delete": can_delete_project_memory},
+    "/project/files/add": {"add": can_add_project_file},
+    "/project/files/list": {"list": can_list_project_file},
+    "/project/files/update": {"update": can_update_project_file},
+    "/project/files/remove": {"remove": can_remove_project_file},
     "/assistant/create": {"create": can_create_assistant},
     "/assistant/list": {"list": can_list_assistant},
     "/assistant/delete": {"delete": can_delete_assistant},

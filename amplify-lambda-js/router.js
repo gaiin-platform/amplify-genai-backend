@@ -22,6 +22,7 @@ import { CacheManager } from "./common/cache.js";
 import { chooseAssistantForRequest } from "./assistants/assistants.js";
 import { processSmartMessages } from "./common/conversations.js";
 import { newStatus } from "./common/status.js";
+import { getProjectContext, getApprovedProjectMemories, applyProjectContext, stripProjectContextMessages, attachProjectFiles, buildProjectContextSummary } from "./projects/projectContext.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
 
 // 🛡️ DEFENSIVE ROUTING
@@ -143,6 +144,10 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     body: { error: error.message }
                 });
             }
+
+            // ── Projects: attach the project's knowledge-base files server-side ──
+            // Must run before data sources are resolved below. Never throws.
+            await attachProjectFiles(params);
 
             // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION - All router operations in parallel!
             logger.info("🚀 Starting comprehensive parallel router setup...");
@@ -433,6 +438,33 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             // ensure the model id in the body and options is consitent with the changes
             let body = { ...params.body, options: options, model: model.id };
+
+            // ── Projects: server-side project context ──────────────────────────
+            // Reserved project-context message types may only be produced here.
+            // Strip anything a client sent (project chat or not), then inject
+            // the owner-validated instructions + approved memories. Additive and
+            // fully defensive (see projectContext.js): a missing project, an
+            // ownership mismatch, an archived project, or a lookup failure all
+            // fall through to the request proceeding as if it had no projectId.
+            body.messages = stripProjectContextMessages(body.messages);
+            if (typeof body.projectId === "string" && body.projectId) {
+                try {
+                    const project = params.projectRecord ?? await getProjectContext(params.user, body.projectId);
+                    if (project) {
+                        const memories = await getApprovedProjectMemories(params.user, project);
+                        body.messages = applyProjectContext(body.messages, project, memories);
+                        // Tell the client what this reply is built on (names/counts only).
+                        sendStateEventToStream(responseStream, {
+                            projectContext: buildProjectContextSummary(project, {
+                                files: params.projectFilesUsed,
+                                memoryCount: memories.length,
+                            }),
+                        });
+                    }
+                } catch (e) {
+                    logger.warn("Failed to apply project context, continuing without it:", e.message);
+                }
+            }
             logger.debug("Checking access on data sources");
             logger.info("Request options.", options);
             logger.info("Request data sources", dataSources);
