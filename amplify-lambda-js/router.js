@@ -536,7 +536,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     ))
                 },
                 interpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0,
-                downloadableFileIntent: downloadableFileIntent && specializedModeEligible
+                downloadableFileIntent: downloadableFileIntent && specializedModeEligible,
+                userDisabledWebSearch: options.disableWebSearch === true
             });
             const explicitSpecializedMode = resolveSpecializedAssistantMode({
                 ...options,
@@ -550,6 +551,10 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 effectiveOptions.fileGenerationUnavailable = true;
             }
             effectiveOptions.enableWebSearch = resolvedRouting.enableWebSearch;
+            // Tool-loop entry points (chatWithData, assistants) key off routingDecision.webSearch,
+            // not enableWebSearch, so the resolved value (availability + user opt-out) must
+            // be written back or the raw classifier decision still runs the search.
+            effectiveOptions.routingDecision.webSearch = resolvedRouting.enableWebSearch;
             effectiveOptions.downloadableFileIntent = resolvedRouting.downloadableFileIntent;
             effectiveOptions.routingDecision.codeInterpreter = resolvedRouting.codeInterpreterOnly;
             effectiveOptions.options.artifacts = resolvedRouting.artifacts;

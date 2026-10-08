@@ -308,3 +308,12 @@ test('does not route specialized requests', async () => {
     const result = await routeOrdinaryChat({ options: { cheapestModel: { id: 'cheap' } } }, { messages: [{ role: 'user', content: 'x' }], options: { configuredTools: [] } }, { routingEnabled: true, availability: {} }, { classify: async () => { throw new Error('must not classify'); } });
     assert.equal(result.metadata.eligible, false);
 });
+
+test('user web-search opt-out vetoes routing but never enables it', () => {
+    const wants = { webSearch: true, artifacts: false, codeInterpreter: false };
+    const avail = { webSearch: true, artifacts: true, codeInterpreter: false };
+    assert.equal(resolveRoutingOptions(wants, avail, {}).enableWebSearch, true);
+    assert.equal(resolveRoutingOptions(wants, avail, { userDisabledWebSearch: true }).enableWebSearch, false);
+    assert.equal(resolveRoutingOptions(wants, avail, { userDisabledWebSearch: false }).enableWebSearch, true);
+    assert.equal(resolveRoutingOptions({ ...wants, webSearch: false }, avail, { userDisabledWebSearch: false }).enableWebSearch, false);
+});

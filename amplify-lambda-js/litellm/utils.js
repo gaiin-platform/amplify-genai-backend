@@ -167,9 +167,13 @@ export function convertSystemMessages(messages, model) {
 /**
  * Add web search tool if URL is detected (OpenAI specific)
  */
-export function addWebSearchIfNeeded(messages, model, existingTools = []) {
+export function addWebSearchIfNeeded(messages, model, existingTools = [], { userDisabledWebSearch = false } = {}) {
     // Only for OpenAI models
     if (!model.provider || !model.provider.includes('OpenAI')) {
+        return existingTools;
+    }
+    // The user's explicit opt-out (e.g. Level 3 data) also covers provider-native search.
+    if (userDisabledWebSearch === true) {
         return existingTools;
     }
     

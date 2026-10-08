@@ -128,7 +128,10 @@ export function hasDownloadableFileIntent(messages = []) {
 export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availability = {}, {
     explicitModes = {},
     interpreterAvailable = true,
-    downloadableFileIntent = false
+    downloadableFileIntent = false,
+    // The user's explicit opt-out (Settings; e.g. Level 3 data). Unlike every
+    // other input it can only veto: absence/false never enables anything.
+    userDisabledWebSearch = false
 } = {}) {
     const codeInterpreterEnabled = availability.codeInterpreter === true && interpreterAvailable === true;
     const artifactsEnabled = availability.artifacts !== false;
@@ -141,7 +144,7 @@ export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availabil
     const routeInterpreter = downloadableFileIntent === true ||
         (!explicitModes.notEligible && routingDecision.codeInterpreter === true);
     return {
-        enableWebSearch: routingDecision.webSearch === true && availability.webSearch !== false,
+        enableWebSearch: routingDecision.webSearch === true && availability.webSearch !== false && userDisabledWebSearch !== true,
         artifacts: (explicitArtifacts || routeArtifacts) && artifactsEnabled,
         artifactsMode: explicitArtifacts && artifactsEnabled,
         codeInterpreterOnly: (explicitInterpreter || routeInterpreter) && codeInterpreterEnabled,
