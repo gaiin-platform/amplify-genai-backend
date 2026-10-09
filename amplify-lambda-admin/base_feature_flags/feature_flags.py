@@ -43,5 +43,6 @@ FEATURE_FLAGS = {
     "bedrockKnowledgeBase": False,
     "mcp": False,
     "skills": False,  # Controls the skills feature in the assistant builder
-    "smartMessages" : True 
+    "smartMessages" : True,
+    "newUi": False,
 }
