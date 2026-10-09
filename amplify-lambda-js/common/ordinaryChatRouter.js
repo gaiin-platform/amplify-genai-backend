@@ -1,4 +1,5 @@
 import { getLogger } from './logging.js';
+import { AMPLIFY_HELPER_ASSISTANT_ID } from './systemPrompts.js';
 
 const logger = getLogger('ordinaryChatRouter');
 
@@ -165,8 +166,11 @@ export function resolveSpecializedAssistantMode(options = {}) {
 
 export function isEligibleOrdinaryChat(params = {}, body = {}) {
     const options = body.options || {};
+    // The built-in helper (validated by the router) is a plain chat with extra guidance,
+    // so it keeps ordinary-chat prompt composition and feature routing.
+    const isBuiltInHelper = options.amplifyHelper === true && options.assistantId === AMPLIFY_HELPER_ASSISTANT_ID;
     const hasSpecializedAssistant = Boolean(
-        options.assistantId || options.groupId || options.groupType || body.assistantId || body.groupId
+        (options.assistantId && !isBuiltInHelper) || options.groupId || options.groupType || body.assistantId || body.groupId
     );
     const hasWorkflowOrConfiguredTools = Boolean(
         options.workflowId || options.workflow || body.workflowId || body.workflow ||

@@ -14,7 +14,8 @@ import { getUserAvailableModels } from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import { requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation } from "./common/envVarsTracking.js";
 import { logCriticalError } from "./common/criticalLogger.js";
-import { loadDeploymentConfig } from "./common/adminConfig.js";
+import { loadDeploymentConfig, isAmplifyHelperAllowed } from "./common/adminConfig.js";
+import { AMPLIFY_HELPER_ASSISTANT_ID } from "./common/systemPrompts.js";
 import { routeOrdinaryChat, resolveRoutingOptions, resolveSpecializedAssistantMode, hasDownloadableFileIntent } from "./common/ordinaryChatRouter.js";
 import { createRequestCancellation } from "./common/requestCancellation.js";
 import { CacheManager } from "./common/cache.js";
@@ -478,8 +479,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const deploymentConfig = await loadDeploymentConfig();
             // Admin policy always takes precedence over client options. On a config read
             // failure with no last-known-good value optional features fail closed.
+            // The reserved helper id only works for users the feature flag allows; otherwise it is
+            // dropped so the request behaves as a plain chat instead of a failed assistant lookup.
+            const requestsHelperId = options?.assistantId === AMPLIFY_HELPER_ASSISTANT_ID;
+            const helperAllowed = requestsHelperId && options?.amplifyHelper === true &&
+                isAmplifyHelperAllowed(deploymentConfig, params.user);
             const effectiveOptions = {
                 ...(options || {}),
+                ...(requestsHelperId && !helperAllowed ? { assistantId: undefined } : {}),
+                amplifyHelper: helperAllowed,
                 deploymentFeatures: deploymentConfig.availability,
                 deploymentPromptSettings: deploymentConfig,
                 isOrdinaryChatRequest: true,

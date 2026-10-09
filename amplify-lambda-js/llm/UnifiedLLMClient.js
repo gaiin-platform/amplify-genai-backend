@@ -490,7 +490,8 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 promptSettings: deploymentConfig,
                 modelSystemPrompt: model.systemPrompt,
                 requestPrompt: params.options?.prompt,
-                activeFeatures
+                activeFeatures,
+                includeAmplifyHelper: params.options?.amplifyHelper === true
             })
             : addModelSystemPrompt(finalMessages, model.systemPrompt);
         const callOptions = {

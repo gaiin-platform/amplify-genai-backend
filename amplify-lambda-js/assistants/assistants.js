@@ -17,6 +17,7 @@ import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
 import { resolveSpecializedAssistantMode } from "../common/ordinaryChatRouter.js";
+import { AMPLIFY_HELPER_ASSISTANT_ID } from "../common/systemPrompts.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import * as skillsService from "../skills/skillsService.js";
 
@@ -306,6 +307,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     logger.info(`Choose Assistant for Request `);
 
     const clientSelectedAssistant = body.options?.assistantId ?? null;
+    const isAmplifyHelper = body.options?.amplifyHelper === true && clientSelectedAssistant === AMPLIFY_HELPER_ASSISTANT_ID;
     const specializedMode = resolveSpecializedAssistantMode({
         ...body.options,
         deploymentFeatures: body.options?.deploymentFeatures,
@@ -318,6 +320,14 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     } else if (specializedMode === 'artifacts') {
         selectedAssistant = ArtifactModeAssistant;
         logger.info("ARTIFACT MODE DETERMINED");
+    } else if (isAmplifyHelper) {
+        logger.info('Using built-in Amplify Helper assistant');
+        selectedAssistant = {
+            ...defaultAssistant,
+            name: 'Amplify Helper',
+            displayName: 'Amplify Helper',
+            description: 'Administrator-controlled guide to using Amplify.'
+        };
     } else if (clientSelectedAssistant) {
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group assistants

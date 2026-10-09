@@ -30,7 +30,7 @@ const client = DynamoDBDocumentClient.from(new DynamoDBClient({
     marshallOptions: { removeUndefinedValues: true }
 });
 
-export function normalizeDeploymentConfig(promptRecord, featureRecord, { featureReadFailed = false } = {}) {
+export function normalizeDeploymentConfig(promptRecord, featureRecord, { featureFlagsRecord = null, featureReadFailed = false } = {}) {
     const prompts = {};
     const inputPrompts = promptRecord?.schemaVersion === 1 && promptRecord.prompts && typeof promptRecord.prompts === 'object'
         ? promptRecord.prompts
@@ -54,9 +54,16 @@ export function normalizeDeploymentConfig(promptRecord, featureRecord, { feature
             : (featureReadFailed ? false : DEFAULT_AVAILABILITY[key])
     ]));
 
+    const helperFlag = featureFlagsRecord?.amplifyHelper;
     return {
         prompts,
         availability,
+        // Feature flag for the built-in Amplify Helper, evaluated per user by isAmplifyHelperAllowed.
+        amplifyHelperFlag: {
+            enabled: helperFlag?.enabled === true,
+            userExceptions: Array.isArray(helperFlag?.userExceptions) ? helperFlag.userExceptions.filter(u => typeof u === 'string') : [],
+            hasGroupExceptions: Array.isArray(helperFlag?.amplifyGroupExceptions) && helperFlag.amplifyGroupExceptions.length > 0
+        },
         allowClassicUiSwitch: typeof featureRecord?.allowClassicUiSwitch === 'boolean'
             ? featureRecord.allowClassicUiSwitch
             : true,
@@ -67,6 +74,18 @@ export function normalizeDeploymentConfig(promptRecord, featureRecord, { feature
             : false,
         status: featureReadFailed ? 'unavailable' : 'loaded'
     };
+}
+
+/**
+ * Mirrors the admin feature-flag rule: enabled flips for users listed as exceptions.
+ * Group exceptions cannot be resolved here, so a flag with group exceptions is treated
+ * leniently when disabled; the helper only adds guidance text, never access.
+ */
+export function isAmplifyHelperAllowed(deploymentConfig, user) {
+    const flag = deploymentConfig?.amplifyHelperFlag;
+    if (!flag) return false;
+    if (user && flag.userExceptions?.includes(user)) return !flag.enabled;
+    return flag.enabled || flag.hasGroupExceptions === true;
 }
 
 export function createDeploymentConfigLoader({
@@ -86,11 +105,13 @@ export function createDeploymentConfigLoader({
 
         inFlight = (async () => {
             try {
-                const [promptRecord, featureRecord] = await Promise.all([
+                const [promptRecord, featureRecord, featureFlagsRecord] = await Promise.all([
                     getConfigItem('systemPrompts', timeoutMs),
-                    getConfigItem('deploymentFeatures', timeoutMs)
+                    getConfigItem('deploymentFeatures', timeoutMs),
+                    // Optional: a failed read must only disable the helper, never other config.
+                    Promise.resolve().then(() => getConfigItem('featureFlags', timeoutMs)).catch(() => null)
                 ]);
-                const normalized = normalizeDeploymentConfig(promptRecord, featureRecord);
+                const normalized = normalizeDeploymentConfig(promptRecord, featureRecord, { featureFlagsRecord });
                 lastKnownGood = normalized;
                 cached = normalized;
                 expiresAt = now() + ttlMs;
@@ -100,7 +121,7 @@ export function createDeploymentConfigLoader({
                     errorName: error?.name || 'Error'
                 });
                 if (lastKnownGood) return lastKnownGood;
-                const fallback = normalizeDeploymentConfig(null, null, { featureReadFailed: true });
+                const fallback = normalizeDeploymentConfig(null, null, { featureFlagsRecord: null, featureReadFailed: true });
                 cached = fallback;
                 expiresAt = now() + Math.min(ttlMs, 5_000);
                 return fallback;
