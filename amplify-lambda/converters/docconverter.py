@@ -22,6 +22,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 )
 
 from pycommon.logger import getLogger
+from converters.pandoc_runner import convert_with_fallbacks
 logger = getLogger("docconverters")
 
 setup_validated(rules, get_permission_checker)
@@ -159,6 +160,11 @@ date: {formatted_date}
     # Initialize the S3 client
     s3_client = boto3.client("s3")
 
+    # The template pointer must exist BEFORE the .md lands: the .md upload is what
+    # triggers the convert Lambda, which reads the pointer immediately.
+    if templateName and templateName != "":
+        put_template_to_s3(user, unique_uuid, templateName)
+
     logger.info(
         "Saving file to S3 with key: %s and content type: text/markdown and bucket: %s", consolidation_s3_key, consolidation_bucket_name
     )
@@ -172,9 +178,6 @@ date: {formatted_date}
 
     logger.info("File saved to S3 with key: %s", consolidation_s3_key)
 
-    if templateName and templateName != "":
-        put_template_to_s3(user, unique_uuid, templateName)
-
     s3_output_key = f"conversion/output/{user}/{unique_uuid}.{fmat}"
 
     logger.debug("Creating presigned URL for user: '%s' (decoded)", user)
@@ -186,11 +189,19 @@ date: {formatted_date}
         ExpiresIn=3600,  # URL expires in 1 hour
     )
 
+    # Failures are reported through a small marker object next to the output so the
+    # client can show the real reason instead of polling until it times out.
+    error_presigned_url = s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": consolidation_bucket_name, "Key": f"conversion/output/{user}/{unique_uuid}.error"},
+        ExpiresIn=3600,
+    )
+
     # Create the response
     response = {
         "success": True,
         "message": "Document conversion started",
-        "data": {"url": presigned_url},
+        "data": {"url": presigned_url, "errorUrl": error_presigned_url},
     }
 
     return response
@@ -251,6 +262,70 @@ def get_template_from_s3(user: str, unique_uuid: str):
     return None
 
 
+def download_template(template_name: str, consolidation_bucket_name: str, fmat: str):
+    """Locate and download a template; returns a local path, or None if unusable.
+
+    Lookup order (unchanged):
+      1. powerPointTemplates/{template_name} in the consolidation bucket
+      2. templates/{template_name} in the legacy conversion output bucket
+    A template whose type does not match the target format (e.g. a .pptx
+    reference doc for a docx export) is ignored rather than passed to pandoc.
+    """
+    try:
+        if "." not in template_name or template_name.rsplit(".", 1)[1].lower() != fmat.lower():
+            logger.warning("Ignoring template '%s' for %s conversion (type mismatch)", template_name, fmat)
+            return None
+
+        template_key = None
+        template_bucket = None
+
+        new_template_key = f"powerPointTemplates/{template_name}"
+        try:
+            s3.head_object(Bucket=consolidation_bucket_name, Key=new_template_key)
+            template_key, template_bucket = new_template_key, consolidation_bucket_name
+            logger.debug("Found template at new location: s3://%s/%s", template_bucket, template_key)
+        except Exception:
+            original_conversion_bucket = os.environ.get("S3_CONVERSION_OUTPUT_BUCKET_NAME")
+            if original_conversion_bucket:
+                original_template_key = f"templates/{template_name}"
+                try:
+                    s3.head_object(Bucket=original_conversion_bucket, Key=original_template_key)
+                    template_key, template_bucket = original_template_key, original_conversion_bucket
+                    logger.debug("Found template at original location: s3://%s/%s", template_bucket, template_key)
+                except Exception:
+                    logger.warning("Template not found at either location: s3://%s/%s or s3://%s/%s",
+                                   consolidation_bucket_name, new_template_key, original_conversion_bucket, original_template_key)
+            else:
+                logger.warning("Template not found in consolidation bucket and S3_CONVERSION_OUTPUT_BUCKET_NAME not configured")
+
+        if not template_key:
+            logger.error("Template not found: %s", template_name)
+            return None
+
+        suffix = template_key.rsplit(".", 1)[1]
+        template_file = tempfile.NamedTemporaryFile(suffix="." + suffix, delete=False)
+        template_file.close()
+        if download_file_from_s3(template_bucket, template_key, template_file.name) is None:
+            return None
+        return template_file.name
+    except Exception as e:
+        logger.error("Error downloading template from S3: %s, template will not be used", str(e))
+        return None
+
+
+def put_conversion_error(email: str, unique_uuid: str, message: str):
+    """Record why a conversion failed so the client can surface it."""
+    try:
+        boto3.client("s3").put_object(
+            Body=(message or "Conversion failed")[:1000].encode("utf-8", errors="replace"),
+            Bucket=os.environ["S3_CONSOLIDATION_BUCKET_NAME"],
+            Key=f"conversion/output/{email}/{unique_uuid}.error",
+            ContentType="text/plain",
+        )
+    except Exception as e:
+        logger.error("Could not write conversion error marker: %s", str(e))
+
+
 @required_env_vars({
     "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM],
 })
@@ -290,131 +365,88 @@ def handler(event, context):
     }
 
     for record in event["Records"]:
+        email = unique_uuid = None
+        temp_paths = []
+        try:
+            key = unquote(record["s3"]["object"]["key"])
+            # Sanitize key to prevent surrogate encoding errors in logs
+            safe_key = sanitize_surrogates(key)
 
-        input_file = tempfile.NamedTemporaryFile(delete=False, suffix=".md")
-        record = event["Records"][0]
-        key = record["s3"]["object"]["key"]
+            logger.info("Processing document conversion for key: %s", safe_key)
 
-        key = unquote(key)
-        # Sanitize key to prevent surrogate encoding errors in logs
-        safe_key = sanitize_surrogates(key)
+            input_bucket = record["s3"]["bucket"]["name"]
 
-        logger.info("Processing document conversion for key: %s", safe_key)
+            # Extract user path from consolidation bucket format
+            # Consolidation bucket keys: conversion/input/{user}/{uuid}-to-{format}.md
+            if not key.startswith("conversion/input/"):
+                logger.error("Unexpected key format for document conversion: %s, expected conversion/input/ prefix", safe_key)
+                continue
 
-        input_bucket = record["s3"]["bucket"]["name"]
+            user_path = key[len("conversion/input/"):]
+            email, unique_uuid, fmat, extension = parse_s3_key(user_path)
 
-        # Extract user path from consolidation bucket format
-        # Consolidation bucket keys: conversion/input/{user}/{uuid}-to-{format}.md
-        if not key.startswith("conversion/input/"):
-            logger.error("Unexpected key format for document conversion: %s, expected conversion/input/ prefix", safe_key)
-            return
+            # Sanitize email for logging
+            safe_email = sanitize_surrogates(email) if email else email
 
-        user_path = key[len("conversion/input/"):]
-        email, uuid, fmat, extension = parse_s3_key(user_path)
+            logger.info("bucket:%s user: %s, uuid: %s, format: %s, extension: %s", input_bucket, safe_email, unique_uuid, fmat, extension)
 
-        # Sanitize email for logging
-        safe_email = sanitize_surrogates(email) if email else email
+            if not email or not unique_uuid or not fmat or not extension:
+                logger.error("Could not parse email, uuid, format, and extension from key: %s", safe_key)
+                continue
 
-        logger.info("bucket:%s user: %s, uuid: %s, format: %s, extension: %s", input_bucket, safe_email, uuid, fmat, extension)
+            input_file = tempfile.NamedTemporaryFile(delete=False, suffix=".md")
+            output_file = tempfile.NamedTemporaryFile(suffix="." + fmat, delete=False)
+            temp_paths += [input_file.name, output_file.name]
+            input_file.close()
+            output_file.close()
 
-        if not email or not uuid or not fmat or not extension:
-            logger.error("Could not parse email, uuid, format, and extension from key: %s", safe_key)
-            return
+            mime_type = supported_mime_types.get(fmat, "text/plain")
 
-        output_file = tempfile.NamedTemporaryFile(suffix="." + fmat, delete=False)
+            logger.debug("input_bucket: %s, key: %s, input_file: %s, output_file: %s, mime_type: %s", input_bucket, safe_key, input_file.name, output_file.name, mime_type)
 
-        mime_type = supported_mime_types.get(fmat, "text/plain")
+            download_file_from_s3(input_bucket, key, input_file.name)
 
-        logger.debug("input_bucket: %s, key: %s, input_file: %s, output_file: %s, mime_type: %s", input_bucket, safe_key, input_file.name, output_file.name, mime_type)
+            template_name = get_template_from_s3(email, unique_uuid)
+            template_path = None
 
-        download_file_from_s3(input_bucket, key, input_file.name)
+            if template_name and template_name != "":
+                template_path = download_template(template_name, consolidation_bucket_name, fmat)
+                if template_path:
+                    temp_paths.append(template_path)
 
-        template_name = get_template_from_s3(email, uuid)
-        has_template = False
+            logger.info("Converting %s %s using %s", input_bucket, safe_key, input_file.name)
 
-        if template_name and template_name != "":
-            try:
-                # Try two locations in order:
-                # 1. powerPointTemplates/{template_name} in consolidation bucket (new migrated location)
-                # 2. templates/{template_name} in original conversion output bucket (backward compatibility)
-                
-                template_key = None
-                template_bucket = None
-                template_found = False
-                
-                # Location 1: New migrated location in consolidation bucket
-                new_template_key = f"powerPointTemplates/{template_name}"
+            ok, info = convert_with_fallbacks(input_file.name, output_file.name, template_path, logger)
+            temp_paths.append(input_file.name + ".noimg.md")
+            if not ok:
+                logger.error("Conversion failed for %s: %s", safe_key, info)
+                put_conversion_error(email, unique_uuid, f"The {fmat} conversion failed: {info}")
+                continue
+
+            logger.info("Converted %s %s to %s (dropped: %s)", input_bucket, safe_key, output_file.name, info or "nothing")
+
+            output_key = f"conversion/output/{email}/{unique_uuid}.{fmat}"
+            safe_output_key = sanitize_surrogates(output_key)
+
+            logger.debug("Handler parsed email: '%s' from key: '%s'", safe_email, safe_key)
+            logger.debug("Handler saving file to output key: '%s'", safe_output_key)
+            logger.info("Uploading %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
+
+            upload_file_to_s3(consolidation_bucket_name, output_key, output_file.name, mime_type)
+
+            logger.info("Uploaded %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
+        except Exception as e:
+            # Do not re-raise: S3 invokes this Lambda asynchronously and would retry the
+            # same failing conversion. Report the failure to the client instead.
+            logger.error("Unexpected error converting document: %s", str(e))
+            if email and unique_uuid:
+                put_conversion_error(email, unique_uuid, f"Conversion failed unexpectedly: {e}")
+        finally:
+            for path in temp_paths:
                 try:
-                    s3.head_object(Bucket=consolidation_bucket_name, Key=new_template_key)
-                    template_key = new_template_key
-                    template_bucket = consolidation_bucket_name
-                    template_found = True
-                    logger.debug("Found template at new location: s3://%s/%s", template_bucket, template_key)
-                except Exception:
-                    # Location 2: Original bucket (backward compatibility for non-migrated templates)
-                    original_conversion_bucket = os.environ.get("S3_CONVERSION_OUTPUT_BUCKET_NAME")
-                    if original_conversion_bucket:
-                        original_template_key = f"templates/{template_name}"
-                        try:
-                            s3.head_object(Bucket=original_conversion_bucket, Key=original_template_key)
-                            template_key = original_template_key
-                            template_bucket = original_conversion_bucket
-                            template_found = True
-                            logger.debug("Found template at original location: s3://%s/%s", template_bucket, template_key)
-                        except Exception:
-                            logger.warning("Template not found at either location: s3://%s/%s or s3://%s/%s", 
-                                          consolidation_bucket_name, new_template_key, original_conversion_bucket, original_template_key)
-                    else:
-                        logger.warning("Template not found in consolidation bucket and S3_CONVERSION_OUTPUT_BUCKET_NAME not configured")
-                
-                if template_found:
-                    suffix = template_key.rsplit(".", 1)[1]
-                    logger.debug("Using template: s3://%s/%s, suffix: %s", template_bucket, template_key, suffix)
-                    template_file = tempfile.NamedTemporaryFile(
-                        suffix="." + suffix, delete=False
-                    )
-                    download_file_from_s3(
-                        template_bucket, template_key, template_file.name
-                    )
-                    has_template = True
-                else:
-                    logger.error("Template not found: %s", template_name)
-                    
-            except Exception as e:
-                logger.error("Error downloading template from S3: %s, template will not be used", str(e))
-                pass
-
-        logger.info("Converting %s %s using %s", input_bucket, safe_key, input_file.name)
-
-        args = []
-        if has_template:
-            args = [
-                "/opt/bin/pandoc",
-                "--reference-doc",
-                template_file.name,
-                input_file.name,
-                "-o",
-                output_file.name,
-            ]
-        else:
-            args = ["/opt/bin/pandoc", input_file.name, "-o", output_file.name]
-
-        check_output(args)
-
-        logger.info("Converted %s %s to %s", input_bucket, safe_key, output_file.name)
-
-        output_key = f"conversion/output/{email}/{uuid}.{fmat}"
-        safe_output_key = sanitize_surrogates(output_key)
-
-        logger.debug("Handler parsed email: '%s' from key: '%s'", safe_email, safe_key)
-        logger.debug("Handler saving file to output key: '%s'", safe_output_key)
-        logger.info("Uploading %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
-
-        upload_file_to_s3(consolidation_bucket_name, output_key, output_file.name, mime_type)
-
-        logger.info("Uploaded %s %s using %s", consolidation_bucket_name, safe_output_key, output_file.name)
-
-        input_file.close()
-        output_file.close()
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
 
     return
