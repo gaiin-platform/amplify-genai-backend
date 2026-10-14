@@ -2,6 +2,7 @@ import {sendStateEventToStream, sendErrorMessage} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 import {logCriticalError} from "../common/criticalLogger.js";
 import { getBudgetTokens } from "../common/params.js";
+import { usesAdaptiveThinking } from "./thinkingModels.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
@@ -128,8 +129,8 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                     "reasoning": { "effort": effort }
                 };
                 logger.info(`GPT-5.6 reasoning enabled (effort=${effort}) with maxTokens=${maxTokens}`);
-            } else if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
-                // Opus 4.6+, Opus 5+, Sonnet 5+ — effort-based adaptive reasoning.
+            } else if (usesAdaptiveThinking(currentModel.id)) {
+                // Opus 4.6+, Opus 5+, Sonnet 5+, Haiku 5+ — effort-based adaptive reasoning.
                 // These models use thinking.type.adaptive + output_config.effort instead of
                 // the older thinking.type.enabled + budget_tokens API.
                 // This mirrors how azure/openai.js and litellmClient.js map
@@ -139,7 +140,7 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                     "reasoning_config": { "type": "adaptive" },
                     "output_config": { "effort": effort }
                 };
-                logger.info(`Adaptive thinking enabled (Opus 4.6+/5+, effort=${effort}) with temperature=1.0, maxTokens=${maxTokens}`);
+                logger.info(`Adaptive thinking enabled (Opus 4.6+/5+, Sonnet 5+, Haiku 5+, effort=${effort}) with temperature=1.0, maxTokens=${maxTokens}`);
             } else {
                 // All other reasoning-capable Claude models (e.g. Sonnet 4.6) use
                 // "enabled" with budget_tokens. getBudgetTokens encodes the user's
