@@ -7,7 +7,6 @@ import {sendStateEventToStream} from "../common/streams.js";
 import {getInternalLLM} from "../llm/InternalLLM.js";
 import {getLogger} from "../common/logging.js";
 import {isKilled} from "../requests/requestState.js";
-import { getFeaturePrompt } from "../common/systemPrompts.js";
 
 const logger = getLogger("assistants.ArtifactModeAssistant");
 
@@ -68,6 +67,18 @@ Guidelines:
 - REMEMBER: If it looks complete, just respond with ${ARTIFACT_COMPLETE_MARKER}
 `;
 
+// Used when the client resumes an artifact it knows was cut off (for example by a time limit).
+// Unlike the instructions above, the model is not allowed to decide the artifact is already complete.
+const resume_instructions = `
+The artifact below was cut off before it finished because the request ran out of time. It is definitely INCOMPLETE. Do not decide that it is complete.
+Continue it from exactly where it stopped, even if it stopped in the middle of a word, a line of code, a string or a tag.
+Guidelines:
+- Start your response with the exact next character that should follow the text below. No preamble, no commentary, and do not repeat anything that is already written.
+- Match the existing format, structure and escaping exactly. Keep continuing the same structure instead of starting a new one.
+- Write the entire missing remainder, including any closing tags, brackets, quotes and sections that are still missing.
+- Do NOT respond with only the identifier ${ARTIFACT_COMPLETE_MARKER}. Only after you have written the missing remainder, end your response with ${ARTIFACT_COMPLETE_MARKER}.
+`;
+
 // Future expansion: mode long form, fast edit, etc.
 // Currently using truncatedOutput mode for all artifact generation
 
@@ -91,8 +102,22 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
     logger.info("🚀 ArtifactMode using InternalLLM for high-speed generation");
     let retryCount = 0;
     let isComplete = false;
-    let accumulatedResponse = "";
-    
+    // When the client resumes a cut-off artifact it sends the text it already has,
+    // so generation continues from there instead of starting over.
+    // Read from the request context: the state machine clones the LLM and the clone drops its params.
+    const requestedContinueFrom = context.body?.options?.continueFrom;
+    const continueFrom = typeof requestedContinueFrom === 'string' ? requestedContinueFrom : "";
+    let accumulatedResponse = continueFrom;
+    // Tells the client this request is an artifact stream, so a stream that ends
+    // without an artifactCompletion event can be shown as cut off.
+    sendStateEventToStream(context.responseStream, {artifactMode: true});
+    let emptyRounds = 0;
+    let stopReason = null;
+    // A resumed request starts from text the client knows is cut off, so until a round writes
+    // real text, the model must continue it and may not just declare it complete.
+    let resumeNeedsText = !!continueFrom;
+    let claimedDone = 0;
+
     // Custom stream handler to buffer output and check for completion marker
     class ArtifactStreamHandler {
         constructor(originalStream) {
@@ -100,6 +125,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
             this.llmResponse = "";
             this.buffer = "";
             this.isComplete = false;
+            this.lastChunkAt = Date.now();
         }
 
         transform(chunk) {
@@ -120,6 +146,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         }
         
         write(chunk) {
+            this.lastChunkAt = Date.now();
             // Stop processing chunks once artifact is complete
             if (this.isComplete) {
                 return false;
@@ -217,13 +244,16 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         };
         
         customStreamLLM.params = { ...llm.params };
-        
+
         // Build the appropriate prompt based on retry count
         const messages = [{
             role: "system",
-            content: [getFeaturePrompt(originalLLM.params?.options?.deploymentPromptSettings, 'artifacts'), additional_instructions].filter(Boolean).join("\n\n")
+            // Only the instructions for writing the artifact itself. The deployment's "artifacts" feature prompt
+            // tells the chat model to emit an autoArtifacts JSON block, which made this round wrap the page in JSON
+            // (and made resuming a cut-off artifact impossible, since the model restarted the wrapper).
+            content: additional_instructions
         }];
-        if (retryCount > 0) {
+        if (retryCount > 0 || continueFrom) {
             // Calculate max chars based on model's context window
             // Formula: (contextWindow - outputLimit) * 4 chars/token, with 20% safety margin
             const model = llm.model || originalLLM.params.options.model;
@@ -242,21 +272,26 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
             }
             messages.push({
                 role: "user",
-                content: `${truncated_output_instructions}\n\nThis is whats been generated so far: \n\n${truncatedAccumulated}`
+                content: `${resumeNeedsText ? resume_instructions : truncated_output_instructions}\n\nThis is whats been generated so far: \n\n${truncatedAccumulated}`
             });
         }
         const prompt = new PromptAction(
             messages,
             "response",
-            {skipRag: true, ragOnly: false, appendMessages: true, streamResults: true}
+            // Extended thinking adds minutes before the first artifact token and artifact
+            // generation has to fit in the request time limit, so keep reasoning off.
+            // retries: 0 because a retry would restart the stream and repeat text the user has already
+            // received. A failed round keeps what it wrote and the next round continues from it.
+            {skipRag: true, ragOnly: false, appendMessages: true, streamResults: true, retries: 0, options: {disableReasoning: true}}
         );
-        
+
         // Execute the prompt and wait for stream completion
         await invokeAction(prompt, customStreamLLM, context, dataSources);
-        
-        // Wait for stream to actually complete (invokeAction returns when call starts, not when stream ends)
+
+        // The call has returned, so the stream is finished. Only wait for any chunk still being
+        // handled, instead of a fixed 10 seconds when the round ended without the end marker.
         let waitCount = 0;
-        while (!streamHandler.isArtifactComplete() && waitCount < 100) {
+        while (!streamHandler.isArtifactComplete() && waitCount < 100 && Date.now() - streamHandler.lastChunkAt < 300) {
             await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
             waitCount++;
         }
@@ -264,8 +299,22 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         isComplete = streamHandler.isArtifactComplete();
         const currentResponse = streamHandler.getAccumulatedResponse();
 
+        // A bare end marker on a resumed request is not a real completion: the client knows the text is
+        // cut off. Reject it (twice at most) instead of reporting a truncated artifact as complete.
+        let rejectedClaim = false;
+        if (resumeNeedsText) {
+            if (currentResponse.replace(ARTIFACT_COMPLETE_MARKER, '').trim().length === 0) {
+                rejectedClaim = true;
+                isComplete = false;
+                claimedDone++;
+                logger.warn(`⚠️ Model answered a resumed artifact with only the end marker (${claimedDone}/2), not accepting it`);
+            } else {
+                resumeNeedsText = false;
+            }
+        }
+
         // FAILSAFE: In retry mode, check if LLM just responded with marker (meaning it detected completion)
-        if (!isComplete && retryCount > 0 && currentResponse.trim() === ARTIFACT_COMPLETE_MARKER) {
+        if (!isComplete && !rejectedClaim && (retryCount > 0 || continueFrom) && currentResponse.trim() === ARTIFACT_COMPLETE_MARKER) {
             logger.info("✅ LLM confirmed artifact was already complete in retry");
             isComplete = true;
         }
@@ -277,14 +326,29 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         }
 
         // Update accumulated response for next iteration if needed
-        accumulatedResponse += currentResponse;
+        accumulatedResponse += rejectedClaim ? "" : currentResponse;
         retryCount++;
+
+        if (isComplete) break;
+
+        if (rejectedClaim && claimedDone >= 2) {
+            stopReason = "model_claimed_complete";
+            break;
+        }
+
+        // Two rounds in a row that wrote nothing means the model call is failing, not progressing.
+        emptyRounds = currentResponse.length === 0 ? emptyRounds + 1 : 0;
+        if (emptyRounds >= 2) {
+            stopReason = "no_progress";
+            logger.warn("⚠️ Two artifact rounds produced no output, stopping");
+            break;
+        }
     }
-    
+
     if (isComplete) {
         sendStateEventToStream(context.responseStream, {artifactCompletion: true});
-    } else if (retryCount >= MAX_RETRIES) {
-        sendStateEventToStream(context.responseStream, {artifactCompletion: false});
+    } else {
+        sendStateEventToStream(context.responseStream, {artifactCompletion: false, reason: stopReason || "round_limit"});
     }
     
     return isComplete;
