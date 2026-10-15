@@ -317,6 +317,17 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
 
         disclaimer: assistant.disclaimer ?? '',
 
+        // The handler below closes over `assistant`, so overriding fields on the
+        // returned wrapper has no effect. Callers that need to change assistant.data
+        // for a single request (e.g. force opsLanguageVersion "v4" when chat-input
+        // connector actions are attached) must use this. Non-mutating: the source
+        // assistant object is shared through CacheManager.
+        withDataOverrides: (overrides) => fillInAssistant(
+            {...assistant, data: {...(assistant.data || {}), ...overrides}},
+            assistantBase,
+            layeredAstId
+        ),
+
         handler: async (params, body, ds, responseStream) => {
             // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
