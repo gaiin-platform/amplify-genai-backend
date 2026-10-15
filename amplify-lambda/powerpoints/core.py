@@ -65,9 +65,9 @@ def handle_pptx_upload(event, context):
                 
                 # Check if template already exists with same metadata (idempotency check)
                 for existing_template in existing_templates:
-                    if (existing_template["name"] == template_name and
-                        existing_template["isAvailable"] == is_available and
-                        existing_template["amplifyGroups"] == amplify_groups):
+                    if (existing_template.get("name") == template_name and
+                        existing_template.get("isAvailable", False) == is_available and
+                        existing_template.get("amplifyGroups", []) == amplify_groups):
                         logger.info(f"Template {template_name} already processed with same metadata, skipping")
                         skip_record = True
                         break
@@ -81,11 +81,13 @@ def handle_pptx_upload(event, context):
                 existing_templates = []
                 
         except Exception as e:
-            logger.warning(f"Could not check for existing template {template_name}: {e}. Proceeding with processing.")
-            existing_templates = []
+            # Never fall back to an empty list here: the put_item below replaces the whole
+            # list, so a transient read error would wipe every other registered template.
+            logger.error(f"Could not read existing templates while registering {template_name}: {e}")
+            raise
 
         # Convert list to dict for easy update
-        existing_templates_dict = {t["name"]: t for t in existing_templates}
+        existing_templates_dict = {t["name"]: t for t in existing_templates if isinstance(t, dict) and "name" in t}
 
         existing_templates_dict[template_name] = {
             "name": template_name,

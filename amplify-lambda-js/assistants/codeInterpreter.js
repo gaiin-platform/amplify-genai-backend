@@ -9,6 +9,7 @@ import { logCriticalError } from "../common/criticalLogger.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import { getFeaturePrompt } from "../common/systemPrompts.js";
 import { v4 as uuidv4 } from "uuid";
+import { MAX_CODE_RETRIES, RETRY_FILE_HINT, isRetryableCodeError, isFileRelatedError, parseToolCode, buildToolErrorTurn } from "./codeInterpreterRetry.js";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -151,15 +152,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // sandbox, etc.) rather than an infrastructure/session issue? If so, the
             // fallback answer should proactively tell the user to re-upload the file
             // alongside their question, since simply re-asking won't fix a file problem.
-            const isFileRelatedError = (msg) => {
-                const m = String(msg || "").toLowerCase();
-                return (
-                    m.includes("file") ||
-                    m.includes("filenotfounderror") ||
-                    m.includes("not authorized to access the referenced files") ||
-                    m.includes("no such file or directory")
-                );
-            };
 
             // On any code interpreter failure: show the error status, then let the LLM
             // answer the original question directly as a fallback.
@@ -290,15 +282,31 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             let executedAny = false;
             let sessionWasRenewed = false;
             const allGeneratedFiles = [];
+            let codeRetries = 0;
+            let lastCodeError = null;
+            // The script is written inside a tool call, so a small output cap truncates long
+            // scripts (e.g. multi-slide python-pptx) mid-JSON. Give this call the model's
+            // real output limit (bounded) rather than the chat's reduced maxTokens.
+            // If the model's real limit is unknown (e.g. only an id string is available here),
+            // still use a floor that fits a full deck script instead of the chat's reduced cap.
+            const knownOutputLimit = typeof model === "object" ? model?.outputTokenLimit : undefined;
+            const codeMaxTokens = knownOutputLimit
+                ? Math.max(options.maxTokens || 4000, Math.min(knownOutputLimit, 16000))
+                : Math.max(options.maxTokens || 4000, 8000);
+            logger.info("Code interpreter output cap: %d tokens (chat maxTokens: %s, model limit: %s)",
+                codeMaxTokens, options.maxTokens, knownOutputLimit ?? "unknown");
 
-            for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+            // Fix-and-retry turns get their own allowance so they don't eat the iterations
+            // needed for the successful run and the final answer.
+            for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS + MAX_CODE_RETRIES; iteration++) {
                 if (await isKilled(account.user, responseStream, body)) return;
 
                 // Force tool use on the first turn so the model can never skip straight to
                 // an empty/no-op response — it must call execute_code at least once. Later
                 // turns (after it has already run code) are left on "auto" so it can stop
                 // calling the tool and produce its final text answer.
-                const toolChoice = iteration === 0 ? "required" : "auto";
+                // After a failed attempt it must also keep calling the tool until it has working code.
+                const toolChoice = (iteration === 0 || lastCodeError) ? "required" : "auto";
 
                 let callResult;
                 try {
@@ -311,7 +319,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                             tool_choice: toolChoice,
                             disableReasoning: true,
                             temperature: options.temperature,
-                            max_tokens: options.maxTokens || 4000
+                            max_tokens: codeMaxTokens
                         }
                     );
                 } catch (err) {
@@ -330,13 +338,27 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 if (!toolCall.id) {
                     toolCall.id = uuidv4();
                 }
-                let args = {};
-                try {
-                    args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
-                } catch (e) {
-                    logger.warn("Failed to parse tool call arguments: %s", e.message);
+                const { code, error: toolCallError } = parseToolCode(toolCall);
+                if (toolCallError) {
+                    logger.warn("Unusable execute_code call: %s", toolCallError);
+                    if (codeRetries >= MAX_CODE_RETRIES) {
+                        await fallbackToLLM(toolCallError);
+                        return;
+                    }
+                    codeRetries += 1;
+                    lastCodeError = toolCallError;
+                    // Never send empty/invalid code to the sandbox; ask the model to try again.
+                    conversationMessages = [
+                        ...conversationMessages,
+                        ...buildToolErrorTurn({
+                            assistantContent: callResult.content,
+                            toolCall,
+                            errorMessage: toolCallError,
+                            safeArguments: "{}"
+                        })
+                    ];
+                    continue;
                 }
-                const code = args.code || "";
 
                 if (await isKilled(account.user, responseStream, body)) return;
                 sendStatusMessage(responseStream, "Executing code...");
@@ -376,6 +398,18 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     }
                 } else {
                     const errMsg = String(executionResponse?.error || "Unknown execution error");
+                    if (isRetryableCodeError(errMsg) && codeRetries < MAX_CODE_RETRIES) {
+                        // The script itself failed: show the model its error so it can fix it.
+                        codeRetries += 1;
+                        lastCodeError = errMsg;
+                        logger.warn("Code execution error, asking the model to fix it (attempt %d/%d)", codeRetries, MAX_CODE_RETRIES);
+                        sendStatusMessage(responseStream, "Fixing a code error and trying again...");
+                        conversationMessages = [
+                            ...conversationMessages,
+                            ...buildToolErrorTurn({ assistantContent: callResult.content, toolCall, errorMessage: errMsg + RETRY_FILE_HINT })
+                        ];
+                        continue;
+                    }
                     logger.error("Code execution failed: %s", errMsg);
                     sendStateEventToStream(responseStream, {
                         codeInterpreter: { error: errMsg.includes("session_expired") ? "session" : errMsg }
@@ -400,6 +434,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 }
 
                 executedAny = true;
+                lastCodeError = null;
                 conversationMessages = [
                     ...conversationMessages,
                     {
@@ -416,6 +451,13 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
 
             if (await isKilled(account.user, responseStream, body)) return;
+
+            // The model never produced working code (every attempt errored or was unusable).
+            if (lastCodeError && !executedAny) {
+                sendStateEventToStream(responseStream, { codeInterpreter: { error: lastCodeError } });
+                await fallbackToLLM(lastCodeError);
+                return;
+            }
 
             // If the session was renewed this turn, make sure the final NL answer itself
             // mentions it — the status/state events above are ephemeral stream signals the

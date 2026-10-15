@@ -5,6 +5,8 @@ import time
 from functools import reduce
 from io import BytesIO
 import boto3
+from .error_detail import extract_error_detail
+from .sandbox_files import file_signature as _file_signature, changed_sandbox_paths
 import botocore
 from botocore.exceptions import ClientError, NoCredentialsError
 from pycommon.api.request_state import request_killed
@@ -514,7 +516,8 @@ def extract_last_message(messages, amplify_messages=True):
 def list_sandbox_files(session_id, directory_path=None):
     """List files in the AgentCore sandbox via the native listFiles operation.
 
-    Returns a set of normalized file paths, or None if the listing could not
+    Returns a dict of normalized file path -> signature (size / modified time when the
+    listing provides them, else None), or None if the listing could not
     be retrieved, so callers can distinguish "empty directory" from "listing
     failed" and skip diffing rather than produce false positives.
     """
@@ -531,7 +534,7 @@ def list_sandbox_files(session_id, directory_path=None):
         logger.warning("listFiles call failed for session %s: %s", session_id, e)
         return None
 
-    paths = set()
+    paths = {}
     try:
         for event in response.get("stream", []):
             if "result" not in event:
@@ -554,12 +557,12 @@ def list_sandbox_files(session_id, directory_path=None):
                         # readFiles rejects absolute paths ("potential path traversal
                         # detected") — file:// URIs resolve to "/name", so strip the
                         # leading slash to get the relative path readFiles expects.
-                        paths.add(path.lstrip("/"))
+                        paths[path.lstrip("/")] = _file_signature(block, resource)
                 elif block_type == "text":
                     for line in block.get("text", "").splitlines():
                         line = line.strip()
                         if line:
-                            paths.add(line)
+                            paths[line] = None
     except Exception as e:
         logger.warning("Error parsing listFiles response for session %s: %s", session_id, e)
         return None
@@ -812,7 +815,7 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
                 continue
 
             result = event["result"]
-            structured = result.get("structuredContent", {})
+            structured = result.get("structuredContent") or {}
 
             # Capture taskId for potential post-stream stopTask call
             task_id = structured.get("taskId", task_id)
@@ -829,9 +832,9 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
                     text_content += block.get("text", "") + "\n"
 
             if result.get("isError"):
-                stderr = structured.get("stderr", "")
-                logger.error("Code execution error in session %s: %s", session_id, stderr)
-                execution_error = stderr
+                detail = extract_error_detail(result)
+                logger.error("Code execution error in session %s: %s", session_id, detail)
+                execution_error = detail
 
     except Exception as e:
         logger.error("Exception while consuming AgentCore event stream: %s", e)
@@ -861,7 +864,7 @@ def chat(current_user, record_id, session_id, last_message, request_id, api_acce
     discovered_paths = []
     files_after = list_sandbox_files(session_id)
     if files_before is not None and files_after is not None:
-        new_paths = sorted(files_after - files_before)
+        new_paths = changed_sandbox_paths(files_before, files_after)
         discovered_paths = [
             p for p in new_paths
             if os.path.splitext(p)[1].lower() in _WATCHED_EXTENSIONS

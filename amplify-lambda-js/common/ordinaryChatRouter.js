@@ -112,6 +112,22 @@ export function buildRoutingContext(messages = [], {
     return bounded;
 }
 
+// PowerPoint requests only count when the user names the format (pptx / ppt / PowerPoint).
+// Bare "presentation", "slides" or "deck" are NOT enough: the Create PowerPoint helper and
+// plain "write me an outline" requests use those words and expect markdown text. Outline /
+// speaker-note / script requests stay in chat unless a file or download is asked for too.
+function hasPowerPointFileIntent(rawText) {
+    // An existing file mentioned by name ("summary of report.pptx") is input, not a request to
+    // build one. Keep ".pptx" after as/to/into/in ("export as .pptx") and bare format words.
+    const text = rawText.replace(/(?<![\w\-])(?<!\b(?:as|to|into|in)\s)[\w\-]+\.pptx?\b/gi, ' ');
+    if (!/\b(generate|create|make|produce|build|export|save|download|deliver|convert)\b[\s\S]{0,80}\b(pptx?|power\s?point)\b/i.test(text)) {
+        return false;
+    }
+    const textOnlyAsk = /\b(outline|speaker notes?|talking points|script)\b/i.test(text);
+    const fileAsk = /\b(pptx|ppt file|file|download|downloadable)\b/i.test(text);
+    return !textOnlyAsk || fileAsk;
+}
+
 export function hasDownloadableFileIntent(messages = []) {
     const latestUserText = [...messages]
         .reverse()
@@ -119,7 +135,8 @@ export function hasDownloadableFileIntent(messages = []) {
         ?.content || '';
     return /\b(download|export|save|deliver|attach|generate|create|make|produce)\b[\s\S]{0,80}\b(file|document|report|word|docx|doc|spreadsheet|xlsx|pdf)\b/i.test(latestUserText) ||
         /\b(file|document|report)\b[\s\S]{0,80}\b(as|in|to)\b[\s\S]{0,20}\b(word|docx|doc|xlsx|pdf)\b/i.test(latestUserText) ||
-        /\.(docx?|xlsx?|pdf)\b/i.test(latestUserText);
+        /\.(docx?|xlsx?|pdf)\b/i.test(latestUserText) ||
+        hasPowerPointFileIntent(latestUserText);
 }
 
 /**

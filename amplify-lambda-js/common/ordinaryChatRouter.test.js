@@ -76,6 +76,39 @@ test('recognizes downloadable Word, DOCX, and PDF requests', () => {
     assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Explain what DOCX means.' }]), false);
 });
 
+test('recognizes downloadable PowerPoint requests', () => {
+    for (const content of [
+        'Generate a ppt on climate change',
+        'Create a PowerPoint presentation about our Q3 results',
+        'Create a pptx for this',
+        'Please export this as .pptx',
+        'Make a powerpoint with speaker notes and let me download it',
+        'Create a pptx from report.docx',
+        'Save this as q3.pptx'
+    ]) {
+        assert.equal(hasDownloadableFileIntent([{ role: 'user', content }]), true, content);
+    }
+});
+
+test('does not route text-only presentation requests to the code interpreter', () => {
+    for (const content of [
+        'What is a presentation skill?',
+        'Summarize this deck',
+        'Explain what PPTX means.',
+        'Summarize report.pptx',
+        'Create a summary of the Q3 deck.pptx',
+        'Generate speaker notes for Q3-deck.pptx',
+        'Create a presentation outline',
+        'Create a PowerPoint outline for my talk',
+        'Generate speaker notes for my presentation',
+        'Make a slide for the intro',
+        'Create slides about onboarding',
+        'Create a slide presentation by Jane titled "AI" ... Please use the following format to create a slide presentation outline for me.'
+    ]) {
+        assert.equal(hasDownloadableFileIntent([{ role: 'user', content }]), false, content);
+    }
+});
+
 test('dispatches downloadable documents to code interpreter only when deployment-enabled and available', () => {
     const docxMessages = [{ role: 'user', content: 'Please create a downloadable DOCX file.' }];
     const pdfMessages = [{ role: 'user', content: 'Create a PDF report and attach it.' }];
