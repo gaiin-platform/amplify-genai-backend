@@ -378,10 +378,11 @@ class Agent:
             logger.debug(f"Request {request_id} not provided, continuing...")
 
         action_def, action = self.get_action(response)
-        capability_decision = reduce(
-            lambda a, c: c.should_terminate(self, action_context, response),
-            self.capabilities,
-            False,
+        # Any capability can request termination (previously only the last capability's
+        # answer was honored because the accumulator was discarded).
+        capability_decision = any(
+            c.should_terminate(self, action_context, response)
+            for c in self.capabilities
         )
         return action_def.terminal or capability_decision
 
