@@ -209,10 +209,8 @@ functions:
           batchSize: 1
           maximumBatchingWindow: 5
 
-
 resources:
   Resources:
-
     LambdaJSIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -335,9 +333,15 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*  
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/tools*
 
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
 
             - Effect: Allow
               Action:

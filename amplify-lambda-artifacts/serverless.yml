@@ -120,10 +120,30 @@ functions:
           method: post
           cors: true
 
-
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  param_populator:
+    handler: populate_env_vars.lambda_handler
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
 
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local param_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
+      Properties:
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt ParamUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
 
     LambdaAPIIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
@@ -176,8 +196,15 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
-                
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
+
             - Effect: Allow
               Action:
                 - sqs:SendMessage

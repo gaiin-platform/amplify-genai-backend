@@ -317,6 +317,17 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
 
         disclaimer: assistant.disclaimer ?? '',
 
+        // The handler below closes over `assistant`, so overriding fields on the
+        // returned wrapper has no effect. Callers that need to change assistant.data
+        // for a single request (e.g. force opsLanguageVersion "v4" when chat-input
+        // connector actions are attached) must use this. Non-mutating: the source
+        // assistant object is shared through CacheManager.
+        withDataOverrides: (overrides) => fillInAssistant(
+            {...assistant, data: {...(assistant.data || {}), ...overrides}},
+            assistantBase,
+            layeredAstId
+        ),
+
         handler: async (params, body, ds, responseStream) => {
             // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
@@ -330,6 +341,10 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                     skipRag: false,  // Force RAG processing for configured assistant data sources
                     skipDocumentCache: true  // Skip general document caching, focus on assistant's configured sources
                 }
+            }
+
+            if (assistant.data?.featureOptions?.IncludeArtifactsInstr === false) {
+                params = { ...params, options: { ...params.options, options: { ...(params.options?.options || {}), artifacts: false } } };
             }
 
             if(assistant.ragOnly) {
@@ -826,7 +841,11 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         groupType: groupType, // Preserve groupType for conversation analysis
                         // 🔧 PRESERVE WEB SEARCH & MCP in options too (checked by shouldEnableWebSearch)
                         enableWebSearch: body.options?.enableWebSearch,
-                        mcpEnabled: body.options?.mcpEnabled
+                        mcpEnabled: body.options?.mcpEnabled,
+                        // Assistant-level opt-out (builder setting "IncludeArtifactsInstr"): its
+                        // instructions stay untouched by the artifacts guidance.
+                        ...(assistant.data?.featureOptions?.IncludeArtifactsInstr === false
+                            ? { options: { ...(body.options?.options || {}), artifacts: false } } : {})
                     }
                 };
             

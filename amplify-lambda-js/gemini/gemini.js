@@ -11,6 +11,7 @@ import { getSecretApiKey } from "../common/secrets.js";
 import { newStatus, getThinkingMessage } from "../common/status.js";
 import { getBudgetTokens } from "../common/params.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { addModelSystemPrompt } from "../common/systemPrompts.js";
 
 const logger = getLogger("gemini");
 
@@ -25,11 +26,12 @@ const constructGeminiUrl = () => {
     return `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
 }
 
-export const chat = async (chatBody, writable) => {
+export const chat = async (chatBody, writable, abortSignal = chatBody.abortSignal) => {
     try {
         let body = { ...chatBody };
         const options = { ...body.options };
         delete body.options;
+        delete body.abortSignal;
         const model = options.model;
         const modelId = (model && model.id) || "gemini-1.5-pro";
         const maxTokens = body.max_tokens || 2000;
@@ -55,8 +57,12 @@ export const chat = async (chatBody, writable) => {
 
         // Removed debug logging for performance
 
+        const providerMessages = options.isOrdinaryChatRequest === true
+            ? body.messages
+            : addModelSystemPrompt(body.messages, model.systemPrompt);
         let data = {
             ...body,
+            messages: providerMessages,
             "model": modelId,
             "stream": true,
             "stream_options": { "include_usage": true }
@@ -79,16 +85,22 @@ export const chat = async (chatBody, writable) => {
             data.max_tokens = model.outputTokenLimit
         }
 
-        // append additional system prompt
-        if (model.systemPrompt) {
-            data.messages[0].content += `\n${model.systemPrompt}`
-        }
-
         if (!model.supportsSystemPrompts) {
-            data.messages = data.messages.map(m => {
-                return (m.role === 'system') ? { ...m, role: 'user' } : m
+            const systemText = data.messages.filter(m => m.role === 'system').map(m => typeof m.content === 'string' ? m.content : '').filter(Boolean).join('\n\n');
+            const conversationMessages = data.messages.filter(m => m.role !== 'system');
+            const firstUserIndex = conversationMessages.findIndex(m => m.role === 'user');
+            if (systemText && firstUserIndex >= 0) {
+                const firstUser = conversationMessages[firstUserIndex];
+                conversationMessages[firstUserIndex] = {
+                    ...firstUser,
+                    content: typeof firstUser.content === 'string'
+                        ? `${systemText}\n\n${firstUser.content}`
+                        : [{ type: 'text', text: systemText }, ...firstUser.content]
+                };
+            } else if (systemText) {
+                conversationMessages.unshift({ role: 'user', content: systemText });
             }
-            );
+            data.messages = conversationMessages;
         }
         if (!options.dataSourceOptions?.disableDataSources) {
             data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
@@ -110,6 +122,7 @@ export const chat = async (chatBody, writable) => {
 
         if (data.imageSources) delete data.imageSources;
         if (data.videoSources) delete data.videoSources;
+        if (data.abortSignal) delete data.abortSignal;
 
 
         // OpenAI compatibility endpoint uses OpenAI format - keep string content for text messages
@@ -121,7 +134,7 @@ export const chat = async (chatBody, writable) => {
             // If content is a string, convert to proper format for Gemini
             if (typeof msg.content === 'string') {
                 return {
-                    role: msg.role === 'system' ? 'user' : msg.role,
+                    role: msg.role === 'system' && !model.supportsSystemPrompts ? 'user' : msg.role,
                     content: [
                         {
                             type: "text",
@@ -207,7 +220,7 @@ export const chat = async (chatBody, writable) => {
         trace(options.requestId, ["chat", "gemini"], { modelId, url, data });
 
         // No status timer - let the actual response be the indication
-        return streamAxiosResponseToWritable(url, writable, null, data, headers);
+        return streamAxiosResponseToWritable(url, writable, null, data, headers, abortSignal);
     } catch (error) {
         console.error('Exception in chat function:', error);
 
@@ -279,14 +292,15 @@ export const chat = async (chatBody, writable) => {
     }
 }
 
-function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, headers) {
+function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, headers, abortSignal) {
     return new Promise((resolve, reject) => {
         axios({
             data,
             headers: headers,
             method: 'post',
             url: url,
-            responseType: 'stream'
+            responseType: 'stream',
+            ...(abortSignal ? { signal: abortSignal } : {})
         })
             .then(response => {
                 let responseEnded = false;

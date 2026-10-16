@@ -73,6 +73,8 @@ export const shouldKill = async (user, requestId) => {
 
 export const createRequestState = async (user, requestId) => {
     try {
+        // Do not overwrite a killswitch that raced request setup.
+        if (await shouldKill(user, requestId)) return false;
         return await updateKillswitch(user, requestId, false);
     } catch (e) {
         logger.error("Error creating request state: " + e);
@@ -145,6 +147,21 @@ const killedCache = lru(10, 0, false);
 export const localKill = (user, requestId) => {
     const key = getKillSwitchKey(user, requestId);
     killedCache.set(key, true);
+}
+
+/** Check killswitch state without ending a response stream (used during routing). */
+export const isRequestKilled = async (user, requestId) => {
+    if (!user || !requestId) return false;
+    const killed = Boolean(killedCache.get(getKillSwitchKey(user, requestId))) || await shouldKill(user, requestId);
+    if (killed) {
+        killedCache.set(getKillSwitchKey(user, requestId), true);
+        try {
+            await deleteRequestState(user, requestId);
+        } catch (error) {
+            logger.error("Error deleting request state after routing killswitch: " + error);
+        }
+    }
+    return killed;
 }
 
 function getKillSwitchKey(user, requestId) {

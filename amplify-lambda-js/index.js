@@ -139,8 +139,30 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             maxCostPerHour: 30,  // $30/hour cost threshold
             cooldownPeriod: 300  // 5-minute cooldown
         })(async (_event, _context, params) => {
-            // 🛡️ TIMEOUT PROTECTION: Main routing with 5-minute timeout
-            return await withTimeout(300000)(routeRequest(params, returnResponse, effectiveStream));
+            // 🛡️ TIMEOUT PROTECTION: Main routing with 5-minute timeout.
+            // withTimeout only races the Promise — it does NOT cancel underlying async work.
+            // The socketTimeout on BedrockRuntimeClient handles actual stream cancellation.
+            // If the 5-minute timeout fires before Bedrock's 2-minute socket timeout,
+            // mark the request as cancelled so the keepalive interval stops writing.
+            const routeController = new AbortController();
+            const routeParams = { ...params, signal: routeController.signal };
+            const routePromise = routeRequest(routeParams, returnResponse, effectiveStream);
+            try {
+                return await withTimeout(300000)(routePromise);
+            } catch (timeoutErr) {
+                if (timeoutErr.message && timeoutErr.message.includes('timed out after 300000ms')) {
+                    timeoutErr.code = 'REQUEST_TIMEOUT';
+                    routeController.abort(timeoutErr);
+                    routePromise.catch(() => {});
+                    if (!effectiveStream.writableEnded) effectiveStream.end();
+                    // Mark the in-flight request's keepalive as cancelled so it stops writing.
+                    if (params && params.body && params.body.options && params.body.options.requestId) {
+                        const { cancelRequest } = await import('./llm/UnifiedLLMClient.js');
+                        cancelRequest(params.body.options.requestId);
+                    }
+                }
+                throw timeoutErr;
+            }
         });
         
         // Execute the protected routing with user context
@@ -152,7 +174,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
         }
     } catch (e) {
         logger.error("Error processing request: " + e.message, e);
-        
+        if (e.code === 'CLIENT_DISCONNECTED') return;
+
         // Enhanced error response with debugging info
         const errorResponse = {
             statusCode: 500,

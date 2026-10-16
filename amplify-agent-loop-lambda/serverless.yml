@@ -155,8 +155,30 @@ functions:
           method: get
           cors: true
 
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  param_populator:
+    handler: populate_env_vars.lambda_handler
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
+
 resources:
   Resources:
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local param_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
+      Properties:
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt ParamUnderscorepopulatorLambdaFunction.Arn
+        ServiceName: ${self:service}
+        Stage: ${sls:stage}
+        TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
 
     LambdaAgentLoopIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
@@ -171,10 +193,7 @@ resources:
                 - ssm:PutParameter
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
-            # - Effect: Allow
-            #   Action:
-            #     - lambda:InvokeFunction
-            #   Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/amplify/${sls:stage}/${self:service}/*  # Locally-defined vars - ONLY this service!
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -189,8 +208,6 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
-                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"

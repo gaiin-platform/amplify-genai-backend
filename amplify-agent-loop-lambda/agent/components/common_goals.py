@@ -188,7 +188,7 @@ ALLOW_EARLY_EXIT_AGENT_LOOP = Goal(
 IMPORTANT: This is a last resort measure. Only exit the agent loop when a situation is absolutely irremediable.
 
 You should exit the agent loop in these specific situations:
-1. Authentication/credential failures that cannot be resolved (e.g., "API key expired", "Invalid credentials", "Access denied", "Unable to refresh credentials", "Integration is not currently available")
+1. Authentication/credential failures that cannot be resolved (e.g., "API key expired", "Invalid credentials", "Access denied", "Unable to refresh credentials", "Integration is not currently available", or any error containing INTEGRATION_RECONNECT_REQUIRED, which means the user must reconnect the integration and retrying cannot help)
 2. Critical resource limitations (e.g., "Rate limit exceeded" with no reasonable way to proceed)
 3. When you've attempted multiple approaches to solve a problem and ALL have failed with the SAME underlying issue
 4. When execution is fundamentally blocked by technical constraints that cannot be overcome

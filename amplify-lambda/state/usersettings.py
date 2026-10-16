@@ -171,14 +171,42 @@ def save_settings(event, context, user, name, data):
     return save_settings_for_user(user, settings_data["settings"], access_token)
 
 
+def _classic_ui_switch_allowed() -> bool:
+    """Return False when the admin deployment config disables the classic-UI switch."""
+    try:
+        admin_table_name = os.environ.get("AMPLIFY_ADMIN_DYNAMODB_TABLE")
+        if not admin_table_name:
+            return True
+        admin_table = boto3.resource("dynamodb").Table(admin_table_name)
+        response = admin_table.get_item(Key={"config_id": "deploymentFeatures"})
+        if "Item" in response:
+            data = response["Item"].get("data") or {}
+            return bool(data.get("allowClassicUiSwitch", True))
+    except Exception as e:
+        logger.warning("Could not read deploymentFeatures for classic-UI enforcement: %s", e)
+        return False
+    return True
+
+
 def save_settings_for_user(current_user, settings, access_token=None):
     try:
         if not access_token:
             return {"success": False, "error": "Access token required"}
-        
+
+        # Enforce the strict UI policy: a missing deployment record retains the
+        # legacy allow default, but lookup errors fail closed to avoid persisting a
+        # classic preference when current policy cannot be confirmed.
+        if isinstance(settings, dict) and settings.get("uiPreference") == "classic":
+            if not _classic_ui_switch_allowed():
+                logger.info(
+                    "Classic UI switch disabled or unverifiable; overriding uiPreference for %s",
+                    current_user,
+                )
+                settings = {**settings, "uiPreference": "new"}
+
         app_id = get_app_id()
         settings_data = {"settings": settings}
-        
+
         result = handle_put_item(current_user, app_id, "user-settings", "user-settings", settings_data)
         if result and "uuid" in result:
             logger.info("Settings for user %s saved successfully", current_user)

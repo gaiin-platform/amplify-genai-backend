@@ -1,5 +1,6 @@
 import requests
 from pycommon.llm.chat import chat
+from .system_prompts import compose_api_chat_messages, get_prompt_config
 import os
 from pycommon.api.get_endpoint import get_endpoint, EndpointType
 import json
@@ -163,13 +164,23 @@ def chat_endpoint(event, context, current_user, name, data):
         payload["model"] = model_id
         messages = payload["messages"]
 
-        SYSTEM_ROLE = "system"
-        if messages[0]["role"] != SYSTEM_ROLE:
-            logger.debug("Adding system prompt message")
-            user_prompt = payload_options.get("prompt", "No Prompt Provided")
-            payload["messages"] = [
-                {"role": SYSTEM_ROLE, "content": user_prompt}
-            ] + messages
+        prompt_config = get_prompt_config()
+        base_prompt = prompt_config.get("prompts", {}).get("ordinaryChat.base") or None
+        payload["messages"] = compose_api_chat_messages(
+            messages,
+            request_prompt=payload_options.get("prompt"),
+            base_prompt=base_prompt,
+        )
+        # Apply deployment policy to explicit API options before forwarding. The
+        # external CHAT_ENDPOINT remains responsible for its own provider conversion.
+        if not prompt_config.get("availability", {}).get("webSearch", False):
+            payload["enableWebSearch"] = False
+            payload_options["enableWebSearch"] = False
+        if not prompt_config.get("availability", {}).get("artifacts", False):
+            payload_options["artifacts"] = False
+            payload_options["artifactsMode"] = False
+        if not prompt_config.get("availability", {}).get("codeInterpreter", False):
+            payload_options["codeInterpreterOnly"] = False
 
         response, metadata = chat(chat_endpoint, access_token, payload)
         return {
