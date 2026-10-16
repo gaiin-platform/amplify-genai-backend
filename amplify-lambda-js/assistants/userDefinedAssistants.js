@@ -343,6 +343,10 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                 }
             }
 
+            if (assistant.data?.featureOptions?.IncludeArtifactsInstr === false) {
+                params = { ...params, options: { ...params.options, options: { ...(params.options?.options || {}), artifacts: false } } };
+            }
+
             if(assistant.ragOnly) {
                 params = {
                     ...params,
@@ -837,7 +841,11 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
                         groupType: groupType, // Preserve groupType for conversation analysis
                         // 🔧 PRESERVE WEB SEARCH & MCP in options too (checked by shouldEnableWebSearch)
                         enableWebSearch: body.options?.enableWebSearch,
-                        mcpEnabled: body.options?.mcpEnabled
+                        mcpEnabled: body.options?.mcpEnabled,
+                        // Assistant-level opt-out (builder setting "IncludeArtifactsInstr"): its
+                        // instructions stay untouched by the artifacts guidance.
+                        ...(assistant.data?.featureOptions?.IncludeArtifactsInstr === false
+                            ? { options: { ...(body.options?.options || {}), artifacts: false } } : {})
                     }
                 };
             

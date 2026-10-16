@@ -82,6 +82,27 @@ export function addModelSystemPrompt(messages = [], modelSystemPrompt) {
     return updated;
 }
 
+/**
+ * Layer feature guidance (web search / artifacts only) onto a selected assistant's messages
+ * without replacing its instructions. Appended to the first system message, like the model prompt.
+ */
+export function addAssistantFeaturePrompts(messages = [], promptSettings, activeFeatures = {}) {
+    const prompts = ['webSearch', 'artifacts']
+        .filter(feature => activeFeatures[feature] === true)
+        .map(feature => getFeaturePrompt(promptSettings, feature))
+        .filter(Boolean);
+    const addition = prompts.filter(prompt => !messages.some(message =>
+        message?.role === 'system' && typeof message.content === 'string' && message.content.includes(prompt)));
+    if (addition.length === 0) return messages;
+    const text = addition.join('\n\n');
+    const systemIndex = messages.findIndex(message => message?.role === 'system' && typeof message.content === 'string');
+    if (systemIndex < 0) return [asSystemMessage(text), ...messages];
+    const updated = [...messages];
+    const current = updated[systemIndex].content;
+    updated[systemIndex] = { ...updated[systemIndex], content: `${current}${current ? '\n\n' : ''}${text}` };
+    return updated;
+}
+
 export function normalizeSystemMessagesForProvider(messages = [], supportsSystemPrompts = true) {
     if (supportsSystemPrompts) return messages;
     const systemText = messages.filter(message => message?.role === 'system')

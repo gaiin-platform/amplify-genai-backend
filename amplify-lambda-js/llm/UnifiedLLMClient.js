@@ -24,7 +24,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
-import { getFeaturePrompt, addModelSystemPrompt, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from "../common/systemPrompts.js";
+import { getFeaturePrompt, addModelSystemPrompt, addAssistantFeaturePrompts, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from "../common/systemPrompts.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
@@ -493,7 +493,11 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 activeFeatures,
                 includeAmplifyHelper: params.options?.amplifyHelper === true
             })
-            : addModelSystemPrompt(finalMessages, model.systemPrompt);
+            : (params.options?.assistantFeaturePrompts === true && options._isInternalCall !== true)
+                // Selected assistant: keep its instructions, add web search / artifacts guidance only.
+                ? addAssistantFeaturePrompts(addModelSystemPrompt(finalMessages, model.systemPrompt), deploymentConfig,
+                    { webSearch: activeFeatures.webSearch, artifacts: activeFeatures.artifacts })
+                : addModelSystemPrompt(finalMessages, model.systemPrompt);
         const callOptions = {
             ...params.options,
             isOrdinaryChatRequest: isOrdinaryChatCall,

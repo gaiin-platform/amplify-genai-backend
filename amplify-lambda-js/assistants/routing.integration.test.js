@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveRoutingOptions, resolveSpecializedAssistantMode } from '../common/ordinaryChatRouter.js';
+import { resolveRoutingOptions, resolveSpecializedAssistantMode, hasDownloadableFileIntent } from '../common/ordinaryChatRouter.js';
 
 process.env.LOCAL_DEVELOPMENT = 'true';
 process.env.LOCAL_SECRET_ = '{"models":[]}';
@@ -56,12 +56,18 @@ test('assistant selection precedence preserves ordinary assistant but resolves e
     assert.equal(resolveSpecializedAssistantMode({ assistantId: 'astp/selected', downloadableFileIntent: true, deploymentFeatures: availability, codeInterpreterAvailable: true }), 'codeInterpreter');
 });
 
-test('ordinary requests with a selected assistant are excluded from automatic routing', async () => {
+test('a selected assistant is never treated as ordinary chat, and never gets an inferred Code Interpreter', async () => {
     const body = { messages: [{ role: 'user', content: 'ordinary question' }], options: { assistantId: 'astp/selected' } };
+    let classified = 0;
     const routing = await import('../common/ordinaryChatRouter.js').then(({ routeOrdinaryChat }) =>
         routeOrdinaryChat({ options: { cheapestModel: { id: 'cheap' } } }, body,
-            { routingEnabled: true, availability }, { classify: async () => assert.fail('selected assistant must not be re-routed') }));
+            { routingEnabled: true, availability },
+            { classify: async () => { classified += 1; return { schemaVersion: 1, webSearch: true, artifacts: false, codeInterpreter: true }; } }));
+    assert.equal(classified, 1); // web search / artifacts may be layered onto the assistant
+    assert.equal(routing.metadata.eligible, false);
     assert.equal(routing.metadata.notEligible, true);
+    assert.equal(routing.decision.webSearch, true);
+    assert.equal(routing.decision.codeInterpreter, false);
     assert.equal(body.options.assistantId, 'astp/selected');
 });
 
@@ -92,4 +98,25 @@ test('downloadable DOCX and PDF requests with selected assistants reach the inte
         };
         assert.equal((await chooseAssistantForRequest({ user: 'test-user', accessToken: 'test-token' }, {}, body, [], { writableEnded: false, write() {} })).name, 'Code Interpreter Assistant');
     }
+});
+
+test('selected assistant with attachment file names in its input is not replaced by the interpreter', async () => {
+    // Regression: pasted data such as "Attachment: Approval.pdf" used to be read as a file request,
+    // which swapped the assistant (and its strict JSON-only instructions) for Code Interpreter.
+    const messages = [{ role: 'user', content: 'Requisition: R27017824\nAttachment: Colloquium F26 Chair COA Approval.pdf' }];
+    const intent = hasDownloadableFileIntent(messages);
+    assert.equal(intent, false);
+    const body = {
+        messages,
+        options: {
+            assistantId: 'astp/selected',
+            api_accessed: true,
+            ...resolveRoutingOptions({ artifacts: false, codeInterpreter: false }, availability,
+                { downloadableFileIntent: intent, explicitModes: { notEligible: true } }),
+            deploymentFeatures: availability,
+            codeInterpreterAvailable: true
+        }
+    };
+    assert.equal(body.options.codeInterpreterOnly, false);
+    assert.equal(resolveSpecializedAssistantMode(body.options), null);
 });

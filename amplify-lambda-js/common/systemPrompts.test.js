@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AMPLIFY_HELPER_ASSISTANT_ID, BUILTIN_PROMPTS, addModelSystemPrompt, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from './systemPrompts.js';
+import { AMPLIFY_HELPER_ASSISTANT_ID, BUILTIN_PROMPTS, addModelSystemPrompt, addAssistantFeaturePrompts, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from './systemPrompts.js';
 import { createDeploymentConfigLoader, isAmplifyHelperAllowed, normalizeDeploymentConfig } from './adminConfig.js';
 import { isEligibleOrdinaryChat } from './ordinaryChatRouter.js';
 
@@ -196,4 +196,20 @@ test('falls back to built-in prompts when config values are empty', () => {
         promptSettings: { prompts: { 'ordinaryChat.base': '' } }
     });
     assert.equal(messages[0].content, BUILTIN_PROMPTS['ordinaryChat.base']);
+});
+
+test('assistant feature prompts extend the assistant instructions without replacing them', () => {
+    const messages = [{ role: 'user', content: 'hi' }, { role: 'system', content: 'ASSISTANT RULES: reply in JSON' }, { role: 'user', content: 'go' }];
+    const out = addAssistantFeaturePrompts(messages, null, { webSearch: true, artifacts: true, codeInterpreter: true });
+    const system = out.find(m => m.role === 'system').content;
+    assert.ok(system.startsWith('ASSISTANT RULES: reply in JSON'));
+    assert.ok(system.includes(BUILTIN_PROMPTS['webSearch.use']));
+    assert.ok(system.includes(BUILTIN_PROMPTS['artifacts.generate']));
+    assert.ok(!system.includes(BUILTIN_PROMPTS['codeInterpreter.use']), 'code interpreter guidance is never added to assistants');
+    assert.equal(out.length, messages.length);
+    // idempotent, and a no-op with nothing active
+    assert.deepEqual(addAssistantFeaturePrompts(out, null, { webSearch: true, artifacts: true }), out);
+    assert.equal(addAssistantFeaturePrompts(messages, null, {}), messages);
+    // no system message: prepend one
+    assert.equal(addAssistantFeaturePrompts([{ role: 'user', content: 'x' }], null, { artifacts: true })[0].role, 'system');
 });
