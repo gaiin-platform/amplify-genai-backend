@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
+import { sendErrorMessage, sendStateEventToStream } from "./common/streams.js";
 import { getUsageTracker } from "./common/usageTracking.js";
 // Removed AWS X-Ray for performance optimization
 // Removed Python LiteLLM - now using native JS providers
@@ -154,6 +155,11 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
                     timeoutErr.code = 'REQUEST_TIMEOUT';
                     routeController.abort(timeoutErr);
                     routePromise.catch(() => {});
+                    sendStateEventToStream(effectiveStream, {requestTimedOut: true});
+                    // Artifact streams show a "cut off" card instead; text written here would end up inside the artifact.
+                    if (params?.body?.options?.artifactsMode !== true) {
+                        sendErrorMessage(effectiveStream, 408, 'REQUEST_TIMEOUT');
+                    }
                     if (!effectiveStream.writableEnded) effectiveStream.end();
                     // Mark the in-flight request's keepalive as cancelled so it stops writing.
                     if (params && params.body && params.body.options && params.body.options.requestId) {
