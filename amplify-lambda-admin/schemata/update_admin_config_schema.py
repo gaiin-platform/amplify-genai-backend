@@ -674,7 +674,18 @@ update_admin_config_schema = {
                                         "additionalProperties": False
                                     },
                                     "allowClassicUiSwitch": {"type": "boolean"},
-                                    "routingEnabled": {"type": "boolean"}
+                                    "routingEnabled": {"type": "boolean"},
+                                    "announcement": {
+                                        "type": "object",
+                                        "properties": {
+                                            "enabled": {"type": "boolean"},
+                                            "message": {"type": "string", "maxLength": 1000},
+                                            "id": {"type": "string"},
+                                            "expiresAt": {"type": ["string", "null"]}
+                                        },
+                                        "required": ["enabled", "message"],
+                                        "additionalProperties": False
+                                    }
                                 },
                                 "required": ["schemaVersion", "availability", "allowClassicUiSwitch"],
                                 "additionalProperties": False

@@ -1,4 +1,5 @@
 import { getLogger } from './logging.js';
+import { AMPLIFY_HELPER_ASSISTANT_ID } from './systemPrompts.js';
 
 const logger = getLogger('ordinaryChatRouter');
 
@@ -111,14 +112,75 @@ export function buildRoutingContext(messages = [], {
     return bounded;
 }
 
+/**
+ * Heuristic: does the latest user message ask for a downloadable file?
+ * Requires an explicit request verb near a file noun. A bare file name or
+ * extension (e.g. "Attachment: Approval.pdf" inside pasted data) is NOT a
+ * request and must not trigger file-generation routing.
+ */
 export function hasDownloadableFileIntent(messages = []) {
     const latestUserText = [...messages]
         .reverse()
         .find(message => message?.role === 'user' && typeof message.content === 'string')
         ?.content || '';
     return /\b(download|export|save|deliver|attach|generate|create|make|produce)\b[\s\S]{0,80}\b(file|document|report|word|docx|doc|spreadsheet|xlsx|pdf)\b/i.test(latestUserText) ||
-        /\b(file|document|report)\b[\s\S]{0,80}\b(as|in|to)\b[\s\S]{0,20}\b(word|docx|doc|xlsx|pdf)\b/i.test(latestUserText) ||
-        /\.(docx?|xlsx?|pdf)\b/i.test(latestUserText);
+        /\b(file|document|report)\b[\s\S]{0,80}\b(as|in|to)\b[\s\S]{0,20}\b(word|docx|doc|xlsx|pdf)\b/i.test(latestUserText);
+}
+
+/**
+ * True when the request explicitly selects a user/group assistant. The built-in
+ * Amplify Helper is a plain chat with extra guidance, so it does not count.
+ * Inferred routing (file-intent heuristics, classifier output) must never replace
+ * a selected assistant: its instructions (e.g. strict JSON-only output) have to win.
+ */
+export function hasSelectedAssistant(options = {}, body = {}) {
+    const isBuiltInHelper = options.amplifyHelper === true && options.assistantId === AMPLIFY_HELPER_ASSISTANT_ID;
+    return Boolean(
+        (options.assistantId && !isBuiltInHelper) || options.groupId || options.groupType || body.assistantId || body.groupId
+    );
+}
+
+/**
+ * Per-request routing policy. Single place that decides which feature inputs are honored.
+ *
+ * Precedence (highest first):
+ *   1. Deployment availability (admin) - hard off, never overridden.
+ *   2. Selected assistant / connector actions / workflow - always respected; inferred routing
+ *      never applies. For API-key requests explicit code-interpreter/artifacts flags do not
+ *      replace a selected assistant either.
+ *   3. Explicit per-request disable flags (disableWebSearch / disableArtifacts / disableCodeInterpreter).
+ *   4. Explicit per-request enables (enableWebSearch / artifactsMode / codeInterpreterOnly).
+ *   5. Automatic routing (classifier + file-intent heuristic). For API-key requests this is
+ *      OFF unless the caller passes `enableRouting: true` (and the deployment has routing on).
+ *      Browser (non-API) requests keep automatic routing governed by the deployment alone.
+ */
+export function resolveRequestRoutingPolicy(options = {}, body = {}, deploymentConfig = {}) {
+    const apiAccessed = options.api_accessed === true;
+    const selectedAssistant = hasSelectedAssistant(options, body);
+    const connectorActions = hasConfiguredToolsOnMessages(body.messages);
+    const routingRequested = !apiAccessed ||
+        ((options.enableRouting === true || body.enableRouting === true) && deploymentConfig?.routingEnabled === true);
+    const baseEligible = !options.workflowId && !options.workflow && !options.configuredTools &&
+        !options.agentId && !options._isInternalCall;
+    return {
+        apiAccessed,
+        // Connector actions never need Code Interpreter: it is not inferred for them.
+        connectorActions,
+        // Selected assistant that may be augmented with web search / artifacts guidance.
+        assistantFeatures: selectedAssistant && baseEligible && !connectorActions,
+        automaticRouting: routingRequested,
+        // Heuristics inferred from message text only apply when routing is requested and
+        // nothing else (assistant / connector actions) already defines the behavior.
+        inferredRoutingAllowed: routingRequested && !selectedAssistant && !connectorActions,
+        // Whether explicit code-interpreter / artifacts flags may switch the assistant.
+        specializedModeEligible: baseEligible && !(apiAccessed && selectedAssistant),
+        explicitWebSearch: options.enableWebSearch === true || body.enableWebSearch === true,
+        disabled: {
+            webSearch: options.disableWebSearch === true,
+            artifacts: options.disableArtifacts === true,
+            codeInterpreter: options.disableCodeInterpreter === true
+        }
+    };
 }
 
 /**
@@ -128,23 +190,44 @@ export function hasDownloadableFileIntent(messages = []) {
 export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availability = {}, {
     explicitModes = {},
     interpreterAvailable = true,
-    downloadableFileIntent = false
+    downloadableFileIntent = false,
+    // The user's explicit opt-out (Settings; e.g. Level 3 data). Unlike every
+    // other input it can only veto: absence/false never enables anything.
+    userDisabledWebSearch = false,
+    // Explicit `enableWebSearch: true` from the caller (documented API option). Still
+    // subject to deployment availability and the user's opt-out.
+    explicitWebSearch = false,
+    // Explicit per-request vetoes for the other features; they beat explicit enables and routing.
+    userDisabledArtifacts = false,
+    userDisabledCodeInterpreter = false,
+    // Chat-input connector actions present: never infer Code Interpreter (explicit flag still works).
+    connectorActions = false,
+    // Selected assistant that keeps running: classifier/explicit artifacts add guidance to it.
+    assistantFeatures = false
 } = {}) {
-    const codeInterpreterEnabled = availability.codeInterpreter === true && interpreterAvailable === true;
-    const artifactsEnabled = availability.artifacts !== false;
-    const explicitArtifacts = explicitModes.artifactsMode === true && downloadableFileIntent !== true;
+    const codeInterpreterEnabled = availability.codeInterpreter === true && interpreterAvailable === true &&
+        userDisabledCodeInterpreter !== true;
+    const artifactsEnabled = availability.artifacts !== false && userDisabledArtifacts !== true;
+    const explicitArtifacts = explicitModes.artifactsMode === true;
     const explicitInterpreter = explicitModes.codeInterpreterOnly === true;
-    const routeArtifacts = !explicitModes.notEligible && !downloadableFileIntent && routingDecision.artifacts === true;
+    // An inferred file request still beats a classifier artifacts guess (artifacts can't produce a real file);
+    // an explicit artifactsMode beats everything.
+    const routeArtifacts = (!explicitModes.notEligible || assistantFeatures === true) && !downloadableFileIntent && routingDecision.artifacts === true;
     // A downloadable-file request is a deterministic specialized route, not a
     // classifier feature decision. It may override a selected assistant, but
     // never a workflow/configured-tool/internal request (guarded by the caller).
     const routeInterpreter = downloadableFileIntent === true ||
-        (!explicitModes.notEligible && routingDecision.codeInterpreter === true);
+        (!explicitModes.notEligible && connectorActions !== true && routingDecision.codeInterpreter === true);
+    // Artifacts and Code Interpreter are mutually exclusive assistants; Artifacts wins when both
+    // are requested/inferred (including over an inferred file request). If artifacts is
+    // unavailable or vetoed, Code Interpreter can still be used.
+    const artifacts = (explicitArtifacts || routeArtifacts) && artifactsEnabled;
+    const codeInterpreterOnly = !artifacts && (explicitInterpreter || routeInterpreter) && codeInterpreterEnabled;
     return {
-        enableWebSearch: routingDecision.webSearch === true && availability.webSearch !== false,
-        artifacts: (explicitArtifacts || routeArtifacts) && artifactsEnabled,
+        enableWebSearch: (routingDecision.webSearch === true || explicitWebSearch === true) && availability.webSearch !== false && userDisabledWebSearch !== true,
+        artifacts,
         artifactsMode: explicitArtifacts && artifactsEnabled,
-        codeInterpreterOnly: (explicitInterpreter || routeInterpreter) && codeInterpreterEnabled,
+        codeInterpreterOnly,
         downloadableFileIntent: downloadableFileIntent === true,
         fileGenerationUnavailable: downloadableFileIntent === true && !codeInterpreterEnabled && !explicitModes.notEligible,
         notEligible: explicitModes.notEligible === true
@@ -154,17 +237,24 @@ export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availabil
 export function resolveSpecializedAssistantMode(options = {}) {
     if (options.notEligible === true && options.downloadableFileIntent !== true &&
         options.codeInterpreterOnly !== true && options.artifactsMode !== true) return null;
+    if (options.artifactsMode === true && options.deploymentFeatures?.artifacts === true) return 'artifacts';
     if ((options.codeInterpreterOnly === true || options.downloadableFileIntent === true) &&
         options.deploymentFeatures?.codeInterpreter === true && options.codeInterpreterAvailable === true) return 'codeInterpreter';
-    if (options.artifactsMode === true && options.deploymentFeatures?.artifacts === true) return 'artifacts';
     return null;
 }
 
-export function isEligibleOrdinaryChat(params = {}, body = {}) {
+/**
+ * Chat-input connector actions (read email, etc.) travel on the latest message as
+ * `configuredTools` (see assistants/agent.js getTools). They never need Code Interpreter,
+ * so it is not inferred (regex or classifier) for them; other routing is unchanged.
+ */
+export function hasConfiguredToolsOnMessages(messages = []) {
+    const last = Array.isArray(messages) ? messages[messages.length - 1] : null;
+    return Array.isArray(last?.configuredTools) && last.configuredTools.length > 0;
+}
+
+function passesBaseEligibility(params = {}, body = {}) {
     const options = body.options || {};
-    const hasSpecializedAssistant = Boolean(
-        options.assistantId || options.groupId || options.groupType || body.assistantId || body.groupId
-    );
     const hasWorkflowOrConfiguredTools = Boolean(
         options.workflowId || options.workflow || body.workflowId || body.workflow ||
         options.configuredTools || body.configuredTools || options.agentId || body.agentId
@@ -178,8 +268,21 @@ export function isEligibleOrdinaryChat(params = {}, body = {}) {
     const isDataSourceOnlyRequest = Boolean(body.datasourceRequest || body.skillsRequest || body.killSwitch);
 
     return Array.isArray(body.messages) && body.messages.length > 0 &&
-        !hasSpecializedAssistant && !hasWorkflowOrConfiguredTools &&
-        !hasExplicitSpecializedMode && !hasInternalMarker && !isDataSourceOnlyRequest;
+        !hasWorkflowOrConfiguredTools && !hasExplicitSpecializedMode && !hasInternalMarker && !isDataSourceOnlyRequest;
+}
+
+export function isEligibleOrdinaryChat(params = {}, body = {}) {
+    return passesBaseEligibility(params, body) && !hasSelectedAssistant(body.options || {}, body);
+}
+
+/**
+ * A selected assistant keeps running (its instructions are never replaced), but web search and
+ * artifacts guidance may be layered on top of it. Code Interpreter is never inferred for
+ * assistants. Connector actions use the agent path, which manages its own tools.
+ */
+export function isEligibleForAssistantFeatures(params = {}, body = {}) {
+    return passesBaseEligibility(params, body) && hasSelectedAssistant(body.options || {}, body) &&
+        !hasConfiguredToolsOnMessages(body.messages);
 }
 
 export function validateRoutingDecision(candidate) {
@@ -261,7 +364,8 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
 } = {}) {
     const availability = deploymentConfig?.availability || {};
     const eligible = isEligibleOrdinaryChat(params, body);
-    const baseMeta = { eligible, routingEnabled: deploymentConfig?.routingEnabled === true };
+    const assistantFeatures = !eligible && isEligibleForAssistantFeatures(params, body);
+    const baseMeta = { eligible, routingEnabled: deploymentConfig?.routingEnabled === true, ...(assistantFeatures ? { assistantFeatures: true, notEligible: true } : {}) };
 
     const externalSignal = params.signal || params.options?.signal || params.body?.options?.signal;
     const ensureRequestActive = () => {
@@ -269,8 +373,12 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         throw externalSignal.reason || Object.assign(new Error('request cancelled'), { code: 'REQUEST_CANCELLED' });
     };
     ensureRequestActive();
-    if (!eligible) return { decision: fallback('not_eligible'), metadata: { ...baseMeta, notEligible: true } };
+    if (!eligible && !assistantFeatures) return { decision: fallback('not_eligible'), metadata: { ...baseMeta, notEligible: true } };
     if (deploymentConfig?.routingEnabled !== true) {
+        return { decision: fallback('routing_disabled'), metadata: baseMeta };
+    }
+    // API-key requests are routing-off by default; callers opt in with `enableRouting: true`.
+    if (!resolveRequestRoutingPolicy({ ...(params.options || {}), ...(body.options || {}) }, body, deploymentConfig).automaticRouting) {
         return { decision: fallback('routing_disabled'), metadata: baseMeta };
     }
 
@@ -287,6 +395,7 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
             model: routingModel,
             cheapestModel: routingModel,
             isOrdinaryChatRequest: false,
+            assistantFeaturePrompts: false,
             _isInternalCall: true,
             // Extended thinking/reasoning adds multiple seconds of latency and is
             // unnecessary for a small boolean classification decision. Without this,
@@ -348,6 +457,8 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         }
         ensureRequestActive();
         const decision = applyRoutingPolicy(validated, availability, body.messages);
+        // Assistants can gain web search / artifacts, never an inferred Code Interpreter.
+        if (assistantFeatures) decision.codeInterpreter = false;
         return {
             decision,
             metadata: { ...baseMeta, modelId: routingModelId, latencyMs: now() - startedAt, fallback: null }

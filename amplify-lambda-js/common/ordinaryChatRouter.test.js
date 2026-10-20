@@ -16,6 +16,8 @@ import {
     buildRoutingContext,
     defaultClassifier,
     hasDownloadableFileIntent,
+    hasSelectedAssistant,
+    hasConfiguredToolsOnMessages,
     resolveRoutingOptions,
     resolveSpecializedAssistantMode,
     isEligibleOrdinaryChat,
@@ -74,6 +76,22 @@ test('recognizes downloadable Word, DOCX, and PDF requests', () => {
     assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Please export this as .docx.' }]), true);
     assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Generate a PDF file for me.' }]), true);
     assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Explain what DOCX means.' }]), false);
+});
+
+test('does not treat file names or extensions inside pasted data as a download request', () => {
+    const requisition = 'Requisition: R27017824\nAmount: $500.00 USD\nAttachment: Colloquium F26 Chair COA Approval.pdf\nFunds status: Not reserved';
+    assert.equal(hasDownloadableFileIntent([{ role: 'user', content: requisition }]), false);
+    assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Summarize budget.xlsx and notes.docx' }]), false);
+    assert.equal(hasDownloadableFileIntent([{ role: 'user', content: 'Save the output as report.docx' }]), true);
+});
+
+test('hasSelectedAssistant detects user/group assistants but not the built-in helper', () => {
+    assert.equal(hasSelectedAssistant({ assistantId: 'astp/abc' }, {}), true);
+    assert.equal(hasSelectedAssistant({ groupId: 'g1' }, {}), true);
+    assert.equal(hasSelectedAssistant({}, { assistantId: 'astp/abc' }), true);
+    assert.equal(hasSelectedAssistant({}, {}), false);
+    assert.equal(hasSelectedAssistant({ assistantId: 'amplify-helper', amplifyHelper: true }, {}), false);
+    assert.equal(hasSelectedAssistant({ assistantId: 'amplify-helper', amplifyHelper: false }, {}), true);
 });
 
 test('dispatches downloadable documents to code interpreter only when deployment-enabled and available', () => {
@@ -307,4 +325,36 @@ test('does not route specialized requests', async () => {
     assert.equal(isEligibleOrdinaryChat({}, { messages: [{ role: 'user', content: 'x' }], options: { assistantId: 'astp/x' } }), false);
     const result = await routeOrdinaryChat({ options: { cheapestModel: { id: 'cheap' } } }, { messages: [{ role: 'user', content: 'x' }], options: { configuredTools: [] } }, { routingEnabled: true, availability: {} }, { classify: async () => { throw new Error('must not classify'); } });
     assert.equal(result.metadata.eligible, false);
+});
+
+test('user web-search opt-out vetoes routing but never enables it', () => {
+    const wants = { webSearch: true, artifacts: false, codeInterpreter: false };
+    const avail = { webSearch: true, artifacts: true, codeInterpreter: false };
+    assert.equal(resolveRoutingOptions(wants, avail, {}).enableWebSearch, true);
+    assert.equal(resolveRoutingOptions(wants, avail, { userDisabledWebSearch: true }).enableWebSearch, false);
+    assert.equal(resolveRoutingOptions(wants, avail, { userDisabledWebSearch: false }).enableWebSearch, true);
+    assert.equal(resolveRoutingOptions({ ...wants, webSearch: false }, avail, { userDisabledWebSearch: false }).enableWebSearch, false);
+});
+
+test('connector actions only suppress inferred Code Interpreter; other routing is unchanged', () => {
+    const withTools = [{ role: 'user', content: 'Read my latest email and create a report', configuredTools: [{ id: 'read_email' }] }];
+    assert.equal(hasConfiguredToolsOnMessages(withTools), true);
+    assert.equal(hasConfiguredToolsOnMessages([{ role: 'user', content: 'hi', configuredTools: [] }]), false);
+    assert.equal(hasConfiguredToolsOnMessages([{ role: 'user', content: 'hi' }]), false);
+    // still ordinary chat (base prompt + web search / artifacts classification)
+    assert.equal(isEligibleOrdinaryChat({}, { messages: withTools, options: {} }), true);
+    const all = { webSearch: true, artifacts: true, codeInterpreter: true };
+    const avail = { webSearch: true, artifacts: true, codeInterpreter: true };
+    const r = resolveRoutingOptions(all, avail, { connectorActions: true });
+    assert.deepEqual([r.codeInterpreterOnly, r.enableWebSearch, r.artifacts], [false, true, true]);
+    // explicit CI toggle still honored when artifacts isn't also requested
+    assert.equal(resolveRoutingOptions({ webSearch: false, artifacts: false, codeInterpreter: false }, avail, { connectorActions: true, explicitModes: { codeInterpreterOnly: true } }).codeInterpreterOnly, true);
+});
+
+test('explicit enableWebSearch is honored but still bound by availability and user opt-out', () => {
+    const off = { webSearch: false, artifacts: false, codeInterpreter: false };
+    assert.equal(resolveRoutingOptions(off, { webSearch: true }, { explicitWebSearch: true }).enableWebSearch, true);
+    assert.equal(resolveRoutingOptions(off, { webSearch: true }, {}).enableWebSearch, false);
+    assert.equal(resolveRoutingOptions(off, { webSearch: false }, { explicitWebSearch: true }).enableWebSearch, false);
+    assert.equal(resolveRoutingOptions(off, { webSearch: true }, { explicitWebSearch: true, userDisabledWebSearch: true }).enableWebSearch, false);
 });

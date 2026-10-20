@@ -17,6 +17,7 @@ import { agentInstructions, getTools } from "./agent.js"
 import { executeToolLoop, shouldEnableWebSearch } from "../tools/toolLoop.js";
 import { getAdminWebSearchApiKey } from "../tools/webSearch.js";
 import { resolveSpecializedAssistantMode } from "../common/ordinaryChatRouter.js";
+import { AMPLIFY_HELPER_ASSISTANT_ID } from "../common/systemPrompts.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import * as skillsService from "../skills/skillsService.js";
 
@@ -301,11 +302,25 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 
 
 
+/**
+ * Apply per-request overrides to a selected assistant's `data`. User-defined assistants
+ * (fillInAssistant) read `data` from a closure, so spreading onto the wrapper is a
+ * silent no-op; they expose withDataOverrides instead. Plain assistant objects
+ * (defaultAssistant, built-ins) carry `data` directly.
+ */
+export const withAssistantDataOverrides = (assistant, overrides) => {
+    if (typeof assistant.withDataOverrides === 'function') {
+        return assistant.withDataOverrides(overrides);
+    }
+    return {...assistant, data: {...(assistant.data || {}), ...overrides}};
+};
+
 export const chooseAssistantForRequest = async (account, _model, body, _dataSources, responseStream) => {
     // 🚀 BREAKTHROUGH: Direct streaming without LLM dependency
     logger.info(`Choose Assistant for Request `);
 
     const clientSelectedAssistant = body.options?.assistantId ?? null;
+    const isAmplifyHelper = body.options?.amplifyHelper === true && clientSelectedAssistant === AMPLIFY_HELPER_ASSISTANT_ID;
     const specializedMode = resolveSpecializedAssistantMode({
         ...body.options,
         deploymentFeatures: body.options?.deploymentFeatures,
@@ -318,6 +333,14 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     } else if (specializedMode === 'artifacts') {
         selectedAssistant = ArtifactModeAssistant;
         logger.info("ARTIFACT MODE DETERMINED");
+    } else if (isAmplifyHelper) {
+        logger.info('Using built-in Amplify Helper assistant');
+        selectedAssistant = {
+            ...defaultAssistant,
+            name: 'Amplify Helper',
+            displayName: 'Amplify Helper',
+            description: 'Administrator-controlled guide to using Amplify.'
+        };
     } else if (clientSelectedAssistant) {
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group assistants
@@ -421,14 +444,10 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
         // Force opsLanguageVersion to "v4" so the agent path runs in userDefinedAssistants.js.
         // This must override any existing opsLanguageVersion on the assistant — without "v4"
         // the workflow block is never reached and the workflow is silently ignored.
-        selectedAssistant = {
-            ...selectedAssistant,
-            data: {
-                ...(selectedAssistant.data || {}),
-                workflowTemplateId: msgWorkflowTemplateId,
-                opsLanguageVersion: "v4",
-            }
-        };
+        selectedAssistant = withAssistantDataOverrides(selectedAssistant, {
+            workflowTemplateId: msgWorkflowTemplateId,
+            opsLanguageVersion: "v4",
+        });
     }
 
     // If the user attached actions (configuredTools) from the chat input alongside a real
@@ -438,13 +457,7 @@ export const chooseAssistantForRequest = async (account, _model, body, _dataSour
     const msgConfiguredTools = getTools(body.messages);
     if (msgConfiguredTools.length > 0 && selectedAssistant && selectedAssistant.data?.opsLanguageVersion !== "v4") {
         logger.info(`Chat-input actions detected (${msgConfiguredTools.length} tools) — forcing opsLanguageVersion to v4 for assistant: ${selectedAssistant.name}`);
-        selectedAssistant = {
-            ...selectedAssistant,
-            data: {
-                ...(selectedAssistant.data || {}),
-                opsLanguageVersion: "v4",
-            }
-        };
+        selectedAssistant = withAssistantDataOverrides(selectedAssistant, { opsLanguageVersion: "v4" });
     }
 
     const selected = selectedAssistant || defaultAssistant;

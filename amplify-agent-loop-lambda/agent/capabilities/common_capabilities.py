@@ -35,6 +35,44 @@ def get_results_map(agent, action_context, response):
     return {}
 
 
+# Marker emitted by the integration lambdas (office365/google) when a user's stored
+# authorization is expired/revoked.  Kept in sync with RECONNECT_REQUIRED_MARKER there.
+RECONNECT_REQUIRED_MARKER = "INTEGRATION_RECONNECT_REQUIRED"
+
+
+class ReconnectRequiredCapability(Capability):
+    """
+    Stops the agent loop as soon as a tool reports that an integration needs the user
+    to reconnect.  This is a permanent failure (retrying cannot fix a revoked grant),
+    so there is no point burning iterations/tokens on identical retries.  The tool
+    result containing the marker stays in memory so callers (e.g. scheduled tasks) can
+    detect it and report the run as failed.
+    """
+
+    def __init__(self):
+        super().__init__(
+            name="Reconnect Required Detection",
+            description="Stops the agent when an integration needs to be reconnected by the user",
+        )
+
+    def process_result(
+        self, agent, action_context, response, action_def, action, result
+    ):
+        try:
+            if RECONNECT_REQUIRED_MARKER in json.dumps(result, default=str):
+                logger.warning(
+                    "Tool %s reported an integration needing reconnection; stopping agent loop",
+                    getattr(action_def, "name", "unknown"),
+                )
+                action_context.set("reconnect_required", True)
+        except Exception as e:
+            logger.error("Error checking for reconnect-required marker: %s", e)
+        return result
+
+    def should_terminate(self, agent, action_context, response) -> bool:
+        return bool(action_context.get("reconnect_required", False))
+
+
 class CurrentUserAwareCapability(Capability):
     def __init__(self):
         super().__init__(

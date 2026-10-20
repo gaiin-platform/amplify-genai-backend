@@ -14,8 +14,9 @@ import { getUserAvailableModels } from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import { requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation } from "./common/envVarsTracking.js";
 import { logCriticalError } from "./common/criticalLogger.js";
-import { loadDeploymentConfig } from "./common/adminConfig.js";
-import { routeOrdinaryChat, resolveRoutingOptions, resolveSpecializedAssistantMode, hasDownloadableFileIntent } from "./common/ordinaryChatRouter.js";
+import { loadDeploymentConfig, isAmplifyHelperAllowed } from "./common/adminConfig.js";
+import { AMPLIFY_HELPER_ASSISTANT_ID } from "./common/systemPrompts.js";
+import { routeOrdinaryChat, resolveRoutingOptions, resolveSpecializedAssistantMode, hasDownloadableFileIntent, hasSelectedAssistant, resolveRequestRoutingPolicy } from "./common/ordinaryChatRouter.js";
 import { createRequestCancellation } from "./common/requestCancellation.js";
 import { CacheManager } from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
@@ -478,8 +479,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const deploymentConfig = await loadDeploymentConfig();
             // Admin policy always takes precedence over client options. On a config read
             // failure with no last-known-good value optional features fail closed.
+            // The reserved helper id only works for users the feature flag allows; otherwise it is
+            // dropped so the request behaves as a plain chat instead of a failed assistant lookup.
+            const requestsHelperId = options?.assistantId === AMPLIFY_HELPER_ASSISTANT_ID;
+            const helperAllowed = requestsHelperId && options?.amplifyHelper === true &&
+                isAmplifyHelperAllowed(deploymentConfig, params.user);
             const effectiveOptions = {
                 ...(options || {}),
+                ...(requestsHelperId && !helperAllowed ? { assistantId: undefined } : {}),
+                amplifyHelper: helperAllowed,
                 deploymentFeatures: deploymentConfig.availability,
                 deploymentPromptSettings: deploymentConfig,
                 isOrdinaryChatRequest: true,
@@ -525,9 +533,20 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             // Specialized modes retain explicit requests; ordinary automatic routing
             // remains classifier-owned. Every requested/automatic mode is availability-gated.
-            const downloadableFileIntent = hasDownloadableFileIntent(body.messages);
-            const specializedModeEligible = !options.workflowId && !options.workflow && !options.configuredTools && !options.agentId && !options._isInternalCall;
-            const resolvedRouting = resolveRoutingOptions(routingDecision, deploymentConfig.availability, {
+            // Policy precedence (availability > assistant/connectors > disables > enables > routing)
+            // lives in resolveRequestRoutingPolicy. API requests are routing-off unless enableRouting.
+            const routingPolicy = resolveRequestRoutingPolicy(effectiveOptions, body, deploymentConfig);
+            const downloadableFileIntent = routingPolicy.inferredRoutingAllowed && hasDownloadableFileIntent(body.messages);
+            const specializedModeEligible = routingPolicy.specializedModeEligible;
+            // A selected assistant keeps running; web search / artifacts guidance is layered onto it.
+            // API callers can request artifacts on their assistant with `artifactsMode: true`.
+            const assistantFeatureRequest = routingPolicy.assistantFeatures;
+            const explicitAssistantArtifacts = assistantFeatureRequest && routingPolicy.apiAccessed &&
+                options.artifactsMode === true && !routingPolicy.disabled.artifacts;
+            const resolvedRouting = resolveRoutingOptions(
+                explicitAssistantArtifacts ? { ...routingDecision, artifacts: true } : routingDecision,
+                deploymentConfig.availability, {
+                assistantFeatures: assistantFeatureRequest,
                 explicitModes: {
                     artifactsMode: options.artifactsMode === true && specializedModeEligible,
                     codeInterpreterOnly: options.codeInterpreterOnly === true && specializedModeEligible,
@@ -536,10 +555,18 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     ))
                 },
                 interpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0,
-                downloadableFileIntent: downloadableFileIntent && specializedModeEligible
+                downloadableFileIntent: downloadableFileIntent && specializedModeEligible,
+                userDisabledWebSearch: routingPolicy.disabled.webSearch,
+                userDisabledArtifacts: routingPolicy.disabled.artifacts,
+                userDisabledCodeInterpreter: routingPolicy.disabled.codeInterpreter,
+                explicitWebSearch: routingPolicy.explicitWebSearch,
+                connectorActions: routingPolicy.connectorActions
             });
             const explicitSpecializedMode = resolveSpecializedAssistantMode({
                 ...options,
+                // Only requests the policy actually allows (not vetoed, not blocked by an API assistant).
+                artifactsMode: options.artifactsMode === true && specializedModeEligible && !routingPolicy.disabled.artifacts,
+                codeInterpreterOnly: options.codeInterpreterOnly === true && specializedModeEligible && !routingPolicy.disabled.codeInterpreter,
                 downloadableFileIntent: resolvedRouting.downloadableFileIntent,
                 deploymentFeatures: deploymentConfig.availability,
                 codeInterpreterAvailable: typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.length > 0,
@@ -549,7 +576,20 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             if (resolvedRouting.fileGenerationUnavailable) {
                 effectiveOptions.fileGenerationUnavailable = true;
             }
+            // One line per request so assistant replacement (Code Interpreter / Artifacts) is traceable in logs.
+            logger.info('Routing resolved', {
+                api: routingPolicy.apiAccessed,
+                assistantSelected: hasSelectedAssistant(effectiveOptions, body),
+                connectorActions: routingPolicy.connectorActions,
+                inferred: { fileIntent: downloadableFileIntent, classifier: { ...routingDecision } },
+                explicit: { codeInterpreter: options.codeInterpreterOnly === true, artifacts: options.artifactsMode === true },
+                result: { codeInterpreter: resolvedRouting.codeInterpreterOnly, artifacts: resolvedRouting.artifacts, webSearch: resolvedRouting.enableWebSearch, specializedMode: explicitSpecializedMode }
+            });
             effectiveOptions.enableWebSearch = resolvedRouting.enableWebSearch;
+            // Tool-loop entry points (chatWithData, assistants) key off routingDecision.webSearch,
+            // not enableWebSearch, so the resolved value (availability + user opt-out) must
+            // be written back or the raw classifier decision still runs the search.
+            effectiveOptions.routingDecision.webSearch = resolvedRouting.enableWebSearch;
             effectiveOptions.downloadableFileIntent = resolvedRouting.downloadableFileIntent;
             effectiveOptions.routingDecision.codeInterpreter = resolvedRouting.codeInterpreterOnly;
             effectiveOptions.options.artifacts = resolvedRouting.artifacts;
@@ -561,12 +601,16 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             if (effectiveOptions.codeInterpreterOnly === true) {
                 effectiveOptions.isOrdinaryChatRequest = false;
             }
+            const assistantFeaturesApplied = assistantFeatureRequest && !explicitSpecializedMode;
             if (resolvedRouting.notEligible) {
                 // Classifier output is never allowed to switch a non-ordinary request.
-                effectiveOptions.options.artifacts = explicitSpecializedMode === 'artifacts';
+                effectiveOptions.options.artifacts = explicitSpecializedMode === 'artifacts' ||
+                    (assistantFeaturesApplied && resolvedRouting.artifacts === true);
                 effectiveOptions.artifactsMode = explicitSpecializedMode === 'artifacts';
                 effectiveOptions.codeInterpreterOnly = explicitSpecializedMode === 'codeInterpreter';
             }
+            effectiveOptions.assistantFeaturePrompts = assistantFeaturesApplied &&
+                (effectiveOptions.options.artifacts === true || resolvedRouting.enableWebSearch === true);
             if (resolvedRouting.fileGenerationUnavailable) {
                 const limitationNotice = {
                     role: 'system',
