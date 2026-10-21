@@ -245,6 +245,16 @@ functions:
           method: delete
           cors: true
 
+  # Stops AgentCore code interpreter sessions with no chat message for 15 minutes
+  # (AgentCore's own sessionTimeoutSeconds is an absolute TTL from creation, not an idle timeout).
+  reap_idle_code_interpreter_sessions:
+    handler: codeinterpreter/handlers.reap_idle_code_interpreter_sessions
+    timeout: 300
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
   get_group_ast_conversations:
     handler: service/group_ast_data.get_group_assistant_conversations
     timeout: 30
@@ -603,6 +613,12 @@ resources:
           -
             AttributeName: user
             AttributeType: S
+          -
+            AttributeName: activityBucket
+            AttributeType: S
+          -
+            AttributeName: updatedAt
+            AttributeType: N
 
         KeySchema:
           -
@@ -615,6 +631,19 @@ resources:
               -
                 AttributeName: user
                 KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          # Sparse: only records with a live AgentCore session have activityBucket (constant
+          # value). Lets reap_idle_code_interpreter_sessions query "idle since X" without a Scan.
+          -
+            IndexName: ActivityIndex
+            KeySchema:
+              -
+                AttributeName: activityBucket
+                KeyType: HASH
+              -
+                AttributeName: updatedAt
+                KeyType: RANGE
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
