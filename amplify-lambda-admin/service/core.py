@@ -1485,7 +1485,17 @@ def get_user_feature_flags(event, context, current_user, name, data):
         user_feature_flags[feature_name] = enabled
 
     # Add Admin Interface Access
-    user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
+    # A failed admins lookup must not masquerade as "not an admin": clients treat a
+    # successful flag payload as authoritative (and cache it), so report failure instead
+    # and let them retry.
+    try:
+        user_feature_flags["adminInterface"] = authorized_admin(current_user, True)
+    except Exception as e:
+        logger.error("Admin lookup failed while computing feature flags: %s", e)
+        return {
+            "success": False,
+            "message": f"Error retrieving feature flags: {str(e)}",
+        }
 
     # Include deployment features so clients can enforce deployment policy.
     # Defaults are safe (all enabled, classic switch allowed) when config is absent.
@@ -1912,6 +1922,8 @@ def authorized_admin(current_user, forFeatureFlags=False):
 
     except Exception as e:
         logger.error("Error in authorized_admin: %s", str(e))
+        if forFeatureFlags:
+            raise  # lookup failure != "not an admin"; let the caller report it
     logger.warning("%s is not authorized to make changes.", current_user)
 
     # using for authentication
