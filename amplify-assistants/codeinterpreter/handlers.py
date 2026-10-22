@@ -155,7 +155,7 @@ logger = getLogger("code_interpreter")
     },
 )
 @required_env_vars({
-    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
@@ -398,6 +398,14 @@ def get_presigned_url_code_interpreter(event, context, current_user, name, data)
     file_name = data.get("fileName", None)
 
     return codeinterpreter.get_presigned_download_url(key, current_user, file_name)
+
+
+@required_env_vars({
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
+def reap_idle_code_interpreter_sessions(event, context):
+    """Scheduled (no HTTP/auth): stop AgentCore sessions idle for IDLE_TIMEOUT_SECONDS."""
+    return codeinterpreter.reap_idle_sessions()
 
 
 def is_valid_query_param_id(id, current_user, prefix):

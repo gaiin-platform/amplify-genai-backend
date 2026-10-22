@@ -393,6 +393,8 @@ export async function connectMCPServer(userId, serverId) {
             status: 'error',
             lastError: error.message
         });
+        // So callers can name the server in a failure (additive; the message is unchanged).
+        try { error.serverName = serverConfig.name; } catch { /* frozen error: ignore */ }
         throw error;
     }
 }
@@ -511,7 +513,8 @@ export async function executeMCPTool(userId, toolName, args, attachmentContext, 
         }
     }
 
-    return result;
+    // Which server ran it, so callers can show a name rather than an id (additive).
+    return { ...result, serverId, serverName: client.name };
 }
 
 // Re-export the isMCPTool function for convenience

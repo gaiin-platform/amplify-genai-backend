@@ -9,6 +9,7 @@ import { logCriticalError } from "../common/criticalLogger.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import { getFeaturePrompt } from "../common/systemPrompts.js";
 import { v4 as uuidv4 } from "uuid";
+import { buildRunRecord, generatedFileName, isCodeFailure, stripCodeFailurePrefix } from "./codeInterpreterRun.js";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -28,6 +29,13 @@ export const CODE_INTERPRETER_TOOL_DEFINITION = {
                 code: {
                     type: "string",
                     description: "Valid Python code to execute in the sandbox."
+                },
+                description: {
+                    type: "string",
+                    description:
+                        "A short, plain-language summary of what this code does, shown to the user as the " +
+                        "step's title. 3-8 words, past tense, no punctuation. " +
+                        "Examples: 'Calculated monthly revenue', 'Charted sales by region', 'Cleaned the survey data'."
                 }
             },
             required: ["code"]
@@ -111,16 +119,11 @@ function buildToolResultContent(responseData) {
     const inner = responseData?.data?.data ?? {};
     const result = { output: inner.textContent || "" };
     if (inner.content && inner.content.length > 0) {
-        result.files = inner.content.map(f => {
-            const fileKey = f.values?.file_key || "";
-            const fnMatch = fileKey.match(/-FN-([^/]+)$/);
-            const fileName = fnMatch ? fnMatch[1] : fileKey.split("/").pop() || "generated_file";
-            return {
-                type: f.type,
-                file_name: fileName,
-                file_size: f.values?.file_size
-            };
-        });
+        result.files = inner.content.map(f => ({
+            type: f.type,
+            file_name: generatedFileName(f),
+            file_size: f.values?.file_size
+        }));
     }
     return JSON.stringify(result);
 }
@@ -366,6 +369,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     const ciStateData = {
                         ...messageData,
                         content: allGeneratedFiles,
+                        // What this execution did, for the UI's step row. The raw output is
+                        // truncated here and is not part of messageData, so it can't leak whole.
+                        runs: [buildRunRecord({ id: toolCall.id, args, stdout: textContent, files: content, ok: true })],
                         ...(executionResponse.sessionRenewed ? { sessionRenewed: true } : {})
                     };
                     sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
@@ -378,7 +384,14 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     const errMsg = String(executionResponse?.error || "Unknown execution error");
                     logger.error("Code execution failed: %s", errMsg);
                     sendStateEventToStream(responseStream, {
-                        codeInterpreter: { error: errMsg.includes("session_expired") ? "session" : errMsg }
+                        codeInterpreter: {
+                            error: errMsg.includes("session_expired") ? "session" : errMsg,
+                            // The user's code itself failed (not the session/infrastructure): record the
+                            // attempt so the UI can show what ran and why it failed.
+                            ...(isCodeFailure(errMsg)
+                                ? { runs: [buildRunRecord({ id: toolCall.id, args, error: stripCodeFailurePrefix(errMsg), ok: false })] }
+                                : {})
+                        }
                     });
                     logCriticalError({
                         functionName: "codeInterpreter_executionFailure",

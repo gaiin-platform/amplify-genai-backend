@@ -13,6 +13,8 @@ import { callUnifiedLLM } from '../llm/UnifiedLLMClient.js';
 import { getUserToolApiKeys } from './userToolKeys.js';
 import { WEB_SEARCH_TOOL_DEFINITION, executeToolCall, getAdminWebSearchApiKey } from './webSearch.js';
 import { getMCPToolDefinitions, executeMCPTool, isMCPTool } from '../mcp/mcpRegistry.js';
+import { parseMCPToolName } from '../mcp/mcpClient.js';
+import { buildMcpRunRecord } from '../mcp/mcpRun.js';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { extractKey } from '../datasource/datasources.js';
@@ -39,6 +41,35 @@ async function presignDataSource(ds, bucket) {
 const logger = getLogger('toolLoop');
 
 const MAX_TOOL_ITERATIONS = 5;
+
+/**
+ * Stream one finished server-side MCP call as `mcpRuns: [record]` so the UI can show what was
+ * sent and what came back. Sent once per call (the browser's deepMerge appends and de-duplicates
+ * array items). Never throws: a display record must not break the tool loop.
+ */
+function streamMcpRun(responseStream, { toolCall, toolName, args, result, error, startedAt }) {
+    if (!responseStream || responseStream.writableEnded) return;
+    try {
+        const parsed = parseMCPToolName(toolName);
+        const text = typeof result?.content === 'string' ? result.content : '';
+        const failed = !!error || result?.isError === true || result?.success === false;
+        const record = buildMcpRunRecord({
+            id: toolCall.id,
+            tool: parsed?.originalName || toolName,
+            serverName: result?.serverName || error?.serverName,
+            serverId: result?.serverId || parsed?.serverId,
+            args,
+            result: failed ? '' : text,
+            error: failed ? (error ? error.message : text) : '',
+            rawContent: result?.rawResult?.content,
+            ms: Date.now() - startedAt,
+            ok: !failed,
+        });
+        sendStateEventToStream(responseStream, { mcpRuns: [record] });
+    } catch (e) {
+        logger.warn(`Could not stream MCP run record for ${toolName}: ${e.message}`);
+    }
+}
 
 export function sendToolLoopFallback(responseStream, content = 'Maximum tool iterations reached. Please try rephrasing your request.') {
     if (responseStream && !responseStream.writableEnded) {
@@ -314,6 +345,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
             // token refresh support). Only fall back to client-side if the server is not
             // in the backend registry.
             if (isToolMCP && mcpClientSide) {
+                const mcpStartedAt = Date.now();
                 try {
                     logger.info(`MCP tool ${toolName} - trying server-side execution first`);
                     if (responseStream && !responseStream.writableEnded) {
@@ -328,6 +360,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     const serverSideResult = await executeMCPTool(mcpUserId, toolName, args,
                         hasAttachments ? attachmentContext : undefined,
                         params.account?.accessToken);
+                    streamMcpRun(responseStream, { toolCall, toolName, args, result: serverSideResult, startedAt: mcpStartedAt });
                     if (responseStream && !responseStream.writableEnded) {
                         sendStatusEventToStream(responseStream, newStatus({
                             id: `mcp-tool-${toolName}`,
@@ -345,6 +378,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     if (!canFallBackToClient) {
                         // Server found but execution failed — surface as tool error
                         logger.error(`MCP tool ${toolName} server-side execution failed: ${serverSideError.message}`);
+                        streamMcpRun(responseStream, { toolCall, toolName, args, error: serverSideError, startedAt: mcpStartedAt });
                         toolResults.push({
                             callId: toolCall.id,
                             toolName,
@@ -406,6 +440,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                 }
             }
 
+            const toolStartedAt = Date.now();
             try {
                 logger.info(`Executing tool: ${toolName} (MCP: ${isToolMCP})`);
                 let toolResult;
@@ -416,6 +451,7 @@ export async function executeToolLoop(params, messages, model, responseStream, o
                     toolResult = await executeMCPTool(mcpUserId, toolName, args,
                         hasAttachments ? attachmentContext : undefined,
                         params.account?.accessToken);
+                    streamMcpRun(responseStream, { toolCall, toolName, args, result: toolResult, startedAt: toolStartedAt });
 
                     // Clear MCP tool status
                     if (responseStream && !responseStream.writableEnded) {
@@ -450,6 +486,9 @@ export async function executeToolLoop(params, messages, model, responseStream, o
 
             } catch (error) {
                 logger.error('Tool execution failed:', error.message);
+                if (isToolMCP) {
+                    streamMcpRun(responseStream, { toolCall, toolName, args, error, startedAt: toolStartedAt });
+                }
                 toolResults.push({
                     callId: toolCall.id,
                     toolName: toolName,
