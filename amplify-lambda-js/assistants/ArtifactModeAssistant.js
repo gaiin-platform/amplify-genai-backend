@@ -7,6 +7,7 @@ import {sendStateEventToStream} from "../common/streams.js";
 import {getInternalLLM} from "../llm/InternalLLM.js";
 import {getLogger} from "../common/logging.js";
 import {isKilled} from "../requests/requestState.js";
+import {ARTIFACT_TYPE_RULES} from "./artifactTypeRules.js";
 
 const logger = getLogger("assistants.ArtifactModeAssistant");
 
@@ -251,7 +252,9 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
             // Only the instructions for writing the artifact itself. The deployment's "artifacts" feature prompt
             // tells the chat model to emit an autoArtifacts JSON block, which made this round wrap the page in JSON
             // (and made resuming a cut-off artifact impossible, since the model restarted the wrapper).
-            content: additional_instructions
+            // The per-type rules (CSV / code / visualization / document) live here, not in the browser request:
+            // they contain literal HTML/SVG that the WAF in front of the web app rejects as XSS.
+            content: `${ARTIFACT_TYPE_RULES}\n${additional_instructions}`
         }];
         if (retryCount > 0 || continueFrom) {
             // Calculate max chars based on model's context window
