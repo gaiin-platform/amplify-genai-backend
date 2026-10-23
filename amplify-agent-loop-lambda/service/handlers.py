@@ -33,6 +33,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 )
 from datetime import datetime
 from typing import List, Dict, Any
+from service.attached_documents import apply_attachment_text, build_document_blocks
 from service.data_sources import resolve_datasources
 from botocore.exceptions import ClientError
 
@@ -266,6 +267,10 @@ def handle_event(
         data_sources = extract_data_sources_from_messages(prompt)
         logger.info("Data sources referenced in messages: %s", data_sources)
 
+        # Extracted text of attachments, by index of the message they were attached to.
+        # Applied only to the final agent input (see apply_attachment_text below).
+        attachment_text_by_message = {}
+
         # Process data sources
         with xray_recorder.in_subsegment("datasource_init"):
             if data_sources:
@@ -331,6 +336,8 @@ def handle_event(
                                         "local_path": os.path.join(
                                             work_directory, result["local_path"]
                                         ),
+                                        # Signed URL of the text extracted from the file
+                                        "content_url": source_details.get("contentUrl"),
                                     }
                     else:
                         # Fallback to the original data sources if resolution fails
@@ -393,6 +400,18 @@ def handle_event(
                     # Create a deep copy of the prompt to avoid modifying the original
                     enhanced_prompt = copy.deepcopy(prompt)
 
+                    # The agent has no file-reading tools, so inline the text the RAG
+                    # pipeline extracted from each attachment (e.g. xlsx, docx, pdf).
+                    attach_options = (
+                        ((metadata or {}).get("assistant") or {}).get("data") or {}
+                    ).get("dataSourceOptions") or {}
+                    datasources_disabled = attach_options.get("disableDataSources") is True
+                    document_blocks = {}
+                    if not datasources_disabled:
+                        document_blocks = build_document_blocks(
+                            processed_data_sources, data_source_to_message_idx
+                        )
+
                     # Add conversational notes about data sources to the relevant messages
                     for source_id, source_info in processed_data_sources.items():
                         if source_id in data_source_to_message_idx:
@@ -408,6 +427,11 @@ def handle_event(
                                     enhanced_prompt[message_idx]["content"], str
                                 ):
                                     enhanced_prompt[message_idx]["content"] += note
+                                    if source_id in document_blocks:
+                                        attachment_text_by_message[message_idx] = (
+                                            attachment_text_by_message.get(message_idx, "")
+                                            + document_blocks[source_id]
+                                        )
 
                     # Use the enhanced prompt for the agent
                     prompt = enhanced_prompt
@@ -699,6 +723,11 @@ def handle_event(
             (entry["content"] for entry in reversed(prompt) if entry["role"] == "user"),
             None,
         )
+
+        # Add the extracted attachment text to what the agent LLM sees. This is done after
+        # user_last_message is captured and after tool selection, so the text is not
+        # saved into the conversation state or sent to the tool-selection call.
+        prompt = apply_attachment_text(prompt, attachment_text_by_message)
 
         # Remove any messages from the prompt that aren't user or assistant
         prompt = [entry for entry in prompt if entry["role"] in ["user", "assistant"]]
