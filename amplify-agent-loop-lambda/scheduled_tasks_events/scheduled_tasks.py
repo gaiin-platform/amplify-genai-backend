@@ -15,7 +15,7 @@ from delegation.api_keys import get_api_key_directly_by_id
 from events.event_templates import get_assistant_by_alias
 from pycommon.api.user_data import load_user_data, save_user_data
 from pycommon.api.ses_email import send_email
-from pycommon.lzw import safe_compress
+from pycommon.lzw import safe_compress, is_lzw_compressed_format, lzw_uncompress
 from croniter import croniter
 from pycommon.logger import getLogger
 from pycommon.decorators import required_env_vars, track_execution
@@ -49,6 +49,35 @@ def safe_json_dumps(obj):
         str: JSON string representation of the object
     """
     return json.dumps(obj, cls=DecimalEncoder)
+
+
+def decompress_log_if_needed(data):
+    """
+    Return a stored execution log in its decompressed form.
+
+    Logs are stored LZW-compressed as a list of integers (see safe_compress), or as the raw
+    object when compression did not pay off. Both a compressed log and a message list are
+    "iterable", so callers must not use an __iter__ check to tell them apart: that archived
+    compressed logs untouched, and clients then received an integer array instead of details.
+
+    Anything that is not recognisably LZW (dicts, message lists, strings, bad codes) is
+    returned unchanged, so this is safe to call on already-decompressed data.
+    """
+    if not isinstance(data, (list, tuple)) or not data:
+        return data
+    try:
+        # DynamoDB hands numbers back as Decimal/float; LZW codes are integers.
+        codes = [
+            int(x)
+            for x in data
+            if isinstance(x, (int, float, Decimal)) and not isinstance(x, bool) and x == int(x)
+        ]
+        if len(codes) != len(data) or not is_lzw_compressed_format(codes):
+            return data
+        return lzw_uncompress(codes)
+    except (ValueError, TypeError, OverflowError) as e:
+        logger.warning("Could not decompress log data, leaving as-is: %s", e)
+        return data
 
 
 # Marker emitted by the integration lambdas when a user's authorization for an
@@ -596,16 +625,7 @@ def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive,
                 archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
                 
                 # Decompress data before archiving to S3 (S3 stores uncompressed)
-                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
-                    # Already decompressed data
-                    log_data = compressed_data
-                else:
-                    # Decompress LZW data
-                    from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
-                    if is_lzw_compressed_format(compressed_data):
-                        log_data = lzw_uncompress(compressed_data)
-                    else:
-                        log_data = compressed_data
+                log_data = decompress_log_if_needed(compressed_data)
                 
                 # Store in consolidation bucket
                 s3.put_object(
