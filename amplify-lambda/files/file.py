@@ -24,6 +24,7 @@ import traceback
 logger = getLogger("files")
 
 import os
+import time
 import boto3
 import rag.util
 from boto3.dynamodb.conditions import Key
@@ -1807,14 +1808,9 @@ def query_table_index(
         if len(expression_attribute_values) > 0:
             query_params["ExpressionAttributeValues"] = expression_attribute_values
 
-    # Always set a limit to control pagination
-    # When there are filters, we may need to scan more items to get enough results
-    if filter_expressions:
-        # With filters, set a reasonable upper bound to avoid scanning entire table
-        # while still allowing enough items to be scanned to meet the page_size after filtering
-        query_params["Limit"] = min(page_size * 10, 1000)  # Cap at 1000 to avoid large scans
-    else:
-        query_params["Limit"] = page_size
+    # Limit is the number of rows DynamoDB *evaluates* before applying the
+    # FilterExpression, not the number returned.
+    query_params["Limit"] = page_size
 
     # Use exclusive_start_key if provided
     if exclusive_start_key:
@@ -1826,30 +1822,47 @@ def query_table_index(
 
     logger.debug("Query: %s", query_params)
 
-    # Query the DynamoDB table or index
-    response = dynamodb.query(**query_params)
+    # With a FilterExpression a single evaluated slice can hold few (or zero)
+    # matches. Keep reading real, contiguous slices until we have at least a
+    # page of matches, or hit the evaluation/time budget. The returned pageKey
+    # is always DynamoDB's own LastEvaluatedKey for the last slice read, so
+    # callers can paginate without gaps or duplicates. A filtered page may hold
+    # more than page_size items (never more than 2 * page_size - 1); an
+    # unfiltered query returns after exactly one slice, as before.
+    items = []
+    last_evaluated_key = None
+    evaluated = 0
+    max_evaluated = 5000
+    deadline = time.monotonic() + 20
+    while True:
+        response = dynamodb.query(**query_params)
+        evaluated += response.get("ScannedCount", 0)
+        items.extend(unmarshal_dynamodb_item(item) for item in response.get("Items", []))
+        raw_last_key = response.get("LastEvaluatedKey")
+        if not raw_last_key:
+            last_evaluated_key = None
+            break
+        last_evaluated_key = unmarshal_dynamodb_item(raw_last_key)
+        if len(items) >= page_size or evaluated >= max_evaluated or time.monotonic() > deadline:
+            break
+        query_params["ExclusiveStartKey"] = raw_last_key
 
-    items = [unmarshal_dynamodb_item(item) for item in response.get("Items", [])]
-    last_evaluated_key = response.get("LastEvaluatedKey")
-    if last_evaluated_key:
-        last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
-
-    # When filters are applied, we need to limit results to the requested page_size
-    # and handle pagination correctly
-    if filter_expressions and len(items) > page_size:
-        # Limit items to requested page size
+    # A filtered slice can hold more matches than page_size. Trim the response
+    # to page_size and, when we do, rebuild the pagination key from the last
+    # item actually returned (the same field set the previous implementation
+    # used) rather than the raw DynamoDB key from the whole slice we read —
+    # otherwise the untrimmed remainder of that slice would never be returned
+    # on the next page.
+    if len(items) > page_size:
         items = items[:page_size]
-        # If we're truncating results, create a pagination key from the last item
-        if len(items) == page_size:
-            last_item = items[-1]
-            # Create pagination key based on the index being used
-            last_evaluated_key = {
-                partition_key_name: partition_key_value,
-                sort_key_name: last_item.get(sort_key_name),
-                "id": last_item.get("id"),  # Primary key for the main table
-                "createdAt": last_item.get("createdAt"),  # Always include for GSI
-                "type": last_item.get("type")  # Include type for type-based sorts
-            }
+        last_item = items[-1]
+        last_evaluated_key = {
+            partition_key_name: partition_key_value,
+            sort_key_name: last_item.get(sort_key_name),
+            "id": last_item.get("id"),  # Primary key for the main table
+            "createdAt": last_item.get("createdAt"),  # Always include for GSI
+            "type": last_item.get("type"),  # Include type for type-based sorts
+        }
 
     return {"success": True, "data": {"items": items, "pageKey": last_evaluated_key}}
 
