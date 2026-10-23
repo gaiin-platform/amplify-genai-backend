@@ -400,7 +400,11 @@ def share_with_users(event, context, current_user, name, data):
 
         if len(valid_users) == 0:
             logger.warning("No valid users to share with")
-            return {"success": False, "message": "No valid users to share with."}
+            return {
+                "success": False,
+                "message": "No valid users to share with.",
+                "invalidUsers": list(invalid_users or []),
+            }
         
         note = data.get("note", "")
         new_data = data.get("sharedData", {})
@@ -525,8 +529,10 @@ def share_with_users(event, context, current_user, name, data):
                 logger.error("Error storing sent record: %s", str(e))
                 # Non-fatal — don't fail the share
 
-        return {"success": True, "items": succesful_shares}
-        
+        # invalidUsers: recipients who aren't Amplify users (never signed in). They were
+        # skipped above, so surface them or the caller can't tell the share was partial.
+        return {"success": True, "items": succesful_shares, "invalidUsers": list(invalid_users or [])}
+
     except Exception as e:
         logger.error("=== CRITICAL ERROR in share_with_users === %s", str(e), exc_info=True)
         import traceback
