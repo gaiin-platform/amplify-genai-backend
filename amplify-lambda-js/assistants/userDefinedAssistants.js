@@ -14,6 +14,7 @@ import {newStatus} from "../common/status.js";
 import {sendStateEventToStream, sendStatusEventToStream, forceFlush, sendErrorMessage} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 import {getLogger} from "../common/logging.js";
+import {isMemberOfGroup, userInAmplifyGroup} from "./groupMembership.js";
 // Skills integration
 import * as skillsService from "../skills/skillsService.js";
 // import AWSXRay from "aws-xray-sdk";
@@ -67,72 +68,6 @@ async function getAssistantByAssistantDatabaseId(id) {
         logger.error('Error getting assistant by database id:', error);
         return null;
     }
-}
-
-const isMemberOfGroup = async (current_user, ast_owner, token) => {
-    try {
-        const params = {
-            TableName: process.env.ASSISTANT_GROUPS_DYNAMO_TABLE,
-            Key: {
-                group_id: { S: ast_owner }
-            }
-        };
-    
-        const response = await dynamodbClient.send(new GetItemCommand(params));
-        
-        if (response.Item) {
-            const item = unmarshall(response.Item);
-            // Check if the group is public or if the user is a direct member, a system user, or a member of an amplify group
-            if (item.isPublic || 
-                (item.members && Object.keys(item.members).includes(current_user)) || 
-                (item.systemUsers && item.systemUsers.includes(current_user)) || 
-                userInAmplifyGroup(item.amplifyGroups ?? [], token)) {
-                return true;
-            } 
-            logger.error(`User is not a member of groupId: ${ast_owner}`);
-        } else {
-            logger.error(`No group entry found for groupId: ${ast_owner}`);
-        }
-    
-    } catch (error) {
-        logger.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
-    }
-}
-
-const userInAmplifyGroup = async (amplifyGroups, token) => {
-    if (amplifyGroups.length === 0) return false;
-    logger.debug("Checking if user is in amplify groups:", amplifyGroups)
-
-    const apiBaseUrl = process.env.API_BASE_URL;
-    if (!apiBaseUrl) {
-        logger.error("API_BASE_URL environment variable is not set");
-        return false;
-    }
-
-    try {
-        const response = await fetch(`${apiBaseUrl}/amplifymin/verify_amp_member`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({data: {groups: amplifyGroups}})
-        });
-        
-        const responseContent = await response.json();
-
-        if (response.status !== 200 || !responseContent.success) {
-            logger.error(`Error verifying amp group membership: ${responseContent}`);
-            return false;
-        } else if (response.status === 200 && responseContent.success) {
-            return responseContent.isMember || false;
-        }
-    } catch (e) {
-        logger.error(`Error verifying amp group membership: ${e}`);
-        
-    }
-    return false;
-
 }
 
 const getStandaloneAst = async (assistantPublicId, current_user, token) => {
@@ -227,7 +162,11 @@ export const getLatestAssistant = async (assistantPublicId) => {
 export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token, layeredAstId = null) => {
     // ⚡ CACHE OPTIMIZATION: Check cache first
     const { CacheManager } = await import('../common/cache.js');
-    const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
+    // Layered requests are authorised by the layered gate, not by this assistant's own
+    // access checks (e.g. group membership). Keep their cache entries in a separate
+    // namespace so a direct request for the same leaf id can never be served from them.
+    const cacheAssistantId = layeredAstId ? `${layeredAstId}>${assistantPublicId}` : assistantPublicId;
+    const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, cacheAssistantId, token);
     if (cached) {
         logger.debug(`Using cached assistant: ${assistantPublicId}`);
         return fillInAssistant(cached, assistantBase, layeredAstId);
@@ -246,7 +185,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
             return null;
         }
         logger.debug(`Leaf assistant loaded directly for layered context: ${assistantPublicId}`);
-        CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, leafData);
+        CacheManager.setCachedUserDefinedAssistant(current_user, cacheAssistantId, token, leafData);
         return fillInAssistant(leafData, assistantBase, layeredAstId);
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -379,12 +318,13 @@ export const fillInAssistant = (assistant, assistantBase, layeredAstId = null) =
             const user = params.account?.user;
             // 🎯 SKILLS INTEGRATION: Inject skills into assistant context
             let activeSkills = [];
+            // Declared outside the try block: the v4 agent path below also reads it
+            // to pass the full skill content to the agent loop.
+            const injectedSkills = [];
             try {
                 const skillsEnabled = process.env.SKILLS_DYNAMODB_TABLE; // Feature flag via env var existence
 
                 if (skillsEnabled && user) {
-                    const injectedSkills = [];
-
                     // 1. Get required skills from assistant config
                     if (assistant.data?.skills && assistant.data.skills.length > 0) {
                         logger.debug(`Loading ${assistant.data.skills.length} assistant-configured skills`);
