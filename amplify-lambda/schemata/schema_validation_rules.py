@@ -81,6 +81,10 @@ rules = {
         },
         "/state/conversation/delete": {"delete": {}},
         "/chat": {"chat": chat_input_schema},
+        # OpenAI-compatible routes: the body is not wrapped in {"data": ...}, so the empty schema
+        # validates the whole body and chat/openai_compat.py does the real validation.
+        "/v1/chat/completions": {"chat": {}},
+        "/v1/models": {"list": {}},
         "/state/settings/save": {"save": save_settings_schema},
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
@@ -100,6 +104,10 @@ rules = {
         "/files/tags/list": {"list": {}},
         "/files/query": {"query": file_query_schema},
         "/chat": {"chat": chat_input_schema},
+        # OpenAI-compatible routes: the body is not wrapped in {"data": ...}, so the empty schema
+        # validates the whole body and chat/openai_compat.py does the real validation.
+        "/v1/chat/completions": {"chat": {}},
+        "/v1/models": {"list": {}},
         "/files/download": {"download": key_request_schema},
         "/state/conversation/register": {
             "conversation_upload": register_conversation_schema

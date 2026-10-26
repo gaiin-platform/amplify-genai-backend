@@ -114,5 +114,86 @@ class ChatFacadeForwardingTests(unittest.TestCase):
         self.stubs["pycommon.llm.chat"].chat.assert_not_called()
 
 
+class ChatServiceRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.service, self.stubs = load_chat_service()
+        self.service.resolve_model_alias = Mock(return_value="m")
+        self.service.validate_assistant_id = Mock(return_value={"success": True})
+        self.service.get_prompt_config = Mock(return_value={"prompts": {}, "availability": {}})
+
+    def invoke(self, payload):
+        return self.service.chat_endpoint(None, None, {}, "test", {
+            "access_token": "token", "allowed_access": ["CHAT"], "data": payload})
+
+    def test_payload_without_data_sources_is_accepted(self):
+        # dataSources is not required by the /chat schema; it used to raise KeyError.
+        result = self.invoke({"messages": [{"role": "user", "content": "hi"}], "options": {"model": {"id": "x"}}})
+        self.assertTrue(result["success"])
+        self.assertEqual(self.stubs["pycommon.llm.chat"].chat.call_args.args[2]["dataSources"], [])
+
+    def test_failures_return_a_json_serializable_message(self):
+        # The message used to be a set literal, which json.dumps cannot serialize.
+        self.stubs["pycommon.llm.chat"].chat.side_effect = RuntimeError("boom")
+        result = self.invoke({"messages": [], "dataSources": [], "options": {"model": {"id": "x"}}})
+        self.assertFalse(result["success"])
+        self.assertEqual(result["message"], "Chat service error: boom")
+        import json
+        json.dumps(result)
+
+    def test_invalid_assistant_id_is_reported_without_calling_the_model(self):
+        self.service.validate_assistant_id.return_value = {"success": False}
+        result = self.invoke({"messages": [], "dataSources": [], "options": {"model": {"id": "x"}, "assistantId": "astp/x"}})
+        self.assertEqual(result, {"success": False, "message": "Invalid assistant id"})
+        self.stubs["pycommon.llm.chat"].chat.assert_not_called()
+
+    def test_unresolvable_alias_is_returned_unchanged(self):
+        service, stubs = load_chat_service()
+        stubs["pycommon.api.models"].get_default_models.return_value = {}
+        service.get_default_models = Mock(return_value={})
+        self.assertEqual(service.resolve_model_alias("SIMPLE", "t"), "SIMPLE")
+        service.get_default_models = Mock(return_value={"cheapest_model": "c", "advanced_model": "a"})
+        self.assertEqual(service.resolve_model_alias("COMPLEX", "t"), "a")
+        self.assertEqual(service.resolve_model_alias("gpt", "t"), "gpt")
+
+
+class DataSourceLookupTests(unittest.TestCase):
+    def setUp(self):
+        self.service, _ = load_chat_service()
+        self.table = Mock()
+        self.dynamodb = Mock()
+        self.service.boto3.resource.return_value = self.dynamodb
+        self.env = patch.dict("os.environ", {"FILES_DYNAMO_TABLE": "files"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def respond(self, ids):
+        self.dynamodb.batch_get_item.side_effect = lambda RequestItems: {
+            "Responses": {"files": [{"id": i["id"], "name": i["id"]} for i in RequestItems["files"]["Keys"]][::-1]}}
+
+    def test_only_bedrock_sources_skip_dynamodb(self):
+        # batch_get_item raises on an empty key list.
+        result = self.service.get_data_source_details(["bedrock-kb://kb1"])
+        self.assertEqual(result, [{"id": "bedrock-kb://kb1", "type": "bedrock/knowledge-base"}])
+        self.dynamodb.batch_get_item.assert_not_called()
+
+    def test_duplicate_ids_are_looked_up_once_and_order_is_preserved(self):
+        self.respond(None)
+        result = self.service.get_data_source_details(["b", "a", "s3://b"])
+        keys = self.dynamodb.batch_get_item.call_args.kwargs["RequestItems"]["files"]["Keys"]
+        self.assertEqual(keys, [{"id": "b"}, {"id": "a"}])
+        self.assertEqual([item["key"] for item in result], ["b", "a"])
+
+    def test_more_than_100_ids_are_split_across_requests(self):
+        self.respond(None)
+        ids = [f"id-{n}" for n in range(250)]
+        result = self.service.get_data_source_details(ids)
+        sizes = [len(c.kwargs["RequestItems"]["files"]["Keys"]) for c in self.dynamodb.batch_get_item.call_args_list]
+        self.assertEqual(sizes, [100, 100, 50])
+        self.assertEqual([item["key"] for item in result], ids)
+
+    def test_empty_input_returns_empty_list(self):
+        self.assertEqual(self.service.get_data_source_details([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

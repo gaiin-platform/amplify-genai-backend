@@ -172,6 +172,29 @@ functions:
           method: post
           cors: true
     
+  # OpenAI-compatible chat API (non-streaming). Base URL for OpenAI SDKs: ${API_BASE_URL}/v1
+  chat_completions:
+    handler: chat/openai_service.chat_completions
+    timeout: 180
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: v1/chat/completions
+          method: post
+          cors: true
+
+  openai_list_models:
+    handler: chat/openai_service.list_models
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: v1/models
+          method: get
+          cors: true
+
   register_conversation:
     handler: state/conversation.register_conversation
     layers:
@@ -598,6 +621,8 @@ resources:
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
+      # The timeout lookup fails if the route does not exist yet (first deploy).
+      DependsOn: ApiGatewayMethodV1ChatCompletionsPost
       Properties:
         ServiceToken: !GetAtt RuntimeUnderscoreconfigUnderscoremanagerLambdaFunction.Arn
         ApiGatewayId:
@@ -606,6 +631,9 @@ resources:
         Functions:
           - name: chat_endpoint
             path: /chat
+            method: POST
+          - name: chat_completions
+            path: /v1/chat/completions
             method: POST
 
     # SSM Policy
