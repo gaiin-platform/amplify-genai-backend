@@ -18,6 +18,10 @@ def can_save(user, data):
     return True
 
 
+def can_rename(user, data):
+    return True
+
+
 def can_share(user, data):
     return True
 
@@ -39,5 +43,6 @@ permissions_by_state_type = {
     "/artifacts/get": {"read": can_read},
     "/artifacts/delete": {"delete": can_delete},
     "/artifacts/save": {"save": can_save},
+    "/artifacts/rename": {"rename": can_rename},
     "/artifacts/share": {"share": can_share},
 }

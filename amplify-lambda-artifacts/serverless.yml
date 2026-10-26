@@ -111,6 +111,14 @@ functions:
           cors: true
 
 
+  rename_artifact:
+    handler: service/core.rename_artifact
+    events:
+      - http:
+          path: /artifacts/rename
+          method: post
+          cors: true
+
   share_artifacts:
     handler: service/core.share_artifact
     timeout: 900

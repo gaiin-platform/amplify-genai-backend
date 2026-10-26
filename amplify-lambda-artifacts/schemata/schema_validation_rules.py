@@ -1,4 +1,5 @@
 from .save_artifact_schema import save_artifact_schema
+from .rename_artifact_schema import rename_artifact_schema
 from .share_artifact_schema import share_artifact_schema
 
 rules = {
@@ -7,6 +8,7 @@ rules = {
         "/artifacts/get": {"read": {}},  # get
         "/artifacts/delete": {"delete": {}},  # delete
         "/artifacts/save": {"save": save_artifact_schema},
+        "/artifacts/rename": {"rename": rename_artifact_schema},
         "/artifacts/share": {"share": share_artifact_schema},
     },
     "api_validators": {},
