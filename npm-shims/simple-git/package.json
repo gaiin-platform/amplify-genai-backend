@@ -1,0 +1,10 @@
+{
+  "name": "simple-git",
+  "version": "4.0.2-compat.1",
+  "description": "Compat shim: gives serverless 3.x's dashboard-plugin the callable CJS API of simple-git 3.x, backed by patched simple-git 4.x",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "simple-git-patched": "npm:simple-git@4.0.2"
+  }
+}
