@@ -58,7 +58,7 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     try {
         // Validate that account.user is not undefined
-        if (!account.user) {
+        if (!account?.user) {
             logger.error("Missing account.user in recordUsage call");
             return false;
         }

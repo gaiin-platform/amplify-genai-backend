@@ -513,8 +513,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             try {
                 await cancellation.ready;
                 if (cancellation.signal.aborted) throw cancellation.signal.reason;
+                // The classifier makes a billable LLM call. It needs the canonical account
+                // (params.account is only attached to assistantParams later), otherwise
+                // recordUsage has no user and the routing spend is never recorded.
                 routingResult = await routeOrdinaryChat(
-                    { ...params, signal: cancellation.signal, options: effectiveOptions },
+                    {
+                        ...params,
+                        account: buildAccount({
+                            user: params.user,
+                            username: params.username,
+                            accessToken: params.accessToken,
+                            apiKeyId: params.apiKeyId,
+                            options: effectiveOptions
+                        }),
+                        signal: cancellation.signal,
+                        options: effectiveOptions
+                    },
                     { ...body, options: effectiveOptions },
                     deploymentConfig
                 );
