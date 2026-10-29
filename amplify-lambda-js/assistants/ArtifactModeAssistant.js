@@ -28,18 +28,13 @@ const additional_instructions = `
        This means your response DOES NOT REQUIRE the identier at the end of your response WHEN YOU KNOW YOU ARE NOT DONE/IT IS NOT COMPLETE. It is only required when detected the artifact is whole and complete, there is no more content needed to be returned to the user, it is not cut off.
        The identifer is    ${ARTIFACT_COMPLETE_MARKER} 
    
-   - **Referencing Previous Artifacts:**
-     - If you need to reference a previous artifact, use the placeholder format:
-       <$artifact[<artifactid>]>
-     - Example:
-       <$artifactId[randomId]>
-
-     - Do not repeat the content of the artifact directly. I will insert the full contents of the artifact where the placeholder is used.
+   - **Updating an Artifact:**
+     - When you are given the current content of an artifact to update, apply the requested changes and write out the complete updated artifact.
+     - Never use placeholders or references in place of content; nothing expands them.
 
 3. **Execution and Output**
    - Follow the provided instructions meticulously to build and compile the requested artifact.
    - Ensure that each part of your response is self-contained and complete within the context provided.
-   - Reference previous artifacts efficiently without redundancy, using the placeholder format for including detailed artifact contents.
 
 
 Adhere to these guidelines to ensure the artifact is produced accurately and efficiently without unnecessary token wastage or superfluous content and 
