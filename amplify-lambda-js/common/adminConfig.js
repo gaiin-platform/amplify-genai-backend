@@ -22,6 +22,9 @@ const DEFAULT_AVAILABILITY = Object.freeze({
 const MAX_PROMPT_BYTES = 16 * 1024;
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_READ_TIMEOUT_MS = 2_500;
+const MAX_MODEL_ID_LENGTH = 200;
+const ROUTING_MODEL_CACHE_TTL_MS = 30_000;
+const ROUTING_MODEL_MISS_TTL_MS = 10_000;
 
 const client = DynamoDBDocumentClient.from(new DynamoDBClient({
     maxAttempts: 1,
@@ -72,6 +75,11 @@ export function normalizeDeploymentConfig(promptRecord, featureRecord, { feature
         routingEnabled: typeof featureRecord?.routingEnabled === 'boolean'
             ? featureRecord.routingEnabled
             : false,
+        // Admin-chosen classifier model id from the model catalog. '' = use the built-in default.
+        routingModelId: typeof featureRecord?.routingModelId === 'string' &&
+            featureRecord.routingModelId.trim().length <= MAX_MODEL_ID_LENGTH
+            ? featureRecord.routingModelId.trim()
+            : '',
         status: featureReadFailed ? 'unavailable' : 'loaded'
     };
 }
@@ -86,6 +94,62 @@ export function isAmplifyHelperAllowed(deploymentConfig, user) {
     if (!flag) return false;
     if (user && flag.userExceptions?.includes(user)) return !flag.enabled;
     return flag.enabled || flag.hasGroupExceptions === true;
+}
+
+/**
+ * Shape a model-catalog row (MODEL_RATE_TABLE) like the model objects the chat path uses.
+ * `systemPrompt` is deliberately blank: the catalog's additional prompt is chat guidance
+ * and must not leak into an internal classification call.
+ */
+export function routingModelFromRecord(item) {
+    if (!item || typeof item.ModelID !== 'string' || !item.ModelID) return null;
+    const num = (v) => (v === undefined || v === null || Number.isNaN(Number(v)) ? undefined : Number(v));
+    return {
+        id: item.ModelID,
+        name: typeof item.ModelName === 'string' && item.ModelName ? item.ModelName : item.ModelID,
+        provider: typeof item.Provider === 'string' ? item.Provider : '',
+        inputContextWindow: num(item.InputContextWindow),
+        outputTokenLimit: num(item.OutputTokenLimit),
+        inputTokenCost: num(item.InputCostPerThousandTokens),
+        outputTokenCost: num(item.OutputCostPerThousandTokens),
+        inputCachedTokenCost: num(item.InputCachedCostPerThousandTokens),
+        inputWriteCachedTokenCost: num(item.InputWriteCachedCostPerThousandTokens),
+        supportsImages: item.SupportsImages === true,
+        supportsImageGeneration: item.SupportsImageGeneration === true,
+        supportsReasoning: item.SupportsReasoning === true,
+        supportsSystemPrompts: item.SupportsSystemPrompts === true,
+        systemPrompt: ''
+    };
+}
+
+/**
+ * Cached lookup of one catalog model by id. Misses (unknown id, read failure) resolve to
+ * `null` and are cached briefly so a bad setting cannot add a Dynamo read to every request.
+ */
+export function createRoutingModelLoader({
+    getModelItem,
+    ttlMs = ROUTING_MODEL_CACHE_TTL_MS,
+    missTtlMs = ROUTING_MODEL_MISS_TTL_MS,
+    now = () => Date.now()
+}) {
+    const cache = new Map();
+    return async function loadRoutingModelById(modelId) {
+        if (typeof modelId !== 'string' || !modelId) return null;
+        const hit = cache.get(modelId);
+        if (hit && now() < hit.expiresAt) return hit.model;
+        let model = null;
+        let ttl = missTtlMs;
+        try {
+            model = routingModelFromRecord(await getModelItem(modelId));
+            if (model) ttl = ttlMs;
+        } catch (error) {
+            logger.warn('Routing model lookup failed; default routing model will be used', {
+                errorName: error?.name || 'Error'
+            });
+        }
+        cache.set(modelId, { model, expiresAt: now() + ttl });
+        return model;
+    };
 }
 
 export function createDeploymentConfigLoader({
@@ -147,4 +211,16 @@ const loadDeploymentConfig = createDeploymentConfigLoader({
     }
 });
 
-export { loadDeploymentConfig, PROMPT_KEYS, AVAILABILITY_KEYS, DEFAULT_AVAILABILITY, MAX_PROMPT_BYTES };
+const loadRoutingModelById = createRoutingModelLoader({
+    getModelItem: async (modelId) => {
+        const tableName = process.env.MODEL_RATE_TABLE;
+        if (!tableName) throw new Error('Model table is not configured');
+        const result = await client.send(new GetCommand({
+            TableName: tableName,
+            Key: { ModelID: modelId }
+        }), { abortSignal: AbortSignal.timeout(DEFAULT_READ_TIMEOUT_MS) });
+        return result.Item ?? null;
+    }
+});
+
+export { loadDeploymentConfig, loadRoutingModelById, PROMPT_KEYS, AVAILABILITY_KEYS, DEFAULT_AVAILABILITY, MAX_PROMPT_BYTES };

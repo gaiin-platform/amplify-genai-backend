@@ -22,6 +22,7 @@ import {
     resolveSpecializedAssistantMode,
     isEligibleOrdinaryChat,
     routeOrdinaryChat,
+    resolveConfiguredRoutingModel,
     validateRoutingDecision
 } from './ordinaryChatRouter.js';
 
@@ -196,6 +197,64 @@ test('classifier always uses the internal Haiku 4.5 model instead of user-select
     assert.equal(userCheapestModel.id, 'user-cheapest-model');
     assert.equal(result.decision.webSearch, true);
     assert.equal(result.metadata.fallback, null);
+});
+
+const ALL_ON = { webSearch: true, artifacts: true, codeInterpreter: true };
+const HAIKU_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+async function routedModelFor(deploymentConfig, loadModel) {
+    let classifierParams;
+    const result = await routeOrdinaryChat(params, body,
+        { routingEnabled: true, availability: ALL_ON, ...deploymentConfig },
+        {
+            loadModel,
+            classify: async (p) => { classifierParams = p; return { schemaVersion: 1, webSearch: false, artifacts: false, codeInterpreter: false }; }
+        });
+    return { model: classifierParams.model, result, classifierParams };
+}
+
+test('an admin-configured routing model replaces the default classifier model', async () => {
+    const configured = { id: 'gpt-4o-mini', name: 'GPT-4o mini', provider: 'OpenAI' };
+    let asked;
+    const { model, result, classifierParams } = await routedModelFor({ routingModelId: 'gpt-4o-mini' }, async (id) => { asked = id; return configured; });
+    assert.equal(asked, 'gpt-4o-mini');
+    assert.equal(model, configured);
+    assert.equal(classifierParams.options.model, configured);
+    assert.equal(classifierParams.options.cheapestModel, configured);
+    assert.equal(classifierParams.options.disableReasoning, true);
+    assert.equal(result.metadata.modelId, 'gpt-4o-mini');
+});
+
+test('routing falls back to the default model when no model is configured or the configured one cannot be used', async () => {
+    const never = async () => { throw new Error('must not look up'); };
+    assert.equal((await routedModelFor({}, never)).model.id, HAIKU_ID);
+    assert.equal((await routedModelFor({ routingModelId: '' }, never)).model.id, HAIKU_ID);
+    assert.equal((await routedModelFor({ routingModelId: HAIKU_ID }, never)).model.id, HAIKU_ID);
+
+    const cases = {
+        'not in catalog': async () => null,
+        'lookup throws': async () => { throw new Error('dynamo down'); },
+        'unsupported provider': async () => ({ id: 'x', provider: 'Mystery' }),
+        'embedding model': async () => ({ id: 'amazon.titan-embed-text-v2:0', provider: 'Bedrock' }),
+        'image generation model': async () => ({ id: 'img', provider: 'OpenAI', supportsImageGeneration: true })
+    };
+    for (const [label, load] of Object.entries(cases)) {
+        const { model, result } = await routedModelFor({ routingModelId: 'configured' }, load);
+        assert.equal(model.id, HAIKU_ID, label);
+        assert.equal(result.metadata.fallback, null, label);
+    }
+});
+
+test('the model lookup is skipped when routing will not classify', async () => {
+    const never = async () => { throw new Error('must not look up'); };
+    const off = await routeOrdinaryChat(params, body, { routingEnabled: false, availability: ALL_ON, routingModelId: 'configured' }, { loadModel: never });
+    assert.equal(off.decision.webSearch, false);
+    assert.equal(off.metadata.modelId, undefined);
+});
+
+test('resolveConfiguredRoutingModel returns the default for a missing config', async () => {
+    assert.equal((await resolveConfiguredRoutingModel(null)).id, HAIKU_ID);
+    assert.equal((await resolveConfiguredRoutingModel({ routingModelId: 42 })).id, HAIKU_ID);
 });
 
 test('classifier call disables extended reasoning and allows up to five seconds for classification', async () => {

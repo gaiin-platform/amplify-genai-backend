@@ -675,6 +675,9 @@ update_admin_config_schema = {
                                     },
                                     "allowClassicUiSwitch": {"type": "boolean"},
                                     "routingEnabled": {"type": "boolean"},
+                                    # Model id from the model catalog used for ordinary-chat routing;
+                                    # empty/absent means the built-in default classifier model.
+                                    "routingModelId": {"type": "string", "maxLength": 200},
                                     "announcement": {
                                         "type": "object",
                                         "properties": {

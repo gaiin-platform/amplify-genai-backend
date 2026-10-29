@@ -1,5 +1,6 @@
 import { getLogger } from './logging.js';
 import { AMPLIFY_HELPER_ASSISTANT_ID } from './systemPrompts.js';
+import { loadRoutingModelById } from './adminConfig.js';
 
 const logger = getLogger('ordinaryChatRouter');
 
@@ -8,7 +9,8 @@ export const ROUTING_TIMEOUT_MS = 5_000;
 export const MAX_ROUTING_CONTEXT_CHARS = 6_000;
 export const MAX_ROUTING_CONTEXT_TURNS = 6;
 
-// Dedicated internal classifier model. Keep this independent of user model defaults
+// Default internal classifier model, used unless an admin picks another one
+// (deploymentFeatures.routingModelId). Keep this independent of user model defaults
 // and availability; the catalog entry is intentionally unavailable for direct chat.
 const ROUTING_MODEL = Object.freeze({
     id: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -78,6 +80,34 @@ export function resolveRoutingModel(params = {}, body = {}) {
 
     const requestModel = params.options?.model || params.model || body.options?.model || body.model;
     return hasSupportedProvider(requestModel) ? requestModel : null;
+}
+
+/** A configured routing model must be a text model on a provider the classifier can call. */
+function isUsableRoutingModel(model) {
+    return hasSupportedProvider(model) &&
+        model.supportsImageGeneration !== true &&
+        !/embed/i.test(model.id || '');
+}
+
+/**
+ * The admin-selected classifier model (deploymentFeatures.routingModelId), else the built-in
+ * default. Any problem (unknown id, unreadable catalog, unusable model) falls back to the
+ * default so a bad setting can never take ordinary chat down.
+ */
+export async function resolveConfiguredRoutingModel(deploymentConfig, loadModel = loadRoutingModelById) {
+    const modelId = deploymentConfig?.routingModelId;
+    if (typeof modelId !== 'string' || !modelId || modelId === ROUTING_MODEL.id) return ROUTING_MODEL;
+    try {
+        const model = await loadModel(modelId);
+        if (isUsableRoutingModel(model)) return model;
+        logger.warn('Configured routing model is unavailable or unsupported; using default', { modelId });
+    } catch (error) {
+        logger.warn('Configured routing model lookup failed; using default', {
+            modelId,
+            errorName: error?.name || 'Error'
+        });
+    }
+    return ROUTING_MODEL;
 }
 
 const textFromMessage = (message) => {
@@ -359,6 +389,7 @@ export async function defaultClassifier(classifierParams, classifierMessages, sc
  */
 export async function routeOrdinaryChat(params, body, deploymentConfig, {
     classify = defaultClassifier,
+    loadModel = loadRoutingModelById,
     timeoutMs = ROUTING_TIMEOUT_MS,
     now = () => Date.now()
 } = {}) {
@@ -382,7 +413,8 @@ export async function routeOrdinaryChat(params, body, deploymentConfig, {
         return { decision: fallback('routing_disabled'), metadata: baseMeta };
     }
 
-    const routingModel = ROUTING_MODEL;
+    const routingModel = await resolveConfiguredRoutingModel(deploymentConfig, loadModel);
+    ensureRequestActive();
 
     const context = buildRoutingContext(body.messages);
     const classifierParams = {

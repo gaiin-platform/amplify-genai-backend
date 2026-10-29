@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AMPLIFY_HELPER_ASSISTANT_ID, BUILTIN_PROMPTS, addModelSystemPrompt, addAssistantFeaturePrompts, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from './systemPrompts.js';
-import { createDeploymentConfigLoader, isAmplifyHelperAllowed, normalizeDeploymentConfig } from './adminConfig.js';
+import { createDeploymentConfigLoader, createRoutingModelLoader, isAmplifyHelperAllowed, normalizeDeploymentConfig, routingModelFromRecord } from './adminConfig.js';
 import { isEligibleOrdinaryChat } from './ordinaryChatRouter.js';
 
 test('normalizes missing prompts to safe runtime defaults and defaults highlighter/memory off', () => {
@@ -212,4 +212,59 @@ test('assistant feature prompts extend the assistant instructions without replac
     assert.equal(addAssistantFeaturePrompts(messages, null, {}), messages);
     // no system message: prepend one
     assert.equal(addAssistantFeaturePrompts([{ role: 'user', content: 'x' }], null, { artifacts: true })[0].role, 'system');
+});
+
+test('routingModelId is carried through trimmed, and defaults to empty for missing or malformed values', () => {
+    const cfg = (record) => normalizeDeploymentConfig(null, record).routingModelId;
+    assert.equal(cfg(null), '');
+    assert.equal(cfg({ schemaVersion: 1, routingModelId: '  gpt-4o-mini ' }), 'gpt-4o-mini');
+    assert.equal(cfg({ schemaVersion: 1, routingModelId: 7 }), '');
+    assert.equal(cfg({ schemaVersion: 1, routingModelId: 'x'.repeat(201) }), '');
+});
+
+test('routingModelFromRecord shapes a catalog row and drops the chat-only system prompt', () => {
+    assert.equal(routingModelFromRecord(null), null);
+    assert.equal(routingModelFromRecord({ ModelName: 'no id' }), null);
+    const model = routingModelFromRecord({
+        ModelID: 'm1', ModelName: 'Model One', Provider: 'OpenAI', InputContextWindow: '128000', OutputTokenLimit: 4096,
+        InputCostPerThousandTokens: '0.001', SupportsReasoning: true, AdditionalSystemPrompt: 'be chatty'
+    });
+    assert.equal(model.id, 'm1');
+    assert.equal(model.name, 'Model One');
+    assert.equal(model.provider, 'OpenAI');
+    assert.equal(model.inputContextWindow, 128000);
+    assert.equal(model.inputTokenCost, 0.001);
+    assert.equal(model.supportsReasoning, true);
+    assert.equal(model.supportsImageGeneration, false);
+    assert.equal(model.systemPrompt, '');
+});
+
+test('the routing model loader caches hits, caches misses briefly, and never throws', async () => {
+    let t = 0;
+    let reads = 0;
+    let fail = false;
+    const loader = createRoutingModelLoader({
+        ttlMs: 1000, missTtlMs: 100, now: () => t,
+        getModelItem: async (id) => {
+            reads += 1;
+            if (fail) throw new Error('offline');
+            return id === 'known' ? { ModelID: 'known', Provider: 'Bedrock' } : null;
+        }
+    });
+    assert.equal((await loader('known')).id, 'known');
+    assert.equal((await loader('known')).id, 'known');
+    assert.equal(reads, 1);
+    t = 1001;
+    await loader('known');
+    assert.equal(reads, 2);
+
+    assert.equal(await loader('missing'), null);
+    await loader('missing');
+    assert.equal(reads, 3);
+    t += 101;
+    fail = true;
+    assert.equal(await loader('missing'), null);
+    assert.equal(reads, 4);
+    assert.equal(await loader(''), null);
+    assert.equal(await loader(undefined), null);
 });
