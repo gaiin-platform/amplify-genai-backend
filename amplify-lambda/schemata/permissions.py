@@ -67,9 +67,11 @@ def can_delete_file(user, data):
 permissions_by_state_type = {
     "/state/share": {"append": can_share, "read": can_share},
     "/state/share/load": {"load": can_share},
+    "/state/share/sent": {"read": can_share},
     "/datasource/metadata/set": {"set": can_upload},
     "/files/upload": {"upload": can_upload},
     "/files/set_tags": {"set_tags": can_upload},
+    "/files/rename": {"rename": can_upload},
     "/files/tags/create": {"create": can_save},
     "/files/tags/delete": {"delete": can_delete_item},
     "/files/tags/list": {"list": can_read},
@@ -94,6 +96,8 @@ permissions_by_state_type = {
         "delete_multiple_conversations": can_delete_item
     },
     "/chat": {"chat": can_chat},
+    "/v1/chat/completions": {"chat": can_chat},
+    "/v1/models": {"list": can_read},
     "/state/settings/save": {"save": can_save},
     "/state/settings/get": {"get": can_read},
     "/files/reprocess/rag": {"upload": can_upload},

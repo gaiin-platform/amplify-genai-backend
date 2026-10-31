@@ -47,6 +47,62 @@ def is_migrated_artifact(artifact_key: str) -> bool:
     return bool(re.match(migrated_pattern, artifact_key))
 
 
+MAX_ARTIFACT_NAME_LENGTH = 200
+MAX_RENAME_KEYS = 100
+# Old format: user@email.com/20250904/Artifact:v1   New format: 20250904/Artifact:v1
+ARTIFACT_KEY_PATTERNS = (r"^[^/]+/\d{8}/[^/]+:v\d+$", r"^\d{8}/[^/]+:v\d+$")
+
+
+def is_valid_artifact_key(artifact_key):
+    return isinstance(artifact_key, str) and any(
+        re.match(pattern, artifact_key) for pattern in ARTIFACT_KEY_PATTERNS
+    )
+
+
+def apply_metadata_name(artifact_content, artifact_info):
+    """
+    The metadata entry (see rename_artifact) is the source of truth for an artifact's
+    display name. Stored content keeps the name it was saved with, so overlay the
+    entry's name on whatever is returned to the caller.
+    """
+    if isinstance(artifact_content, dict) and isinstance(artifact_info, dict):
+        entry_name = artifact_info.get("name")
+        if isinstance(entry_name, str) and entry_name:
+            artifact_content["name"] = entry_name
+    return artifact_content
+
+
+def validate_artifact_name(new_name):
+    if not isinstance(new_name, str):
+        return None
+    cleaned = sanitize_surrogates(new_name).strip()
+    if not cleaned or len(cleaned) > MAX_ARTIFACT_NAME_LENGTH:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
+        return None
+    return cleaned
+
+
+def rename_entries(artifacts, keys, new_name):
+    """
+    Pure helper: returns (updated_list, renamed_entries, not_found_keys). Only the
+    display name changes; the key / artifactId stay put so nothing can collide with
+    or orphan an existing artifact.
+    """
+    wanted = set(keys)
+    found = set()
+    updated = []
+    renamed = []
+    for entry in artifacts:
+        if entry.get("key") in wanted:
+            entry = {**entry, "name": new_name}
+            found.add(entry["key"])
+            renamed.append(entry)
+        updated.append(entry)
+    not_found = [key for key in keys if key not in found]
+    return updated, renamed, not_found
+
+
 @required_env_vars({
     "S3_ARTIFACTS_BUCKET": [S3Operation.GET_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
@@ -117,7 +173,8 @@ def get_artifact(event, context, current_user, name, data):
             else:
                 # Fallback: return the whole content if structure is different
                 actual_artifact = artifact_content
-                
+
+            apply_metadata_name(actual_artifact, user_artifact_info)
             return {"success": True, "data": actual_artifact}
         else:
             # Old format: Get from S3
@@ -125,7 +182,9 @@ def get_artifact(event, context, current_user, name, data):
             
             response = s3.get_object(Bucket=artifact_bucket, Key=artifact_key)
             contents = response["Body"].read().decode("utf-8")
-            return {"success": True, "data": json.loads(contents)}
+            legacy_artifact = json.loads(contents)
+            apply_metadata_name(legacy_artifact, user_artifact_info)
+            return {"success": True, "data": legacy_artifact}
 
     except Exception as e:
         logger.error("Error retrieving artifact: %s", e)
@@ -328,6 +387,8 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         "description": artifact["description"],
         "createdAt": created_at_str,
         "tags": artifact.get("tags", []),
+        # createdAt is date-only (the client's "Oct 26, 2026"); this gives the Library a time
+        "savedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     if sharedBy:
         artifact_table_data["sharedBy"] = sharedBy
@@ -345,8 +406,18 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
             artifacts = []
             createdAt = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Append the new artifact data
-        artifacts.append(artifact_table_data)
+        # Replace an existing entry with the same key (re-saves must not duplicate it);
+        # otherwise append the new artifact data
+        existing_index = next(
+            (i for i, entry in enumerate(artifacts) if entry.get("key") == artifact_key), None
+        )
+        if existing_index is not None:
+            # keep the original save time when the same artifact is saved again
+            if artifacts[existing_index].get("savedAt"):
+                artifact_table_data["savedAt"] = artifacts[existing_index]["savedAt"]
+            artifacts[existing_index] = artifact_table_data
+        else:
+            artifacts.append(artifact_table_data)
 
         # Update DynamoDB with new artifact metadata
         artifact_table.put_item(
@@ -399,6 +470,45 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
 
 
 @required_env_vars({
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
+@validated("rename")
+def rename_artifact(event, context, current_user, name, data):
+    """
+    Rename one or more artifacts (typically every version of one artifact) owned by
+    the caller. Metadata-only: a single read/write of the caller's entry list.
+    """
+    payload = data["data"]
+    new_name = validate_artifact_name(payload.get("name"))
+    if new_name is None:
+        return {
+            "success": False,
+            "message": f"Name must be 1-{MAX_ARTIFACT_NAME_LENGTH} characters with no control characters.",
+        }
+
+    keys = list(dict.fromkeys(payload.get("keys", [])))  # de-dupe, keep order
+    if not keys or len(keys) > MAX_RENAME_KEYS or not all(is_valid_artifact_key(k) for k in keys):
+        return {"success": False, "message": "Invalid artifact keys."}
+
+    try:
+        response = artifact_table.get_item(Key={"user_id": current_user})
+        item = response.get("Item")
+        if not item:
+            return {"success": False, "message": "Artifact not found."}
+
+        updated, renamed, not_found = rename_entries(item.get("artifacts", []), keys, new_name)
+        if not renamed:
+            return {"success": False, "message": "Artifact not found."}
+
+        item["artifacts"] = updated
+        artifact_table.put_item(Item=item)
+        return {"success": True, "data": {"renamed": renamed, "notFound": not_found}}
+    except Exception as e:
+        logger.error("Error renaming artifacts for user %s: %s", current_user, e)
+        return {"success": False, "message": "Failed to rename artifact."}
+
+
+@required_env_vars({
     "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
 })
@@ -423,6 +533,10 @@ def share_artifact(event, context, current_user, name, data):
         return {"success": False, "message": "Invalid artifact data."}
 
     caller_artifact_info = validate_user_and_get_artifact_info(current_user, claimed_key)
+    if caller_artifact_info is None:
+        # A renamed artifact keeps its original key, so the name-derived key above no
+        # longer matches. Accept it only if the caller's own entry carries that name.
+        caller_artifact_info = find_renamed_artifact_info(current_user, artifact)
     if caller_artifact_info is None:
         logger.warning(
             "User %s attempted to share artifact '%s' that does not exist in their namespace.",
@@ -483,6 +597,23 @@ def validate_user_and_get_artifact_info(current_user, artifact_key):
         logger.error("Error validating user permissions: %s", e)
         return None
 
+def find_renamed_artifact_info(current_user, artifact):
+    """Find the caller's entry for an artifact whose name no longer matches its key."""
+    try:
+        response = artifact_table.get_item(Key={"user_id": current_user})
+        version = int(artifact["version"])
+        for entry in response.get("Item", {}).get("artifacts", []):
+            if (
+                entry.get("name") == artifact["name"]
+                and entry.get("createdAt") == artifact["createdAt"]
+                and str(entry.get("key", "")).endswith(f":v{version}")
+            ):
+                return entry
+    except Exception as e:
+        logger.error("Error looking up renamed artifact: %s", e)
+    return None
+
+
 def validate_user(current_user, artifact_key):
     """Legacy function for backward compatibility"""
     artifact_info = validate_user_and_get_artifact_info(current_user, artifact_key)
@@ -495,13 +626,8 @@ def validate_query_param(query_params):
         return {"success": False, "message": "Missing artifact_id parameter"}
     artifact_key = query_params.get("artifact_id")
 
-    # Support both old and new artifact key formats:
-    # Old format: user@email.com/20250904/Artifact:v1
-    # New format: 20250904/Artifact:v1
-    old_key_pattern = r"^[^/]+/\d{8}/[^/]+:v\d+$"
-    new_key_pattern = r"^\d{8}/[^/]+:v\d+$"
-
-    if not (re.match(old_key_pattern, artifact_key) or re.match(new_key_pattern, artifact_key)):
+    # Support both old and new artifact key formats (see ARTIFACT_KEY_PATTERNS)
+    if not is_valid_artifact_key(artifact_key):
         return {"success": False, "message": "Invalid artifact_key format"}
 
     return {"success": True, "key": artifact_key}

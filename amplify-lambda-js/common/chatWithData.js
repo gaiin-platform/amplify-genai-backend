@@ -515,7 +515,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const conversationId = chatRequestOrig.options?.conversationId || params.options?.conversationId;
 
     // Check if web search or MCP is enabled
-    let webSearchEnabled = shouldEnableWebSearch(chatRequestOrig);
+    let webSearchEnabled = chatRequestOrig?.options?.routingDecision
+        ? chatRequestOrig.options.routingDecision.webSearch === true
+        : shouldEnableWebSearch(chatRequestOrig);
     const mcpEnabled = chatRequestOrig?.mcpEnabled === true || chatRequestOrig?.options?.mcpEnabled === true;
 
     if (webSearchEnabled || mcpEnabled) {
@@ -525,6 +527,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 account,
                 options: {
                     ...options,
+                    ...params.options,
                     model,
                     requestId: params.options?.requestId
                 }

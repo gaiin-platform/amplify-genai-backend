@@ -206,15 +206,26 @@ export async function updateMCPServer(userId, serverId, updates) {
     const fullUserId = getFullUserId(userId);
     const hashKey = createHashKey(fullUserId, APP_ID);
     const pk = `${hashKey}#${ENTITY_TYPE}`;
+    // getUserMCPServers also reads records stored under the legacy (non-IDP-prefixed) PK, so a
+    // server it returns may live there. Look in both, and write back to wherever it was found.
+    const legacyPk = `${createHashKey(userId, APP_ID)}#${ENTITY_TYPE}`;
+    const candidatePks = legacyPk !== pk ? [pk, legacyPk] : [pk];
 
     try {
         // First get the existing item
-        const getCommand = new GetCommand({
-            TableName: tableName,
-            Key: { PK: pk, SK: serverId }
-        });
-
-        const existing = await docClient.send(getCommand);
+        let existing = {};
+        let itemPk = pk;
+        for (const candidatePk of candidatePks) {
+            const found = await docClient.send(new GetCommand({
+                TableName: tableName,
+                Key: { PK: candidatePk, SK: serverId }
+            }));
+            if (found.Item) {
+                existing = found;
+                itemPk = candidatePk;
+                break;
+            }
+        }
 
         if (!existing.Item) {
             throw new Error(`MCP server ${serverId} not found`);
@@ -229,7 +240,7 @@ export async function updateMCPServer(userId, serverId, updates) {
         const putCommand = new PutCommand({
             TableName: tableName,
             Item: {
-                PK: pk,
+                PK: itemPk,
                 SK: serverId,
                 data: updatedData
             }
@@ -247,6 +258,18 @@ export async function updateMCPServer(userId, serverId, updates) {
     } catch (error) {
         logger.error('Failed to update MCP server:', error.message);
         throw error;
+    }
+}
+
+/**
+ * Persist connection status/tools for a server without ever throwing.
+ * Persistence failures are logged as warnings only.
+ */
+async function recordServerStateBestEffort(userId, serverId, updates) {
+    try {
+        await updateMCPServer(userId, serverId, updates);
+    } catch (error) {
+        logger.warn(`Could not persist MCP server state for ${serverId}: ${error.message}`);
     }
 }
 
@@ -374,8 +397,10 @@ export async function connectMCPServer(userId, serverId) {
     try {
         const result = await mcpClient.connect();
 
-        // Update server with discovered tools
-        await updateMCPServer(userId, serverId, {
+        // Record discovered tools/status. This is bookkeeping: a failed write must not turn a
+        // working connection into a failure (callers read "not found" errors as "server is not
+        // in the registry" and reroute the tool call to the client).
+        await recordServerStateBestEffort(userId, serverId, {
             tools: result.tools,
             lastConnected: new Date().toISOString(),
             status: 'connected'
@@ -388,11 +413,13 @@ export async function connectMCPServer(userId, serverId) {
         return mcpClient;
 
     } catch (error) {
-        // Update status to error
-        await updateMCPServer(userId, serverId, {
+        // Update status to error (best effort so the real connection error is what surfaces)
+        await recordServerStateBestEffort(userId, serverId, {
             status: 'error',
             lastError: error.message
         });
+        // So callers can name the server in a failure (additive; the message is unchanged).
+        try { error.serverName = serverConfig.name; } catch { /* frozen error: ignore */ }
         throw error;
     }
 }
@@ -511,7 +538,8 @@ export async function executeMCPTool(userId, toolName, args, attachmentContext, 
         }
     }
 
-    return result;
+    // Which server ran it, so callers can show a name rather than an id (additive).
+    return { ...result, serverId, serverName: client.name };
 }
 
 // Re-export the isMCPTool function for convenience

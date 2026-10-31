@@ -617,6 +617,86 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    # ── systemPrompts ──────────────────────────────────────
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "systemPrompts"},
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "schemaVersion": {"type": "integer"},
+                                    "prompts": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^[a-zA-Z0-9_.]+$": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "version": {"type": "integer"},
+                                                    "text": {
+                                                        "type": "string",
+                                                        # Secondary character bound; service validation enforces UTF-8 bytes.
+                                                        "maxLength": 16384
+                                                    }
+                                                },
+                                                "required": ["version", "text"],
+                                                "additionalProperties": False
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "required": ["schemaVersion", "prompts"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    # ── deploymentFeatures ─────────────────────────────────
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "deploymentFeatures"},
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "schemaVersion": {"type": "integer"},
+                                    "availability": {
+                                        "type": "object",
+                                        "properties": {
+                                            "promptHighlighter": {"type": "boolean"},
+                                            "artifacts": {"type": "boolean"},
+                                            "webSearch": {"type": "boolean"},
+                                            "codeInterpreter": {"type": "boolean"},
+                                            "memory": {"type": "boolean"}
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "allowClassicUiSwitch": {"type": "boolean"},
+                                    "routingEnabled": {"type": "boolean"},
+                                    # Model id from the model catalog used for ordinary-chat routing;
+                                    # empty/absent means the built-in default classifier model.
+                                    "routingModelId": {"type": "string", "maxLength": 200},
+                                    "announcement": {
+                                        "type": "object",
+                                        "properties": {
+                                            "enabled": {"type": "boolean"},
+                                            "message": {"type": "string", "maxLength": 1000},
+                                            "id": {"type": "string"},
+                                            "expiresAt": {"type": ["string", "null"]}
+                                        },
+                                        "required": ["enabled", "message"],
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "required": ["schemaVersion", "availability", "allowClassicUiSwitch"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }

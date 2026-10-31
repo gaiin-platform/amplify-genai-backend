@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
+import { sendErrorMessage, sendStateEventToStream } from "./common/streams.js";
 import { getUsageTracker } from "./common/usageTracking.js";
 // Removed AWS X-Ray for performance optimization
 // Removed Python LiteLLM - now using native JS providers
@@ -139,8 +140,35 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             maxCostPerHour: 30,  // $30/hour cost threshold
             cooldownPeriod: 300  // 5-minute cooldown
         })(async (_event, _context, params) => {
-            // 🛡️ TIMEOUT PROTECTION: Main routing with 5-minute timeout
-            return await withTimeout(300000)(routeRequest(params, returnResponse, effectiveStream));
+            // 🛡️ TIMEOUT PROTECTION: Main routing with 5-minute timeout.
+            // withTimeout only races the Promise — it does NOT cancel underlying async work.
+            // The socketTimeout on BedrockRuntimeClient handles actual stream cancellation.
+            // If the 5-minute timeout fires before Bedrock's 2-minute socket timeout,
+            // mark the request as cancelled so the keepalive interval stops writing.
+            const routeController = new AbortController();
+            const routeParams = { ...params, signal: routeController.signal };
+            const routePromise = routeRequest(routeParams, returnResponse, effectiveStream);
+            try {
+                return await withTimeout(300000)(routePromise);
+            } catch (timeoutErr) {
+                if (timeoutErr.message && timeoutErr.message.includes('timed out after 300000ms')) {
+                    timeoutErr.code = 'REQUEST_TIMEOUT';
+                    routeController.abort(timeoutErr);
+                    routePromise.catch(() => {});
+                    sendStateEventToStream(effectiveStream, {requestTimedOut: true});
+                    // Artifact streams show a "cut off" card instead; text written here would end up inside the artifact.
+                    if (params?.body?.options?.artifactsMode !== true) {
+                        sendErrorMessage(effectiveStream, 408, 'REQUEST_TIMEOUT');
+                    }
+                    if (!effectiveStream.writableEnded) effectiveStream.end();
+                    // Mark the in-flight request's keepalive as cancelled so it stops writing.
+                    if (params && params.body && params.body.options && params.body.options.requestId) {
+                        const { cancelRequest } = await import('./llm/UnifiedLLMClient.js');
+                        cancelRequest(params.body.options.requestId);
+                    }
+                }
+                throw timeoutErr;
+            }
         });
         
         // Execute the protected routing with user context
@@ -152,7 +180,8 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
         }
     } catch (e) {
         logger.error("Error processing request: " + e.message, e);
-        
+        if (e.code === 'CLIENT_DISCONNECTED') return;
+
         // Enhanced error response with debugging info
         const errorResponse = {
             statusCode: 500,

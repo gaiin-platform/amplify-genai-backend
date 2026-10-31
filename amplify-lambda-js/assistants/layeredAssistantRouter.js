@@ -19,6 +19,7 @@ import { newStatus } from "../common/status.js";
 import { sendStatusEventToStream, forceFlush } from "../common/streams.js";
 import { getLogger } from "../common/logging.js";
 import { getLatestAssistant } from "./userDefinedAssistants.js";
+import { isMemberOfGroup, userInAmplifyGroup } from "./groupMembership.js";
 
 const objectPermissionsEndpoint = process.env.API_BASE_URL + "/utilities/can_access_objects";
 
@@ -125,10 +126,7 @@ async function canAccessPersonal(item, user, token) {
                 if (accessTo.users?.includes(user)) return true;
 
                 // Amplify group membership
-                if (accessTo.amplifyGroups?.length > 0) {
-                    const isMember = await checkAmplifyGroupMembership(accessTo.amplifyGroups, token);
-                    if (isMember) return true;
-                }
+                if (await userInAmplifyGroup(accessTo.amplifyGroups ?? [], token)) return true;
             }
         }
     } catch (err) {
@@ -141,7 +139,7 @@ async function canAccessPersonal(item, user, token) {
 
 /**
  * Group LA: caller must be a member of the group that owns this LA.
- * Mirrors the isMemberOfGroup logic in userDefinedAssistants.js.
+ * Membership rules live in groupMembership.js (shared with userDefinedAssistants.js).
  */
 async function canAccessGroup(item, user, token) {
     const groupId = item.groupId;
@@ -149,68 +147,7 @@ async function canAccessGroup(item, user, token) {
         logger.warn("Group LA has no groupId stored:", item.assistantId);
         return false;
     }
-
-    const groupTable = process.env.ASSISTANT_GROUPS_DYNAMO_TABLE;
-    if (!groupTable) {
-        logger.error("ASSISTANT_GROUPS_DYNAMO_TABLE env var not set");
-        return false;
-    }
-
-    try {
-        const response = await dynamoClient.send(new GetItemCommand({
-            TableName: groupTable,
-            Key: { group_id: { S: groupId } },
-        }));
-
-        if (!response.Item) {
-            logger.error(`No group record found for groupId: ${groupId}`);
-            return false;
-        }
-
-        const group = unmarshall(response.Item);
-
-        // Public group — anyone can access
-        if (group.isPublic) return true;
-
-        // Direct member check
-        if (group.members && Object.keys(group.members).includes(user)) return true;
-
-        // System user check
-        if (group.systemUsers && group.systemUsers.includes(user)) return true;
-
-        // Amplify group membership check
-        if (group.amplifyGroups?.length > 0) {
-            const isMember = await checkAmplifyGroupMembership(group.amplifyGroups, token);
-            if (isMember) return true;
-        }
-
-        logger.warn(`User ${user} is not a member of group ${groupId}`);
-        return false;
-    } catch (err) {
-        logger.error("Error checking group membership for layered assistant:", err);
-        return false;
-    }
-}
-
-async function checkAmplifyGroupMembership(amplifyGroups, token) {
-    const apiBaseUrl = process.env.API_BASE_URL;
-    if (!apiBaseUrl) return false;
-
-    try {
-        const response = await fetch(`${apiBaseUrl}/amplifymin/verify_amp_member`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ data: { groups: amplifyGroups } }),
-        });
-        const json = await response.json();
-        return response.status === 200 && json.success && (json.isMember || false);
-    } catch (err) {
-        logger.error("Error verifying amplify group membership:", err);
-        return false;
-    }
+    return isMemberOfGroup(user, groupId, token);
 }
 
 // ── Status helpers ─────────────────────────────────────────────────────────────

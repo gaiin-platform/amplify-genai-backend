@@ -216,6 +216,12 @@ def delete_assistant(event, context, current_user, name, data):
             assistants_table, assistant_public_id
         )
 
+        if not existing_assistant:
+            # Already gone. Treat the delete as done rather than "not authorized", so a caller holding a
+            # stale reference (e.g. a group clearing a leftover entry from its list) can finish the cleanup.
+            logger.info("Assistant %s not found; nothing to delete.", assistant_public_id)
+            return {"success": True, "message": "Assistant already deleted."}
+
         if not check_user_can_delete_assistant(existing_assistant, current_user):
             logger.warning("User %s is not authorized to delete assistant %s", current_user, assistant_public_id)
             return {
