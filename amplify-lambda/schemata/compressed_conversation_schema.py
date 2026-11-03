@@ -5,6 +5,8 @@ compressed_conversation_schema = {
         "conversationId": {
             "type": "string",
         },
+        # version (S3 LastModified ms) of the stored copy the client last saw; enables conflict detection
+        "expectedVersion": {"type": ["number", "null"]},
         "folder": {
             "oneOf": [
                 {
