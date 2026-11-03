@@ -9,6 +9,7 @@ import boto3
 import json
 import uuid
 import concurrent.futures
+import copy
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from decimal import Decimal
@@ -1198,9 +1199,17 @@ def assistant_share_save(access_token, current_user, shared_with, note, assistan
         )
 
         ast_id = assistant["id"]
-        ast = assistant
-        ast["tools"] = []
+        # Work on a copy: `assistant` is the caller's live entry, reused for every recipient,
+        # and the access flags below must not leak back into it.
+        ast = copy.deepcopy(assistant)
         ast["fileKeys"] = []
+        # The owner's files are private, so the file list is cleared. Integration tools are
+        # deliberately NOT stripped: data.operations stays on the shared copy. Operations run
+        # with the *calling* user's own connection (never the owner's), so a recipient who has
+        # connected the integration gets a working assistant, and one who hasn't is told to
+        # connect. `tools` is the editor's mirror of those same operations; the shared copy is
+        # not editable, so it is cleared exactly as before.
+        ast["tools"] = []
         # match frontend prompt data
         ast_prompt = {
             "id": ast_id,
@@ -1211,7 +1220,7 @@ def assistant_share_save(access_token, current_user, shared_with, note, assistan
             "folderId": "assistants",
             "data": {
                 "assistant": {"id": ast_id, "definition": ast},
-                **(assistant.get("data", {})),
+                **(ast.get("data", {})),
                 "noCopy": True,
                 "noEdit": True,
                 "noDelete": True,
@@ -1307,6 +1316,37 @@ def get_most_recent_assistant_version(assistants_table, assistant_public_id):
     return items[0] if items else None
 
 
+# DynamoDB caps an item at 400KB. `tools` repeats the op definitions that `data.operations`
+# already carries, so a heavy integration selection would otherwise double that part of the
+# item. `data.operations` is what chat reads; `tools` is the editor's copy, so past this
+# size we skip it rather than risk failing the whole save.
+MAX_PERSISTED_TOOLS_BYTES = 100_000
+
+
+def persistable_tools(tools):
+    """The `tools` list to store on an assistant item.
+
+    Assistants used to be saved without it: `tools` was hashed (so it still drove versioning)
+    and then dropped, which left every client that reloads from `definition.tools` with an
+    empty selection. Anything other than a list, or a list too large to duplicate safely,
+    stores as [].
+    """
+    if not isinstance(tools, list) or not tools:
+        return []
+    try:
+        size = len(json.dumps(tools, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return []
+    if size > MAX_PERSISTED_TOOLS_BYTES:
+        logger.warning(
+            "Not persisting assistant tools (%d bytes > %d); data.operations remains the source of truth",
+            size,
+            MAX_PERSISTED_TOOLS_BYTES,
+        )
+        return []
+    return tools
+
+
 def save_assistant(
     assistants_table,
     assistant_name,
@@ -1395,6 +1435,7 @@ def save_assistant(
         "createdAt": timestamp,
         "updatedAt": timestamp,
         "dataSources": data_sources,
+        "tools": persistable_tools(tools),
         "version": version,
     }
 
