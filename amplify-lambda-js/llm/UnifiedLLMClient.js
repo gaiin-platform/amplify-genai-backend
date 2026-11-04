@@ -34,6 +34,8 @@ import { handleContextOverflow, detectContextOverflow, buildMessagesWithHistoric
 
 // Import cache for proactive overflow prevention
 import { CacheManager } from '../common/cache.js';
+import { parseJsonWithRepair } from './jsonRepair.js';
+import { buildBedrockOutputConfig } from './bedrockStructuredOutput.js';
 
 const logger = getLogger('UnifiedLLMClient');
 
@@ -899,41 +901,6 @@ function addAdditionalPropertiesFalse(schema) {
 }
 
 /**
- * Deterministically repair the common STRUCTURAL JSON defects that Azure gpt-4.1-mini
- * occasionally emits even under a strict json_schema. These are punctuation defects, not
- * semantic ones, so they can be fixed without changing meaning:
- *   - double / empty commas:  [0,1,,3]  (model dropped an integer)  -> [0,1,3]
- *   - trailing commas:        [0,1,]                                -> [0,1]
- *   - leading commas:         [,0,1]                                -> [0,1]
- * Only meaningful to call after a real JSON.parse failure.
- */
-function repairMalformedJson(text) {
-    return text
-        .replace(/,(\s*,)+/g, ',')       // collapse ANY run of commas: [0,1,,,5] -> [0,1,5]
-        .replace(/,\s*([\]}])/g, '$1')   // strip trailing commas:      [0,1,]    -> [0,1]
-        .replace(/([\[{])\s*,/g, '$1');  // strip leading commas:       [,0,1]    -> [0,1]
-}
-
-/**
- * Parse JSON, attempting a single deterministic repair pass if the first parse fails.
- * This lets us salvage Azure's malformed structured output WITHOUT paying for a full LLM
- * retry. It never corrupts valid JSON because the repair only runs after a parse failure,
- * and if the repair doesn't change the string we rethrow the original error.
- *
- * @returns {{parsed: any, repaired: boolean}}
- * @throws  the original parse error if neither the raw nor repaired text is valid JSON
- */
-function parseJsonWithRepair(text) {
-    try {
-        return { parsed: JSON.parse(text), repaired: false };
-    } catch (firstErr) {
-        const repaired = repairMalformedJson(text);
-        if (repaired === text) throw firstErr; // nothing to fix — genuinely broken
-        return { parsed: JSON.parse(repaired), repaired: true };
-    }
-}
-
-/**
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
@@ -985,25 +952,12 @@ RULES:
     let structuredOutputOptions = {};
 
     if (provider === 'Bedrock') {
-        // Only Claude models support outputConfig on Bedrock.
-        // Nova, Titan, Llama, Mistral, and other non-Claude models will error if outputConfig is sent.
-        // Claude 4+ models also require additionalProperties: false on all object schemas.
-        const modelId = (model?.id || '').toLowerCase();
-        const isClaudeModel = modelId.includes('claude');
-        if (isClaudeModel) {
-            const schemaWithAdditionalProps = addAdditionalPropertiesFalse(outputFormat);
-            structuredOutputOptions.outputConfig = {
-                textFormat: {
-                    type: "json_schema",
-                    structure: {
-                        jsonSchema: {
-                            schema: JSON.stringify(schemaWithAdditionalProps)
-                        }
-                    }
-                }
-            };
-        }
-        // else: fall through to JSON-in-prompt only (no outputConfig)
+        // Native structured output (outputConfig) is only sent to model families verified to
+        // accept it - Claude and OpenAI GPT-5.6 (which additionally needs a schema `name`).
+        // Nova, Titan, Llama, Mistral, etc. error if outputConfig is sent, so they fall through
+        // to JSON-in-prompt only. Claude 4+ / GPT-5.6 require additionalProperties: false.
+        const outputConfig = buildBedrockOutputConfig(model?.id, addAdditionalPropertiesFalse(outputFormat));
+        if (outputConfig) structuredOutputOptions.outputConfig = outputConfig;
     } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
         structuredOutputOptions.response_format = {
             type: "json_schema",
@@ -1060,17 +1014,43 @@ RULES:
 
     // Parse JSON response (with the same deterministic repair pass used during validation,
     // so a malformed-but-recoverable structured output is salvaged rather than thrown away).
-    const content = result.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const candidate = jsonMatch ? jsonMatch[0] : content;
+    const extractCandidate = (res) => {
+        const text = res?.content || '';
+        const match = text.match(/\{[\s\S]*\}/);
+        return match ? match[0] : text;
+    };
+    let candidate = extractCandidate(result);
 
     try {
-        const { parsed, repaired } = parseJsonWithRepair(candidate);
+        let parseResult;
+        try {
+            parseResult = parseJsonWithRepair(candidate);
+        } catch (firstParseError) {
+            // Models without native structured output (e.g. Bedrock gpt-5.6-*) occasionally emit
+            // JSON that even the repair pass can't fix. These calls are small and cheap, and the
+            // defect is non-deterministic, so one more attempt usually succeeds — far better than
+            // silently degrading (e.g. RAG returning zero sources). Skip if the caller aborted.
+            if (signal?.aborted) throw firstParseError;
+            logger.warn(`Unparseable JSON from ${provider || 'unknown'} model ${model?.id}; retrying once. Preview: ${candidate.substring(0, 120)}`);
+            retried = true;
+            try {
+                result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
+            } catch (retryCallError) {
+                if (signal?.aborted || ['AbortError', 'CanceledError'].includes(retryCallError?.name)) throw retryCallError;
+                logger.warn(`Parse-failure retry call failed (${retryCallError?.message}); falling back to the original parse error.`);
+                throw firstParseError;
+            }
+            candidate = extractCandidate(result);
+            parseResult = parseJsonWithRepair(candidate);
+        }
+        const { parsed, repaired } = parseResult;
         if (repaired) {
             logger.warn(`Salvaged malformed structured-output JSON after deterministic repair. Original preview: ${candidate.substring(0, 120)}`);
         }
         return parsed;
     } catch (parseError) {
+        // Never mask a cancellation as a parse failure.
+        if (signal?.aborted || ['AbortError', 'CanceledError'].includes(parseError?.name)) throw parseError;
         // Last-resort: the response has irreparable structural corruption (e.g. Azure gpt-4.1-mini
         // merging adjacent integers like "46,4750" instead of "46,47,50"). Standard JSON.parse
         // and our punctuation-repair pass both fail. However, we can still extract a best-effort

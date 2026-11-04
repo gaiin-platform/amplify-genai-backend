@@ -7,6 +7,7 @@ import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bed
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
+import { extractBedrockResponseDiagnostics, captureRawResponseMiddleware, captureRawResponseMiddlewareOptions } from "./responseDiagnostics.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 
 
@@ -31,6 +32,8 @@ const getBedrockClient = () => {
                 connectionTimeout: 5000,
             }),
         });
+        // Keep the raw HTTP status/headers on errors (the SDK otherwise drops them for stream exceptions).
+        cachedBedrockClient.middlewareStack.add(captureRawResponseMiddleware, captureRawResponseMiddlewareOptions);
     }
     return cachedBedrockClient;
 };
@@ -315,19 +318,15 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
         const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
 
         if (shouldLog) {
-            // Capture raw response body for HTML error pages (502 Bad Gateway, etc.)
-            let rawResponsePreview = 'N/A';
-            if (error.$response?.body) {
-                try {
-                    // Try to read the body as text if it's an HTML error page
-                    const bodyText = typeof error.$response.body === 'string'
-                        ? error.$response.body
-                        : JSON.stringify(error.$response.body);
-                    rawResponsePreview = bodyText.substring(0, 500); // First 500 chars
-                } catch (e) {
-                    rawResponsePreview = 'Unable to read response body';
-                }
+            // Capture whatever the SDK kept of the raw HTTP response. For deserialization errors
+            // ("Deserialization error: to see the raw response, inspect the hidden field
+            // {error}.$response") the SDK hides it on a non-enumerable property, so it never shows
+            // up in logs unless we copy it out explicitly.
+            const responseDiagnostics = extractBedrockResponseDiagnostics(error);
+            if (responseDiagnostics.hasResponse) {
+                logger.error(`Bedrock raw response diagnostics for model ${currentModel?.id}: ${JSON.stringify(responseDiagnostics)}`);
             }
+            const rawResponsePreview = responseDiagnostics.bodyPreview;
 
             // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
             const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
@@ -345,6 +344,10 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                     requestId: requestId,
                     modelId: currentModel?.id || 'unknown',
                     httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
+                    responseStatusCode: responseDiagnostics.statusCode,
+                    responseHeaders: responseDiagnostics.headers,
+                    errorFault: error.$fault || 'N/A',
+                    errorRetryable: error.$retryable ?? 'N/A',
                     awsReason: error.$response?.reason || 'N/A',
                     awsMessage: error.$response?.message || 'N/A',
                     rawResponsePreview: rawResponsePreview,
