@@ -1,4 +1,5 @@
 from datetime import datetime
+import hashlib
 import json
 import re
 import boto3
@@ -360,6 +361,32 @@ def create_artifact_keys(current_user, artifact):
     return artifact_key, artifact_id, created_at_str
 
 
+def resolve_save_key(artifacts, artifact_key, artifact_id, lineage_id):
+    """
+    Pure helper: returns (key, artifactId, index of the entry to replace or None).
+    Keys come from date + name + version, so two different artifacts can produce the same
+    one, and replacing that entry would overwrite the other artifact's record and content.
+    When the entry under the key belongs to another lineage, save under a key tagged with
+    this lineage instead. An entry with no lineage can't be told apart from a re-save of
+    the same artifact, so it is replaced as before.
+    """
+    def index_of(key):
+        return next((i for i, entry in enumerate(artifacts) if entry.get("key") == key), None)
+
+    index = index_of(artifact_key)
+    if index is None or not lineage_id:
+        return artifact_key, artifact_id, index
+    existing_lineage = artifacts[index].get("lineageId")
+    if not existing_lineage or existing_lineage == str(lineage_id):
+        return artifact_key, artifact_id, index
+
+    tag = hashlib.sha1(str(lineage_id).encode("utf-8")).hexdigest()[:8]
+    key_base, key_version = artifact_key.rsplit(":v", 1)
+    id_base, id_rest = artifact_id.rsplit(":v", 1)
+    tagged_key = f"{key_base}_{tag}:v{key_version}"
+    return tagged_key, f"{id_base}_{tag}:v{id_rest}", index_of(tagged_key)
+
+
 @required_env_vars({
     # "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
@@ -369,7 +396,7 @@ def save_artifact(event, context, current_user, name, data):
     return save_artifact_for_user(current_user, data["data"]["artifact"], data["access_token"])
 
 
-def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
+def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None, lineage_id=None):
     logger.info("saving artifact for user %s", current_user)
 
     # Sanitize artifact data FIRST to remove invalid UTF-16 surrogates
@@ -390,9 +417,19 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         # createdAt is date-only (the client's "Oct 26, 2026"); this gives the Library a time
         "savedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    # The client's artifactId is shared by every version of one artifact; the stored
+    # artifactId above is per-version, so keep the client's as the link between them.
+    # Optional: a save without them still goes through, just without the link.
+    # lineage_id overrides it when the caller knows the stored lineage (a share).
+    if lineage_id or artifact.get("artifactId"):
+        artifact_table_data["lineageId"] = str(lineage_id or artifact["artifactId"])
+    try:
+        artifact_table_data["version"] = int(artifact["version"])
+    except (KeyError, TypeError, ValueError):
+        pass
     if sharedBy:
         artifact_table_data["sharedBy"] = sharedBy
-        
+
     try:
         logger.info("Adding artifact details to the table")
         createdAt = ""
@@ -406,11 +443,13 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
             artifacts = []
             createdAt = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Replace an existing entry with the same key (re-saves must not duplicate it);
-        # otherwise append the new artifact data
-        existing_index = next(
-            (i for i, entry in enumerate(artifacts) if entry.get("key") == artifact_key), None
+        # Replace an existing entry with the same key (re-saves must not duplicate it),
+        # unless it belongs to a different artifact; otherwise append the new artifact data
+        artifact_key, artifact_id, existing_index = resolve_save_key(
+            artifacts, artifact_key, artifact_id, artifact_table_data.get("lineageId")
         )
+        artifact_table_data["key"] = artifact_key
+        artifact_table_data["artifactId"] = artifact_id
         if existing_index is not None:
             # keep the original save time when the same artifact is saved again
             if artifacts[existing_index].get("savedAt"):
@@ -532,7 +571,11 @@ def share_artifact(event, context, current_user, name, data):
         logger.warning("Unable to derive artifact key for ownership check: %s", e)
         return {"success": False, "message": "Invalid artifact data."}
 
-    caller_artifact_info = validate_user_and_get_artifact_info(current_user, claimed_key)
+    # Look the version up by its lineage first: two artifacts with the same name, date and
+    # version can both be saved (see resolve_save_key), and only the lineage tells them apart.
+    caller_artifact_info = find_artifact_info_by_lineage(current_user, artifact)
+    if caller_artifact_info is None:
+        caller_artifact_info = validate_user_and_get_artifact_info(current_user, claimed_key)
     if caller_artifact_info is None:
         # A renamed artifact keeps its original key, so the name-derived key above no
         # longer matches. Accept it only if the caller's own entry carries that name.
@@ -556,7 +599,12 @@ def share_artifact(event, context, current_user, name, data):
     for email in valid_users:
         try:
             logger.info("Sharing artifact with user %s", email)
-            result = save_artifact_for_user(email, artifact, access_token, current_user)
+            # A version fetched back from storage carries its per-version id, not the
+            # chat's, so use the lineage saved on the owner's entry when there is one
+            result = save_artifact_for_user(
+                email, artifact, access_token, current_user,
+                lineage_id=caller_artifact_info.get("lineageId"),
+            )
             if not result["success"]:
                 logger.warning("Failed to save artifact for %s: %s", email, result['message'])
                 errors.append({"email": email, "message": result["message"]})
@@ -596,6 +644,35 @@ def validate_user_and_get_artifact_info(current_user, artifact_key):
     except Exception as e:
         logger.error("Error validating user permissions: %s", e)
         return None
+
+def find_lineage_entry(artifacts, lineage_id, version):
+    """Pure helper: the entry holding this version of the artifact with this lineage."""
+    if not lineage_id:
+        return None
+    return next(
+        (
+            entry for entry in artifacts
+            if entry.get("lineageId") == str(lineage_id)
+            and not entry.get("sharedBy")
+            and str(entry.get("key", "")).endswith(f":v{version}")
+        ),
+        None,
+    )
+
+
+def find_artifact_info_by_lineage(current_user, artifact):
+    """Find the caller's own entry for this version by the client's artifactId."""
+    try:
+        response = artifact_table.get_item(Key={"user_id": current_user})
+        return find_lineage_entry(
+            response.get("Item", {}).get("artifacts", []),
+            artifact.get("artifactId"),
+            int(artifact["version"]),
+        )
+    except Exception as e:
+        logger.error("Error looking up artifact by lineage: %s", e)
+    return None
+
 
 def find_renamed_artifact_info(current_user, artifact):
     """Find the caller's entry for an artifact whose name no longer matches its key."""
