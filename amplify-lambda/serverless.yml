@@ -436,6 +436,16 @@ functions:
           path: state/share
           method: get
 
+  user_get_sent_shares:
+    handler: state/share.get_sent_shares_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: state/share/sent
+          method: get
+
   chat_convert:
     handler: converters/docconverter.submit_conversion_job
     layers:
