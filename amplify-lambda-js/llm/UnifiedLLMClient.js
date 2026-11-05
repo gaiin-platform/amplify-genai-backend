@@ -728,6 +728,20 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         const inputWriteCachedTokens = requestState.totalUsage?.inputWriteCachedTokens || 0;
 
         if (promptTokens > 0 || completionTokens > 0 || inputCachedTokens > 0 || inputWriteCachedTokens > 0) {
+            // One structured line per LLM call so prompt-cache hit rates can be measured from logs.
+            // For Bedrock, promptTokens EXCLUDES cached tokens (hit rate = read / (prompt + read + write)).
+            logger.info(`[CACHE-USAGE] ${JSON.stringify({
+                requestId,
+                llmCallId,
+                modelId: model?.id,
+                provider: model?.provider,
+                promptTokens,
+                cacheRead: inputCachedTokens,
+                cacheWrite: inputWriteCachedTokens,
+                completionTokens,
+                hasTools: !!(options.tools && options.tools.length > 0),
+                isInternalCall: options._isInternalCall === true,
+            })}`);
             // recordUsage logs its own "📊 [ACCOUNTING] recordUsage invoked" + cost line, so no
             // duplicate billing log is needed here.
             await recordUsage(

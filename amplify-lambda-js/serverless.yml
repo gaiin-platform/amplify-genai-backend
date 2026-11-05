@@ -56,6 +56,9 @@ provider:
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
     BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
+    BEDROCK_PROMPT_CACHING: ${ssm:/amplify/${sls:stage}/BEDROCK_PROMPT_CACHING, 'off'}
+    BEDROCK_PROMPT_CACHING_POINTS: ${ssm:/amplify/${sls:stage}/BEDROCK_PROMPT_CACHING_POINTS, 'tools,system,history,tail'}
+    BEDROCK_PROMPT_CACHING_MODELS: ${ssm:/amplify/${sls:stage}/BEDROCK_PROMPT_CACHING_MODELS, ''}
     COGNITO_CLIENT_ID: ${ssm:/amplify/${sls:stage}/COGNITO_CLIENT_ID}
     COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/COGNITO_USER_POOL_ID}
     DEP_REGION: ${ssm:/amplify/${sls:stage}/DEP_REGION} 

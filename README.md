@@ -82,16 +82,16 @@ node amplify-lambda-js/local/localServer.js
 
 ### Install Serverless
 
-First, install Serverless globally:
+This repo uses [osls](https://github.com/oss-serverless/osls) (the open-source Serverless Framework v3 fork, v3 line) instead of the upstream `serverless` package. It is installed locally as an npm alias (`"serverless": "npm:osls@^3.79.0"`), so `npm i` at the repo root provides the `sls` command. Run it with `npx sls ...`, and if you previously installed the upstream framework globally, remove it so it does not shadow the local copy (osls does not auto-delegate to a local install):
 
 ```bash
-npm install -g serverless
+npm uninstall -g serverless
 ```
 
 Then, install the necessary Serverless plugins:
 
 ```bash
-npm install --save-dev @serverless/compose
+npm install --save-dev @osls/compose
 
 npm install --save-dev serverless-offline
 

@@ -3,6 +3,9 @@ API_GATEWAY_MAX_TIMEOUT_MS: "" #Max timeout in ms for API Gateway streaming endp
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
 BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
+BEDROCK_PROMPT_CACHING: "off" #Bedrock Claude explicit prompt caching: "on" or "off" (default off)
+BEDROCK_PROMPT_CACHING_POINTS: "tools,system,history,tail" #Which cache checkpoints to use (optional subset of tools,system,history,tail)
+#BEDROCK_PROMPT_CACHING_MODELS: "" #Optional comma list of regexes to narrow which model ids get caching (leave unset for all supported Claude families)
 CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
 CHAT_ENDPOINT: "" #function url for lambda
 COGNITO_USER_POOL_ID: "" #cognito_user_pool_id from IAC output

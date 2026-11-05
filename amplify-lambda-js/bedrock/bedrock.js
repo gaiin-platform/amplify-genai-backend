@@ -9,6 +9,12 @@ import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
 import { extractBedrockResponseDiagnostics, captureRawResponseMiddleware, captureRawResponseMiddlewareOptions } from "./responseDiagnostics.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { combineMessages } from "./combineMessages.js";
+import { applyBedrockCaching, getBedrockCachingConfig } from "./bedrockCaching.js";
+import { createTokenCounter } from "../azure/tokens.js";
+
+// Re-exported for callers/tests that import it from here.
+export { combineMessages };
 
 
 const logger = getLogger("bedrock");
@@ -76,6 +82,8 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
     let input = null;
     // Declare hasToolRelatedContent at function scope so it's available in catch block for error logging
     let hasToolRelatedContent = false;
+    // True when toolConfig was rebuilt from history with placeholder specs (never prompt-cache those).
+    let toolsAreStub = false;
 
     try {
         // Client already fetched in parallel above
@@ -215,6 +223,7 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                 });
                 if (toolNames.size > 0) {
                     logger.warn(`body.tools missing but tool-related content found in history — reconstructing minimal toolConfig for: ${[...toolNames].join(', ')}`);
+                    toolsAreStub = true;
                     tools = [...toolNames].map(name => ({ function: { name, description: name, parameters: { type: "object", properties: {} } } }));
                 }
             }
@@ -270,6 +279,25 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                 delete input.toolConfig;
                 logger.warn('Tool-related content found in history but no tools available to build toolConfig — omitting toolConfig to avoid an invalid request');
             }
+        }
+
+        // Explicit prompt caching (Claude on Bedrock). No-op unless BEDROCK_PROMPT_CACHING=on and the
+        // model has a caching profile. A bug here must never fail a chat request: fall back to the uncached input.
+        try {
+            let tokenCounter = null;
+            input = applyBedrockCaching(input, {
+                config: getBedrockCachingConfig(),
+                toolsAreStub,
+                systemPlaceholder: BLANK_MSG,
+                countTokens: (text) => (tokenCounter ??= createTokenCounter()).countTokens(text),
+                onPlan: (plan) => {
+                    if (plan.enabled) {
+                        logger.info(`[CACHE-PLAN] model=${currentModel.id} points=${plan.points.join(',')} estimatedTokens=${JSON.stringify(plan.estimates)} minTokens=${plan.profile?.minTokens}`);
+                    }
+                },
+            });
+        } catch (cachingError) {
+            logger.warn(`Prompt caching planning failed; sending request without cache points: ${cachingError?.message}`);
         }
 
         trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})
@@ -431,61 +459,6 @@ function sanitizeOutputConfig(outputConfig) {
         return outputConfig;
     }
 }
-
-function combineMessages(oldMessages, failSafeUserMessage) {
-    if (!oldMessages || oldMessages.length === 0) return oldMessages;
-
-    const delimiter = "\n_________________________\n";
-    const messages = [];
-    let currentMessage = null;
-
-    // Single pass optimization
-    for (let j = 0; j < oldMessages.length; j++) {
-        const msg = oldMessages[j];
-        const role = msg.role;
-
-        // Don't combine tool messages or assistant messages with tool_calls - preserve full structure
-        if (role === 'tool' || (role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)) {
-            // Push any pending message first
-            if (currentMessage) {
-                messages.push(currentMessage);
-                currentMessage = null;
-            }
-            // Push tool-related message as-is (preserves tool_call_id and tool_calls)
-            messages.push({ ...msg });
-            continue;
-        }
-
-        let content = msg.content || "NA Intentionally left empty, disregard and continue";
-
-        // Add delimiter to last user message
-        if (j === oldMessages.length - 1 && role === 'user') {
-            content = `${delimiter}${content}`;
-        }
-
-        content = typeof content === 'string' ? content.trimEnd() : content; // remove white space
-
-        if (!currentMessage || currentMessage.role !== role) {
-            // New role, push previous and start new
-            if (currentMessage) messages.push(currentMessage);
-            currentMessage = { role, content };
-        } else {
-            // Same role, combine content
-            currentMessage.content += delimiter + content;
-        }
-    }
-
-    // Push last message
-    if (currentMessage) messages.push(currentMessage);
-
-    // Ensure first message is user
-    if (messages.length === 0 || messages[0].role !== 'user') {
-        messages.unshift({ role: 'user', content: failSafeUserMessage });
-    }
-
-    return messages;
-}
-
 
 async function sanitizeMessages(messages, imageSources, model, responseStream) {
     if (!messages) return messages;
