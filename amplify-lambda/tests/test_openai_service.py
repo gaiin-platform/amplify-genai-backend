@@ -84,6 +84,8 @@ class ChatCompletionsHandlerTests(unittest.TestCase):
 
     def call(self, body, **kwargs):
         response = self.mod.chat_completions(event(body, **kwargs), None)
+        if response["headers"]["Content-Type"].startswith("text/event-stream"):
+            return response, None
         return response, json.loads(response["body"])
 
     def valid(self, **extra):
@@ -121,8 +123,8 @@ class ChatCompletionsHandlerTests(unittest.TestCase):
         self.assertFalse(payload["enableWebSearch"])
         self.assertFalse(payload["options"]["artifacts"])
 
-    def test_streaming_and_other_unsupported_parameters_are_rejected_before_any_work(self):
-        for extra, param in (({"stream": True}, "stream"), ({"tools": [{"type": "function"}]}, "tools"),
+    def test_unsupported_parameters_are_rejected_before_any_work(self):
+        for extra, param in (({"tools": [{"type": "function"}]}, "tools"),
                              ({"stop": ["x"]}, "stop"), ({"n": 2}, "n")):
             with self.subTest(param=param):
                 response, body = self.call(self.valid(**extra))
@@ -131,6 +133,57 @@ class ChatCompletionsHandlerTests(unittest.TestCase):
                 self.assertEqual(body["error"]["code"], "unsupported_parameter")
                 self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.chat_streaming.assert_not_called()
+
+    def test_streaming_request_gets_a_server_sent_events_response(self):
+        response, _ = self.call(self.valid(stream=True, stream_options={"include_usage": True}))
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["headers"]["Content-Type"], "text/event-stream; charset=utf-8")
+        events = [json.loads(chunk[6:]) for chunk in response["body"].split("\n\n") if chunk.startswith("data: {")]
+        self.assertEqual("".join(e["choices"][0]["delta"].get("content", "") for e in events), "Hello world")
+        self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
+        self.assertTrue(response["body"].endswith("data: [DONE]\n\n"))
+        self.assertEqual(self.chat_streaming.call_count, 1)
+
+    def test_streaming_errors_are_still_plain_json_errors(self):
+        self.chat_streaming.side_effect = Exception("Request failed with status 429: slow down")
+        response, body = self.call(self.valid(stream=True))
+        self.assertEqual(response["statusCode"], 429)
+        self.assertEqual(response["headers"]["Content-Type"], "application/json")
+        self.assertIn("message", body["error"])
+
+    def test_requests_seen_from_the_document_remediation_tool_are_accepted(self):
+        # Observed in prod: LiteLLM sends these alongside normal chat fields.
+        shapes = [
+            {"reasoning_effort": "high"}, {"enable_thinking": False}, {"enable_thinking": True},
+            {"stream": True, "stream_options": {"include_usage": True}},
+            {"thinking": {"type": "enabled", "budget_tokens": 2048}},
+            {"reasoning": {"effort": "low"}}, {"chat_template_kwargs": {"enable_thinking": False}},
+        ]
+        for extra in shapes:
+            with self.subTest(extra=extra):
+                response, _ = self.call(self.valid(**extra))
+                self.assertEqual(response["statusCode"], 200)
+
+    def test_reasoning_settings_are_forwarded_as_amplify_options(self):
+        self.call(self.valid(reasoning_effort="high"))
+        self.assertEqual(self.chat_streaming.call_args.args[2]["options"]["reasoningLevel"], "high")
+        self.call(self.valid(enable_thinking=False))
+        options = self.chat_streaming.call_args.args[2]["options"]
+        self.assertTrue(options["disableReasoning"])
+        self.assertNotIn("reasoningLevel", options)
+        self.call(self.valid())
+        options = self.chat_streaming.call_args.args[2]["options"]
+        self.assertNotIn("disableReasoning", options)
+        self.assertNotIn("reasoningLevel", options)
+
+    def test_json_mode_instruction_is_sent_and_fenced_output_is_cleaned(self):
+        self.chat_streaming.side_effect = feed({"d": '```json\n{"title": "Report"}\n```'})
+        response, body = self.call(self.valid(response_format={"type": "json_schema", "json_schema": {
+            "name": "doc", "schema": {"type": "object", "properties": {"title": {"type": "string"}}}}}))
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], '{"title": "Report"}')
+        sent = self.chat_streaming.call_args.args[2]["messages"]
+        self.assertTrue(any(m["role"] == "system" and "JSON Schema" in m["content"] for m in sent))
 
     def test_caller_cannot_inject_auth_fields_through_the_body(self):
         response, body = self.call(self.valid(allowed_access=["FULL_ACCESS"], access_token="x"))

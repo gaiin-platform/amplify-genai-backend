@@ -3,7 +3,8 @@
 Translates OpenAI-format requests into the Amplify chat pipeline (the same preparation
 ``/chat`` uses, see ``service.prepare_chat_payload``) and translates the collected answer
 back. Authentication is the standard ``Authorization: Bearer <amp- key>`` header, which
-OpenAI SDKs already send. Streaming is not supported.
+OpenAI SDKs already send. ``stream: true`` is answered with a buffered SSE replay (the full
+answer is collected first), not incremental delivery.
 
 These routes intentionally do NOT use ``@api_tool``: that registry also exposes functions as
 agent ops, and agents call ops with Amplify's ``{"data": ...}`` envelope, which this
@@ -67,9 +68,13 @@ def _chat_completions(event, context, current_user, name, data):
     # caller's body is re-read from the event to keep the two apart.
     _require_chat_access(data)
     access_token = data["access_token"]
+    request_body = json.loads(event["body"])
     try:
-        parsed = oc.parse_chat_completion_request(json.loads(event["body"]))
+        parsed = oc.parse_chat_completion_request(request_body)
     except oc.OpenAIRequestError as e:
+        # Field names only (never values): lets us see what a client really sends.
+        logger.warning("Rejected chat completion request: %s | fields=%s", e.message,
+                       oc.request_field_names(request_body))
         _raise(e)
 
     chat_url = get_endpoint(EndpointType.CHAT_ENDPOINT)
@@ -96,6 +101,9 @@ def _chat_completions(event, context, current_user, name, data):
         _raise(oc.OpenAIRequestError("The model returned an empty response.", code="empty_response",
                                      status_code=502, error_type="api_error"))
 
+    text = oc.normalize_structured_output(text, parsed["json_mode"])
+    if parsed["stream"]:
+        return oc.sse_result(oc.build_chat_completion_stream(payload["model"], text))
     return oc.build_chat_completion(payload["model"], text)
 
 

@@ -73,11 +73,10 @@ class ParseRequestTests(unittest.TestCase):
 
     def test_unsupported_fields_are_rejected_with_param_and_code(self):
         cases = {
-            "stream": True, "n": 2, "top_p": 0.5, "frequency_penalty": 0.5, "presence_penalty": -1,
+            "n": 2, "top_p": 0.5, "frequency_penalty": 0.5, "presence_penalty": -1,
             "stop": ["x"], "seed": 1, "logit_bias": {"1": 2}, "logprobs": True, "top_logprobs": 2,
             "tools": [{"type": "function"}], "tool_choice": "auto", "functions": [{"name": "f"}],
-            "response_format": {"type": "json_object"}, "modalities": ["text", "audio"],
-            "reasoning_effort": "high", "stream_options": {"include_usage": True},
+            "modalities": ["text", "audio"],
             "service_tier": "flex", "parallel_tool_calls": True, "prediction": {"type": "content"},
         }
         for field, value in cases.items():
@@ -85,6 +84,14 @@ class ParseRequestTests(unittest.TestCase):
                 err = self.reject(request(**{field: value}))
                 self.assertEqual(err.param, field)
                 self.assertEqual(err.code, "unsupported_parameter")
+
+    def test_all_offending_fields_are_reported_in_one_error(self):
+        err = self.reject(request(tools=[{"type": "function"}], seed=1, mystery=1, other=2))
+        self.assertEqual(err.param, "tools")
+        for name in ("'tools'", "'seed'", "mystery", "other"):
+            self.assertIn(name, err.message)
+        err = self.reject(request(mystery=1, tools=[{"type": "function"}]))
+        self.assertEqual((err.param, err.code), ("mystery", "unknown_parameter"))
 
     def test_unknown_fields_are_rejected(self):
         err = self.reject(request(access_token="steal", account="x"))
@@ -127,6 +134,160 @@ class ParseRequestTests(unittest.TestCase):
     def test_data_source_objects_are_allowed(self):
         parsed = oc.parse_chat_completion_request(request(dataSources=[{"id": "x", "type": "text/plain"}]))
         self.assertEqual(parsed["dataSources"], [{"id": "x", "type": "text/plain"}])
+
+
+class ReasoningTests(unittest.TestCase):
+    def reasoning(self, **fields):
+        return oc.parse_chat_completion_request(request(**fields))["reasoning"]
+
+    def reject(self, **fields):
+        with self.assertRaises(oc.OpenAIRequestError) as ctx:
+            oc.parse_chat_completion_request(request(**fields))
+        self.assertEqual(ctx.exception.status_code, 400)
+        return ctx.exception
+
+    def test_no_reasoning_fields_leave_model_default(self):
+        self.assertEqual(self.reasoning(), {})
+        self.assertEqual(self.reasoning(reasoning_effort=None, enable_thinking=None, thinking=None), {})
+
+    def test_reasoning_effort_maps_to_amplify_levels(self):
+        cases = {"none": {"disableReasoning": True}, "minimal": {"reasoningLevel": "low"},
+                 "low": {"reasoningLevel": "low"}, "medium": {"reasoningLevel": "medium"},
+                 "high": {"reasoningLevel": "high"}, "xhigh": {"reasoningLevel": "high"},
+                 "HIGH": {"reasoningLevel": "high"}}
+        for effort, expected in cases.items():
+            with self.subTest(effort=effort):
+                self.assertEqual(self.reasoning(reasoning_effort=effort), expected)
+
+    def test_enable_thinking(self):
+        self.assertEqual(self.reasoning(enable_thinking=False), {"disableReasoning": True})
+        self.assertEqual(self.reasoning(enable_thinking=True), {})
+        self.assertEqual(self.reject(enable_thinking="no").param, "enable_thinking")
+
+    def test_reasoning_object_string_and_bool_forms(self):
+        self.assertEqual(self.reasoning(reasoning={"effort": "medium", "summary": "auto"}),
+                         {"reasoningLevel": "medium"})
+        self.assertEqual(self.reasoning(reasoning={"enabled": False}), {"disableReasoning": True})
+        self.assertEqual(self.reasoning(reasoning={"max_tokens": 5000}), {"reasoningLevel": "high"})
+        self.assertEqual(self.reasoning(reasoning="low"), {"reasoningLevel": "low"})
+        self.assertEqual(self.reasoning(reasoning=False), {"disableReasoning": True})
+        self.assertEqual(self.reject(reasoning=5).param, "reasoning")
+
+    def test_anthropic_thinking_forms(self):
+        self.assertEqual(self.reasoning(thinking={"type": "disabled"}), {"disableReasoning": True})
+        self.assertEqual(self.reasoning(thinking={"type": "enabled", "budget_tokens": 1024}),
+                         {"reasoningLevel": "low"})
+        self.assertEqual(self.reasoning(thinking={"type": "enabled", "budget_tokens": 3000}),
+                         {"reasoningLevel": "medium"})
+        self.assertEqual(self.reasoning(thinking={"type": "enabled", "budget_tokens": 9000}),
+                         {"reasoningLevel": "high"})
+        self.assertEqual(self.reasoning(thinking={"type": "adaptive"}), {})
+        self.assertEqual(self.reasoning(thinking={"type": "enabled", "budget_tokens": 0}),
+                         {"disableReasoning": True})
+        self.assertEqual(self.reject(thinking={"type": "weird"}).param, "thinking.type")
+        self.assertEqual(self.reject(thinking={"type": "enabled", "budget_tokens": -1}).param,
+                         "thinking.budget_tokens")
+
+    def test_vllm_style_fields(self):
+        self.assertEqual(self.reasoning(chat_template_kwargs={"enable_thinking": False, "x": 1}),
+                         {"disableReasoning": True})
+        self.assertEqual(self.reasoning(thinking_budget=4096), {"reasoningLevel": "high"})
+        self.assertEqual(self.reasoning(include_reasoning=False, reasoning_format="parsed"), {})
+        self.assertEqual(self.reject(chat_template_kwargs="x").param, "chat_template_kwargs")
+
+    def test_off_wins_over_a_level_and_first_level_wins(self):
+        self.assertEqual(self.reasoning(reasoning_effort="high", enable_thinking=False),
+                         {"disableReasoning": True})
+        self.assertEqual(self.reasoning(reasoning_effort="low", thinking_budget=9000),
+                         {"reasoningLevel": "low"})
+
+    def test_invalid_effort_is_rejected_with_valid_values(self):
+        err = self.reject(reasoning_effort="extreme")
+        self.assertEqual((err.param, err.code), ("reasoning_effort", "invalid_value"))
+        self.assertIn("none, minimal, low, medium, high, xhigh", err.message)
+
+    def test_reasoning_options_reach_the_amplify_payload(self):
+        parsed = oc.parse_chat_completion_request(request(reasoning_effort="medium", assistantId="astp/x"))
+        options = oc.to_amplify_payload(parsed)["options"]
+        self.assertEqual(options, {"model": {"id": "gpt-4o"}, "assistantId": "astp/x",
+                                   "reasoningLevel": "medium"})
+
+
+class ClientCompatibilityTests(unittest.TestCase):
+    """Requests shaped like real LiteLLM/OpenAI-SDK traffic must be accepted."""
+
+    def test_stream_options_are_ignored(self):
+        parsed = oc.parse_chat_completion_request(
+            request(stream=True, stream_options={"include_usage": True}))
+        self.assertTrue(parsed["stream"])
+        self.assertFalse(oc.parse_chat_completion_request(request(stream_options=None))["stream"])
+
+    def test_stream_must_be_boolean(self):
+        with self.assertRaises(oc.OpenAIRequestError) as ctx:
+            oc.parse_chat_completion_request(request(stream="yes"))
+        self.assertEqual(ctx.exception.param, "stream")
+
+    def test_non_openai_sampling_knobs_are_ignored(self):
+        oc.parse_chat_completion_request(request(top_k=40, min_p=0.1, repetition_penalty=1.1))
+
+    def test_json_object_response_format_adds_instruction(self):
+        parsed = oc.parse_chat_completion_request(request(response_format={"type": "json_object"}))
+        self.assertTrue(parsed["json_mode"])
+        self.assertEqual(parsed["messages"][-1]["role"], "system")
+        self.assertIn("valid JSON", parsed["messages"][-1]["content"])
+
+    def test_json_schema_response_format_embeds_schema(self):
+        schema = {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]}
+        parsed = oc.parse_chat_completion_request(request(response_format={
+            "type": "json_schema", "json_schema": {"name": "doc", "strict": True, "schema": schema}}))
+        instruction = parsed["messages"][-1]["content"]
+        self.assertTrue(parsed["json_mode"])
+        self.assertIn("'doc'", instruction)
+        self.assertIn(json.dumps(schema), instruction)
+
+    def test_text_response_format_is_a_no_op(self):
+        parsed = oc.parse_chat_completion_request(request(response_format={"type": "text"}))
+        self.assertFalse(parsed["json_mode"])
+        self.assertEqual(parsed["messages"], [{"role": "user", "content": "hi"}])
+
+    def test_bad_response_formats_are_rejected(self):
+        for value in ("json", {"type": "xml"}, {"type": "json_schema"},
+                      {"type": "json_schema", "json_schema": {"schema": "x"}}):
+            with self.subTest(value=value):
+                with self.assertRaises(oc.OpenAIRequestError):
+                    oc.parse_chat_completion_request(request(response_format=value))
+
+    def test_structured_output_cleanup(self):
+        n = oc.normalize_structured_output
+        self.assertEqual(n('{"a": 1}', True), '{"a": 1}')
+        self.assertEqual(n('```json\n{"a": 1}\n```', True), '{"a": 1}')
+        self.assertEqual(json.loads(n('Sure! Here it is: {"a": [1, 2]} Hope it helps', True)), {"a": [1, 2]})
+        self.assertEqual(n("no json here", True), "no json here")
+        self.assertEqual(n("```json\n{}\n```", False), "```json\n{}\n```")
+
+    def test_request_field_names_never_include_values(self):
+        self.assertEqual(oc.request_field_names({"b": "secret", "a": 1}), ["a", "b"])
+        self.assertEqual(oc.request_field_names("x"), [])
+
+
+class StreamBodyTests(unittest.TestCase):
+    def events(self, body):
+        self.assertTrue(body.endswith("data: [DONE]\n\n"))
+        return [json.loads(line[6:]) for line in body.split("\n\n") if line.startswith("data: {")]
+
+    def test_stream_body_is_standard_chunks(self):
+        events = self.events(oc.build_chat_completion_stream("m", "hello", completion_id="c1", created=5))
+        self.assertEqual([e["object"] for e in events], ["chat.completion.chunk"] * 3)
+        self.assertEqual(events[0]["choices"][0]["delta"], {"role": "assistant", "content": ""})
+        self.assertEqual(events[1]["choices"][0]["delta"], {"content": "hello"})
+        self.assertEqual(events[2]["choices"][0]["finish_reason"], "stop")
+        self.assertTrue(all(e["id"] == "c1" and e["model"] == "m" and "usage" not in e for e in events))
+
+    def test_finalize_unwraps_sse_marker(self):
+        body = oc.build_chat_completion_stream("m", "hi")
+        response = oc.finalize_response({"statusCode": 200, "body": json.dumps(oc.sse_result(body))})
+        self.assertEqual(response["headers"]["Content-Type"], "text/event-stream; charset=utf-8")
+        self.assertEqual(response["body"], body)
 
 
 class ResponseTests(unittest.TestCase):

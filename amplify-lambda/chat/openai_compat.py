@@ -20,11 +20,28 @@ DEFAULT_MAX_TOKENS = 4096
 # Fields that are accepted as-is by this endpoint.
 _SUPPORTED_FIELDS = {
     "model", "messages", "temperature", "max_tokens", "max_completion_tokens", "stream",
+    "response_format",
+}
+# Reasoning/"thinking" controls. Clients spell these many ways (OpenAI ``reasoning_effort``,
+# Responses/OpenRouter ``reasoning``, Anthropic ``thinking``, Qwen/vLLM ``enable_thinking`` and
+# ``chat_template_kwargs``). They are translated into Amplify's ``reasoningLevel`` /
+# ``disableReasoning`` options by ``_translate_reasoning``.
+_REASONING_FIELDS = {
+    "reasoning_effort", "reasoning", "thinking", "enable_thinking", "thinking_budget",
+    "chat_template_kwargs",
 }
 # Amplify-specific extensions (send via the OpenAI SDK's ``extra_body``).
 _EXTENSION_FIELDS = {"dataSources", "assistantId"}
 # Accepted and ignored: they carry no behavior we are expected to reproduce.
-_IGNORED_FIELDS = {"user", "metadata", "store", "prompt_cache_key", "safety_identifier"}
+_IGNORED_FIELDS = {
+    "user", "metadata", "store", "prompt_cache_key", "safety_identifier", "prompt_cache_retention",
+    # Streaming usage options: we never report usage (see build_chat_completion).
+    "stream_options",
+    # Reasoning presentation knobs: reasoning text is never returned by this endpoint.
+    "include_reasoning", "reasoning_format",
+    # Sampling knobs from non-OpenAI clients (LiteLLM forwards these to "OpenAI-compatible" gateways).
+    "top_k", "min_p", "typical_p", "repetition_penalty",
+}
 # Fields we cannot honor. Value = the "neutral" values that mean "not requested"
 # (clients often send library defaults such as n=1 or top_p=1). ``None`` is always neutral.
 _UNSUPPORTED_FIELDS = {
@@ -42,15 +59,12 @@ _UNSUPPORTED_FIELDS = {
     "parallel_tool_calls": (),
     "functions": ([],),
     "function_call": (),
-    "response_format": ({"type": "text"},),
     "modalities": (["text"],),
     "audio": (),
     "prediction": (),
-    "reasoning_effort": (),
     "verbosity": (),
     "web_search_options": (),
     "service_tier": ("auto",),
-    "stream_options": (),
 }
 
 # Message-level fields that OpenAI clients echo back from earlier responses. They are
@@ -205,30 +219,218 @@ def _translate_data_sources(data_sources):
     return data_sources
 
 
+# ----------------------------------------------------------------- reasoning / structured output
+
+# Effort names seen in the wild -> the three levels Amplify's reasoning-capable models understand.
+_EFFORT_LEVELS = {
+    "minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+}
+_EFFORT_OFF = {"none", "off", "disabled", "false"}
+
+
+def _budget_to_level(budget, param):
+    """Token budget -> ``None`` (reasoning off) or a reasoning level."""
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget < 0:
+        raise OpenAIRequestError(f"'{param}' must be a non-negative integer.", param=param, code="invalid_value")
+    if budget == 0:
+        return None
+    return "low" if budget < 2048 else "medium" if budget < 4096 else "high"
+
+
+def _translate_reasoning(body):
+    """Translate every client spelling of "reasoning/thinking" into Amplify options.
+
+    Returns ``{}`` (model default), ``{"disableReasoning": True}`` or ``{"reasoningLevel": ...}``.
+    If any field turns reasoning off, off wins over a level requested by another field. Models that
+    cannot reason ignore the options downstream.
+    """
+    state = {"off": False, "level": None}
+
+    def turn_off():
+        state["off"] = True
+
+    def set_level(level):
+        if state["level"] is None:
+            state["level"] = level
+
+    def effort(value, param):
+        if value is None:
+            return
+        text = value.strip().lower() if isinstance(value, str) else None
+        if text in _EFFORT_OFF:
+            turn_off()
+        elif text in _EFFORT_LEVELS:
+            set_level(_EFFORT_LEVELS[text])
+        else:
+            raise OpenAIRequestError(
+                f"'{param}' must be one of: none, minimal, low, medium, high, xhigh.",
+                param=param, code="invalid_value")
+
+    def budget(value, param):
+        if value is None:
+            return
+        level = _budget_to_level(value, param)
+        turn_off() if level is None else set_level(level)
+
+    def flag(value, param):
+        if value is None:
+            return
+        if not isinstance(value, bool):
+            raise OpenAIRequestError(f"'{param}' must be a boolean.", param=param, code="invalid_type")
+        if not value:
+            turn_off()
+
+    effort(body.get("reasoning_effort"), "reasoning_effort")
+
+    reasoning = body.get("reasoning")
+    if isinstance(reasoning, (str, bool)):
+        flag(reasoning, "reasoning") if isinstance(reasoning, bool) else effort(reasoning, "reasoning")
+    elif isinstance(reasoning, dict):
+        effort(reasoning.get("effort"), "reasoning.effort")
+        budget(reasoning.get("max_tokens"), "reasoning.max_tokens")
+        flag(reasoning.get("enabled"), "reasoning.enabled")
+    elif reasoning is not None:
+        raise OpenAIRequestError("'reasoning' must be an object, string or boolean.", param="reasoning",
+                                 code="invalid_type")
+
+    thinking = body.get("thinking")
+    if isinstance(thinking, bool):
+        flag(thinking, "thinking")
+    elif isinstance(thinking, dict):
+        kind = thinking.get("type")
+        if kind in (None, "enabled", "adaptive"):
+            budget(thinking.get("budget_tokens"), "thinking.budget_tokens")
+        elif kind == "disabled":
+            turn_off()
+        else:
+            raise OpenAIRequestError("'thinking.type' must be 'enabled', 'adaptive' or 'disabled'.",
+                                     param="thinking.type", code="invalid_value")
+    elif thinking is not None:
+        raise OpenAIRequestError("'thinking' must be an object or boolean.", param="thinking",
+                                 code="invalid_type")
+
+    budget(body.get("thinking_budget"), "thinking_budget")
+    flag(body.get("enable_thinking"), "enable_thinking")
+
+    template_kwargs = body.get("chat_template_kwargs")
+    if isinstance(template_kwargs, dict):
+        flag(template_kwargs.get("enable_thinking"), "chat_template_kwargs.enable_thinking")
+        flag(template_kwargs.get("thinking"), "chat_template_kwargs.thinking")
+    elif template_kwargs is not None:
+        raise OpenAIRequestError("'chat_template_kwargs' must be an object.", param="chat_template_kwargs",
+                                 code="invalid_type")
+
+    if state["off"]:
+        return {"disableReasoning": True}
+    if state["level"]:
+        return {"reasoningLevel": state["level"]}
+    return {}
+
+
+_JSON_INSTRUCTION = (
+    "Respond with a single valid JSON value and nothing else: no explanation, no markdown, "
+    "no code fences."
+)
+
+
+def _translate_response_format(response_format):
+    """``response_format`` -> (json_mode, extra system instruction).
+
+    Amplify models have no native structured-output switch behind this endpoint, so JSON modes are
+    enforced with an instruction (best effort) and cleaned up by ``normalize_structured_output``.
+    """
+    if response_format is None:
+        return False, None
+    if not isinstance(response_format, dict):
+        raise OpenAIRequestError("'response_format' must be an object.", param="response_format",
+                                 code="invalid_type")
+    kind = response_format.get("type")
+    if kind in (None, "text"):
+        return False, None
+    if kind == "json_object":
+        return True, _JSON_INSTRUCTION
+    if kind == "json_schema":
+        spec = response_format.get("json_schema")
+        if not isinstance(spec, dict):
+            raise OpenAIRequestError("'response_format.json_schema' must be an object.",
+                                     param="response_format.json_schema", code="invalid_type")
+        schema = spec.get("schema")
+        if schema is None:
+            return True, _JSON_INSTRUCTION
+        if not isinstance(schema, dict):
+            raise OpenAIRequestError("'response_format.json_schema.schema' must be an object.",
+                                     param="response_format.json_schema.schema", code="invalid_type")
+        name = spec.get("name") if isinstance(spec.get("name"), str) else "response"
+        return True, (f"{_JSON_INSTRUCTION} The JSON must conform exactly to this JSON Schema "
+                      f"(named '{name}'); include every required property and no extra ones:\n"
+                      f"{json.dumps(schema)}")
+    raise _reject(f"response_format type '{kind}' is not supported; use 'text', 'json_object' or "
+                  "'json_schema'.", "response_format.type", "unsupported_value")
+
+
+def normalize_structured_output(text, json_mode):
+    """Best-effort cleanup so JSON-mode answers are bare JSON (strips fences / surrounding prose)."""
+    if not json_mode or not isinstance(text, str):
+        return text
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.split("\n", 1)[1] if "\n" in candidate else ""
+        candidate = candidate.rsplit("```", 1)[0].strip()
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(candidate):
+        if char in "{[":
+            try:
+                value, end = decoder.raw_decode(candidate[start:])
+            except ValueError:
+                continue
+            return json.dumps(value) if start or candidate[start + end:].strip() else candidate
+    return text
+
+
+def request_field_names(body):
+    """Top-level field names of a request (for diagnostics; never the values)."""
+    return sorted(str(key) for key in body) if isinstance(body, dict) else []
+
+
 def parse_chat_completion_request(body):
     """Validate an OpenAI request body and return the fields Amplify needs.
 
-    Raises OpenAIRequestError (400) for anything malformed or not honorable.
+    Raises OpenAIRequestError (400) for anything malformed or not honorable. Every offending
+    top-level field is reported in a single error so clients do not have to fix them one by one.
     """
     if not isinstance(body, dict):
         raise OpenAIRequestError("Request body must be a JSON object.", code="invalid_type")
 
+    unsupported, unknown = [], []
     for key, value in body.items():
-        if key in _SUPPORTED_FIELDS or key in _EXTENSION_FIELDS or key in _IGNORED_FIELDS:
+        if key in _SUPPORTED_FIELDS or key in _EXTENSION_FIELDS or key in _IGNORED_FIELDS \
+                or key in _REASONING_FIELDS:
             continue
         if key in _UNSUPPORTED_FIELDS:
             if not _is_neutral(value, _UNSUPPORTED_FIELDS[key]):
-                raise _reject(f"'{key}' is not supported by this endpoint.", key)
+                unsupported.append(key)
             continue
-        raise _reject(f"Unrecognized request argument supplied: {key}", key, "unknown_parameter")
+        unknown.append(key)
+    if unsupported or unknown:
+        parts = []
+        if unsupported:
+            names = ", ".join(f"'{k}'" for k in unsupported)
+            parts.append(f"{names} {'is' if len(unsupported) == 1 else 'are'} not supported by this endpoint.")
+        if unknown:
+            parts.append(f"Unrecognized request argument supplied: {', '.join(unknown)}")
+        first_is_unsupported = bool(unsupported) and (
+            not unknown or list(body).index(unsupported[0]) < list(body).index(unknown[0]))
+        raise _reject(" ".join(parts), unsupported[0] if first_is_unsupported else unknown[0],
+                      "unsupported_parameter" if first_is_unsupported else "unknown_parameter")
 
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
         raise OpenAIRequestError("'model' is required and must be a non-empty string.", param="model",
                                  code="missing_required_parameter")
 
-    if body.get("stream") not in (None, False):
-        raise _reject("Streaming is not supported by this endpoint. Set 'stream' to false.", "stream")
+    stream = body.get("stream")
+    if stream is not None and not isinstance(stream, bool):
+        raise OpenAIRequestError("'stream' must be a boolean.", param="stream", code="invalid_type")
 
     temperature = body.get("temperature")
     if temperature is None:
@@ -250,13 +452,21 @@ def parse_chat_completion_request(body):
         raise OpenAIRequestError("'assistantId' must be a non-empty string.", param="assistantId",
                                  code="invalid_type")
 
+    messages = _translate_messages(body.get("messages"))
+    json_mode, json_instruction = _translate_response_format(body.get("response_format"))
+    if json_instruction:
+        messages.append({"role": "system", "content": json_instruction})
+
     return {
         "model": model.strip(),
         "temperature": float(temperature),
         "max_tokens": max_tokens,
-        "messages": _translate_messages(body.get("messages")),
+        "messages": messages,
         "dataSources": _translate_data_sources(body.get("dataSources", [])),
         "assistantId": assistant_id,
+        "stream": bool(stream),
+        "json_mode": json_mode,
+        "reasoning": _translate_reasoning(body),
     }
 
 
@@ -265,6 +475,7 @@ def to_amplify_payload(parsed):
     options = {"model": {"id": parsed["model"]}}
     if parsed.get("assistantId"):
         options["assistantId"] = parsed["assistantId"]
+    options.update(parsed.get("reasoning") or {})
     return {
         "model": parsed["model"],
         "temperature": parsed["temperature"],
@@ -296,6 +507,44 @@ def build_chat_completion(model, content, completion_id=None, created=None):
             "finish_reason": "stop",
         }],
     }
+
+
+SSE_MARKER = "__amplify_sse_body__"
+
+
+def build_chat_completion_stream(model, content, completion_id=None, created=None):
+    """Server-sent-events body for ``stream: true``.
+
+    The pipeline is collected in full before replying, so this is a buffered replay of the answer in
+    the standard ``chat.completion.chunk`` format (role chunk, one content chunk, a ``stop`` chunk,
+    then ``[DONE]``) rather than incremental delivery. ``usage`` is omitted, as in the non-streaming
+    response, even when the client sets ``stream_options.include_usage``.
+    """
+    completion_id = completion_id or f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(created if created is not None else time.time())
+
+    def chunk(delta, finish_reason=None):
+        return "data: " + json.dumps({
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": delta, "logprobs": None, "finish_reason": finish_reason}],
+        }) + "\n\n"
+
+    body = chunk({"role": "assistant", "content": ""})
+    if content:
+        body += chunk({"content": content})
+    return body + chunk({}, "stop") + "data: [DONE]\n\n"
+
+
+def sse_result(body):
+    """Handler return value that ``finalize_response`` turns into a ``text/event-stream`` response.
+
+    ``@validated`` JSON-encodes whatever a handler returns, so the raw SSE text travels inside a
+    marker object and is unwrapped at the very end.
+    """
+    return {SSE_MARKER: body}
 
 
 def build_model_list(models, created=None):
@@ -380,6 +629,16 @@ def finalize_response(response):
     """
     status = response.get("statusCode", 200)
     if status == 200:
+        try:
+            decoded = json.loads(response.get("body") or "")
+        except (ValueError, TypeError):
+            decoded = None
+        if isinstance(decoded, dict) and isinstance(decoded.get(SSE_MARKER), str):
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache"},
+                "body": decoded[SSE_MARKER],
+            }
         return {**response, "headers": {**_HEADERS, **(response.get("headers") or {})}}
 
     try:
