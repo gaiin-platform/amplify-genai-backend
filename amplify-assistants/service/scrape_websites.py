@@ -530,6 +530,14 @@ def fetch_and_parse_url(url):
         logger.error("Error processing URL %s: %s", url, e)
         return None
 
+def stable_page_json(content):
+    """The JSON stored for a scraped page. Files are identified by a hash of their bytes, so anything that changes on every
+    scan (the scan time, which the file record already keeps) is left out: an unchanged page then hashes to the same
+    document and is not embedded again."""
+    metadata = {key: value for key, value in (content.get("metadata") or {}).items() if key != "scrapedAt"}
+    return json.dumps({**content, "metadata": metadata}, cls=SmartDecimalEncoder)
+
+
 def save_scraped_content(scraped_data, access_token, assistant_id=None, group_id=None):
     logger.info("Saving scraped content as DS: %s", scraped_data['url'])
     timestamp = scraped_data["scrapedAt"]
@@ -555,7 +563,7 @@ def save_scraped_content(scraped_data, access_token, assistant_id=None, group_id
         file_extension = get_file_extension_from_content_type(content_file_type)
     else:
         # For regular HTML content: JSON as before
-        file_contents = json.dumps(scraped_data['content'], cls=SmartDecimalEncoder)
+        file_contents = stable_page_json(scraped_data['content'])
         file_type = "application/json"
         file_extension = "json"
     

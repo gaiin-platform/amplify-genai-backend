@@ -17,6 +17,7 @@ from .scrape_website_schema import scrape_website_schema
 from .tools_op_schema import tools_op_schema
 from .rescan_websites_schema import rescan_websites_schema
 from .extract_sitemap_urls_schema import extract_sitemap_urls_schema
+from .migrate_references_schema import migrate_references_schema
 
 rules = {
     "validators": {
@@ -54,6 +55,7 @@ rules = {
         "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": extract_sitemap_urls_schema},
         "/assistant/process_drive_sources": {"process_drive_sources": assistant_id_schema},
         "/assistant/register_ops": {"register_ops": tools_op_schema},
+        "/assistant/migrate_references": {"migrate_references": migrate_references_schema},
         # ── Layered Assistants ──────────────────────────────────────────────
         "/assistant/layered/create_or_update": {
             "create_or_update_layered_assistant": create_layered_assistant_schema

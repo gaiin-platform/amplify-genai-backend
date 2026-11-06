@@ -335,6 +335,15 @@ functions:
           method: post
           cors: true
 
+  migrate_references:
+    handler: service/migrate_references.migrate_references
+    timeout: 300
+    events:
+      - http:
+          path: assistant/migrate_references
+          method: post
+          cors: true
+
   extract_sitemap_urls:
     handler: service/scrape_websites.extract_sitemap_urls
     timeout: 300

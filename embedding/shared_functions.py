@@ -11,7 +11,16 @@ import os
 import boto3
 from boto3.dynamodb.conditions import Key
 from pycommon.api.credentials import get_endpoint
+from pycommon.rag.contracts import NOVA_EMBEDDING_MODEL_ID
+from pycommon.rag.migration_cost import add_doc_cost
 from embedding_models import get_embedding_models
+from nova_embeddings import (
+    INDEX_PURPOSE,
+    MIXED_RETRIEVAL_PURPOSE,
+    build_image_request,
+    build_text_request,
+    invoke_nova,
+)
 from pycommon.llm.chat import chat
 from pycommon.api.get_endpoint import get_endpoint as get_chat_endpoint, EndpointType
 import time
@@ -73,9 +82,12 @@ def record_embedding_cost(model_id, token_count, account_data, document_key=None
     from pycommon.api.accounting import record_additional_charge
 
     # Build account dict in the format expected by pycommon
+    # A migration rebuild carries charge_user / charge_account so the cost goes to the migration account,
+    # never to the document's owner.
     account = {
-        "user": account_data.get("user") if account_data else None,
-        "account_id": account_data.get("account") if account_data else None,
+        "user": (account_data.get("charge_user") or account_data.get("user")) if account_data else None,
+        # A missing account never skips the charge: it falls back to general_account.
+        "account_id": ((account_data.get("charge_account") or account_data.get("account")) if account_data else None) or "general_account",
     }
 
     # Build details dict with document key if provided
@@ -85,15 +97,31 @@ def record_embedding_cost(model_id, token_count, account_data, document_key=None
 
     # Call the reusable pycommon function
     # Note: TTL is not set (was commented out in original code)
-    return record_additional_charge(
+    cost = record_additional_charge(
         account=account,
         model_id=model_id,
         token_count=token_count,
         item_type="embedding",
-        request_id="embedding-batch",
+        # The charge id is user#type#request_id: a fixed request id made every embedding call overwrite the previous
+        # record, so only the last one of a document was ever billed.
+        request_id=f"embedding-{uuid.uuid4()}",
         details=details,
         ttl_days=None,  # Original code had TTL commented out
     )
+    if account_data and account_data.get("charge_user"):       # a migration rebuild: also keep the document's running cost
+        add_doc_cost(document_key, "embeddingCost", cost)
+    return cost
+
+
+def record_qa_call(account_data, document_key):
+    """Count one question-generation call on the document's migration row (migration rebuilds only).
+
+    The chat service bills the call as ordinary chat usage and does not return what it cost, and what it bills includes its own
+    instructions and any hidden reasoning, so the admin tab prices each counted call from the chat usage records instead of
+    from the text seen here. Never raises.
+    """
+    if account_data and account_data.get("charge_user"):
+        add_doc_cost(document_key, "qaCalls", 1)
 
 
 def clean_text(text):
@@ -130,7 +158,15 @@ def preprocess_text(text):
         return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 
-def generate_embeddings(content, account_data=None, document_key=None):
+def generate_embeddings(content, account_data=None, document_key=None, image_bytes=None, image_media_type="image/png"):
+    # global2 sources always use the global2 model (Nova) so document, QA, page
+    # image, and query vectors share one model, dimension, and vector space.
+    if is_global2_key(document_key):
+        return generate_global2_embeddings(
+            content, account_data, document_key, image_bytes=image_bytes, image_media_type=image_media_type
+        )
+    if image_bytes is not None:
+        return {"success": False, "error": "Image embeddings are supported only for global2 sources"}
     if not embedding_model_name:
         logger.error(f"No Models Provided:\nembedding: {embedding_model_name}")
         return {"success": False, "error": f"No Models Provided:\nembedding: {embedding_model_name}"}
@@ -142,6 +178,70 @@ def generate_embeddings(content, account_data=None, document_key=None):
         return generate_openai_embeddings(content, account_data, document_key)
     logger.error(f"Invalid embedding provider: {embedding_provider}")
     return {"success": False, "error": f"Invalid embedding provider: {embedding_provider}"}
+
+
+
+def is_global2_key(document_key):
+    return str(document_key or "").removeprefix("s3://").startswith("global2/")
+
+
+def generate_global2_embeddings(
+    content=None,
+    account_data=None,
+    document_key=None,
+    *,
+    image_bytes=None,
+    image_media_type="image/png",
+    purpose=None,
+):
+    """Embed exactly one modality (text OR a page image) with the global2 model.
+
+    Nova rejects requests carrying more than one modality, so callers that have
+    both page text and a page image make two calls and store two vectors.
+    Documents are indexed with GENERIC_INDEX; queries pass
+    purpose=GENERIC_RETRIEVAL so a mixed text+image index ranks correctly.
+    """
+    text = content.strip() if isinstance(content, str) else ""
+    if bool(text) == bool(image_bytes):
+        return {"success": False, "error": "global2 embeddings need exactly one of text or image input"}
+
+    dimension = int(os.environ.get("GLOBAL2_EMBEDDING_DIM", "1024"))
+    purpose = purpose or os.environ.get("GLOBAL2_EMBEDDING_PURPOSE", INDEX_PURPOSE)
+    max_text_chars = int(os.environ.get("GLOBAL2_MAX_TEXT_CHARS", "21000"))   # same ceiling embed_chunks applies; Nova also truncates by tokens (truncationMode END)
+    try:
+        if image_bytes:
+            request = build_image_request(
+                image_bytes, media_type=image_media_type, dimension=dimension, purpose=purpose
+            )
+        else:
+            if len(text) > max_text_chars:
+                logger.warning(
+                    "global2 text input truncated from %d to %d characters (Nova per-request limit)",
+                    len(text), max_text_chars,
+                )
+                text = text[:max_text_chars]
+            request = build_text_request(text, dimension=dimension, purpose=purpose)
+        client = boto3.client("bedrock-runtime", region_name=os.environ.get("GLOBAL2_BEDROCK_REGION") or region)
+        result = invoke_nova(
+            client, model_id=NOVA_EMBEDDING_MODEL_ID, request=request, expected_dimension=dimension
+        )
+    except Exception as e:
+        logger.error(f"An error occurred with global2 Nova embeddings: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
+
+    try:
+        cost = record_embedding_cost(NOVA_EMBEDDING_MODEL_ID, result["token_count"], account_data, document_key)
+        logger.info(f"global2 embedding generated. Input tokens: {result['token_count']}, size: {len(result['data'])}, Cost: ${cost:.6f}")
+    except Exception as cost_error:
+        # Cost bookkeeping must never fail an otherwise good embedding.
+        logger.warning(f"Could not record global2 embedding cost: {cost_error}")
+    return result
+
+
+def generate_global2_query_embedding(content, account_data=None):
+    """Query-side embedding for global2 retrieval (mixed text/image index); the cost goes to account_data."""
+    return generate_global2_embeddings(content, account_data, None, purpose=MIXED_RETRIEVAL_PURPOSE)
+
 
 def generate_bedrock_embeddings(content, account_data=None, document_key=None):
     # VALIDATION: Check content before sending to Bedrock
@@ -340,7 +440,7 @@ def truncate_content_for_model(content, model_name, max_tokens):
         return truncated
 
 
-def generate_questions(content, account_data = None):
+def generate_questions(content, account_data = None, document_key=None):
     chat_endpoint = get_chat_endpoint(EndpointType.CHAT_ENDPOINT)
 
     # DEFENSIVE: Validate account_data is a dict before accessing
@@ -457,6 +557,7 @@ def generate_questions(content, account_data = None):
             
             # Success case
             logger.info(f"[QA_RETRY] ✅ Question generation successful on attempt {attempt + 1}")
+            record_qa_call(account_data, document_key)
             return {"success": True, "data": response}
             
         except Exception as e:

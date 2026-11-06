@@ -101,7 +101,11 @@ permissions_by_state_type = {
     "/state/settings/save": {"save": can_save},
     "/state/settings/get": {"get": can_read},
     "/files/reprocess/rag": {"upload": can_upload},
-    "/state/register_ops": {"register_ops": can_save}, 
+    "/state/register_ops": {"register_ops": can_save},
+    # Admin-only: each handler verifies admin status itself (verify_user_as_admin).
+    "/rag_migration/status": {"read": can_read},
+    "/rag_migration/settings": {"update": can_save},
+    "/rag_migration/action": {"action": can_save},
     "/user-data/put": {"route": lambda for_user, with_data: True},
     "/user-data/get": {"route": lambda for_user, with_data: True},
     "/user-data/get-by-uuid": {"route": lambda for_user, with_data: True},

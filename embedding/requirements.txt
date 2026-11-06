@@ -40,3 +40,14 @@ tiktoken==0.11.0
 tqdm==4.67.1
     # via openai
 pyyaml==6.0.3
+
+# DynamoDB native vector search (SearchVectors / VectorIndexes, used by global2)
+# only exists in recent boto3 releases; the python3.11 Lambda runtime's bundled
+# boto3 is older, so pin a release verified to include it (>= this version).
+boto3==1.43.118
+botocore==1.43.118
+s3transfer==0.19.3
+jmespath==1.1.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+urllib3==2.8.0

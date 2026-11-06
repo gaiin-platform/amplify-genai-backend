@@ -2,17 +2,29 @@
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import io
+import time
 import pypdfium2 as pdfium
-import fitz  # PyMuPDF for PDF modification
+import fitz  # PyMuPDF for PDF modification and page rendering
+import boto3
 from enum import Enum
 
 from rag.handlers.text import TextExtractionHandler
 from rag.handlers.shared_functions import hash_visual_data, format_visual_chunk_data
 
 from pycommon.logger import getLogger
+from rag import ocr_rules, pdf_tables
 logger = getLogger("rag_pdf")
+s3_client = None
+
+
+def _get_s3_client():
+    global s3_client
+    if s3_client is None:
+        s3_client = boto3.client("s3")
+    return s3_client
 
 PNG = "image/png"
+PAGE_IMAGE_TAG = "artifact=page-image"   # matched by the ExpirePageImages lifecycle rule (see serverless.yml)
 
 
 class VisualType(Enum):
@@ -22,7 +34,7 @@ class VisualType(Enum):
 
 
 class PDFHandler(TextExtractionHandler):
-    def extract_text(self, file_content, visual_map={}):
+    def extract_text(self, file_content, visual_map={}, position_ordered_pages=None):
         """
         Extract text from PDF. Visual markers are now handled by PyMuPDF preprocessing,
         so this method focuses on clean text extraction and visual chunk processing.
@@ -47,6 +59,14 @@ class PDFHandler(TextExtractionHandler):
         # Keep the buffer alive during the entire PDF processing
         buffer = io.BytesIO(file_content)
         pdf = pdfium.PdfDocument(buffer)
+        positioned = None
+        if position_ordered_pages:
+            # Pages where a table placeholder was inserted: the placeholder is appended to the page's content
+            # stream, so stream order would put it last. Read those pages top-to-bottom instead.
+            try:
+                positioned = fitz.open(stream=file_content, filetype="pdf")
+            except Exception as e:
+                logger.warning("Could not open PDF for position-ordered reading: %s", e)
 
         # Preprocess visual_map to group visuals by page for efficient lookup
         visuals_by_page = {}
@@ -72,6 +92,9 @@ class PDFHandler(TextExtractionHandler):
                     # Extract text from the whole page
                     # Visual markers are already embedded by PyMuPDF preprocessing
                     text = textpage.get_text_range()
+                    if positioned is not None and page_number in position_ordered_pages:
+                        blocks = positioned[page_index].get_text("blocks", sort=True)
+                        text = "\n".join(b[4].strip() for b in blocks if b[6] == 0 and b[4].strip()) or text
 
                     if text and text.strip():
                         chunk = {
@@ -102,8 +125,84 @@ class PDFHandler(TextExtractionHandler):
             # Clean up resources
             pdf.close()
             buffer.close()
+            if positioned is not None:
+                positioned.close()
 
         return chunks
+
+    def extract_text_layout(self, file_content):
+        """Per-page text in reading order, read the way the original MarkItDown pipeline read PDFs (pdfminer
+        layout analysis), but kept page by page so every part carries its page number.
+
+        The pdfium reader in ``extract_text`` returns text in the order it was written into the file, which
+        scrambles multi-column pages and sidebars. Returns None when MarkItDown fails or its page count does not
+        match the PDF's, and the caller falls back to ``extract_text``.
+        """
+        from rag.handlers.markitdown_extractor import MarkItDownExtractor
+        pieces = MarkItDownExtractor().extract_pdf_pages(file_content)
+        if not pieces:
+            return None
+        with fitz.open(stream=file_content, filetype="pdf") as document:
+            page_count = document.page_count
+        if len(pieces) != page_count:
+            logger.warning("MarkItDown returned %d page sections for a %d page PDF; using the page reader instead", len(pieces), page_count)
+            return None
+        return [
+            {"content": clean, "tokens": self.num_tokens_from_string(clean), "location": {"page_number": number}, "canSplit": True}
+            for number, clean in ((n, ocr_rules.join_hyphen_breaks(t)) for n, t in enumerate(pieces, 1)) if clean.strip()
+        ]
+
+    def preprocess_pdf_tables(self, file_content):
+        """Same idea as preprocess_pdf_visuals, for tables: replace every table with a placeholder.
+
+        Returns (modified PDF bytes, table_map). Extraction runs on the modified PDF; restore_tables()
+        then swaps each placeholder for its markdown table. No tables -> the original bytes, empty map.
+        """
+        return pdf_tables.preprocess_pdf_tables(file_content)
+
+    def restore_tables(self, parts, table_map):
+        """Put the markdown tables back into per-page parts. Returns (parts, report)."""
+        return pdf_tables.restore_tables(parts, table_map, self.num_tokens_from_string)
+
+    def render_full_page_images(self, file_content, *, bucket, key_prefix, dpi=144, max_pages=None, time_budget_seconds=None):
+        """Render deterministic page images (``<key_prefix>/<page_number>.png``).
+
+        Used for global2 Nova page-image vectors. Keys are stable, so reprocessing
+        overwrites the same objects. ``max_pages`` bounds work for very large
+        PDFs; ``time_budget_seconds`` stops rendering early so a huge document
+        cannot consume the Lambda's remaining time. Pages beyond either limit
+        simply have no image (text is unaffected).
+        """
+        if not file_content or not bucket or not key_prefix:
+            raise ValueError("file_content, bucket, and key_prefix are required")
+        document = fitz.open(stream=file_content, filetype="pdf")
+        rendered = []
+        try:
+            matrix = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+            page_total = document.page_count if not max_pages else min(document.page_count, int(max_pages))
+            started = time.monotonic()
+            for page_index in range(page_total):
+                if time_budget_seconds and time.monotonic() - started > time_budget_seconds:
+                    logger.warning("Page rendering stopped at page %d of %d (time budget %ss)", page_index, page_total, time_budget_seconds)
+                    break
+                page_number = page_index + 1
+                page = document.load_page(page_index)
+                image_bytes = page.get_pixmap(matrix=matrix, alpha=False).tobytes("png")
+                image_key = f"{key_prefix.rstrip('/')}/{page_number}.png"
+                # Tagged so a bucket lifecycle rule expires page images a few days after embedding finishes (nothing reads
+                # them afterwards; a force reprocess re-renders them from the original PDF).
+                _get_s3_client().put_object(Bucket=bucket, Key=image_key, Body=image_bytes, ContentType=PNG,
+                                            Tagging=PAGE_IMAGE_TAG)
+                rendered.append({
+                    "page_number": page_number,
+                    "image_location": f"s3://{bucket}/{image_key}",
+                    "image_hash": hash_visual_data(image_bytes),
+                    "width": page.rect.width,
+                    "height": page.rect.height,
+                })
+            return rendered
+        finally:
+            document.close()
 
     ### Visual Data Extraction ###
     def preprocess_pdf_visuals(self, file_content):

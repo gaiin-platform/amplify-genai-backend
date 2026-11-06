@@ -48,6 +48,25 @@ class MarkItDownExtractor:
             logger.error("Error extracting text with MarkItDown from content: %s", str(e))
             return None
 
+    def extract_pdf_pages(self, file_content):
+        """MarkItDown text of a PDF, one string per page (MarkItDown separates pages with a form feed).
+        Returns None if it fails; the caller compares the page count with the real one."""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                temp_file.write(file_content)
+                temp_path = temp_file.name
+            try:
+                text = self.md.convert(temp_path).text_content
+            finally:
+                os.unlink(temp_path)
+            pieces = text.split("\f")
+            if len(pieces) > 1 and not pieces[-1].strip():
+                pieces.pop()                      # a trailing page break does not start another page
+            return pieces
+        except Exception as e:
+            logger.error("Error extracting PDF pages with MarkItDown: %s", str(e))
+            return None
+
     def _clean_excel_content(self, content):
         logger.debug("Cleaning Excel content")
         """Clean up the Excel content to extract meaningful data."""
