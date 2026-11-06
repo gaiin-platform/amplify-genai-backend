@@ -2,8 +2,9 @@
 
 How each kind of document moves through the system, what the legacy-to-global2 migration changes for it, and how the
 orphan cleanup decides what is safe to remove. Code: `rag/core.py` (ingest), `rag/migration*.py` (migration),
-`rag/orphans.py` and `rag/retention.py` (cleanup), `embedding/embedding-dual-retrieval.py` and
-`embedding/migration_hook.py` (retrieval and aliasing), `amplify-lambda-js/datasource/datasources.js` (chat side).
+`rag/orphans.py` and `rag/retention.py` (cleanup), `rag/migration_costs.py` (cost estimate and spend),
+`embedding/embedding-dual-retrieval.py` and `embedding/migration_hook.py` (retrieval and aliasing),
+`amplify-lambda-js/datasource/datasources.js` (chat side; also stamps when a document was last used).
 
 "Verified" means it was read in dev data or code; "to check" means it was read in code but not exercised, so look at it on
 the first small batch. Counts are from the dev environment on 2026-11-04.
@@ -40,6 +41,7 @@ the CONTENT key, and why a delete must never remove shared content while another
         -> NO chunking queue, NO embeddings
  chat   -> JS: user key -> hash row -> CONTENT key -> read text from S3 -> split to fit the model
  migration: not touched (nothing embedded). Verified: it has no progress row.
+ later attached to an assistant from the library: it is embedded at that point (see I).
 ```
 
 ### B. File attached to a chat with RAG on, or kept in the library with embeddings
@@ -103,11 +105,21 @@ the CONTENT key, and why a delete must never remove shared content while another
 
 ### I. A RAG-off library file attached to an assistant later
 ```
- save   -> the assistant editor calls /embedding/check-completion for files newly attached from the library
- server -> only global2 documents are started; a legacy global/ document is never (re)embedded (that would
-           write new Postgres rows). A document with no progress row is run through process_document with
-           rag_enabled forced on for that run: stored text is reused, the page manifest and images are built,
-           then chunking and embedding follow. (embedding-dual-retrieval.py: start_rag_from_file)
+ save   -> the assistant editor sends EVERY library file it just attached to /embedding/check-completion
+           (global2/ and global/ alike; it never blocks the save)
+ server -> ids_to_embed (embedding-dual-retrieval.py):
+             migrated legacy id (cutover/cleaned) ........ swapped to its global2 id, then checked as below
+             global2/X ................................... no progress row: run process_document with rag_enabled
+                                                           forced on for that run (stored text reused, page manifest
+                                                           and images built, then chunking and embedding)
+             global/X WITH a progress row ................ left alone: a legacy document is never re-embedded
+                                                           (that would write new Postgres rows)
+             global/X with NO progress row (never embedded, e.g. a chat-only upload from before the new pipeline)
+                                                        .. built as its global2 twin from the original upload
+ chat   -> retrieval (alias_never_embedded, after the access gates): a global/X with no embeddings of its own whose
+           global2 twin has a progress row is answered from the twin and reported under the id the assistant stores.
+           Until the twin has a progress row (seconds to a minute after the save) it is still searched in Postgres and
+           returns nothing, as before.
 ```
 
 ## 3. What each migration step changes, per type
@@ -117,7 +129,7 @@ the CONTENT key, and why a delete must never remove shared content while another
 | Rebuild (build global2 twin) | nothing | twin built, live path untouched | twin built | twin built |
 | Switch | nothing | pointer -> global2, access copied first | alias turns on (the migration record says switched) | pointer -> global2, access copied first |
 | Roll back | nothing | pointer -> global/ | alias off within 60 s | pointer -> global/ |
-| Remove old copies | nothing | Postgres rows deleted, S3 text kept | same | same |
+| Remove old copies | nothing | Postgres rows deleted; S3 text, progress row and access rows kept | same | same |
 
 Assistants that stored `global/<hash>` (type C) are changed too, by Move references (`rag/assistant_refs.py`, endpoint
 `/assistant/migrate_references` in the assistants service, admin only, called with the admin's own token):
@@ -132,8 +144,11 @@ Assistants that stored `global/<hash>` (type C) are changed too, by Move referen
         (in place, only if the record is unchanged     (same rule)
          since it was read; no new version, alias
          or permission; older versions untouched)
- A failure on one assistant never undoes the move; "Update assistants" repeats it safely.
- An automatic move (the 1-minute tick) has no admin login, so it cannot do this part: press Update assistants.
+ A failure on one assistant never undoes the move; pressing Move references again repeats it safely, and it also
+ catches up documents that were already moved but whose assistants still hold the old id (the Move references
+ count includes them).
+ An automatic switch (the 1-minute check, "switch automatically") has no admin login, so it cannot edit assistants:
+ the next press of Move references does that part.
 ```
 
 The retrieval swap stays as the safety net for everything that still holds an old id (older versions, API clients, saved chats).
@@ -148,8 +163,11 @@ Why users do not see anything break:
    A warm container can keep sending the old `global/X` after a switch. This is harmless: retrieval aliases
    `global/X` to `global2/X` for switched documents, and the legacy S3 text is never deleted by cleanup. After a
    rollback, a cached `global2/X` also still works because the twin is not deleted.
-5. Remove old copies is guarded: the new copy must have vectors, no upload may
-   still point at the old key, and the Postgres delete accepts only `global/` keys.
+5. Remove old copies is guarded: the new copy must be complete and have vectors, no upload may still point at the old
+   key, access is copied once more first, and the Postgres delete accepts only `global/` keys. It runs inside the
+   Remove old embeddings press (up to 200 documents), through an admin-only endpoint (`/embedding/legacy-cleanup`,
+   at most 50 keys per call) called with the admin's own token. There is no waiting period and nothing is removed
+   automatically.
 
 ## 4. Orphans: how a file is judged
 
@@ -169,7 +187,7 @@ Then the retention sweep's own decision engine (`Sweeper.decide`, reused) plus t
 
 ```
  changed in the last 14 days ............................ keep ("too new": an editor uploads before saving)
- used in a chat lately .................................. keep
+ used in a chat within the admin's retention days ........ keep (with no days set there is no recency check)
  key, content key or hash appears in ANY assistant,
    layered assistant or group record (any version) ...... keep ("in use")
  document has a migration record ........................ keep (the migration owns it)
@@ -200,16 +218,23 @@ needs the admin check, a typed confirmation and a re-check on the server at the 
 
 ```
  admin panel > Configurations > Document Retention        (admin config "documentRetention": isActive, days)
-        |  saved by the admin service; OFF until an admin turns it on
+        |  saved as sent; OFF until an admin turns it on; the only source of "how long"
         v
  daily sweep (rag/retention.py, 4 AM UTC) reads it on every run
         |-- off / missing / unreadable ........ does nothing
-        `-- on: for each chat-only attachment (RAG off, no assistant, no group, not media)
-              due = later of (upload, last use) + days      <- the CURRENT days, so a change applies to old files too
+        `-- on: for each chat-only attachment (marked `ephemeral` at upload: RAG off, no assistant, no group, not media)
+              last use  = lastAccessedAt on the document's CONTENT row in the hash-files table
+              due       = (later of the upload time and last use + 1 day) + the CURRENT days
+                          (the +1 day covers the stamp moving at most once a day; a change to the days applies to old files)
               then the same safety rules as everything else: used by an assistant -> keep; embeddings exist -> keep;
               shared with others -> remove only this upload; last copy -> remove the upload and its text
  A manual run with {"dryRun": true} only logs the plan.
 ```
+
+One record of when a document was last used: `lastAccessedAt`, on the CONTENT row (id = sha256), whichever key reached
+it. Writers: the chat service (`touchLastAccessed` in `datasources.js`, for upload keys and for the content keys an
+assistant holds) and dual retrieval (`mark_sources_accessed`). Each moves it forward at most once a day. Readers: the
+retention sweep and the migration inventory. Files uploaded before the `ephemeral` marker existed are never swept.
 
 ## 6. Not covered, on purpose
 
@@ -221,51 +246,64 @@ needs the admin check, a typed confirmation and a re-check on the server at the 
 
 
 
-# Rollback migrated documents 
+## 7. Rolling back a migrated document
 
-Rollback only moves pointers back. It never deletes anything, so it is safe to test. I read the code (rollback_doc, _repoint, alias_sources) before writing these flows.
+Rollback only moves pointers back (and, for assistants, the document ids saved in them). It never deletes anything, so
+it is safe to test.
 
-1. Move references (the forward step), for comparison
+```
+ Move references (forward, for comparison)           doc#global/X   status: built
+   1. copy access: every reader of global/X is added to global2/X (never overwrites a grant)
+   2. hash-files rows whose textLocationKey = global/X (the content row and every upload pointer),
+      only if they STILL point at global/X:  textLocationKey = global2/X, migratedFrom = global/X
+   3. assistants whose newest version stores global/X: the id is changed to global2/X in place
+   -> doc#global/X   status: cutover, flipped = [row ids that moved], cutoverAt
 
- doc#global/X   status: built
-        |
-        | 1. copy access: every reader of global/X is added to global2/X
-        |    (never overwrites an existing grant)
-        v
- hash-files table: for each row whose textLocationKey = global/X
-        (the content row + every upload pointer)
-        |  only if it STILL points at global/X
-        |  set textLocationKey = global2/X, migratedFrom = global/X
-        v
- doc#global/X   status: cutover, flipped = [row ids that moved], cutoverAt
-2. Roll back
+ Roll back (allowed only when status = cutover; refused if cleaned or the old progress row is gone)
+   for each id in doc.flipped:  textLocationKey = global2/X ?  yes -> set back to global/X
+                                                               no  -> left alone (changed since), not counted
+   assistants whose newest version stores global2/X: the id is changed back to global/X
+   -> doc#global/X   status: rolledback, restored = [ids put back]
+```
 
- you press Roll back                      (allowed only when status = cutover)
-        |
-        |  refused if status = cleaned, or the old progress row is gone
-        v
- for each id in doc.flipped:
-        hash row textLocationKey = global2/X ?
-              | yes -> set it back to global/X
-              | no  -> left alone (someone changed it since); not counted
-        v
- doc#global/X   status: rolledback, restored = [ids put back]
-Nothing else is touched. The following are deliberately left in place:
+Left in place on purpose: the new embeddings (vectors, progress row, stored text), the access rows copied to the new
+key, and the old embeddings.
 
-the new embeddings (vectors, progress row, stored text)
-the access rows copied to the new key
-the old embeddings and the assistants
-3. What a user sees, by kind of caller
-
+```
                       BEFORE ROLLBACK              AFTER ROLLBACK
  file attached        hash row -> global2/X        hash row -> global/X
  to a chat            chat reads global2/X         next chat reads global/X (old embeddings)
 
  assistant that       sends global/X               sends global/X
- stores global/X      retrieval swaps it to        status is no longer "cutover",
- (your test case)     global2/X                    so no swap: global/X (old embeddings)
-                      (looks up the migration      the lookup caches the status for
-                       record, result reported     60 s, so up to ~1 minute later
-                       under global/X)             on a warm server
+ stores global/X      retrieval swaps it to        status is no longer "cutover", so no swap:
+                      global2/X (looks up the      global/X (old embeddings); the lookup caches the
+                      migration record, result     status for 60 s, so up to ~1 minute later on a
+                      reported under global/X)     warm server
 
- assistant record     unchanged                    unchanged (never edited)
+ assistant record     changed to global2/X         changed back to global/X
+```
+
+## 8. Costs, failures and stalled documents
+
+```
+ Create new embeddings (a rebuild) -> each cost is added to the document's migration row as it happens:
+   embeddingCost  Nova calls, from the recorded charge (exact)           pycommon.rag.migration_cost.add_doc_cost
+   ocrCost        Textract pages, from the recorded charge (exact)
+   qaCalls        question-generation calls (a count; the chat service bills them and returns no cost)
+ Overview > "What the migration has cost" (refreshed on demand and when documents finish):
+   embeddings + OCR ........ sums over the documents' rows
+   question generation ..... what the chat service BILLED the migration account, across every admin who ran it:
+                             this month from the cost table, earlier months from the history table
+   per document, questions . qaCalls x the average billed cost of a recent call (the migration account's latest
+                             chat usage records, which carry the real tokens incl. the service's own instructions)
+ Estimate before Create (rag/migration_costs.py): chunks = tokens / ~130; Nova ~800 tokens per chunk; ~1.5 question
+   calls per chunk; page images at one per PDF/Office page; OCR shown as "up to" for PDFs with little text per page,
+   "possible" for .docx/.pptx/.xlsx pictures, none otherwise. The constants come from dev documents and are printed
+   with the numbers.
+```
+
+A document whose new embeddings stop making progress for 2 hours is marked failed by the 1-minute check (nothing is
+queued for the unfinished chunks, and restarting needs an admin's login). Embedding errors reported by the pipeline are
+retried automatically up to 3 times, then fail. Failed and queued documents are listed from the Overview (click the
+count); each has Details and a Retry or Start now that starts it again from its original file (finished chunks are
+kept). Starting by hand starts exactly the picked documents; older queued ones are not started in their place.
