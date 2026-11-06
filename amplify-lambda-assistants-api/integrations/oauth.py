@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -543,10 +544,19 @@ def _share_token(current_user, target_integration, source_integration):
 
             if token_response.status_code != 200:
                 error_code = _extract_oauth_error_code(token_response)
-                if error_code in REAUTH_REQUIRED_ERROR_CODES:
+                if (
+                    error_code in REAUTH_REQUIRED_ERROR_CODES
+                    and not _is_scope_consent_failure(token_response)
+                ):
                     # The source grant itself is dead (revoked/expired), so the copied
                     # token is dead too.  Undo the copy and report failure instead of
                     # pretending the target is connected.
+                    #
+                    # NOTE: invalid_grant is ALSO what Microsoft returns when the grant is
+                    # healthy but the *broader* target scopes (e.g. Mail.*.Shared) have not
+                    # been consented to (AADSTS65001).  That is a scope-upgrade problem, not
+                    # a dead source, so it is excluded above and falls through to the
+                    # "using copied token" fallback below.
                     logger.warning(
                         "Source integration %s grant is revoked/expired (%s); "
                         "not sharing token to %s",
@@ -635,6 +645,35 @@ def _extract_oauth_error_code(response):
         return (response.json() or {}).get("error")
     except Exception:
         return None
+
+
+# Microsoft (AADSTS) codes that mean "the requested *scopes* are not consented to /
+# not valid for this app", as opposed to "the grant is dead".  Microsoft reports these
+# with the generic OAuth error `invalid_grant`, so `REAUTH_REQUIRED_ERROR_CODES` alone
+# cannot tell them apart from a revoked/expired refresh token.  When a scope *upgrade*
+# (e.g. outlook -> exchange adding Mail.*.Shared) fails with one of these, the original
+# grant is still healthy and its token remains usable for the narrower scopes.
+#   65001 - user/admin has not consented to the application / requested scopes
+#   65004 - user declined to consent
+#   65005 - app requested scopes/resources not listed in its registration
+#   70011 - invalid_scope
+#   90094 - admin consent required
+SCOPE_CONSENT_AADSTS_CODES = ("AADSTS65001", "AADSTS65004", "AADSTS65005", "AADSTS70011", "AADSTS90094")
+
+
+def _is_scope_consent_failure(response):
+    """True if a token endpoint error is a scope/consent problem rather than a dead grant."""
+    try:
+        body = response.json() or {}
+    except Exception:
+        return False
+    if body.get("error") in ("consent_required", "invalid_scope"):
+        return True
+    description = body.get("error_description") or ""
+    # Match "AADSTS65001:" exactly so e.g. AADSTS650010 is not mistaken for 65001.
+    return any(
+        re.search(r"%s(?!\d)" % code, description) for code in SCOPE_CONSENT_AADSTS_CODES
+    )
 
 
 # Integrations that share credentials from another integration instead of
