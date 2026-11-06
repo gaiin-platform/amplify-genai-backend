@@ -16,6 +16,10 @@ def can_delete(user, data):
     return True
 
 
+def can_legacy_cleanup(user, data):
+    return True      # admin-only: the handler verifies admin status itself (verify_user_as_admin)
+
+
 def get_permission_checker(user, type, op, data):
     logger.debug(
         "Checking permissions for user: %s and type: %s and op: %s",
@@ -42,4 +46,5 @@ permissions_by_state_type = {
     "/embedding/register_ops": {"register_ops": can_retrieve},
     "/embedding/status": {"get_status": can_retrieve},
     "/bedrock-kb/download": {"bedrock-kb-download": can_retrieve},
+    "/embedding/legacy-cleanup": {"legacy_cleanup": can_legacy_cleanup},
 }

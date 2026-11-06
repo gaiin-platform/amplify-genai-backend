@@ -562,6 +562,27 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'documentRetention': automatic deletion of chat attachments nobody has used for `days`
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "documentRetention"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "days": {"type": "integer", "minimum": 1, "maximum": 3650},
+                                },
+                                "required": ["isActive", "days"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'defaultSmartMessages'
                         "type": "object",
                         "properties": {

@@ -96,6 +96,12 @@ provider:
     VPC_CIDR: ${ssm:/amplify/${sls:stage}/VPC_CIDR}
     VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID}
     EMBEDDING_DIM: ${ssm:/amplify/${sls:stage}/EMBEDDING_DIM, '1536'}
+    # global2 = Nova multimodal embeddings + native DynamoDB vector index.
+    # Dimension must be one of 256/384/1024/3072 and must match the index.
+    GLOBAL2_EMBEDDING_DIM: ${ssm:${self:custom.ssmBasePath}-embedding/GLOBAL2_EMBEDDING_DIM, '1024'}
+    # Nova is currently offered in us-east-1 only; override if the stack lives elsewhere.
+    GLOBAL2_BEDROCK_REGION: ${ssm:${self:custom.ssmBasePath}-embedding/GLOBAL2_BEDROCK_REGION, 'us-east-1'}
+    GLOBAL2_VECTOR_TABLE: ${self:service}-${sls:stage}-vectors
     # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
 
@@ -121,6 +127,7 @@ provider:
     MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    RAG_MIGRATION_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/RAG_MIGRATION_TABLE}
     S3_FILE_TEXT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_FILE_TEXT_BUCKET_NAME}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_CHUNKS_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_CHUNKS_BUCKET_NAME}
@@ -167,7 +174,8 @@ functions:
         subnetIds:
           - ${self:provider.environment.PRIVATE_SUBNET_ONE}
           - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-      timeout: 120
+      # A chunk file is ~10 chunks with an LLM call each; the queue's VisibilityTimeout (amplify-lambda stack) must stay above this.
+      timeout: 300
       events:
         - sqs:
             batchSize: 1         
@@ -241,6 +249,7 @@ functions:
           cors: true
     environment:
       RAG_CHUNK_DOCUMENT_QUEUE_URL: !ImportValue "${sls:stage}-RagChunkDocumentQueueURL"
+      RAG_PROCESS_DOCUMENT_QUEUE_URL: !ImportValue "${sls:stage}-RagDocumentIndexQueueUrl"
 
   get_sqs_messages:
     handler: embedding-sqs.get_in_flight_messages
@@ -286,6 +295,30 @@ functions:
           path: /embedding-delete
           method: post
           cors: true
+
+  # Admin-only endpoint called by the RAG migration tab; accepts legacy global/ keys only.
+  legacy_cleanup:
+    runtime: python3.11
+    handler: embedding-legacy-cleanup.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc:
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 29
+    events:
+      - http:
+          path: /embedding/legacy-cleanup
+          method: post
+          cors: true
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET}
+      RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+      RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT}
 
   bedrock_kb_download:
     handler: bedrock-kb-download.bedrock_kb_download
@@ -357,6 +390,47 @@ resources:
             method: POST
 
 
+    Global2VectorTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.GLOBAL2_VECTOR_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: source_id
+            AttributeType: S
+          - AttributeName: kind
+            AttributeType: S
+        # (source_id, id): deleting or checking one document is a single-partition
+        # Query instead of a table scan, which keeps bulk retention sweeps cheap.
+        KeySchema:
+          - AttributeName: source_id
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        VectorIndexes:
+          - IndexName: global2-vector-index      # same name as VECTOR_INDEX_NAME in rag/dynamodb_vector_store.py
+            VectorAttribute:
+              AttributeName: vector
+            SearchSchema:
+              - AttributeName: tenant_id
+                SearchSchemaElementType: HASH
+              - AttributeName: source_id
+                SearchSchemaElementType: INLINE_FILTER
+              - AttributeName: kind
+                SearchSchemaElementType: INLINE_FILTER
+            Projection:
+              ProjectionType: ALL
+            Dimensions: ${self:provider.environment.GLOBAL2_EMBEDDING_DIM}
+            DistanceFunction: COSINE
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+
     EmbeddingIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -376,6 +450,7 @@ resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
+                - dynamodb:SearchVectors
                 - sqs:SendMessage
                 - sqs:ReceiveMessage
                 - sqs:DeleteMessage
@@ -388,8 +463,12 @@ resources:
                 - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+                # global2 page manifests and rendered page images live in the text bucket
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.RAG_MIGRATION_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -421,12 +500,15 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GLOBAL2_VECTOR_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GLOBAL2_VECTOR_TABLE}/index/*"
 
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource:
                 - !ImportValue "${sls:stage}-RagChunkDocumentQueueArn"
+                - !ImportValue "${sls:stage}-RagDocumentIndexQueueArn"
             - Effect: Allow
               Action:
                 - ssm:GetParameter

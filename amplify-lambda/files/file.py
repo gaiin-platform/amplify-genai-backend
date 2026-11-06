@@ -26,6 +26,7 @@ logger = getLogger("files")
 import os
 import boto3
 import rag.util
+from rag import limits, artifact_cleanup, delete_policy, retention
 from boto3.dynamodb.conditions import Key
 from rag.rag_secrets import store_ds_secrets_for_rag
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources, extract_key
@@ -397,7 +398,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
 
 
 def create_file_metadata_entry(
-    current_user, name, file_type, tags, data_props, knowledge_base
+    current_user, name, file_type, tags, data_props, knowledge_base, ephemeral=False
 ):
     
     # Route video files and images to the consolidation bucket (S3_IMAGE_INPUT_BUCKET_NAME)
@@ -413,20 +414,23 @@ def create_file_metadata_entry(
     key = f"{current_user}/{dt_string}/{uuid.uuid4()}.json"
 
     files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
-    files_table.put_item(
-        Item={
-            "id": key,
-            "name": name,
-            "type": file_type,
-            "tags": tags,
-            "data": convert_floats_to_decimal(data_props),
-            "knowledgeBase": knowledge_base,
-            "createdAt": datetime.now().isoformat(),
-            "updatedAt": datetime.now().isoformat(),
-            "createdBy": current_user,
-            "updatedBy": current_user,
-        }
-    )
+    item = {
+        "id": key,
+        "name": name,
+        "type": file_type,
+        "tags": tags,
+        "data": convert_floats_to_decimal(data_props),
+        "knowledgeBase": knowledge_base,
+        "createdAt": datetime.now().isoformat(),
+        "updatedAt": datetime.now().isoformat(),
+        "createdBy": current_user,
+        "updatedBy": current_user,
+    }
+    if ephemeral:
+        # Chat-only attachment: the retention sweep may consider it (see rag/retention.py), by the admin's current
+        # setting. Assistant/group/RAG-on files are never marked.
+        item["ephemeral"] = True
+    files_table.put_item(Item=item)
 
     if tags is not None and len(tags) > 0:
         update_file_tags(current_user, key, tags)
@@ -696,6 +700,15 @@ def get_presigned_url(event, context, current_user, name, data):
             "error": "ZIP files are not supported. Please upload individual files or extract the contents of the ZIP file and upload them separately."
         }
     
+    # Early, clear rejection when the client declares a size (the file itself is
+    # re-checked at ingestion, which is authoritative: S3 presigned PUTs cannot cap size).
+    declared_size = data.get("size")
+    if isinstance(declared_size, (int, float)) and declared_size > 0:
+        problem = limits.check_size(os.path.splitext(name)[1].lower(), int(declared_size))
+        if problem:
+            logger.warning("Rejecting upload of %s before it starts: %s", name, problem)
+            return {"success": False, "error": problem}
+
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
@@ -726,7 +739,15 @@ def get_presigned_url(event, context, current_user, name, data):
     )
 
     # Set the S3 bucket and key
-    bucket_name, key = create_file_metadata_entry( current_user, name, file_type, tags, props, knowledge_base )
+    is_media = file_type in IMAGE_FILE_TYPES or file_type in VIDEO_FILE_TYPES
+    ephemeral = retention.is_ephemeral_upload(
+        rag_on=rag_on, group_id=groupId,
+        props=({**props, "astp": astp_id} if astp_id else props),  # any claim opts out, even a stripped one
+        is_media=is_media,
+    )
+    bucket_name, key = create_file_metadata_entry(
+        current_user, name, file_type, tags, props, knowledge_base, ephemeral=ephemeral
+    )
     logger.info("Created metadata entry for file %s in bucket %s", key, bucket_name)
 
     # Generate a presigned URL for uploading the file to S3
@@ -2021,30 +2042,37 @@ def delete_file(event, context, current_user, name, data):
             }
 
         # Handle deletion paths
+        keep_access = False  # True while this user has another upload of the same content
         if current_user_permission.lower() == "read":
             logger.info("Current user has read access only")
-            route_personal_file_deletion(global_key, key, current_user, is_media_file)
+            keep_access = route_personal_file_deletion(global_key, key, current_user, is_media_file)
 
             # Delete from object access table
             try:
-                object_access_table.delete_item(
-                    Key={"object_id": global_key, "principal_id": current_user}
-                )
-                logger.info("Deleted from object access file table")
+                if keep_access:
+                    logger.info("User has another upload of this content; keeping their access entry")
+                else:
+                    object_access_table.delete_item(
+                        Key={"object_id": global_key, "principal_id": current_user}
+                    )
+                    logger.info("Deleted from object access file table")
             except ClientError as e:
                 logger.error("Error deleting file text from object access table: %s", e)
 
         elif current_user_permission.lower() in ["write", "owner"]:
             if high_access_count > 1:
                 # Multiple users have write access
-                route_personal_file_deletion(global_key, key, current_user, is_media_file)
+                keep_access = route_personal_file_deletion(global_key, key, current_user, is_media_file)
 
                 # Delete from object access table
                 try:
-                    object_access_table.delete_item(
-                        Key={"object_id": global_key, "principal_id": current_user}
-                    )
-                    logger.info("Deleted from object access file table")
+                    if keep_access:
+                        logger.info("User has another upload of this content; keeping their access entry")
+                    else:
+                        object_access_table.delete_item(
+                            Key={"object_id": global_key, "principal_id": current_user}
+                        )
+                        logger.info("Deleted from object access file table")
                 except ClientError as e:
                     logger.error("Error deleting file text from object access table: %s", e)
 
@@ -2082,11 +2110,12 @@ def delete_file(event, context, current_user, name, data):
 
 
 def route_personal_file_deletion(global_key, key, current_user, is_media_file):
+    """Remove this upload only. Returns True if the user's access entry must be kept."""
     logger.debug("Route personal file deletion - is_media_file: %s", is_media_file)
     if is_media_file:
         delete_file_from_table(key)
-    else:
-        delete_text_file_personally(global_key, key, current_user)
+        return False
+    return delete_text_file_personally(global_key, key, current_user)
 
 
 def route_full_file_deletion(
@@ -2102,52 +2131,43 @@ def route_full_file_deletion(
         )
 
 
+def get_content_pointer_rows(global_key):
+    """Every hash-files row that resolves to this content (upload pointers + the content row)."""
+    hash_files_table = dynamodb.Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
+    kwargs = {
+        "IndexName": "TextLocationIndex",
+        "KeyConditionExpression": Key("textLocationKey").eq(global_key),
+    }
+    response = hash_files_table.query(**kwargs)
+    rows = list(response["Items"])
+    while "LastEvaluatedKey" in response:
+        response = hash_files_table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+        rows.extend(response["Items"])
+    return rows
+
+
 def delete_text_file_personally(global_key, key, current_user):
     """
-    Perform a partial deletion of a file.
+    Perform a partial deletion of a file: remove only THIS upload.
+
+    Other uploads of identical bytes (including the same user's, e.g. a chat copy
+    and an assistant copy) share the content object, so their pointers and the
+    shared content row are left alone. Returns True if the current user still has
+    another upload of the content, in which case their access entry must stay.
     """
-    # Delete from hash files table
-    hash_table = os.environ["HASH_FILES_DYNAMO_TABLE"]
-    hash_files_table = dynamodb.Table(hash_table)
+    hash_files_table = dynamodb.Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
+    rows = get_content_pointer_rows(global_key)
 
-    # Query the GSI to get all items with the same textLocationKey
-    response = hash_files_table.query(
-        IndexName="TextLocationIndex",
-        KeyConditionExpression=Key("textLocationKey").eq(global_key),
-    )
-
-    items_to_delete = response["Items"]
-    # Check if there are more items (pagination)
-    while "LastEvaluatedKey" in response:
-        response = hash_files_table.query(
-            IndexName="TextLocationIndex",
-            KeyConditionExpression=Key("textLocationKey").eq(global_key),
-            ExclusiveStartKey=response["LastEvaluatedKey"],
-        )
-        items_to_delete.extend(response["Items"])
-
-    logger.info("Deleting items:")
-    # Delete each item
-    for item in items_to_delete:
-        user = item.get("originalCreator") or item["id"].split("/")[0]
-        logger.debug("item: %s", item)
-        logger.debug("user: %s", user)
-        if user == current_user:
-            try:
-                logger.info("Deleting entry from hash files table: %s", item['id'])
-                hash_files_table.delete_item(Key={"id": item["id"]})
-                logger.info("Deleted item with id %s from hash files table", item['id'])
-            except ClientError as e:
-                logger.error("Error deleting file text from hash file table: %s", e)
-        else:
-            logger.info(
-                "Skipping delete, entry belongs to another user with the entry ID: %s", item['id']
-            )
-
-    logger.info("Total items deleted: %d", len(items_to_delete))
+    for row_id in delete_policy.pointer_ids_to_remove(rows, key):
+        try:
+            logger.info("Deleting this upload's entry from hash files table: %s", row_id)
+            hash_files_table.delete_item(Key={"id": row_id})
+        except ClientError as e:
+            logger.error("Error deleting file text from hash file table: %s", e)
 
     # Delete from user files table
     delete_file_from_table(key)
+    return delete_policy.user_still_references(rows, key, current_user)
 
 
 def delete_text_file_fully(
@@ -2155,7 +2175,26 @@ def delete_text_file_fully(
 ):
     """
     Perform a full deletion of a file.
+
+    Safety: if any other upload (the same user's included) still points at this
+    content, only this upload is removed and the shared content, embeddings and
+    access entries are kept.
     """
+    still_referenced = delete_policy.other_references(get_content_pointer_rows(global_key), key)
+    if still_referenced:
+        logger.info(
+            "Content %s is still referenced by %d other upload(s); deleting this upload only",
+            global_key, len(still_referenced),
+        )
+        if not delete_text_file_personally(global_key, key, current_user):
+            try:
+                dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]).delete_item(
+                    Key={"object_id": global_key, "principal_id": current_user}
+                )
+            except ClientError as e:
+                logger.error("Error deleting file text from object access table: %s", e)
+        return
+
     delete_text_file_personally(global_key, key, current_user)
 
     hash_table = os.environ["HASH_FILES_DYNAMO_TABLE"]
@@ -2198,6 +2237,11 @@ def delete_text_file_fully(
         logger.info("Deleted file from file-text bucket")
     except ClientError as e:
         logger.error("Error deleting file text from S3: %s", e)
+
+    # global2 documents also have a page manifest and rendered page images
+    removed = artifact_cleanup.delete_global2_page_artifacts(s3, file_text_bucket, global_key)
+    if removed:
+        logger.info("Deleted %d global2 page artifacts", removed)
 
     # Delete from embeddings
     success, result = delete_embeddings(access_token, global_key)

@@ -17,6 +17,10 @@ from .register_conversation_schema import register_conversation_schema
 from .conversation_ids_schema import conversation_ids_schema
 from .save_settings_schema import save_settings_schema
 from .tools_op_schema import tools_op_schema
+from .rag_migration_schema import (
+    rag_migration_settings_schema,
+    rag_migration_action_schema,
+)
 from .user_data_put_schema import user_data_put_schema
 from .user_data_get_schema import user_data_get_schema
 from .user_data_uuid_get_schema import user_data_uuid_get_schema
@@ -90,6 +94,9 @@ rules = {
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/state/register_ops": {"register_ops": tools_op_schema},
         "/poll/status": {"get_poll_status": {}},
+        "/rag_migration/status": {"read": {}},
+        "/rag_migration/settings": {"update": rag_migration_settings_schema},
+        "/rag_migration/action": {"action": rag_migration_action_schema},
         **user_data_validators,
     },
     "api_validators": {

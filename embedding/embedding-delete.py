@@ -14,6 +14,8 @@ setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
 from pycommon.logger import getLogger
+from pycommon.rag.contracts import namespace_for_source, EmbeddingNamespace, normalize_source_id
+from rag.dynamodb_vector_store import DynamoDBVectorStore
 logger = getLogger("embedding_delete")
 
 # Get environment variables
@@ -129,38 +131,6 @@ def delete_progress_entry(src_id):
         return False
 
 
-def delete_progress_entry(src_id):
-    """Delete progress table entry for a given source."""
-    try:
-        dynamodb = boto3.resource("dynamodb")
-        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
-        
-        if not progress_table:
-            logger.warning("EMBEDDING_PROGRESS_TABLE not configured, skipping progress cleanup")
-            return True
-            
-        table = dynamodb.Table(progress_table)
-        
-        # First check if item exists
-        try:
-            response = table.get_item(Key={"object_id": src_id})
-            if "Item" not in response:
-                logger.info(f"No progress entry found for {src_id}")
-                return True
-        except Exception as e:
-            logger.warning(f"Could not check progress entry for {src_id}: {e}")
-            return True
-        
-        # Delete the progress entry
-        table.delete_item(Key={"object_id": src_id})
-        logger.info(f"Successfully deleted progress entry for {src_id}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error deleting progress entry for {src_id}: {e}")
-        return False
-
-
 @required_env_vars({
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
     "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.DELETE_ITEM, DynamoDBOperation.GET_ITEM],
@@ -184,11 +154,16 @@ def delete_embeddings(event, context, current_user, name, data):
                 failed_sources.append(src_id)
                 continue
 
-            # Delete embeddings from PostgreSQL
-            rows_deleted = delete_embeddings_from_db(src_id)
-            
+            normalized_src_id = normalize_source_id(src_id)
+            if namespace_for_source(normalized_src_id) is EmbeddingNamespace.GLOBAL2:
+                # Global2 vector records are independent from PostgreSQL rows (and counted here).
+                # The shared progress record is still removed below.
+                rows_deleted = DynamoDBVectorStore().delete(normalized_src_id)
+            else:
+                rows_deleted = delete_embeddings_from_db(normalized_src_id)
+
             # Delete progress entry from DynamoDB
-            progress_deleted = delete_progress_entry(src_id)
+            progress_deleted = delete_progress_entry(normalized_src_id)
             
             total_deleted += rows_deleted
             deleted_sources.append(src_id)

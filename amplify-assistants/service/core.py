@@ -550,22 +550,6 @@ def list_user_assistants(user_id):
     return latest_assistants
 
 
-def get_latest_assistants(assistants):
-    latest_assistants = {}
-    for assistant in assistants:
-        # Set version to 1 if it doesn't exist
-        assistant.setdefault("version", 1)
-        assistant_id = assistant.get("assistantId", None)
-        # will exclude system ast since they dont have assistantId
-        if assistant_id and (
-            assistant_id not in latest_assistants
-            or latest_assistants[assistant_id]["version"] < assistant["version"]
-        ):
-            latest_assistants[assistant_id] = assistant
-
-    return list(latest_assistants.values())
-
-
 def get_assistant(assistant_id):
     """
     Retrieves the assistant with the given ID.

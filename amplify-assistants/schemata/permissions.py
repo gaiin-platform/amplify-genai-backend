@@ -53,6 +53,10 @@ def can_get_group_conversations_data(user, data):
     return True
 
 
+def can_migrate_references(user, data):
+    return True
+
+
 def can_lookup_assistant(user, data):
     return True
 
@@ -126,6 +130,8 @@ permissions_by_state_type = {
     "/assistant/rescan_websites": {"rescan_websites": can_rescan_websites},
     "/assistant/process_drive_sources": {"process_drive_sources": can_process_drive_sources},
     "/assistant/register_ops": {"register_ops": can_list_assistant},
+    # Admin-only: the handler verifies admin status itself (verify_user_as_admin).
+    "/assistant/migrate_references": {"migrate_references": can_migrate_references},
     "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": can_scrape_website},
     # ── Layered Assistants ────────────────────────────────────────────────────
     "/assistant/layered/create_or_update": {

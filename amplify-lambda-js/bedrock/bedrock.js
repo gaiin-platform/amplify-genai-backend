@@ -8,7 +8,7 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
 import { extractBedrockResponseDiagnostics, captureRawResponseMiddleware, captureRawResponseMiddlewareOptions } from "./responseDiagnostics.js";
-import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { detectContextOverflow, parseGuardrailSizeError, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 import { combineMessages } from "./combineMessages.js";
 import { applyBedrockCaching, getBedrockCachingConfig } from "./bedrockCaching.js";
 import { createTokenCounter } from "../azure/tokens.js";
@@ -405,7 +405,12 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
         }
 
         // Only send error message if NOT recoverable overflow
-        if (!overflowInfo.isOverflow)  sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
+        if (!overflowInfo.isOverflow) {
+            // A guardrail size limit arrives as a throttling error; say what it really is instead of "too many requests"
+            const guardrailSize = parseGuardrailSizeError(error.message || error.$response?.message);
+            if (guardrailSize) logger.warn(`Bedrock guardrail input limit: ${guardrailSize.size} of ${guardrailSize.limit} text units allowed`);
+            sendErrorMessage(writable, error.$metadata?.httpStatusCode, guardrailSize ? 'guardrail_input_too_large' : error.$response?.reason);
+        }
 
         throw error;
     }
