@@ -485,11 +485,11 @@ class MigrationStore:
         self.table.put_item(Item={"id": "costs", "summary": json.loads(json.dumps(summary), parse_float=Decimal)})
 
     # ---- lock (so overlapping scheduled runs never double-process) -------- #
-    def acquire_lock(self, ttl_seconds: int) -> bool:
+    def acquire_lock(self, ttl_seconds: int, name: str = "lock") -> bool:
         now = int(self.now())
         try:
             self.table.put_item(
-                Item={"id": "lock", "expiresAt": now + ttl_seconds},
+                Item={"id": name, "expiresAt": now + ttl_seconds},
                 ConditionExpression="attribute_not_exists(id) OR expiresAt < :now",
                 ExpressionAttributeValues={":now": now},
             )
@@ -499,8 +499,13 @@ class MigrationStore:
                 return False
             raise
 
-    def release_lock(self) -> None:
-        self.table.delete_item(Key={"id": "lock"})
+    def release_lock(self, name: str = "lock") -> None:
+        self.table.delete_item(Key={"id": name})
+
+    def lock_active(self, name: str = "lock") -> bool:
+        """True while someone holds the named lock (one that has expired no longer counts)."""
+        item = native(self.table.get_item(Key={"id": name}).get("Item") or {})
+        return bool(item) and item.get("expiresAt", 0) >= int(self.now())
 
     # ---- documents -------------------------------------------------------- #
     @staticmethod

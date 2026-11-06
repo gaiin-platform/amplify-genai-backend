@@ -284,6 +284,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 # due to lambda layer requirements in rag.core, we have to define this function here
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
     "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
@@ -328,6 +329,15 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
             "success": False,
             "message": "Missing required parameters: bucket and key",
         }
+
+    if delete_policy.is_content_key(key):
+        # An assistant's data source carries the content key, but the original file is stored under an upload key.
+        upload_key = find_upload_for_content(key, current_user)
+        if not upload_key:
+            logger.warning("No upload found for content %s (user %s)", key, current_user)
+            return {"success": False, "message": "No uploaded copy of this document was found to reprocess"}
+        logger.info("Content %s resolved to upload %s", key, upload_key)
+        key = upload_key
 
     logger.info("Reprocessing document: %s/%s", bucket, key)
     files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
@@ -395,6 +405,15 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     except Exception as e:
         logger.error("Error reprocessing document: %s", str(e))
         return {"success": False, "message": f"Error reprocessing document: {str(e)}"}
+
+
+def find_upload_for_content(content_key, owner):
+    """The upload (files table key) behind a content key: the owner's own if there is one, else any upload of it."""
+    for candidate in delete_policy.content_key_candidates(content_key):
+        upload_key = delete_policy.pick_upload_key(get_content_pointer_rows(candidate), owner)
+        if upload_key:
+            return upload_key
+    return None
 
 
 def create_file_metadata_entry(

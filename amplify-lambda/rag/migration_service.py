@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from rag import admin_post, assistant_refs, migration as m, orphans
-from rag.migration_runner import Migrator, in_secret_sweep_window
+from rag.migration_runner import INVENTORY_LOCK, Migrator, in_secret_sweep_window
 
 ACTIONS = (
     "migrate", "refresh_inventory", "retry_failed",
@@ -47,6 +47,7 @@ def status_payload(migrator: Migrator, now: Optional[float] = None) -> Dict[str,
         )},
         "inventory": inventory,
         "inventoryAgeSeconds": int(now - inventory["generatedAt"]) if inventory else None,
+        "counting": store.lock_active(INVENTORY_LOCK),
         "costs": store.get_costs(),
         "pipeline": store.count_by_status(),
         "inSecretSweepWindow": in_secret_sweep_window(now),
@@ -94,7 +95,8 @@ def run_action(
         return {**result, "loginExpiresAt": m.token_expiry(access_token)}
     if action == "refresh_inventory":
         # Runs now (the endpoint supports polling, so a long scan does not time the request out).
-        return {"summary": migrator.run_inventory()}
+        summary = migrator.scan_inventory()
+        return {"summary": summary} if summary is not None else {"counting": True}      # a count is already running
     if action == "estimate":
         return migrator.estimate_costs(data.get("keys"), data.get("count"))
     if action == "refresh_costs":
@@ -259,6 +261,7 @@ def build_migrator() -> Migrator:
         cost_tables=(dynamodb.Table(os.environ["COST_CALCULATIONS_DYNAMO_TABLE"]),
                      dynamodb.Table(os.environ["HISTORY_COST_CALCULATIONS_DYNAMO_TABLE"])),
         usage_table=dynamodb.Table(os.environ["CHAT_USAGE_DYNAMO_TABLE"]),
+        scan_segments=8,
     )
 
 

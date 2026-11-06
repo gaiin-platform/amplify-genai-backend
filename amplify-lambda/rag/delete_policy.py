@@ -15,7 +15,10 @@ Shared content may be removed only when no other upload still points at it.
 
 from __future__ import annotations
 
-from typing import Iterable, List, Mapping
+import re
+from typing import Iterable, List, Mapping, Optional
+
+CONTENT_KEY = re.compile(r"^(global2?)/([0-9a-f]{64})\.content\.json$")
 
 
 def is_upload_pointer(row: Mapping) -> bool:
@@ -46,3 +49,28 @@ def user_still_references(rows: Iterable[Mapping], key: str, user: str) -> bool:
         is_upload_pointer(row) and row.get("id") != key and pointer_owner(row) == user
         for row in rows
     )
+
+
+def is_content_key(key: str) -> bool:
+    """True for ``global/<sha>.content.json`` and ``global2/<sha>.content.json`` (not an upload key)."""
+    return bool(CONTENT_KEY.match(str(key)))
+
+
+def content_key_candidates(key: str) -> List[str]:
+    """The key plus its twin in the other namespace (same hash).
+
+    An assistant keeps the content key it was saved with. After a document moves from ``global/`` to
+    ``global2/`` its uploads point at the new key, so the old one finds none.
+    """
+    match = CONTENT_KEY.match(str(key))
+    if not match:
+        return [key]
+    other = "global2" if match.group(1) == "global" else "global"
+    return [key, f"{other}/{match.group(2)}.content.json"]
+
+
+def pick_upload_key(rows: Iterable[Mapping], owner: str) -> Optional[str]:
+    """The upload to reprocess for a content key: the owner's own (id prefix), else any other, in a stable order."""
+    ids = sorted(row["id"] for row in rows if is_upload_pointer(row) and row.get("id"))
+    own = [i for i in ids if i.split("/")[0] == owner]
+    return (own or ids or [None])[0]

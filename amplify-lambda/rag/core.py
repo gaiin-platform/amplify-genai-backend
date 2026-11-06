@@ -606,6 +606,9 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
         logger.error("[CHUNK_REPROCESS_CHECK] Error getting chunk status for %s: %s - FALLING BACK TO PROCESS ALL CHUNKS", key, e)
         chunks_needing_reprocessing = None  # Explicit fallback to process all
 
+    if chunks_needing_reprocessing:
+        reopen_failed_parent(key)       # before the first chunk file is saved: each save queues a message right away
+
     chunks = []
     current_chunk = []
     current_chunk_size = 0
@@ -1767,6 +1770,29 @@ def get_chunks_needing_reprocessing(global_id):
     except Exception as e:
         logger.error("[CHUNK_REPROCESS_CHECK] Error checking chunks for %s: %s", global_id, e)
         return None
+
+
+def reopen_failed_parent(global_id):
+    """Mark a failed document as starting again before its chunks are re-queued.
+
+    Saving a chunk file queues its embedding message immediately, but the document's row is only rewritten after the last
+    chunk is saved. The embedding worker deletes messages of a failed document, so a retry lost every chunk queued in
+    that window and left them "starting" forever. Only a failed row is reopened; completed or terminated ones stay as they are.
+    """
+    try:
+        table = boto3.resource("dynamodb").Table(os.environ["EMBEDDING_PROGRESS_TABLE"])
+        table.update_item(
+            Key={"object_id": global_id},
+            UpdateExpression="SET parentChunkStatus = :starting",
+            ConditionExpression="parentChunkStatus = :failed",
+            ExpressionAttributeValues={":starting": "starting", ":failed": "failed"},
+        )
+        logger.info("[PARENT_REOPEN] %s was failed: set to starting before its chunks are queued again", global_id)
+        return True
+    except Exception as error:
+        if getattr(error, "response", {}).get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+            logger.error("[PARENT_REOPEN] Could not reopen %s: %s", global_id, error)
+        return False
 
 
 def reset_chunk_to_starting_status(global_id, chunk_number):

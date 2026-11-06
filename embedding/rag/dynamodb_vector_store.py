@@ -31,13 +31,14 @@ from pycommon.rag.contracts import EmbeddingNamespace, namespace_for_source, nor
 def default_tenant_id() -> str:
     """The tenant stored on every vector row and used to filter every search: ``<deployment name>_<stage>``, e.g. ``v6_dev``.
 
-    Read from the stack's own SERVICE_NAME (``amplify-<deployment name>-embedding``) and STAGE. It fails loudly instead of
+    Read from the stack's own SERVICE_NAME (``amplify-<deployment name>-embedding`` in dev, ``<deployment name>-embedding``
+    where the deployment name already carries the prefix, e.g. ``vu-amplify-embedding``) and STAGE. It fails loudly instead of
     guessing: a different value would write rows that no search could find. Never change it once documents exist.
     """
-    match = re.fullmatch(r"amplify-(.+)-embedding", os.environ.get("SERVICE_NAME", ""))
+    match = re.fullmatch(r"(?:amplify-)?(.+)-embedding", os.environ.get("SERVICE_NAME", ""))
     stage = os.environ.get("STAGE", "")
     if not match or not stage:
-        raise ValueError("SERVICE_NAME (amplify-<name>-embedding) and STAGE are required to name the vector tenant")
+        raise ValueError("SERVICE_NAME (<name>-embedding) and STAGE are required to name the vector tenant")
     return f"{match.group(1)}_{stage}"
 
 # Name of the vector table's search index. Fixed: embedding/serverless.yml creates the index under this same name.

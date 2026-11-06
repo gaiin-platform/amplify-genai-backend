@@ -49,6 +49,8 @@ def doc_state(item: Mapping[str, Any]) -> str:
 
 
 def chunk_counts(item: Mapping[str, Any]) -> Dict[str, int]:
+    if "_chunkCounts" in item:                  # a row the inventory scan already reduced to its counts
+        return dict(item["_chunkCounts"])
     counts = {state: 0 for state in CHUNK_STATES}
     children = ((item.get("data") or {}).get("childChunks")) or {}
     for chunk in children.values():

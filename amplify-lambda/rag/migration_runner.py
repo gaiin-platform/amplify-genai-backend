@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -34,6 +35,8 @@ logger.setLevel(logging.INFO)
 MAX_ATTEMPTS = 3
 STALL_SECONDS = 2 * 3600   # a document being built whose progress has not moved for this long has stalled and is marked failed
 INVENTORY_MAX_AGE_SECONDS = 24 * 3600
+INVENTORY_LOCK = "inventory-scan"
+INVENTORY_SCAN_SECONDS = 960   # a count that dies leaves its lock behind; it frees itself just after the longest function (900 s)
 # The existing daily job deletes every per-document RAG secret at ~03:00 UTC, so
 # nothing is started in a window around it (a started document would lose its secret).
 SECRET_SWEEP_WINDOW = ((2, 55), (3, 20))
@@ -48,6 +51,54 @@ def in_secret_sweep_window(now: float) -> bool:
 
 def _not_found(error: ClientError) -> bool:
     return error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound")
+
+
+PROGRESS_SCAN = {      # every name is aliased: DynamoDB reserves words such as "terminated", "data" and "hash"
+    "ProjectionExpression": "#o, #p, #t, #n, #u, #c, #d.#cc",
+    "ExpressionAttributeNames": {"#o": "object_id", "#p": "parentChunkStatus", "#t": "terminated", "#n": "totalChunks",
+                                 "#u": "lastUpdated", "#c": "originalCreator", "#d": "data", "#cc": "childChunks"},
+}
+POINTER_SCAN = {
+    "ProjectionExpression": "#i, #h, #l, #a",
+    "ExpressionAttributeNames": {"#i": "id", "#h": "hash", "#l": "textLocationKey", "#a": "lastAccessedAt"},
+}
+
+
+def compact_progress(item: Mapping[str, Any]) -> Dict[str, Any]:
+    """A progress row without its per-chunk map: only what the counts need, so hundreds of thousands fit in memory."""
+    row = {key: item[key] for key in ("object_id", "parentChunkStatus", "terminated", "totalChunks", "lastUpdated", "originalCreator") if key in item}
+    row["_chunkCounts"] = migration_health.chunk_counts(item)
+    return row
+
+
+def compact_pointer(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """A hash-table row reduced to what the counts read (whether it is an upload, where it points, when it was last used)."""
+    out = {"id": row.get("id")}
+    if "hash" in row:
+        out["hash"] = True
+    for key in ("textLocationKey", "lastAccessedAt"):
+        if row.get(key):
+            out[key] = row[key]
+    return out
+
+
+def _scan_segment(table: Any, kwargs: Dict[str, Any], transform: Callable[[Mapping[str, Any]], Any]) -> List[Any]:
+    out: List[Any] = []
+    while True:
+        response = table.scan(**kwargs)
+        out.extend(transform(item) for item in response.get("Items", []))
+        if not response.get("LastEvaluatedKey"):
+            return out
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+
+def scan_compact(table: Any, transform: Callable[[Mapping[str, Any]], Any], segments: int = 1, **kwargs: Any) -> List[Any]:
+    """Every row of a table, each reduced by ``transform`` as it arrives, read by ``segments`` parallel scans."""
+    if segments <= 1:
+        return _scan_segment(table, dict(kwargs), transform)
+    with ThreadPoolExecutor(max_workers=segments) as pool:
+        parts = pool.map(lambda n: _scan_segment(table, {**kwargs, "Segment": n, "TotalSegments": segments}, transform), range(segments))
+        return [row for part in parts for row in part]
 
 
 class Migrator:
@@ -73,6 +124,7 @@ class Migrator:
         model_rate_table: Any = None,
         cost_tables: Optional[Tuple[Any, Any]] = None,
         usage_table: Any = None,
+        scan_segments: int = 1,
     ) -> None:
         self.store, self.progress_table, self.hash_table = store, progress_table, hash_table
         self.object_access_table, self.assistant_tables = object_access_table, assistant_tables
@@ -87,6 +139,7 @@ class Migrator:
         self.cost_tables = cost_tables              # (current month, history) cost tables of the chat service
         self.usage_table = usage_table              # the chat service's usage records, for what a question call costs
         self._profiles: Dict[Optional[str], Any] = {}
+        self.scan_segments = max(1, int(scan_segments))   # parallel readers per table scan (a large system has hundreds of thousands of rows)
 
     # ------------------------------------------------------------------ #
     # data access helpers
@@ -118,8 +171,8 @@ class Migrator:
             raise
 
     def _scan_inputs(self):
-        progress = list(retention._scan_all(self.progress_table))
-        pointers = list(retention._scan_all(self.hash_table))
+        progress = scan_compact(self.progress_table, compact_progress, self.scan_segments, **PROGRESS_SCAN)
+        pointers = scan_compact(self.hash_table, compact_pointer, self.scan_segments, **POINTER_SCAN)
         # Personal vs group comes from each assistant record itself (group assistants live in the assistants table too).
         # Only the newest version of each assistant counts: it is the one chat uses; older versions are history.
         # The other tables (layered assistants, groups) only add to "in use": they point at assistants, not at files.
@@ -147,12 +200,51 @@ class Migrator:
             if "hash" in row and str(row.get("textLocationKey", "")).startswith(m.LEGACY_PREFIX):
                 first.setdefault(row["textLocationKey"], row["id"])
         info: Dict[str, Dict[str, Any]] = {}
-        for key, upload in first.items():
-            try:
-                info[key] = m.file_kind(self.files_table.get_item(Key={"id": upload}).get("Item"))
-            except Exception as error:
-                logger.warning("Could not read the file record for %s: %s", upload, error)
+        uploads = list(first.items())
+        batches = [uploads[i:i + 100] for i in range(0, len(uploads), 100)]       # BatchGetItem takes up to 100 keys
+
+        def read(batch):
+            return batch, self._file_records([upload for _, upload in batch])
+
+        with ThreadPoolExecutor(max_workers=self.scan_segments) as pool:
+            for batch, records in pool.map(read, batches):
+                for key, upload in batch:
+                    info[key] = m.file_kind(records.get(upload))
         return info
+
+    def _file_records(self, ids: List[str]) -> Dict[str, Mapping[str, Any]]:
+        """The file records of these uploads (only the fields that tell where a file came from), many per request."""
+        client = getattr(getattr(self.files_table, "meta", None), "client", None)
+        if client is None:                                  # a table without a batch API: one read per upload
+            records = {}
+            for upload in ids:
+                try:
+                    item = self.files_table.get_item(Key={"id": upload}).get("Item")
+                    if item:
+                        records[upload] = item
+                except Exception as error:
+                    logger.warning("Could not read the file record for %s: %s", upload, error)
+            return records
+        name = self.files_table.name
+        request: Dict[str, Any] = {name: {
+            "Keys": [{"id": upload} for upload in ids],
+            "ProjectionExpression": "#i, #d, #t",
+            "ExpressionAttributeNames": {"#i": "id", "#d": "data", "#t": "tags"},
+        }}
+        records = {}
+        for _ in range(8):                                  # unprocessed keys (throttling) are asked for again
+            try:
+                response = client.batch_get_item(RequestItems=request)
+            except Exception as error:
+                logger.warning("Could not read %d file records: %s", len(ids), error)
+                break
+            for item in response.get("Responses", {}).get(name, []):
+                records[item["id"]] = item
+            request = response.get("UnprocessedKeys") or {}
+            if not request:
+                break
+            time.sleep(0.2)
+        return records
 
     def all_docs(self):
         for item in retention._scan_all(self.store.table):
@@ -170,6 +262,16 @@ class Migrator:
         summary["health"] = migration_health.compute_health(progress, pointers, self.now())
         self.store.put_inventory(summary)
         return summary
+
+    def scan_inventory(self) -> Optional[Dict[str, Any]]:
+        """run_inventory, unless a count is already running (a large system takes minutes, and every tab visit used to start another).
+        Returns None when one is."""
+        if not self.store.acquire_lock(INVENTORY_SCAN_SECONDS, INVENTORY_LOCK):
+            return None
+        try:
+            return self.run_inventory()
+        finally:
+            self.store.release_lock(INVENTORY_LOCK)
 
     def _question_call_profile(self, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """What a recent question-generation call billed (see migration_costs.call_profile); kept for ten minutes."""
@@ -577,8 +679,7 @@ class Migrator:
     # scheduled entry point
     # ------------------------------------------------------------------ #
     def _inventory_step(self) -> str:
-        self.run_inventory()
-        return "ok"
+        return "ok" if self.scan_inventory() is not None else "already counting"
 
     def tick(self, budget_seconds: int = 240) -> Dict[str, Any]:
         # the lock must outlive the function (timeout 600s) so a slow run is never overlapped

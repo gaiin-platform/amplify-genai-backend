@@ -10,6 +10,7 @@ import re
 import os
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.config import Config
 from pycommon.api.credentials import get_endpoint
 from pycommon.rag.contracts import NOVA_EMBEDDING_MODEL_ID
 from pycommon.rag.migration_cost import add_doc_cost
@@ -42,6 +43,10 @@ class PROVIDERS(Enum):
     OPENAI = "OpenAI"
     BEDROCK = "Bedrock"
 
+
+# Many chunk workers run at once in a large deployment and share one Bedrock embedding quota. Throttled calls are retried
+# for longer (and the client slows itself down) before a chunk is given up on, because one failed chunk fails the document.
+BEDROCK_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 10})
 
 embedding_model_name = None
 embedding_provider = None
@@ -221,7 +226,7 @@ def generate_global2_embeddings(
                 )
                 text = text[:max_text_chars]
             request = build_text_request(text, dimension=dimension, purpose=purpose)
-        client = boto3.client("bedrock-runtime", region_name=os.environ.get("GLOBAL2_BEDROCK_REGION") or region)
+        client = boto3.client("bedrock-runtime", region_name=os.environ.get("GLOBAL2_BEDROCK_REGION") or region, config=BEDROCK_CONFIG)
         result = invoke_nova(
             client, model_id=NOVA_EMBEDDING_MODEL_ID, request=request, expected_dimension=dimension
         )
@@ -255,7 +260,7 @@ def generate_bedrock_embeddings(content, account_data=None, document_key=None):
         return {"success": False, "error": "Content is empty after stripping whitespace"}
 
     try:
-        client = boto3.client("bedrock-runtime", region_name=region)
+        client = boto3.client("bedrock-runtime", region_name=region, config=BEDROCK_CONFIG)
         model_id = embedding_model_name
 
         # Check if using Nova Multimodal Embeddings
