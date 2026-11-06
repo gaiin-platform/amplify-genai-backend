@@ -627,7 +627,7 @@ functions:
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 900          # the API call returns at 29 s; the work continues and the panel polls for the result
-    memorySize: 512
+    memorySize: 1536      # counting a large system holds hundreds of thousands of rows in memory
     environment:
       RAG_PROCESS_DOCUMENT_QUEUE_URL:
         Ref: RagDocumentIndexQueue
@@ -643,7 +643,7 @@ functions:
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 600
-    memorySize: 512
+    memorySize: 1536      # it recounts too (see rag_migration_action)
     environment:
       RAG_PROCESS_DOCUMENT_QUEUE_URL:
         Ref: RagDocumentIndexQueue
