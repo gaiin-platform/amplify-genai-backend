@@ -4,8 +4,10 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation
+    DynamoDBOperation,
+    SecretsManagerOperation,
 )
+from pycommon.api.credentials import get_credentials
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -22,15 +24,14 @@ logger = getLogger("embedding_delete")
 pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
-rag_pg_password = os.environ.get(
-    "RAG_POSTGRES_DB_ENV", os.environ["RAG_POSTGRES_DB_SECRET"]
-)
+# RAG_POSTGRES_DB_SECRET names a secret in Secrets Manager; it is not the password itself.
+# RAG_POSTGRES_DB_ENV (optional, local runs only) is a literal password.
+rag_pg_secret = os.environ["RAG_POSTGRES_DB_SECRET"]
 object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
 
 # Define the permission levels that grant delete access
 permission_levels = ["write", "owner"]
 
-# pg_password = get_credentials(rag_pg_password)
 
 
 def check_delete_access(src_id, current_user):
@@ -70,7 +71,7 @@ def delete_embeddings_from_db(src_id, child_chunks=None):
         host=pg_host,
         database=pg_database,
         user=pg_user,
-        password=rag_pg_password,
+        password=os.environ.get("RAG_POSTGRES_DB_ENV") or get_credentials(rag_pg_secret),
         port=pg_port,
     ) as conn:
         with conn.cursor() as cur:
@@ -134,6 +135,7 @@ def delete_progress_entry(src_id):
 @required_env_vars({
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
     "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.DELETE_ITEM, DynamoDBOperation.GET_ITEM],
+    "RAG_POSTGRES_DB_SECRET": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated("embedding-delete")
 def delete_embeddings(event, context, current_user, name, data):
