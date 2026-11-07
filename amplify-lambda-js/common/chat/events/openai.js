@@ -216,22 +216,22 @@ export const openaiUsageTransform = (event) => {
             // Convert to legacy format for compatibility
             usage.prompt_tokens = usage.input_tokens;
             usage.completion_tokens = usage.output_tokens;
-            // Add reasoning tokens if present
-            usage.completion_tokens += usage.output_tokens_details?.reasoning_tokens ?? 0;
-            // Extract reasoning tokens for separate tracking
+            // Extract reasoning tokens for separate tracking (already included in output_tokens)
             usage.reasoning_tokens = usage.output_tokens_details?.reasoning_tokens ?? 0;
         } else {
             // Handle legacy completions endpoint format
             // reasoning_tokens lives inside completion_tokens_details, not at the top level
             const reasoningTokens = (usage.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens) ?? 0;
-            usage.completion_tokens += reasoningTokens;
-            // Extract reasoning tokens for separate tracking
+            // Extract reasoning tokens for separate tracking (already included in completion_tokens)
             usage.reasoning_tokens = reasoningTokens;
         }
         
         // Extract cached tokens from OpenAI format
         // Input cached tokens: from prompt_tokens_details.cached_tokens OR input_tokens_details.cached_tokens
         usage.inputCachedTokens = (usage.inputCachedTokens ?? usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens) ?? 0;
+        usage.inputWriteCachedTokens = (usage.inputWriteCachedTokens ?? usage.input_tokens_details?.cache_write_tokens ?? usage.prompt_tokens_details?.cache_write_tokens) ?? 0;
+        // Cached/written tokens are reported inside prompt_tokens but billed at their own rates; remove them or they are charged twice
+        usage.prompt_tokens = Math.max(0, usage.prompt_tokens - usage.inputCachedTokens - usage.inputWriteCachedTokens);
         
         return usage;
     } else {

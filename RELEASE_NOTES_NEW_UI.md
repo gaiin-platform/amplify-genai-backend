@@ -26,8 +26,8 @@ The release has two kinds of content, and this document keeps them apart:
 - :warning: **New defaults** - prompt highlighter and memory are **off** until an admin enables them (existing deployments included).
 - :rocket: **New admin settings** - `newUi` and `amplifyHelper` feature flags, `deploymentFeatures`, and `systemPrompts`.
 - :link: **OpenAI-compatible API** - `POST /v1/chat/completions` and `GET /v1/models`.
-- :mag: **RAG pipeline upgrade** - new uploads are processed by a new document pipeline (Nova multimodal embeddings in a DynamoDB vector table, Textract OCR, page images), with an admin tool to move existing documents. See [section 11](#11-rag-pipeline-upgrade).
-- :package: **No mandatory data migration.** Existing conversations, artifacts and documents keep working. Moving existing documents to the new RAG storage is optional and admin-driven ([section 11](#11-rag-pipeline-upgrade)).
+- :mag: **RAG pipeline upgrade** - new uploads are processed by a new document pipeline (Nova multimodal embeddings in a DynamoDB vector table, Textract OCR, page images), with an admin tool to move existing documents. See [section 9](#10-rag-pipeline-upgrade).
+- :package: **No mandatory data migration.** Existing conversations, artifacts and documents keep working. Moving existing documents to the new RAG storage is optional and admin-driven ([section 9](#10-rag-pipeline-upgrade)).
 
 ### Terms used in this document
 - **Feature flag**: an on/off switch stored in the admin DynamoDB table and edited in the Admin panel. Flags can have per-user and per-group exceptions.
@@ -46,12 +46,11 @@ The release has two kinds of content, and this document keeps them apart:
 | 1 | Check CloudFormation imports | See [section 4](#4-parameter-store-changes). |
 | 2 | Install tooling (`npm install` at repo root) | See [section 2](#2-osls-replaces-upstream-serverless). |
 | 3 | Make sure build machines can reach GitHub | pycommon is installed from `github.com/gaiin-platform/pycommon`. |
-| 4 | (Optional) set Bedrock prompt caching | See [section 7](#7-optional-bedrock-prompt-caching). |
-| 5 | Deploy `amplify-lambda` and **wait until it has finished** | `npx sls amplify-lambda:deploy --stage <stage>` from the repo root. |
-| 6 | Deploy the other compose services, including `embedding` | `embedding` must not start before step 5 is complete. See the note below. |
-| 7 | Deploy the standalone services | See [below](#standalone-services). |
-| 8 | Deploy the frontend | See the frontend release notes. |
-| 9 | Admin: turn on the `newUi` flag | See the frontend release notes. Nothing changes for users before this. |
+| 4 | Deploy `amplify-lambda` and **wait until it has finished** | `npx sls amplify-lambda:deploy --stage <stage>` from the repo root. |
+| 5 | Deploy the other compose services, including `embedding` | `embedding` must not start before step 4 is complete. See the note below. |
+| 6 | Deploy the standalone services | See [below](#standalone-services). |
+| 7 | Deploy the frontend | See the frontend release notes. |
+| 8 | Admin: turn on the `newUi` flag | See the frontend release notes. Nothing changes for users before this. |
 
 > **`amplify-lambda` must finish deploying before you deploy `embedding`.**
 > - `embedding/serverless.yml` now reads the Parameter Store value `/amplify/<stage>/amplify-<dep-name>-lambda/RAG_MIGRATION_TABLE` with **no fallback value**. `amplify-lambda`'s own Parameter Store populator writes that value while `amplify-lambda` deploys (see [section 4](#4-parameter-store-changes)). `embedding` also imports several CloudFormation exports from the `amplify-lambda` stack (API Gateway ids and the document queues).
@@ -109,7 +108,7 @@ Commit `f1e6db5e` ("switch to osls and implement caching") changed the Serverles
 
 There are no new deploy flags or compose commands. The existing commands (`service:deploy --stage <stage>`, `deploy --stage <stage>`) work the same way. Compose does not support `serverless offline`; run offline from the service directory as described in `README.md`.
 
-**What "caching" in that commit means.** Despite the commit title, the commit contains **no build or deploy caching** change. The "caching" is **Bedrock prompt caching** in `amplify-lambda-js` (see [section 7](#7-optional-bedrock-prompt-caching)). It is **off by default**. Nothing is written to disk by the deploy and there is no cache to clear. Deploys behave the same on the first and later runs.
+**What "caching" in that commit means.** Despite the commit title, the commit contains **no build or deploy caching** change. Nothing is written to disk by the deploy and there is no cache to clear. Deploys behave the same on the first and later runs.
 
 **Local shims and overrides in `package.json`**
 
@@ -140,11 +139,11 @@ They were added (commit `de2dafa5`) to clear security alerts on dependencies pin
 | Change | Effect for operators |
 |---|---|
 | Shared Parameter Store handler (`cfn_handler`) | Each stack runs its own populator. See [section 4](#4-parameter-store-changes). |
-| LZW unicode fix | Conversations and other compressed payloads containing emoji, non-Latin scripts or the text `U+` are now stored and read correctly. See [section 8](#8-conversation-storage-lzw-compatibility). |
+| LZW unicode fix | Conversations and other compressed payloads containing emoji, non-Latin scripts or the text `U+` are now stored and read correctly. See [section 7](#7-conversation-storage-lzw-compatibility). |
 | Clearer rate-limit error messages (`get_rate_limit_notice`) | Added to the library; no backend service calls it yet. |
 | JWT verification moved from `python-jose` to PyJWT | Same checks (RS256, issuer, audience, access token). `python-jose` is no longer pulled in by pycommon. |
 | Model rate table optional when a flat cost is given | `MODEL_RATE_TABLE` is only required when `flat_cost` is not set. |
-| New `pycommon.rag` package | Shared building blocks for the RAG upgrade: storage namespaces (`global`, `global2`), the Nova embedding model id, page identities, per-document cost tracking and timing. Required by `amplify-lambda` and `embedding`. See [section 11](#11-rag-pipeline-upgrade). |
+| New `pycommon.rag` package | Shared building blocks for the RAG upgrade: storage namespaces (`global`, `global2`), the Nova embedding model id, page identities, per-document cost tracking and timing. Required by `amplify-lambda` and `embedding`. See [section 9](#10-rag-pipeline-upgrade). |
 | Dependency updates; Python 3.11+ required | All backend Lambdas already run `python3.11`. |
 
 ## 4. Parameter Store changes
@@ -165,7 +164,7 @@ aws cloudformation list-imports --export-name <stage>-ParameterStorePopulatorArn
 - An error saying the export is not imported by any stack (or an empty result) means it is safe to proceed.
 - If stacks are listed, update them to stop importing it before you deploy `amplify-lambda`.
 
-No other migration step is needed for Parameter Store. Existing `/amplify/<stage>/...` parameters stay in place. Re-running `scripts/populate_parameter_store.py` is **not** required for this release (see [section 7](#7-optional-bedrock-prompt-caching) if you want to set the new optional keys):
+No other migration step is needed for Parameter Store. Existing `/amplify/<stage>/...` parameters stay in place. Re-running `scripts/populate_parameter_store.py` is **not** required for this release:
 
 ```bash
 python3 scripts/populate_parameter_store.py --stage <stage> --dep-name <dep-name>   # optional: --region, --dry-run
@@ -215,7 +214,7 @@ Stored in the admin table (`<service>-<stage>-admin-configs`) under `config_id =
 
 ### `documentRetention` (new admin config)
 
-Stored under `config_id = documentRetention`: `{isActive: boolean, days: 1-3650}`. Both fields are required. The default created on first read is **`{isActive: false, days: 90}`**, and an absent or malformed record is treated as off. It controls a daily clean-up of unused chat-only attachments; see [section 11](#11-rag-pipeline-upgrade). Nothing is deleted until an admin turns it on (Admin panel, Configurations, Document Retention).
+Stored under `config_id = documentRetention`: `{isActive: boolean, days: 1-3650}`. Both fields are required. The default created on first read is **`{isActive: false, days: 90}`**, and an absent or malformed record is treated as off. It controls a daily clean-up of unused chat-only attachments; see [section 9](#10-rag-pipeline-upgrade). Nothing is deleted until an admin turns it on (Admin panel, Configurations, Document Retention).
 
 ### `systemPrompts` (new admin config)
 
@@ -233,7 +232,7 @@ Versioned prompt overrides stored under `config_id = systemPrompts`. Keys: `ordi
 | `GET /state/share/sent` | `amplify-lambda` | What the current user has shared with others. The New UI share dialog uses it to show share history across browsers and devices. API keys need the `share` or `full_access` scope. |
 | `POST /v1/chat/completions` | `amplify-lambda` | OpenAI-compatible chat. |
 | `GET /v1/models` | `amplify-lambda` | OpenAI-compatible model list. |
-| `POST /rag_migration/status`, `/rag_migration/settings`, `/rag_migration/action` | `amplify-lambda` | Admin RAG migration tab. Admin only. See [section 11](#11-rag-pipeline-upgrade). |
+| `POST /rag_migration/status`, `/rag_migration/settings`, `/rag_migration/action` | `amplify-lambda` | Admin RAG migration tab. Admin only. See [section 9](#10-rag-pipeline-upgrade). |
 | `POST /embedding/legacy-cleanup` | `embedding` | Removes migrated documents' rows from PostgreSQL. Admin only. |
 | `POST /assistant/migrate_references` | `amplify-assistants` | Points assistants at the new copy of a migrated document. Admin only. |
 
@@ -243,19 +242,7 @@ Versioned prompt overrides stored under `config_id = systemPrompts`. Keys: `ordi
 - A New UI feature that calls a route missing from an older backend will fail, which is why the backend goes first.
 - **`GET /state/share/sent` limits.** A record of each share is stored only by this release's `share_with_users`, so history starts at upgrade: shares made before it do not appear. The query returns at most 100 records per user, taken from the oldest end, so a user with more than 100 recorded shares will not see the newest ones. The share dialog also keeps its own history in the browser, so the list is a supplement and a failed call is ignored.
 
-## 7. Optional: Bedrock prompt caching
-
-New variables for `amplify-lambda-js`, read from Parameter Store with defaults, so nothing needs to be set:
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `BEDROCK_PROMPT_CACHING` | `off` | `on` enables explicit prompt caching for supported Claude models on Bedrock. |
-| `BEDROCK_PROMPT_CACHING_POINTS` | `tools,system,history,tail` | Which checkpoints to cache (any subset). |
-| `BEDROCK_PROMPT_CACHING_MODELS` | empty | Comma list of regexes to restrict which model ids are cached. Empty means all supported Claude families. |
-
-To use them, set the values in your `<stage>-var.yml` (see `dev-var.yml-example`) and run `scripts/populate_parameter_store.py` for the stage, or write `/amplify/<stage>/BEDROCK_PROMPT_CACHING` and the others directly. Each LLM call logs a `[CACHE-USAGE]` line (cache read tokens, cache write tokens, prompt tokens). Design notes: `docs/chat-request-architecture/10-bedrock-prompt-caching-plan.md`.
-
-## 8. Conversation storage (LZW) compatibility
+## 7. Conversation storage (LZW) compatibility
 
 Conversations and some other payloads are compressed with an LZW routine that exists in three copies: `pycommon/lzw.py` (Python services), `amplify-lambda-js/common/lzwCompression.js`, and the frontend's `utils/app/lzwCompression.ts`. Commit `2e7a223c` and pycommon v0.1.2 fix how non-ASCII characters are encoded.
 
@@ -264,22 +251,22 @@ Conversations and some other payloads are compressed with an LZW routine that ex
 - **Old data**: conversations written before this release still read, with one limit. Data that was already unreadable (emoji written by the Python encoder, or 3-digit tags directly followed by a hex character) stays unreadable. No migration or re-save is needed or possible.
 - **Mixed versions**: new readers read old data. Old readers read new data correctly for ordinary text and non-Latin BMP scripts. For emoji an old Python reader returns two separate surrogate characters instead of one. Deploy **all** Python services on pycommon v0.1.2 and the frontend of this release **together** to avoid a window like this.
 
-## 9. Stored data
+## 8. Stored data
 
-No migration scripts are required, and nothing you have stored needs to be converted before or after the deploy. The one optional, admin-run migration is for documents in the RAG store ([section 11](#11-rag-pipeline-upgrade)); skipping it leaves existing documents working as they do today.
+No migration scripts are required, and nothing you have stored needs to be converted before or after the deploy. The one optional, admin-run migration is for documents in the RAG store ([section 9](#10-rag-pipeline-upgrade)); skipping it leaves existing documents working as they do today.
 
 - **Conversations**: saves accept an optional `expectedVersion` (the S3 object's last-modified time in milliseconds). If the stored copy is newer, the save returns `CONFLICT` instead of overwriting it. Clients that do not send it behave as before. A known limit: the check relies on S3 timestamps (one-second resolution noted in the code).
 - **Artifacts**: version entries may carry an optional `lineageId`. Entries without it still load.
 - **Shares and groups**: `object-access` gained group grants (`group_grants.py`).
 - **Code interpreter sessions**: `amplify-assistants` adds a DynamoDB index (`ActivityIndex`, on `activityBucket` and `updatedAt`) to the code-interpreter table and a scheduled Lambda (`reap_idle_code_interpreter_sessions`, every 5 minutes) that closes idle sessions. Both are created by the normal deploy.
 
-## 10. Other operator notes
+## 9. Other operator notes
 
 - Python dependencies were bumped across services for security (for example Pillow 12.2.0). Rebuild layers as part of a normal deploy.
 - The Google and Office365 assistant-API stacks do not auto-populate Parameter Store.
-- Variable templates (`dev-var.yml-example`) gained only the three optional Bedrock caching entries. The RAG settings in [section 11](#11-rag-pipeline-upgrade) are not in the template; they have defaults.
+- Variable templates (`dev-var.yml-example`) are unchanged. The RAG settings in [section 9](#10-rag-pipeline-upgrade) are not in the template; they have defaults.
 
-## 11. RAG pipeline upgrade
+## 10. RAG pipeline upgrade
 
 **RAG** (retrieval-augmented generation) is how Amplify searches the documents users upload so that chat answers can quote them. An **embedding** is the numeric form of a piece of text (or a page image) that makes it searchable. This release (backend PR #405, with frontend PR #350) changes how **new** documents are processed and adds an admin tool for moving **existing** ones. The team's own description of the document flows is in `amplify-lambda/rag/DOCUMENT_FLOWS.md`.
 
@@ -382,7 +369,7 @@ Admin Panel, Configurations, **Document Retention** turns on a daily clean-up (0
 
 ### Chat, models and routing
 - Request handling and routing now use the deployment configuration; routing through the API was improved and a routing usage-recording error fixed.
-- Bedrock: explicit prompt caching (off by default), hardened structured-output parsing for Bedrock GPT-5.6 models with raw-response logging on stream errors, socket-timeout handling and better request cancellation, and the adaptive-reasoning pattern now includes Haiku 5+.
+- Bedrock: hardened structured-output parsing for Bedrock GPT-5.6 models with raw-response logging on stream errors, socket-timeout handling and better request cancellation, and the adaptive-reasoning pattern now includes Haiku 5+.
 
 ### Artifacts
 - Rename artifacts (`/artifacts/rename`); version entries carry a `lineageId` so saved versions stack under one artifact instead of overwriting; artifact edits return the updated content rather than placeholders; a cut-off artifact can be resumed instead of regenerated; artifact type rules with tests.
@@ -409,7 +396,7 @@ Admin Panel, Configurations, **Document Retention** turns on a daily clean-up (0
 ### Documents and RAG
 - New document pipeline ("global2"): Nova multimodal embeddings in a DynamoDB vector table, Textract OCR for scanned pages and images in Office files, page-image embeddings, and direct table and spreadsheet reading.
 - New upload limits and a higher chunk limit (3000).
-- An admin RAG Migration tool (moves existing documents, with rollback before clean-up), an orphaned-file finder, and an optional document-retention sweep for chat-only attachments. See Part 1, [section 11](#11-rag-pipeline-upgrade).
+- An admin RAG Migration tool (moves existing documents, with rollback before clean-up), an orphaned-file finder, and an optional document-retention sweep for chat-only attachments. See Part 1, [section 9](#10-rag-pipeline-upgrade).
 
 ### Infrastructure and dependencies
 - Per-stack Parameter Store populators on pycommon v0.1.2; osls and `@osls/compose`; security updates for pip and npm dependencies across services.
@@ -430,7 +417,7 @@ Measured with `git diff origin/main...origin/dev` on 2026-11-06 (at `cb31207b`);
 
 ## Contributors
 
-- **Max Moundas** - New UI backend, feature flags, admin configs, OpenAI-compatible API, osls, prompt caching
+- **Max Moundas** - New UI backend, feature flags, admin configs, OpenAI-compatible API, osls
 - **Harsha Raj Kumar** - Artifact lineage, edit, and cut-off fixes
 - **Karely Rodriguez** - RAG pipeline upgrade (global2 embeddings, migration tool, Textract OCR), Parameter Store standardization, Bedrock client timeouts
 - **Jagadeesh Reddy Vanga** - Dependabot security fixes
@@ -454,7 +441,7 @@ Open items for the release owner. These are findings from the audit and are not 
 3. **The pycommon `v0.1.2` branch keeps moving.** It gained `pycommon/rag/` on 2026-11-05 and the backend RAG code imports it. Any layer built from an older install breaks `amplify-lambda` and `embedding` at import time. Decide the exact commit you ship, and re-check the pin before publishing. The tip when this was written was `7b4056b`.
 4. **Version numbers.** Both `package.json` files still say `0.9.0`; the last tag is `v0.9.4`.
 5. **RAG: code and docs disagree (frontend wording).** Confirm text in the RAG Migration tab says "update assistants" (that button was removed) and points to a "Documents section" that no longer exists; the clean-up confirm says "every document" but one press handles at most 200. The clean-up step relies on a browser confirm dialog only. See the frontend draft-status section.
-6. **RAG: no operator variable template.** `dev-var.yml-example` and `scripts/populate_parameter_store.py` were not changed by the RAG commit. The `GLOBAL2_*` settings and the Textract and limit variables exist only as defaults in `serverless.yml` and code. They are documented only in [section 11](#11-rag-pipeline-upgrade).
+6. **RAG: no operator variable template.** `dev-var.yml-example` and `scripts/populate_parameter_store.py` were not changed by the RAG commit. The `GLOBAL2_*` settings and the Textract and limit variables exist only as defaults in `serverless.yml` and code. They are documented only in [section 9](#10-rag-pipeline-upgrade).
 7. **RAG: not run by us.** We read the code and `rag/DOCUMENT_FLOWS.md`. We did not deploy, run a migration, or confirm Nova, Textract or DynamoDB vector-index availability in any region. `RagMigrationTable` and `Global2VectorTable` have no deletion policy.
 8. **Uncommitted local change (not part of the notes).** At the time of writing, `amplify-lambda-js/serverless.yml` in the working tree changes the service name to `${self:custom.stageVars.DEP_NAME}-js`, changes `ssmBasePath`, and removes the three `BEDROCK_PROMPT_CACHING*` variables. A service rename creates a new stack and changes the Parameter Store paths other stacks read. If that is not intended, discard it before releasing. `amplify-lambda-assistants-api/serverless.yml` and `amplify-lambda-assistants-api-office365/serverless.yml` also have uncommitted edits.
 9. Not verified by us: any deployed environment, a real `pip` resolve, plugin loading under osls, `npx sls` from standalone service directories, IAM coverage for each stack's populator.

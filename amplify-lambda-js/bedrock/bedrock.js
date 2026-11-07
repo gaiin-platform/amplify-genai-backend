@@ -10,8 +10,7 @@ import {extractKey} from "../datasource/datasources.js";
 import { extractBedrockResponseDiagnostics, captureRawResponseMiddleware, captureRawResponseMiddlewareOptions } from "./responseDiagnostics.js";
 import { detectContextOverflow, parseGuardrailSizeError, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
 import { combineMessages } from "./combineMessages.js";
-import { applyBedrockCaching, getBedrockCachingConfig } from "./bedrockCaching.js";
-import { createTokenCounter } from "../azure/tokens.js";
+import { addCachePoints, isCachePointRejection } from "./promptCache.js";
 
 // Re-exported for callers/tests that import it from here.
 export { combineMessages };
@@ -82,8 +81,6 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
     let input = null;
     // Declare hasToolRelatedContent at function scope so it's available in catch block for error logging
     let hasToolRelatedContent = false;
-    // True when toolConfig was rebuilt from history with placeholder specs (never prompt-cache those).
-    let toolsAreStub = false;
 
     try {
         // Client already fetched in parallel above
@@ -103,7 +100,7 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
         // https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
         const temperature = isReasoningEnabled ? 1.0 : options.temperature;
 
-        const isOpenAIGpt56 = /^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id);
+        const isOpenAIGpt56 = /^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id);
         const inferenceConfigs = {
             // GPT-5.6 rejects temperature entirely; other Bedrock models retain it.
             ...(isOpenAIGpt56 ? {} : { "temperature": temperature }),
@@ -132,7 +129,7 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
         }
 
         if (isReasoningEnabled) {
-            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+            if (/^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id)) {
                 // OpenAI GPT-5.6 on Bedrock expects a string effort value.
                 const effort = options.reasoningLevel ?? "low";
                 input.additionalModelRequestFields = {
@@ -170,7 +167,7 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
             // effort value must be a string, including when reasoning is disabled.
             // Other reasoning-capable Bedrock models retain the legacy shape.
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
-            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+            if (/^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id)) {
                 input.additionalModelRequestFields = {
                     "reasoning": { "effort": "none" }
                 };
@@ -223,7 +220,6 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
                 });
                 if (toolNames.size > 0) {
                     logger.warn(`body.tools missing but tool-related content found in history — reconstructing minimal toolConfig for: ${[...toolNames].join(', ')}`);
-                    toolsAreStub = true;
                     tools = [...toolNames].map(name => ({ function: { name, description: name, parameters: { type: "object", properties: {} } } }));
                 }
             }
@@ -281,23 +277,12 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
             }
         }
 
-        // Explicit prompt caching (Claude on Bedrock). No-op unless BEDROCK_PROMPT_CACHING=on and the
-        // model has a caching profile. A bug here must never fail a chat request: fall back to the uncached input.
-        try {
-            let tokenCounter = null;
-            input = applyBedrockCaching(input, {
-                config: getBedrockCachingConfig(),
-                toolsAreStub,
-                systemPlaceholder: BLANK_MSG,
-                countTokens: (text) => (tokenCounter ??= createTokenCounter()).countTokens(text),
-                onPlan: (plan) => {
-                    if (plan.enabled) {
-                        logger.info(`[CACHE-PLAN] model=${currentModel.id} points=${plan.points.join(',')} estimatedTokens=${JSON.stringify(plan.estimates)} minTokens=${plan.profile?.minTokens}`);
-                    }
-                },
-            });
-        } catch (cachingError) {
-            logger.warn(`Prompt caching planning failed; sending request without cache points: ${cachingError?.message}`);
+        // Prompt caching (Claude only). Keep the plain input so a rejected cache point can be retried without it.
+        const uncachedInput = input;
+        const cached = addCachePoints(input, { isInternalCall: options._isInternalCall === true });
+        input = cached.input;
+        if (cached.points.length > 0) {
+            logger.info(`[CACHE-POINTS] model=${currentModel.id} points=${cached.points.join(',')}`);
         }
 
         trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})
@@ -316,10 +301,21 @@ export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abo
             }
         });
 
-        const response = await client.send(
-            new ConverseStreamCommand(input),
-            abortSignal ? { abortSignal } : undefined
-        );
+        let response;
+        try {
+            response = await client.send(
+                new ConverseStreamCommand(input),
+                abortSignal ? { abortSignal } : undefined
+            );
+        } catch (sendError) {
+            if (input === uncachedInput || !isCachePointRejection(sendError)) throw sendError;
+            logger.warn(`Bedrock rejected a cache point for ${currentModel.id}; retrying without prompt caching: ${sendError.message}`);
+            input = uncachedInput;
+            response = await client.send(
+                new ConverseStreamCommand(input),
+                abortSignal ? { abortSignal } : undefined
+            );
+        }
 
         // Process stream events (SDK v3.1000+ returns parsed event objects directly)
         for await (const event of response.stream) {

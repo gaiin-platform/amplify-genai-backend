@@ -7,7 +7,7 @@
  *  - Claude works without a name, so its request shape is left exactly as it was.
  *  - Other families (Nova, Titan, Llama, Mistral, ...) reject outputConfig, so they get none.
  */
-const OPENAI_GPT_5_6 = /^((us|global)\.)?openai\.gpt-5\.6-/i;
+const OPENAI_GPT_5_6 = /^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i;
 
 /** @returns {'claude'|'openai-gpt-5.6'|null} */
 export function getBedrockStructuredOutputFamily(modelId) {
