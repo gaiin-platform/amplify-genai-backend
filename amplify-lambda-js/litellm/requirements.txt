@@ -1,2 +1,2 @@
-litellm==1.78.7
+litellm==1.84.0
 boto3>=1.26.0

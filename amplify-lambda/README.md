@@ -6,6 +6,8 @@ This repository contains the serverless deployment configuration for "amplify-su
 
 The amplify-support service is configured to run on AWS with Python 3.11 runtime. It defines several Lambda functions for managing assistants and threads, user states and sharing, including functionalities for uploading files, creating and deleting assistants, handling threads, and sharing user states.
 
+RAG documents (uploads, assistant files, web pages, drive files, the legacy-to-global2 migration and the orphan cleanup) are described in [rag/DOCUMENT_FLOWS.md](rag/DOCUMENT_FLOWS.md).
+
 ## Requirements
 
 - AWS CLI

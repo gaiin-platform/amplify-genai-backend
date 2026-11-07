@@ -78,7 +78,9 @@ provider:
     APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
     DEP_REGION: ${ssm:/amplify/${sls:stage}/DEP_REGION}
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
-    MAX_CHUNKS: 1000
+    MAX_CHUNKS: 3000
+    # Tokens of extracted text a RAG upload may have (the code default is 500,000); tuned from measured runs
+    MAX_DOCUMENT_TOKENS_RAG: 2500000
     OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
     PANDOC_LAYER: ${ssm:/amplify/${sls:stage}/PANDOC_LAMBDA_LAYER_ARN}
@@ -93,6 +95,7 @@ provider:
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
+    RAG_MIGRATION_TABLE: ${self:service}-${sls:stage}-rag-migration
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     S3_SHARE_BUCKET_NAME: ${self:service}-${sls:stage}-share #Marked for future deletion
     S3_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-user-conversations #Marked for future deletion
@@ -112,13 +115,18 @@ provider:
 
     # Imported Variables from Parameter Store
     ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}
     CRITICAL_ERRORS_SQS_QUEUE_NAME: ${ssm:${self:custom.ssmBasePath}-admin/CRITICAL_ERRORS_SQS_QUEUE_NAME}
     EMBEDDING_PROGRESS_TABLE: ${ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
+    # Needed by the retention sweep to prove no assistant references a file before it is deleted.
+    ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    LAYERED_ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/LAYERED_ASSISTANTS_DYNAMODB_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     
@@ -136,6 +144,7 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-secrets
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rds
         - !Ref LambdaIAMPolicyAPIGateway
+        - !Ref LambdaIAMPolicyRagMigration
 
 functions:
 
@@ -172,6 +181,29 @@ functions:
           method: post
           cors: true
     
+  # OpenAI-compatible chat API (non-streaming). Base URL for OpenAI SDKs: ${API_BASE_URL}/v1
+  chat_completions:
+    handler: chat/openai_service.chat_completions
+    timeout: 180
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: v1/chat/completions
+          method: post
+          cors: true
+
+  openai_list_models:
+    handler: chat/openai_service.list_models
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: v1/models
+          method: get
+          cors: true
+
   register_conversation:
     handler: state/conversation.register_conversation
     layers:
@@ -224,12 +256,6 @@ functions:
           method: POST
           cors: true
 
-  parameter_store_populator:
-    handler: utilities/parameter_store_populator.lambda_handler
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
-    description: Auto-populates Parameter Store with locally defined variables
 
   get_conversation:
     handler: state/conversation.get_conversation
@@ -357,6 +383,16 @@ functions:
           method: post
           cors: true
 
+  rename_user_file:
+    handler: files/file.rename_file
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/rename
+          method: post
+          cors: true
+
   query_user_files:
     handler: files/file.query_user_files
     layers:
@@ -407,6 +443,16 @@ functions:
     events:
       - http:
           path: state/share
+          method: get
+
+  user_get_sent_shares:
+    handler: state/share.get_sent_shares_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: state/share/sent
           method: get
 
   chat_convert:
@@ -476,7 +522,9 @@ functions:
     handler: rag/core.process_document_for_rag
     layers:
       - Ref: MarkitdownLambdaLayer
-    timeout: 300
+    # Headroom for large documents (page rendering + reading Textract results).
+    # RagDocumentIndexQueue's VisibilityTimeout must stay >= this value.
+    timeout: 600
     events:
       - sqs:
           batchSize: 1
@@ -487,9 +535,13 @@ functions:
     environment:
       RAG_CHUNK_DOCUMENT_QUEUE_URL:
         Ref: RagChunkDocumentQueue
+      # Textract poll/continue messages are re-queued onto this same queue.
+      RAG_PROCESS_DOCUMENT_QUEUE_URL:
+        Ref: RagDocumentIndexQueue
   
   reprocess_document_for_rag:
     handler: files/file.reprocess_document_for_rag
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -528,6 +580,77 @@ functions:
     events:
       - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight
 
+  # Deletes chat-only attachments unused for the number of days set in the admin panel
+  # (Configurations > Document Retention) that nothing depends on. Does nothing while that
+  # setting is off, which is the default. Invoke with {"dryRun": true} to only log the plan.
+  sweep_ephemeral_files:
+    handler: rag/retention.sweep_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 600
+    memorySize: 512
+    environment:
+      EPHEMERAL_CLEANUP_MAX_PER_RUN: '500'
+    events:
+      - schedule: cron(0 4 * * ? *) # Run daily at 4 AM UTC
+
+  # ---- RAG migration (admin tab "RAG Migration") ----
+  rag_migration_status:
+    handler: rag/migration_api.get_status
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 29
+    environment:
+      RAG_PROCESS_DOCUMENT_QUEUE_URL:
+        Ref: RagDocumentIndexQueue
+    events:
+      - http:
+          path: rag_migration/status
+          method: post
+          cors: true
+
+  rag_migration_settings:
+    handler: rag/migration_api.update_settings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 29
+    environment:
+      RAG_PROCESS_DOCUMENT_QUEUE_URL:
+        Ref: RagDocumentIndexQueue
+    events:
+      - http:
+          path: rag_migration/settings
+          method: post
+          cors: true
+
+  rag_migration_action:
+    handler: rag/migration_api.run_action
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 900          # the API call returns at 29 s; the work continues and the panel polls for the result
+    memorySize: 1536      # counting a large system holds hundreds of thousands of rows in memory
+    environment:
+      RAG_PROCESS_DOCUMENT_QUEUE_URL:
+        Ref: RagDocumentIndexQueue
+    events:
+      - http:
+          path: rag_migration/action
+          method: post
+          cors: true
+
+  # Every minute; exits immediately when idle. A lock in the table prevents overlap.
+  rag_migration_tick:
+    handler: rag/migration_api.tick
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 600
+    memorySize: 1536      # it recounts too (see rag_migration_action)
+    environment:
+      RAG_PROCESS_DOCUMENT_QUEUE_URL:
+        Ref: RagDocumentIndexQueue
+    events:
+      - schedule: rate(1 minute)
+
   cleanup_missed_rag_secrets:
     handler: rag/rag_secrets.lambda_handler
     layers:
@@ -552,6 +675,19 @@ functions:
     description: Central runtime configuration manager for API Gateway timeout extension
     # No HTTP events - invoked by CloudFormation custom resources from other services
 
+  # Parameter Store auto-populator Lambda
+  # This Lambda reads its own environment variables and syncs locally-defined ones to SSM
+  param_populator:
+    handler: populate_env_vars.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 60
+    environment:
+      # Inherit all service environment variables
+      SERVICE_NAME: ${self:provider.environment.SERVICE_NAME}
+      STAGE: ${self:provider.environment.STAGE}
+    # No HTTP event - only invoked by CloudFormation custom resource
+
 resources:
   # Use extensions to add DependsOn to the auto-generated role without overriding it
   extensions:
@@ -566,19 +702,23 @@ resources:
         - LambdaIAMPolicyAPIGateway
 
   Resources:
-    # Custom resource to auto-populate Parameter Store with locally defined variables
-    ParameterStoreAutoPopulate:
-      Type: Custom::ParameterStorePopulate
+    # Custom Resource: Auto-populate Parameter Store with locally defined variables
+    # This runs on every deployment to ensure SSM parameters are up-to-date
+    # Uses the local param_populator Lambda function defined above
+    ParamStoreAutoPopulate:
+      Type: Custom::ParamStorePopulate
       Properties:
-        ServiceToken: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
+        # ServiceToken references our OWN populator Lambda (not amplify-lambda's)
+        ServiceToken: !GetAtt ParamUnderscorepopulatorLambdaFunction.Arn
         ServiceName: ${self:service}
         Stage: ${sls:stage}
         TriggerHash: ${sls:instanceId}  # Auto-regenerated on every deployment
-        # No need to pass EnvironmentVariables - Lambda dynamically fetches them!
 
     # Custom resource to extend API Gateway timeouts for long-running functions
     ApiGatewayTimeoutConfig:
       Type: Custom::ApiGatewayTimeout
+      # The timeout lookup fails if the route does not exist yet (first deploy).
+      DependsOn: ApiGatewayMethodV1ChatCompletionsPost
       Properties:
         ServiceToken: !GetAtt RuntimeUnderscoreconfigUnderscoremanagerLambdaFunction.Arn
         ApiGatewayId:
@@ -587,6 +727,9 @@ resources:
         Functions:
           - name: chat_endpoint
             path: /chat
+            method: POST
+          - name: chat_completions
+            path: /v1/chat/completions
             method: POST
 
     # SSM Policy
@@ -635,6 +778,7 @@ resources:
                 - s3:GetObject
                 - s3:PutObject
                 - s3:PutObjectHold
+                - s3:PutObjectTagging
                 - s3:DeleteObject
                 - s3:ListBucket
                 - s3:GetObjectAttributes
@@ -691,12 +835,18 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
@@ -711,6 +861,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.POLL_STATUS_TABLE}/index/*"
 
@@ -737,6 +889,17 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}-dlq"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}-dlq"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.CRITICAL_ERRORS_SQS_QUEUE_NAME}"
+
+            # Asynchronous Textract for large / scanned / image-heavy PDFs.
+            # Textract has no resource-level permissions for these actions.
+            - Effect: Allow
+              Action:
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+                - textract:DetectDocumentText
+                - textract:StartDocumentAnalysis
+                - textract:GetDocumentAnalysis
+              Resource: "*"
 
     # Secrets Manager Policy
     LambdaIAMPolicySecrets:
@@ -786,6 +949,60 @@ resources:
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/resources/*
                 - arn:aws:apigateway:${self:provider.region}::/restapis/*/integrations/*
+
+    RagMigrationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.RAG_MIGRATION_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+          - AttributeName: updatedAt
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: status-index
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+              - AttributeName: updatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    LambdaIAMPolicyRagMigration:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}-rag-migration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.RAG_MIGRATION_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.RAG_MIGRATION_TABLE}/index/*"
+            # The migration API key lives outside rag-ds/, which a daily job purges.
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-migration/${sls:stage}/*
 
     # ---- Lambda invoke permissions for S3 → Lambda ----
     ConvertInvokePermissionFromS3:
@@ -1128,6 +1345,18 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
+        # Chunk files are transient: they only feed the embedding queue and are
+        # regenerated from the extracted text on reprocess. 14 days outlasts the
+        # SQS dead-letter retention so a replayed message still finds its chunk file.
+        LifecycleConfiguration:
+          Rules:
+            - Id: ExpireChunkFiles
+              Status: Enabled
+              ExpirationInDays: 14
+            - Id: AbortIncompleteUploads
+              Status: Enabled
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 2
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
@@ -1147,6 +1376,21 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
+        LifecycleConfiguration:
+          Rules:
+            # In-flight Textract result progress; deleted on completion, this is the safety net.
+            - Id: ExpireTextractPartials
+              Status: Enabled
+              Prefix: textract-partial/
+              ExpirationInDays: 2
+            # Rendered page images are only read while a document is being embedded (and for retries of
+            # failed chunks). Tagged at write time by rag/handlers/pdf.py; expired after 3 days.
+            - Id: ExpirePageImages
+              Status: Enabled
+              TagFilters:
+                - Key: artifact
+                  Value: page-image
+              ExpirationInDays: 3
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
@@ -1178,7 +1422,7 @@ resources:
     EmbeddingChunksIndexQueue:
       Type: "AWS::SQS::Queue"
       Properties:
-        VisibilityTimeout: 120
+        VisibilityTimeout: 360
         QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-queue
         MessageRetentionPeriod: 86400
         RedrivePolicy:
@@ -1224,7 +1468,7 @@ resources:
     RagDocumentIndexQueue:
       Type: "AWS::SQS::Queue"
       Properties:
-        VisibilityTimeout: 300
+        VisibilityTimeout: 660
         QueueName: ${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}
         MessageRetentionPeriod: 86400
         RedrivePolicy:
@@ -1542,10 +1786,4 @@ resources:
       Export:
         Name:
           Fn::Sub: "${sls:stage}-EmbeddingChunksIndexDlqArn"
-   
-    ParameterStorePopulatorArn:
-      Description: "ARN of the parameter store populator Lambda function"
-      Value: !GetAtt ParameterUnderscorestoreUnderscorepopulatorLambdaFunction.Arn
-      Export:
-        Name:
-          Fn::Sub: "${sls:stage}-ParameterStorePopulatorArn"
+

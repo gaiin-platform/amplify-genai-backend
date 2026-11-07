@@ -17,7 +17,17 @@ logger = getLogger("code_interpreter")
 
 agentcore_client = boto3.client("bedrock-agentcore")
 CODE_INTERPRETER_ID = "aws.codeinterpreter.v1"
+# Absolute lifetime of an AgentCore session (a TTL from creation, NOT an idle timeout).
+# It is only a backstop: idle sessions are stopped far sooner by reap_idle_sessions().
 SESSION_TIMEOUT_SECONDS = 3600
+# A session whose record has seen no chat message for this long is stopped.
+IDLE_TIMEOUT_SECONDS = 15 * 60
+# Sparse GSI on the records table: only records whose AgentCore session is live carry
+# ACTIVITY_ATTR (always ACTIVITY_VALUE, a constant partition key), with updatedAt as the
+# sort key, so "live sessions idle since X" is a single Query instead of a table Scan.
+ACTIVITY_INDEX = "ActivityIndex"
+ACTIVITY_ATTR = "activityBucket"
+ACTIVITY_VALUE = "live"
 EXECUTION_TIMEOUT_SECONDS = 240
 AGENTCORE_MODEL_ID = "agentcore-code-interpreter"
 
@@ -420,6 +430,25 @@ def renew_session(record_id, current_user, messages, amplify_messages=True, all_
     return {"success": True, "session_id": new_session_id}
 
 
+def touch_record(record_id):
+    """Record that the session was just used (resets its idle clock).
+
+    Also re-adds the record to the activity index in case the reaper had removed it
+    after stopping an idle session. Best-effort: a failure here must not fail the chat.
+    """
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
+    try:
+        table.update_item(
+            Key={"id": record_id},
+            UpdateExpression="SET updatedAt = :ts, #a = :v",
+            ExpressionAttributeNames={"#a": ACTIVITY_ATTR},
+            ExpressionAttributeValues={":ts": int(time.time() * 1000), ":v": ACTIVITY_VALUE},
+        )
+    except Exception as e:
+        logger.warning("Could not update last-activity for record %s: %s", record_id, e)
+
+
 def chat_with_code_interpreter(current_user, record_id, messages, request_id, api_accessed, file_keys=None, all_conversation_file_keys=None, file_names=None, all_conversation_file_names=None, account_id=""):
     """Entry point for a chat request. Fetches the session and executes the code.
 
@@ -439,6 +468,7 @@ def chat_with_code_interpreter(current_user, record_id, messages, request_id, ap
         return record_existence
 
     session_id = record_existence["session_id"]
+    touch_record(record_id)
     amplify_messages = not api_accessed
     last_message = extract_last_message(messages, amplify_messages=amplify_messages)
 
@@ -1044,6 +1074,7 @@ def create_new_session(user_id, file_keys, account_id="", request_id="", file_na
         "assistant": "AgentCoreCodeInterpreter",
         "createdAt": timestamp,
         "updatedAt": timestamp,
+        ACTIVITY_ATTR: ACTIVITY_VALUE,
         "data": {"sessionId": session_info["data"]["sessionId"]},
     })
     logger.info("Created code interpreter record %s for user %s", record_id, user_id)
@@ -1065,6 +1096,99 @@ def create_new_session(user_id, file_keys, account_id="", request_id="", file_na
     }
 
 
+def stop_agentcore_session(session_id):
+    """Stop an AgentCore session. Returns False only when the stop failed unexpectedly;
+    a session that is already stopped or gone counts as success."""
+    if not session_id:
+        return True
+    try:
+        agentcore_client.stop_code_interpreter_session(
+            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+            sessionId=session_id,
+        )
+        logger.info("Stopped AgentCore session: %s", session_id)
+    except ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        if error_code in ("ConflictException", "ResourceNotFoundException"):
+            logger.info("Session %s already stopped or gone (%s)", session_id, error_code)
+        else:
+            logger.warning("Could not stop AgentCore session %s: %s", session_id, e)
+            return False
+    except Exception as e:
+        logger.warning("Could not stop AgentCore session %s: %s", session_id, e)
+        return False
+    return True
+
+
+def reap_idle_sessions(now_ms=None, idle_seconds=IDLE_TIMEOUT_SECONDS):
+    """Stop AgentCore sessions whose record has had no chat message for idle_seconds.
+
+    Runs on a schedule. The record is kept (with its sessionId), so the next message
+    takes the normal session_expired -> renew_session path: files are reloaded into a
+    fresh session; only in-memory Python state is lost.
+
+    Each record is first "claimed" by removing it from the activity index with a
+    condition on the updatedAt we saw. A message that lands mid-sweep changes updatedAt,
+    the claim fails, and that session is left alone. If the stop then fails unexpectedly,
+    the record is put back in the index so the next run retries.
+    """
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    cutoff = now_ms - idle_seconds * 1000
+    names = {"#a": ACTIVITY_ATTR}
+    stats = {"stopped": 0, "skipped": 0, "failed": 0}
+
+    query = {
+        "IndexName": ACTIVITY_INDEX,
+        "KeyConditionExpression": "#a = :v AND updatedAt < :cutoff",
+        "ExpressionAttributeNames": names,
+        "ExpressionAttributeValues": {":v": ACTIVITY_VALUE, ":cutoff": cutoff},
+    }
+    while True:
+        page = table.query(**query)
+        for item in page.get("Items", []):
+            record_id = item["id"]
+            seen = item["updatedAt"]
+            try:
+                table.update_item(
+                    Key={"id": record_id},
+                    UpdateExpression="REMOVE #a",
+                    ConditionExpression="updatedAt = :seen",
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues={":seen": seen},
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                    stats["skipped"] += 1  # used again since we queried
+                else:
+                    logger.error("Could not claim record %s: %s", record_id, e)
+                    stats["failed"] += 1
+                continue
+
+            if stop_agentcore_session(get(item, "data", "sessionId")):
+                stats["stopped"] += 1
+                continue
+            stats["failed"] += 1
+            try:  # back into the index so the next run retries
+                table.update_item(
+                    Key={"id": record_id},
+                    UpdateExpression="SET #a = :v",
+                    ConditionExpression="updatedAt = :seen",
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues={":v": ACTIVITY_VALUE, ":seen": seen},
+                )
+            except ClientError as e:
+                logger.warning("Could not re-queue record %s for retry: %s", record_id, e)
+
+        if "LastEvaluatedKey" not in page:
+            break
+        query["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+    logger.info("Idle code interpreter session sweep (idle > %ss): %s", idle_seconds, stats)
+    return stats
+
+
 def delete_record_by_id(record_id, user_id):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE"])
@@ -1083,22 +1207,7 @@ def delete_record_by_id(record_id, user_id):
         return {"success": False, "message": "Not authorized to delete this code interpreter session"}
 
     # Stop the AgentCore session
-    session_id = get(item, "data", "sessionId")
-    if session_id:
-        try:
-            agentcore_client.stop_code_interpreter_session(
-                codeInterpreterIdentifier=CODE_INTERPRETER_ID,
-                sessionId=session_id,
-            )
-            logger.info("Stopped AgentCore session: %s", session_id)
-        except ClientError as e:
-            error_code = e.response["Error"]["Code"]
-            if error_code in ("ConflictException", "ResourceNotFoundException"):
-                logger.info("Session %s already stopped or gone (%s)", session_id, error_code)
-            else:
-                logger.warning("Could not stop AgentCore session %s: %s", session_id, e)
-        except Exception as e:
-            logger.warning("Could not stop AgentCore session %s: %s", session_id, e)
+    stop_agentcore_session(get(item, "data", "sessionId"))
 
     try:
         table.delete_item(Key={"id": record_id})

@@ -4,6 +4,7 @@
 
 import hashlib
 import os
+import time
 import mimetypes
 import boto3
 import json
@@ -31,20 +32,25 @@ logger = getLogger("rag")
 #     sys.path.insert(0, parent_dir)
 
 
+from pycommon.rag.contracts import NOVA_EMBEDDING_MODEL_ID
+from pycommon.rag import timing
 from rag.handlers.commaseparatedvalues import CSVHandler
 from rag.handlers.excel import ExcelHandler
-from rag.handlers.pdf import PDFHandler
+from rag.handlers.pdf import PDFHandler, PAGE_IMAGE_TAG
 from rag.handlers.powerpoint import PPTXHandler
 from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
 from rag.handlers.markdown import MarkDownHandler
 from rag.handlers.markitdown_extractor import MarkItDownExtractor
+from rag import xlsx_markdown
 from rag.util import (
     get_text_content_location,
     get_text_metadata_location,
     get_text_hash_content_location,
 )
 from rag.handlers.shared_functions import is_likely_text
+from rag.page_artifacts import build_page_artifact, build_page_manifest, page_artifact_key
+from rag import csv_markdown, textract_cost, textract_pipeline, limits, pdf_tables, office_ocr, table_chunks, migration as migration_rules
 from rag.rag_secrets import get_rag_secrets_for_document, delete_rag_secrets_for_document
 
 s3 = boto3.client("s3")
@@ -181,7 +187,8 @@ def get_file_extension(file_name, mime_type):
 
 
 def preprocess_visual_content(file_content, key):
-    """Extract visuals, replace with markers, return modified content + mapping"""
+    """Deprecated legacy visual extraction; page embeddings use Nova images."""
+    logger.warning("Legacy visual extraction is deprecated for RAG ingestion: %s", key)
     if key.endswith(".pdf"):
         return PDFHandler().preprocess_pdf_visuals(file_content)
     elif key.endswith(".docx"):
@@ -195,34 +202,291 @@ def preprocess_visual_content(file_content, key):
         return file_content, {}
 
 
+def render_pdf_page_images(file_extension, file_content, bucket, text_content_key):
+    """Render PDF page images for global2 Nova page vectors; never fatal.
+
+    Returns {page_number: {"image_location": "s3://...", ...}}. Anything that
+    goes wrong (corrupt/encrypted PDF, S3 error, disabled by env) yields {} so
+    the document still ingests with text-only vectors.
+    """
+    if file_extension != ".pdf" or os.environ.get("GLOBAL2_PAGE_IMAGES_ENABLED", "true").lower() != "true":
+        return {}
+    try:
+        prefix = page_artifact_key(text_content_key, 1).rsplit("/", 1)[0]
+        rendered = PDFHandler().render_full_page_images(
+            file_content,
+            bucket=bucket,
+            key_prefix=prefix,
+            max_pages=int(os.environ.get("GLOBAL2_MAX_PAGE_IMAGES", "200")),
+            time_budget_seconds=int(os.environ.get("GLOBAL2_PAGE_IMAGE_TIME_BUDGET_SECONDS", "20")),
+        )
+        logger.info("Rendered %d page images under s3://%s/%s", len(rendered), bucket, prefix)
+        return {item["page_number"]: item for item in rendered}
+    except Exception as render_error:
+        logger.warning("Page image rendering failed for %s; continuing text-only: %s", text_content_key, render_error)
+        return {}
+
+
+def render_office_picture_images(file_extension, file_content, bucket, text_content_key):
+    """PowerPoint: one picture sheet per slide that has real pictures, stored like a rendered PDF page.
+
+    A slide cannot be drawn without a converter, so Nova embeds the slide's own pictures instead (large ones only,
+    repeated backgrounds and logos left out). Returns {slide_number: {"image_location": "s3://..."}}; anything that
+    goes wrong yields {} and the deck keeps its text-only vectors.
+    """
+    if file_extension != ".pptx" or os.environ.get("GLOBAL2_PAGE_IMAGES_ENABLED", "true").lower() != "true":
+        return {}
+    try:
+        sheets = office_ocr.slide_picture_sheets(
+            file_content,
+            max_slides=int(os.environ.get("GLOBAL2_MAX_PAGE_IMAGES", "200")),
+            time_budget_seconds=float(os.environ.get("GLOBAL2_PAGE_IMAGE_TIME_BUDGET_SECONDS", "20")),
+        )
+        prefix = page_artifact_key(text_content_key, 1).rsplit("/", 1)[0]
+        rendered = {}
+        for slide_number, png in sheets.items():
+            image_key = f"{prefix}/{slide_number}.png"
+            s3.put_object(Bucket=bucket, Key=image_key, Body=png, ContentType="image/png", Tagging=PAGE_IMAGE_TAG)
+            rendered[slide_number] = {"page_number": slide_number, "image_location": f"s3://{bucket}/{image_key}"}
+        logger.info("Stored %d slide picture sheets under s3://%s/%s", len(rendered), bucket, prefix)
+        return rendered
+    except Exception as render_error:
+        logger.warning("Slide picture sheets failed for %s; continuing text-only: %s", text_content_key, render_error)
+        return {}
+
+
+def build_global2_page_manifest(text_parts, text_content_key, dochash, file_extension, file_content, bucket):
+    """Group extracted parts by page and build the global2 page manifest.
+
+    Returns None when the document has no page locations or isn't global2.
+    Renders PDF page images (or PowerPoint slide picture sheets) as a side effect (non-fatal).
+    """
+    if not str(text_content_key).startswith("global2/"):
+        return None
+    page_parts = {}
+    for part in text_parts:
+        page_number = (part.get("location") or {}).get("page_number")
+        if not page_number:
+            continue
+        page_parts.setdefault(int(page_number), []).append(part)
+    if not page_parts:
+        return None
+
+    rendered_images = (render_pdf_page_images(file_extension, file_content, bucket, text_content_key)
+                       or render_office_picture_images(file_extension, file_content, bucket, text_content_key))
+    manifest_pages = []
+    for page_number, parts_for_page in sorted(page_parts.items()):
+        page_text = "\n".join(part.get("content", "") for part in parts_for_page if part.get("content"))
+        if not page_text:
+            continue
+        manifest_pages.append(build_page_artifact(
+            text_content_key,
+            page_number,
+            text=page_text,
+            image_location=rendered_images.get(page_number, {}).get("image_location", ""),
+            extraction_method="existing-extractor",
+            locations=[part.get("location", {}) for part in parts_for_page],
+        ))
+    if not manifest_pages:
+        return None
+    return build_page_manifest(
+        text_content_key,
+        dochash,
+        extraction_mode="existing-extractor",
+        pages=manifest_pages,
+        model_id=NOVA_EMBEDDING_MODEL_ID,
+        embedding_dimension=int(os.environ.get("GLOBAL2_EMBEDDING_DIM", "1024")),
+        embedding_purpose=os.environ.get("GLOBAL2_EMBEDDING_PURPOSE", "GENERIC_INDEX"),
+    )
+
+
+def global2_manifest_key(text_content_key):
+    return f"{text_content_key.removesuffix('.content.json')}.manifest.json"
+
+
+def persist_global2_page_manifest(text_parts, text_content_key, dochash, file_extension, file_content, bucket):
+    """Build and store the page manifest next to the extracted text; never raises."""
+    try:
+        manifest = build_global2_page_manifest(
+            text_parts, text_content_key, dochash, file_extension, file_content, bucket
+        )
+        if manifest is None:
+            return None
+        manifest_key = global2_manifest_key(text_content_key)
+        s3.put_object(Bucket=bucket, Key=manifest_key, Body=manifest.to_json(), ContentType="application/json")
+        logger.info("Persisted global2 page manifest to %s/%s (%d pages)", bucket, manifest_key, manifest.page_count)
+        return manifest
+    except Exception as manifest_error:
+        logger.warning("Skipping global2 page manifest for %s: %s", text_content_key, manifest_error)
+        return None
+
+
+def reject_document(files_table, s3_client, bucket, key, reason):
+    """Record why a document was refused and drop the raw object we will never process.
+
+    Over-limit uploads are a policy outcome, not a system failure, so this logs a
+    warning (no critical-error alert). The frontend sees no metadata file, gives up
+    after its wait, and cleans up the file record itself.
+    """
+    logger.warning("Rejecting %s: %s", key, reason)
+    try:
+        files_table.update_item(
+            Key={"id": key},
+            UpdateExpression="SET ingestStatus = :status, ingestError = :error",
+            ExpressionAttributeValues={":status": "rejected", ":error": reason},
+        )
+    except Exception as error:
+        logger.warning("Could not record rejection for %s: %s", key, error)
+    try:
+        s3_client.delete_object(Bucket=bucket, Key=key)
+    except Exception as error:
+        logger.warning("Could not delete rejected object %s: %s", key, error)
+
+
+def refuse_document(files_table, s3_client, bucket, key, reason, migration_target=None, creator=None):
+    """Refuse a document. A migration replay only records the refusal against its
+    global2 twin; it must never delete the user's file or mark their record."""
+    if not migration_target:
+        reject_document(files_table, s3_client, bucket, key, reason)
+        return
+    logger.warning("Migration replay of %s refused: %s", key, reason)
+    try:
+        table = boto3.resource("dynamodb").Table(os.environ["EMBEDDING_PROGRESS_TABLE"])
+        table.put_item(Item=migration_rules.failure_item(migration_target, reason, creator, datetime.now().isoformat()))
+    except Exception as error:
+        logger.error("Could not record migration refusal for %s: %s", migration_target, error)
+
+
+def ocr_office_pictures(markdown, key, file_content, prefetch=None, account_data=None):
+    """Word / PowerPoint / Excel: text inside large pictures is read with Textract and slotted in where the
+    picture was (see rag/office_ocr.py). Never fatal: on any problem the plain markdown is returned."""
+    lowered = str(key).lower()
+    extension = next((e for e in (".docx", ".pptx", ".xlsx") if lowered.endswith(e)), None)
+    if extension is None or not office_ocr.enabled():
+        return markdown
+    try:
+        enriched, report = office_ocr.enrich_markdown(
+            markdown, extension, file_content, office_ocr.textract_detect_lines(boto3.client("textract")), prefetch)
+    except Exception as error:
+        logger.warning("Picture OCR skipped for %s: %s", key, error)
+        return markdown
+    for line in (office_ocr.describe(report) if report else []):
+        logger.info("[OCR-DECISION] %s", line)
+    if report and report.billed_pages:
+        textract_cost.record_pages(account_data, textract_cost.DETECT, report.billed_pages, f"office-{key}", key)
+    return enriched
+
+
+def can_reuse_processed_document(hash_item, force_reprocess, rag_enabled, embedding_done):
+    """True when the stored text of an earlier upload of the same content can be used as it is.
+
+    A RAG-on upload also needs its embeddings finished (``embedding_done`` is only called then). A RAG-off upload never
+    creates embeddings, so waiting for them would send an identical file through extraction and OCR again every time.
+    """
+    if not hash_item or force_reprocess or not hash_item.get("textLocationKey") or not hash_item.get("textLocationBucket"):
+        return False
+    return True if not rag_enabled else bool(embedding_done())
+
+
+def reusable_stored_parts(hash_item, text_content_key, force_reprocess, rag_enabled, load=None):
+    """The page parts already stored for this exact content when a RAG-off upload is being switched to RAG,
+    else None. Extraction (and Textract) already ran for it; only chunking and embedding are still to do.
+
+    Only for global2 text, and never when ``force_reprocess`` is set (the caller passes False for a forced reprocess that
+    is only retrying unfinished chunks; any other forced reprocess exists to redo the extraction).
+    """
+    if not hash_item or force_reprocess or not rag_enabled or not str(text_content_key).startswith("global2/"):
+        return None
+    if hash_item.get("textLocationKey") != text_content_key or not hash_item.get("textLocationBucket"):
+        return None
+    try:
+        stored = json.loads((load or get_file_from_s3)(hash_item["textLocationBucket"], text_content_key))
+        parts = stored.get("content")
+        if not parts or not all(isinstance(p, dict) and p.get("content") and isinstance(p.get("location"), dict) for p in parts):
+            return None
+        return parts
+    except Exception as error:
+        logger.info("Stored text for %s could not be reused (%s); extracting again", text_content_key, error)
+        return None
+
+
 # Extract text from file and return an array of chunks
-async def extract_text_from_file(key, file_content, current_user=None, account_data=None):
-    # only need to process visuals if account_data is provided since it contains chat-js required data
-    processed_content, visual_map = preprocess_visual_content(file_content, key) if account_data else (file_content, {})
+async def extract_text_from_file(key, file_content, current_user=None, account_data=None, page_aware=False):
+    # Legacy embedded-image extraction and vision-chat transcription are no
+    # longer part of RAG ingestion. Global2 page preparation owns image inputs
+    # for Nova; normal text extraction remains independent and lightweight.
+    processed_content, visual_map = file_content, {}
 
-    # Process visuals asynchronously if any exist
-    if current_user and visual_map:
-        logger.info("Processing %d visuals for %s", len(visual_map), key)
+    # Global2 PDFs need page numbers: they key the page manifest, the rendered
+    # page images, and per-page provenance on every chunk. MarkItDown flattens a
+    # PDF into markdown and drops them, so use the page-aware handler first and
+    # keep MarkItDown as the fallback (e.g. when the PDF has no text layer).
+    if (
+        page_aware
+        and str(key).lower().endswith(".pdf")
+        and os.environ.get("GLOBAL2_PAGE_AWARE_PDF", "true").lower() == "true"
+    ):
         try:
-            # ! Import here to avoid circular imports
-            from rag.handlers.visual_to_text import batch_process_visuals
+            handler = PDFHandler()
+            # Tables are replaced by placeholders before extraction and restored as markdown tables after
+            # (see rag/pdf_tables.py). Any problem there falls back to plain extraction of the original PDF.
+            prepared_content, table_map = handler.preprocess_pdf_tables(file_content)
+            # Reading order comes from MarkItDown's layout analysis (what the original pipeline used), split per
+            # page; if that is unavailable the page reader is used, top-to-bottom on pages that hold a table.
+            page_parts = handler.extract_text_layout(prepared_content) or handler.extract_text(
+                prepared_content, visual_map,
+                position_ordered_pages={entry["page_number"] for entry in table_map.values()} or None)
+            if table_map and page_parts:
+                page_parts, table_report = handler.restore_tables(page_parts, table_map)
+                logger.info("PDF tables for %s: %s", key, table_report)
+            if page_parts:
+                logger.info("Page-aware PDF extraction produced %d pages for %s", len(page_parts), key)
+                return page_parts
+            logger.info("Page-aware PDF extraction found no text for %s; falling back to MarkItDown", key)
+        except Exception as e:
+            logger.warning("Page-aware PDF extraction failed for %s, falling back: %s", key, str(e))
 
-            visual_map = await batch_process_visuals(visual_map, current_user, account_data)
-            logger.info("Visual processing completed: %d successful transcriptions", len(visual_map))
-        except ImportError as e:
-            logger.warning("Visual processing not available (circular import): %s", e)
-            logger.info("Continuing without visual processing...")
+    if page_aware and str(key).lower().endswith(csv_markdown.SUPPORTED_EXTENSIONS):
+        # CSV: a table whose pieces each start with the column names (the plain reader leaves every chunk after the
+        # first without them). Not routed through MarkDownHandler, which would flatten the table back to bare rows.
+        csv_parts = csv_markdown.parts(file_content, MarkDownHandler().num_tokens_from_string)
+        if csv_parts:
+            logger.info("CSV table extraction produced %d pieces for %s", len(csv_parts), key)
+            return csv_parts
 
     try:
         # First we will try with markitdown extractor,
         # if that fails then we will proceed as before
-        markitdown_extractor = MarkItDownExtractor()
-        markitdown_result = markitdown_extractor.extract_from_content(processed_content, key)
+        prefetch = None
+        if page_aware and str(key).lower().endswith(".pptx") and office_ocr.enabled():
+            # global2 only: start reading the deck's pictures now, while the text is converted (both need only the file)
+            prefetch = office_ocr.start_prefetch(".pptx", file_content, office_ocr.textract_detect_lines(boto3.client("textract")))
+        markitdown_result = None
+        if page_aware and str(key).lower().endswith(xlsx_markdown.SUPPORTED_EXTENSIONS):
+            markitdown_result = xlsx_markdown.convert(file_content)      # straight from the workbook: far faster and lighter
+        if not markitdown_result:
+            markitdown_extractor = MarkItDownExtractor()
+            markitdown_result = markitdown_extractor.extract_from_content(processed_content, key)
         if markitdown_result:
+            if page_aware:      # global2 only: the legacy namespace keeps its original behaviour
+                markitdown_result = ocr_office_pictures(markitdown_result, key, file_content, prefetch, account_data)
             logger.debug("MarkItDown extraction: %s", markitdown_result)
             md_bytes = markitdown_result.encode('utf-8')
             logger.info("MarkItDown extraction successful for %s", key)
-            return MarkDownHandler().extract_text(md_bytes, key, visual_map)
+            parts = None
+            if page_aware and str(key).lower().endswith(xlsx_markdown.SUPPORTED_EXTENSIONS):
+                # Excel: tables stay tables, cut into pieces that each start with the column names
+                parts = xlsx_markdown.parts_from_markdown(markitdown_result, MarkDownHandler().num_tokens_from_string)
+            if not parts:
+                parts = MarkDownHandler().extract_text(md_bytes, key, visual_map)
+            if page_aware and str(key).lower().endswith(".pptx"):
+                # A slide is the page of a deck: page_number keys the page manifest, the picture sheet that Nova
+                # embeds and the page id of every vector. slide_number stays for readers that want it.
+                for part in parts:
+                    location = part.get("location")
+                    if isinstance(location, dict) and location.get("slide_number") is not None:
+                        location.setdefault("page_number", location["slide_number"])
+            return parts
 
     except Exception as e:
         logger.warning("Unable to extract text from %s using markitdown extractor: %s", key, str(e))
@@ -254,9 +518,17 @@ async def extract_text_from_file(key, file_content, current_user=None, account_d
 
 def split_text(sent_tokenize, content):
     if content.get("canSplit"):
-        text = re.sub(r"\s+", " ", content["content"].strip())
-        # Sentences will not need whitespace normalization.
-        sentences = sent_tokenize(text)
+
+        # Prose is whitespace-normalized and cut into sentences. A markdown table is kept as rows: it is cut
+        # into pieces that each repeat the header (see rag/table_chunks.py), one piece per "sentence".
+        sentences = []
+        for kind, block in table_chunks.split_blocks(content["content"]):
+            if kind == "table":
+                sentences.extend(table_chunks.table_pieces(block))
+            else:
+                text = re.sub(r"\s+", " ", block.strip())
+                if text:
+                    sentences.extend(sent_tokenize(text))
 
         return [
             {**content, "content": sentence, "index": index}
@@ -266,8 +538,10 @@ def split_text(sent_tokenize, content):
         return [content]
 
 
-def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_reprocess=False, chunks_needing_reprocessing=None):
-    # Check if this chunk actually needs processing (applies to reprocessing AND retries after failures)
+def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_reprocess=False, chunks_needing_reprocessing=None, rag_enabled=True):
+    # Check if this chunk actually needs processing (applies to reprocessing AND retries after failures).
+    # `force_reprocess` does not mean "process every child": the status table
+    # still determines which existing chunks/pages are incomplete.
     if chunks_needing_reprocessing is not None:
         if len(chunks_needing_reprocessing) > 0:
             # Specific chunks need processing - check if this is one of them
@@ -298,7 +572,8 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_
     if force_reprocess:
         metadata["force_reprocess"] = "true"
         logger.debug("Adding force_reprocess metadata: true")
-    
+    metadata["rag_enabled"] = "true" if rag_enabled else "false"
+
     s3.put_object(
         Bucket=chunks_bucket,
         Key=chunks_key,
@@ -311,7 +586,7 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_
 
 
 
-def chunk_content(key, text_content, split_params, object_key=None, force_reprocess=False):
+def chunk_content(key, text_content, split_params, object_key=None, force_reprocess=False, rag_enabled=True):
     # Initialize NLTK data for tokenization
     _ensure_nltk_data()
     # Normalize whitespace once at the start.
@@ -330,6 +605,9 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
     except Exception as e:
         logger.error("[CHUNK_REPROCESS_CHECK] Error getting chunk status for %s: %s - FALLING BACK TO PROCESS ALL CHUNKS", key, e)
         chunks_needing_reprocessing = None  # Explicit fallback to process all
+
+    if chunks_needing_reprocessing:
+        reopen_failed_parent(key)       # before the first chunk file is saved: each save queues a message right away
 
     chunks = []
     current_chunk = []
@@ -398,7 +676,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
                 # Check if we need to save this batch
                 if len(chunks) == split_increment:
                     split_count += 1
-                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing, rag_enabled)
                     chunks = []
             
             # Split massive sentence at word boundaries (NO DATA LOSS)
@@ -423,7 +701,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
                     # Check batch save
                     if len(chunks) == split_increment:
                         split_count += 1
-                        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing, rag_enabled)
                         chunks = []
                     
                     current_split = word
@@ -445,7 +723,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
                 # Check batch save
                 if len(chunks) == split_increment:
                     split_count += 1
-                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                    save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing, rag_enabled)
                     chunks = []
             
             logger.info("HARD_CHUNK_LIMIT: Split massive sentence into %d chunks, all sharing index %d", split_count_for_sentence, index)
@@ -476,9 +754,11 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
                 }
             )
 
-            # Reset for the next chunk
-            locations = []
-            indexes = []
+            # Reset for the next chunk. The sentence that starts it must keep its own location and index,
+            # otherwise a chunk made of one long sentence or table piece has no page number at all.
+            locations = [location]
+            indexes = [index]
+            index += 1
             char_index += (
                 len(chunk_text) + 1
             )  # Include the space that joins with the next chunk.
@@ -489,7 +769,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
             if len(chunks) == split_increment:
                 split_count += 1
-                save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+                save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing, rag_enabled)
                 chunks = []
 
         else:
@@ -558,7 +838,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
 
     if chunks:  # If there are unfinished chunks, save them
         split_count += 1
-        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing)
+        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess, chunks_needing_reprocessing, rag_enabled)
 
     logger.debug("In Chunk Content Function")
     logger.debug(
@@ -568,7 +848,7 @@ def chunk_content(key, text_content, split_params, object_key=None, force_reproc
     return split_count
 
 
-def chunk_s3_file_content(bucket, key, object_key=None, force_reprocess=False):
+def chunk_s3_file_content(bucket, key, object_key=None, force_reprocess=False, rag_enabled=True):
     try:
         # Download the file from S3
         logger.info("Fetching text from %s/%s", bucket, key)
@@ -579,8 +859,10 @@ def chunk_s3_file_content(bucket, key, object_key=None, force_reprocess=False):
         file_content = json.loads(data)
         logger.debug("Loaded json from %s/%s", bucket, key)
 
-        # Extract text from the file in S3
-        chunks = chunk_content(key, file_content, {}, object_key, force_reprocess)
+        # Global2 keeps the existing chunk-file/SQS contract while preserving
+        # page metadata on each local chunk. The selective status lookup is
+        # shared, so failed children are the only files re-uploaded.
+        chunks = chunk_content(key, file_content, {}, object_key, force_reprocess, rag_enabled=rag_enabled)
         logger.info("Chunk S3 File Content Function: Chunked content for %s into %s chunks", key, chunks)
 
         return chunks
@@ -764,10 +1046,17 @@ def process_document_for_rag(event, context):
 
             # Check if this is a force reprocessing request
             force_reprocess = s3_record.get("force_reprocess", False)
+            stopwatch = timing.Stopwatch()   # per-stage timings, reported as [TIMING] lines
+
+            # Migration replay: rebuild a legacy document in global2 only. Live
+            # pointers, permissions and the shared content row are left alone
+            # until an explicit cutover (see rag/migration_runner.py).
+            migration_target = migration_rules.replay_target(s3_record)
 
             # Get the bucket and object key from the event
             logger.info("Getting text from %s", s3_info['object']['key'])
-            bucket = s3_info["bucket"]["name"]
+            # A message that names no bucket is about a file in the RAG input bucket (see start_rag_from_file in embedding)
+            bucket = (s3_info.get("bucket") or {}).get("name") or os.environ["S3_RAG_INPUT_BUCKET_NAME"]
             key = s3_info["object"]["key"]
             key = urllib.parse.unquote(key)
 
@@ -775,25 +1064,36 @@ def process_document_for_rag(event, context):
 
             user = None
             account_data = None
+            object_size = None
+            rag_enabled = False  # until the S3 metadata says otherwise
             try:
                 response = s3.head_object(Bucket=bucket, Key=key)
+                object_size = response.get("ContentLength")
                 logger.debug("Response Metadata: %s", response['Metadata'])
-                rag_enabled = (
-                    True
-                    if force_reprocess
-                    else response["Metadata"].get("rag_enabled", "false") == "true"
-                )
+                # Force reprocessing is used for failed/incomplete embeddings.
+                # It must bypass the successful-content skip below, while the
+                # source's RAG opt-in still controls whether work is queued.
+                rag_enabled = response["Metadata"].get("rag_enabled", "false") == "true"
                
                 logger.info("Retrieve rag details from parameter store")
                 rag_details = get_rag_secrets_for_document(key)
                 if rag_details['success']:
                     account_data = rag_details['data']
+                    if migration_target:        # costs of a rebuild are also added to that document's migration row
+                        account_data = {**account_data, "cost_doc": migration_target}
                     user = account_data['user']
                 else:
                     logger.error("Failed to retrieve RAG details from parameter store")
 
             except Exception as e:
                 logger.error("Error fetching metadata for %s: %s", key, str(e))
+
+            if migration_target:
+                rag_enabled = True      # only embedded documents are migrated
+            if s3_record.get("rag_enabled") is True:
+                # A file uploaded with RAG off is switched to RAG for this run (a library file attached to an assistant):
+                # the stored text is reused, the page manifest and images are built, then chunking and embedding follow.
+                rag_enabled = True
 
             response = files_table.get_item(Key={"id": key})
 
@@ -829,26 +1129,51 @@ def process_document_for_rag(event, context):
                         "Using file extension of %s based on mime type priority (if present and guessable)", file_extension
                     )
 
+                    # Reject by size before downloading anything (see rag/limits.py).
+                    rejection = limits.check_size(file_extension, object_size)
+                    if rejection:
+                        refuse_document(files_table, s3, bucket, key, rejection, migration_target, user)
+                        continue
+
                     # Extract text from the file in S3
-                    file_content = get_file_from_s3(bucket, key)
+                    file_content = stopwatch.call("download", get_file_from_s3, bucket, key)
+
+                    # Page-count / spreadsheet-cell checks: cheap, need the bytes, not a full extraction.
+                    rejection = limits.check_before_extraction(file_extension, file_content, rag_enabled)
+                    if rejection:
+                        refuse_document(files_table, s3, bucket, key, rejection, migration_target, user)
+                        continue
+
                     dochash = hashlib.sha256(file_content).hexdigest()
 
                     dochash_resposne = hash_files_table.get_item(Key={"id": dochash})
 
                     # Create a pointer from the user's key to the actual
                     # location of the document by hash
+                    # New uploads use the global2 text namespace. Legacy
+                    # global/ artifacts remain readable for migration/retrieval.
                     [file_text_content_bucket_name, text_content_key] = (
-                        get_text_hash_content_location(bucket, dochash)
+                        get_text_hash_content_location(bucket, dochash, "global2")
                     )
 
-                    user_key_to_hash_entry = {
-                        "id": key,
-                        "hash": dochash,
-                        "textLocationBucket": file_text_content_bucket_name,
-                        "textLocationKey": text_content_key,
-                        "createdAt": creation_time,
-                    }
-                    hash_files_table.put_item(Item=user_key_to_hash_entry)
+                    if migration_target and text_content_key != migration_target:
+                        # The twin must be built from the exact same bytes as the legacy copy.
+                        refuse_document(
+                            files_table, s3, bucket, key,
+                            f"file hash does not match the legacy document ({text_content_key} != {migration_target})",
+                            migration_target, user,
+                        )
+                        continue
+
+                    if not migration_target:
+                        user_key_to_hash_entry = {
+                            "id": key,
+                            "hash": dochash,
+                            "textLocationBucket": file_text_content_bucket_name,
+                            "textLocationKey": text_content_key,
+                            "createdAt": creation_time,
+                        }
+                        hash_files_table.put_item(Item=user_key_to_hash_entry)
 
                     if not user:
                         user = key.split("/")[0]
@@ -872,24 +1197,42 @@ def process_document_for_rag(event, context):
                             "Also granting assistant %s access to global hash key %s", astp_id, text_content_key
                         )
 
-                    update_object_permissions(user, permissions_update)
+                    if not migration_target:      # a migration replay gets its access at cutover
+                        # A document embedded under global/ before keeps whoever could read it (shared users,
+                        # groups, assistants) when its global2 copy is built by a re-upload or a reprocess.
+                        migration_rules.copy_access(
+                            dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]),
+                            migration_rules.legacy_key_for(text_content_key), text_content_key,
+                        )
+                        update_object_permissions(user, permissions_update)
 
                     text = None
-                    # Check if already processed AND not a force reprocess request AND embedding was successful
-                    if dochash_resposne.get("Item") is not None and not force_reprocess and is_embedding_successful(key):
-                        logger.info("✅ Document %s already processed and embedding completed successfully - skipping", key)
-                        text_bucket = dochash_resposne.get("Item").get(
-                            "textLocationBucket"
-                        )
+                    # Already processed, not a force reprocess, and either embedding finished or this upload does not use
+                    # embeddings at all (RAG off): the stored text is reused instead of extracting (and OCR-ing) it again.
+                    existing_text = None
+                    if can_reuse_processed_document(dochash_resposne.get("Item"), force_reprocess, rag_enabled, lambda: is_embedding_successful(key)):
+                        text_bucket = dochash_resposne.get("Item").get("textLocationBucket")
                         text_key = dochash_resposne.get("Item").get("textLocationKey")
                         logger.info("Getting existing text from %s/%s", text_bucket, text_key)
-                        text = json.loads(get_file_from_s3(text_bucket, text_key))
+                        try:
+                            existing_text = json.loads(get_file_from_s3(text_bucket, text_key))
+                        except Exception as error:
+                            logger.warning("Stored text %s/%s could not be read (%s); processing %s again", text_bucket, text_key, error, key)
+                    if existing_text is not None:
+                        logger.info("✅ Document %s already processed (RAG %s) - skipping", key, "on, embedding completed" if rag_enabled else "off, text already stored")
+                        text = existing_text
                         logger.info("Got existing text from %s/%s", text_bucket, text_key)
                         total_tokens = text.get("totalTokens", 0)
                         total_items = text.get("totalItems", 0)
                         location_properties = text.get("locationProperties", [])
                         tags = text.get("tags", [])
                         props = text.get("props", [])
+                        if not migration_target:      # this upload's own record still needs its size, as after a fresh extraction
+                            files_table.update_item(
+                                Key={"id": key},
+                                UpdateExpression="SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal",
+                                ExpressionAttributeValues={":tokenVal": total_tokens, ":itemVal": total_items, ":hashVal": dochash},
+                            )
                     else:
                         # Process document if: not processed before, OR force reprocess, OR embedding incomplete/failed
                         if force_reprocess:
@@ -898,13 +1241,96 @@ def process_document_for_rag(event, context):
                             logger.info("⚠️ Document %s processed but embedding incomplete/failed - reprocessing", key)
                         else:
                             logger.info("🆕 New document %s - processing", key)
-                        try:
-                            text = asyncio.run(
-                                extract_text_from_file(file_extension, file_content, user, account_data)
+                        # Large, scanned, or image-heavy PDFs are OCR'd by asynchronous
+                        # Textract instead of inside this Lambda. "deferred" means a
+                        # follow-up message was queued (job started, still running, or
+                        # more result pages to read), so this message is done for now.
+                        textract_outcome, textract_payload = textract_pipeline.OUTCOME_NORMAL, ""
+                        # A forced reprocess that is retrying failed or unfinished chunks must chunk the SAME text the
+                        # finished chunks came from (so they can be skipped), and has no reason to read it again.
+                        retrying_chunks = False
+                        if force_reprocess:
+                            try:
+                                retrying_chunks = bool(get_chunks_needing_reprocessing(text_content_key))
+                            except Exception:
+                                retrying_chunks = False
+                        reused_parts = reusable_stored_parts(
+                            dochash_resposne.get("Item"), text_content_key, force_reprocess and not retrying_chunks, rag_enabled)
+                        if reused_parts is not None:
+                            logger.info("Reusing the text already extracted for %s (%d parts): only chunking and embedding remain",
+                                        key, len(reused_parts))
+                        if reused_parts is None and file_extension == ".pdf" and text_content_key.startswith("global2/"):
+                            textract_outcome, textract_payload = stopwatch.call(
+                                "textract_decide_or_poll", textract_pipeline.advance,
+                                message=s3_record,
+                                bucket=bucket,
+                                key=key,
+                                content_hash=dochash,
+                                file_content=file_content,
+                                force_reprocess=force_reprocess,
+                                textract=boto3.client("textract"),
+                                sqs=sqs,
+                                s3=s3,
+                                queue_url=os.environ.get("RAG_PROCESS_DOCUMENT_QUEUE_URL", ""),
+                                text_bucket=file_text_content_bucket_name,
+                                remaining_ms=(lambda: context.get_remaining_time_in_millis()) if context else (lambda: 10**9),
+                                count_tokens=PDFHandler().num_tokens_from_string,
+                                # Textract never sees the tables: it reads a copy with placeholders instead
+                                prepare_input=lambda pages: pdf_tables.prepare_textract_input(
+                                    file_content, dochash, s3, file_text_content_bucket_name, pages=pages),
+                                on_pages_read=lambda api, pages, job_id: textract_cost.record_pages(
+                                    account_data, textract_cost.api_kind(api), pages, job_id, key),
                             )
+                            if textract_outcome in (textract_pipeline.OUTCOME_TOO_BIG, textract_pipeline.OUTCOME_FAILED):
+                                pdf_tables.discard_textract_inputs(s3_record.get("textract"), s3)
+                                refuse_document(files_table, s3, bucket, key, textract_payload, migration_target, user)
+                                continue
+                            if textract_outcome == textract_pipeline.OUTCOME_DEFERRED:
+                                logger.info("Textract in progress for %s; continuing on a later message", key)
+                                continue
+                            if textract_outcome == textract_pipeline.OUTCOME_NORMAL:
+                                logger.info("Using normal extraction for %s: %s", key, textract_payload)
+                                pdf_tables.discard_textract_inputs(s3_record.get("textract"), s3)
+                        try:
+                            # Every page's text layer (with tables slotted in); pages that went through
+                            # Textract then replace theirs, so OCR only ever changes the pages that needed it.
+                            text = reused_parts if reused_parts is not None else stopwatch.call(
+                                "extract", asyncio.run,
+                                extract_text_from_file(
+                                    file_extension, file_content, user, account_data,
+                                    page_aware=text_content_key.startswith("global2/"),
+                                )
+                            )
+                            if textract_outcome == textract_pipeline.OUTCOME_PARTS:
+                                ocr_parts, table_report = pdf_tables.finish_textract_tables(
+                                    textract_payload, s3_record.get("textract") or {}, s3, PDFHandler().num_tokens_from_string)
+                                merge_report = {}
+                                text = textract_pipeline.merge_ocr_pages(
+                                    text or [], ocr_parts, PDFHandler().num_tokens_from_string, merge_report,
+                                    replace_pages=(s3_record.get("textract") or {}).get("replacePages"))
+                                for page_number, outcome in sorted(merge_report.items()):
+                                    logger.info("[OCR-DECISION] page=%s: %s (%d line(s))", page_number, outcome["mode"], outcome["added_lines"])
+                                logger.info("Textract used for %d page(s) of %s; tables on those pages: %s", len(ocr_parts), key, table_report)
                             logger.info("Extracted text from %s", key)
                             total_tokens = sum(d.get("tokens", 0) for d in text)
                             total_items = len(text)
+
+                            # Universal backstop: tokens are what embedding and chat context cost.
+                            rejection = limits.check_tokens(total_tokens, rag_enabled)
+                            if rejection:
+                                refuse_document(files_table, s3, bucket, key, rejection, migration_target, user)
+                                continue
+
+                            # Persist a replayable global2 page manifest (and PDF page
+                            # images) when extraction provides page locations. Optional
+                            # and non-fatal: it never affects the legacy text artifact,
+                            # the RAG-off path, or whether the document ingests.
+                            if rag_enabled:
+                                stopwatch.call(
+                                    "manifest_and_page_images", persist_global2_page_manifest,
+                                    text, text_content_key, dochash, file_extension, file_content,
+                                    file_text_content_bucket_name,
+                                )
                         except Exception as extract_error:
                             # CRITICAL: Text extraction failure = data loss, document unreadable
                             log_critical_error(
@@ -944,7 +1370,8 @@ def process_document_for_rag(event, context):
                             )
                             # Put the text into a file and upload to S3 bucket
                             # use a random uuid for the key
-                            s3.put_object(
+                            stopwatch.call(
+                                "store_text", s3.put_object,
                                 Bucket=file_text_content_bucket_name,
                                 Key=text_content_key,
                                 Body=json.dumps(text),
@@ -953,33 +1380,37 @@ def process_document_for_rag(event, context):
                                 "Uploaded text to %s/%s", file_text_content_bucket_name, text_content_key
                             )
 
-                            hash_file_data = {
-                                "id": dochash,
-                                "originalCreator": user,
-                                "textLocationBucket": file_text_content_bucket_name,
-                                "textLocationKey": text_content_key,
-                                "createdAt": creation_time,
-                            }
-                            hash_files_table.put_item(Item=hash_file_data)
-                            logger.info("Updated hash files entry for %s", dochash)
+                            if not migration_target:
+                                hash_file_data = {
+                                    "id": dochash,
+                                    "originalCreator": user,
+                                    "textLocationBucket": file_text_content_bucket_name,
+                                    "textLocationKey": text_content_key,
+                                    "createdAt": creation_time,
+                                }
+                                hash_files_table.put_item(Item=hash_file_data)
+                                logger.info("Updated hash files entry for %s", dochash)
 
-                            files_table.update_item(
-                                Key={"id": key},
-                                UpdateExpression="SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal",
-                                ExpressionAttributeValues={
-                                    ":tokenVal": total_tokens,
-                                    ":itemVal": total_items,
-                                    ":hashVal": dochash,
-                                },
-                            )
-                            logger.info(
-                                "Uploaded user files entry with token and item count for %s: %d / %d", key, total_tokens, total_items
-                            )
+                                files_table.update_item(
+                                    Key={"id": key},
+                                    UpdateExpression="SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal",
+                                    ExpressionAttributeValues={
+                                        ":tokenVal": total_tokens,
+                                        ":itemVal": total_items,
+                                        ":hashVal": dochash,
+                                    },
+                                )
+                                logger.info(
+                                    "Uploaded user files entry with token and item count for %s: %d / %d", key, total_tokens, total_items
+                                )
 
                             logger.info("RAG enabled: %s", rag_enabled)
 
                             if not rag_enabled:
-                                logger.info( "RAG chunking is disabled, skipping chunk queue...")
+                                # Text is still cached for JS document retrieval,
+                                # but no embedding chunk queue is emitted.
+                                logger.info("RAG embeddings disabled; retained text cache without chunk queue")
+                                stopwatch.emit("process_document", key=key, bytes=len(file_content), parts=total_items, rag=False)
                             else:
                                 chunk_queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
                                 logger.info("Sending message to chunking queue")
@@ -993,11 +1424,13 @@ def process_document_for_rag(event, context):
                                         }
                                     }
                                     message_body = json.dumps(record)
-                                    sqs.send_message(
+                                    stopwatch.call(
+                                        "queue_chunking", sqs.send_message,
                                         QueueUrl=chunk_queue_url,
                                         MessageBody=message_body,
                                     )
                                     logger.info("Message sent to queue: %s", message_body)
+                                    stopwatch.emit("process_document", key=key, bytes=len(file_content), parts=total_items, rag=True)
                                 except Exception as e:
                                     logger.error(
                                         "Error sending message to chunking queue: %s", str(e)
@@ -1098,10 +1531,10 @@ def update_embedding_status(original_creator, object_id, total_chunks, status):
         table = dynamodb.Table(progress_table)
 
         # Check if there's existing progress data (for selective reprocessing)
+        existing_item = None
         try:
             response = table.get_item(Key={"object_id": object_id})
             existing_item = response.get("Item")
-            
             if existing_item and existing_item.get("data", {}).get("childChunks"):
                 # Preserve existing chunk statuses that are completed
                 existing_chunks = existing_item["data"]["childChunks"]
@@ -1136,7 +1569,8 @@ def update_embedding_status(original_creator, object_id, total_chunks, status):
                 "terminated": False,
                 "totalChunks": total_chunks,
                 "data": {
-                    "childChunks": child_chunks
+                    "childChunks": child_chunks,
+                    "namespace": "global2" if str(object_id).startswith("global2/") else "global",
                 },
             }
         )
@@ -1149,8 +1583,11 @@ def update_embedding_status(original_creator, object_id, total_chunks, status):
         logger.error("%s", e)
 
 
-def get_original_creator(key):
+def get_original_creator(key, object_key=None):
+    """Who first uploaded this content: the content row's ``originalCreator``, else the uploader recorded on the user's file
+    record (``createdBy``) for ``object_key``. Older content rows have no ``originalCreator``, which used to show as "unknown"."""
     original_creator = "unknown"
+    dynamodb = None
     try:
         dynamodb = boto3.resource("dynamodb")
         # Get the original creator of the file
@@ -1175,7 +1612,14 @@ def get_original_creator(key):
             "Error getting hash entry for %s to determine original_creator: %s", key, str(e)
         )
 
-    return original_creator
+    if original_creator in (None, "", "unknown") and object_key and dynamodb is not None:
+        try:
+            record = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"]).get_item(Key={"id": object_key}).get("Item") or {}
+            original_creator = record.get("createdBy") or "unknown"
+        except Exception as e:
+            logger.error("Could not read the uploader of %s from the file record: %s", object_key, e)
+
+    return original_creator or "unknown"
 
 
 def get_embedding_progress_by_global_id(global_id):
@@ -1328,6 +1772,29 @@ def get_chunks_needing_reprocessing(global_id):
         return None
 
 
+def reopen_failed_parent(global_id):
+    """Mark a failed document as starting again before its chunks are re-queued.
+
+    Saving a chunk file queues its embedding message immediately, but the document's row is only rewritten after the last
+    chunk is saved. The embedding worker deletes messages of a failed document, so a retry lost every chunk queued in
+    that window and left them "starting" forever. Only a failed row is reopened; completed or terminated ones stay as they are.
+    """
+    try:
+        table = boto3.resource("dynamodb").Table(os.environ["EMBEDDING_PROGRESS_TABLE"])
+        table.update_item(
+            Key={"object_id": global_id},
+            UpdateExpression="SET parentChunkStatus = :starting",
+            ConditionExpression="parentChunkStatus = :failed",
+            ExpressionAttributeValues={":starting": "starting", ":failed": "failed"},
+        )
+        logger.info("[PARENT_REOPEN] %s was failed: set to starting before its chunks are queued again", global_id)
+        return True
+    except Exception as error:
+        if getattr(error, "response", {}).get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+            logger.error("[PARENT_REOPEN] Could not reopen %s: %s", global_id, error)
+        return False
+
+
 def reset_chunk_to_starting_status(global_id, chunk_number):
     """
     Reset a specific chunk to 'starting' status in DynamoDB before reprocessing.
@@ -1428,6 +1895,7 @@ def chunk_document_for_rag(event, context):
 
             # Extract object_key from metadata if present
             object_key = s3_info.get("metadata", {}).get("object_key")
+            rag_enabled = str(s3_info.get("metadata", {}).get("rag_enabled", "true")).lower() == "true"
             logger.info("Object key from metadata: %s", object_key)
 
             # Get the bucket and object key from the event
@@ -1440,10 +1908,14 @@ def chunk_document_for_rag(event, context):
 
             # Figure out who uploaded this file, even though it's a shared
             # global entry
-            original_creator = get_original_creator(key)
+            original_creator = get_original_creator(key, object_key)
 
-            # Use original chunking method - no selective processing for now to avoid complexity
-            chunks_created = chunk_s3_file_content(bucket, key, object_key, force_reprocess)
+            # Chunking always consults shared progress. On force reprocess it
+            # uploads only failed/incomplete child chunk files, preserving
+            # completed work; changed chunk structure invalidates later children.
+            chunk_started = time.perf_counter()
+            chunks_created = chunk_s3_file_content(bucket, key, object_key, force_reprocess, rag_enabled=rag_enabled)
+            timing.emit("chunk_document", time.perf_counter() - chunk_started, key=key, chunk_files=chunks_created)
             
             if chunks_created is None:
                 logger.error("❌ Chunking failed for %s - chunk_s3_file_content returned None", key)

@@ -1,0 +1,10 @@
+{
+  "name": "decompress",
+  "version": "4.2.2-compat.1",
+  "description": "Compat shim: gives serverless 3.x the callable CJS API of decompress 4.x, backed by the patched @xhmikosr/decompress fork (ESM-only)",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "decompress-patched": "npm:@xhmikosr/decompress@^11.1.4"
+  }
+}

@@ -38,6 +38,17 @@ def refresh_integration_token(access_token, integration):
 
 
 def get_user_integrations(access_token):
+    connected, _ = get_user_integrations_with_status(access_token)
+    return connected
+
+
+def get_user_integrations_with_status(access_token):
+    """
+    Returns (connected, disconnected):
+      connected    - list of integration ids the user can use, or None if the lookup failed
+      disconnected - dict of integration id -> reason for integrations whose stored
+                     credentials are no longer usable (e.g. authorization revoked)
+    """
     logger.info("Initiating get user integrations call")
 
     endpoint = os.environ["API_BASE_URL"] + "/integrations/oauth/user/list"
@@ -58,10 +69,12 @@ def get_user_integrations(access_token):
         )  # to adhere to object access return response dict
 
         if response.status_code != 200 or not response_content.get("success", False):
-            return None
-        elif response.status_code == 200 and response_content.get("success", False):
-            return response_content.get("data", None)
+            return None, {}
+        return (
+            response_content.get("data", None),
+            response_content.get("disconnected") or {},
+        )
 
     except Exception as e:
         logger.error("Error getting user integrations: %s", e)
-        return None
+        return None, {}

@@ -26,6 +26,7 @@ from pycommon.dal.providers.aws.resource_perms import (
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from group_grants import revoke_group_grants
 from pycommon.const import NO_RATE_LIMIT
 setup_validated(rules, get_permission_checker)
 
@@ -41,6 +42,34 @@ logger = getLogger("object_access_ast_groups")
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
 groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+
+
+def _call_succeeded(result):
+    """
+    Did a downstream service call work?
+
+    `pycommon.api.assistants.delete_assistant` (and the layered-assistant helper) return a *dict* such as
+    `{"success": False}` on failure. A dict is truthy, so `if not delete_assistant(...)` never fired and every
+    failed delete was treated as done. Always read the flag.
+    """
+    return isinstance(result, dict) and result.get("success") is True
+
+
+def _revoke_member_grants(users, group_id):
+    """
+    Drop the per-user read records members got only because they belonged to `group_id`
+    (see group_grants.py). Returns True when nothing could be left behind.
+    """
+    if not users:
+        return True
+    try:
+        revoke_group_grants(dynamodb.Table(os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]), users, group_id)
+        return True
+    except Exception as e:
+        # The lazy check in can_access_objects still voids these on next use, but chat-time retrieval
+        # reads the table directly, so make a failure visible rather than silent.
+        logger.error("Could not revoke group-derived grants for %s in group %s: %s", users, group_id, e)
+        return False
 
 
 @required_env_vars({
@@ -251,6 +280,7 @@ def update_ast_perms_for_members(members_dict, assistants, access_token):
     "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
     "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
 })
 @validated(op="update")
 def update_members(event, context, current_user, name, data):
@@ -295,6 +325,11 @@ def update_members(event, context, current_user, name, data):
     if not update_res["success"]:
         return update_res
 
+    # A removed member keeps no file access that came only from belonging to this group.
+    revoked_ok = True
+    if update_type == "REMOVE":
+        revoked_ok = _revoke_member_grants(existingMembers, group_id)
+
     # log
     log_item(
         group_id,
@@ -303,7 +338,10 @@ def update_members(event, context, current_user, name, data):
         f"Members updated with {update_type}\nAffected members {members}\nUpdated members list {updated_members}",
     )
 
-    return {"message": "Members updated successfully", "success": True}
+    response = {"message": "Members updated successfully", "success": True}
+    if not revoked_ok:
+        response["warning"] = "Members were removed, but some file access they had through this group could not be revoked yet."
+    return response
 
 
 def update_members_db(group_id, updated_members):
@@ -469,6 +507,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
     current_assistants = item.get("assistants", [])
 
     new_assistants = []
+    failed_removals = []
     if update_type in ["ADD", "UPDATE"]:
         for ast in ast_list:
             # ── Layered assistant path ────────────────────────────────
@@ -571,19 +610,35 @@ def update_assistants(current_user, group_id, update_type, ast_list):
                     "/assistant/layered/delete",
                     {"assistantId": astp},
                 )
-                if not result.get("success"):
+                # An assistant that is already gone counts as removed, so a stale entry in the group's list
+                # can still be cleared instead of failing forever.
+                already_gone = "not found" in str(result.get("message", "")).lower()
+                removed = _call_succeeded(result) or already_gone
+                if not removed:
                     logger.error("failed to delete layered assistant: %s — %s", astp, result.get("message"))
             else:
-                # ── Regular assistant delete path (unchanged) ─────────
+                # ── Regular assistant delete path ─────────────────────
                 # permissions are removed in the delete process
-                if not delete_assistant(
+                removed = _call_succeeded(delete_assistant(
                     access_token,
                     {"assistantId": astp, "removePermsForUsers": []},
-                ):
+                ))
+                if not removed:
                     logger.error("failed to delete assistant: %s", astp)
-            current_assistants = remove_old_ast_versions(current_assistants, astp)
+            if removed:
+                current_assistants = remove_old_ast_versions(current_assistants, astp)
+            else:
+                # Keep it listed: dropping a still-existing assistant from the group would orphan it
+                # and tell the caller it was deleted.
+                failed_removals.append(astp)
 
-        log_item(group_id, "remove assistants", current_user, f"Assistants {ast_list}")
+        log_item(
+            group_id,
+            "remove assistants",
+            current_user,
+            f"Assistants {[a for a in ast_list if a not in failed_removals]}"
+            + (f"; could not remove {failed_removals}" if failed_removals else ""),
+        )
     else:
         return {"message": "Invalid update type", "success": False}
 
@@ -595,6 +650,14 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             ExpressionAttributeValues={":o": current_assistants},
             ReturnValues="UPDATED_NEW",
         )
+        if failed_removals:
+            # The group's list was updated for the ones that did go, but the caller must not be told
+            # the whole request worked: the still-existing assistants stay listed.
+            return {
+                "message": f"Could not delete {len(failed_removals)} assistant(s); they were kept in the group.",
+                "success": False,
+                "failedAssistants": failed_removals,
+            }
         return {
             "message": "Assistants updated successfully",
             "success": True,
@@ -847,6 +910,7 @@ def is_valid_group_id(group_id):
     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
     "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
 })
 @validated(op="delete")
 def delete_group(event, context, current_user, name, data):
@@ -868,14 +932,17 @@ def delete_group(event, context, current_user, name, data):
     assistants = item["assistants"]
     for ast_data in assistants:  # list of assistantIds
         # permissions are removed in the delete process
-        if not delete_assistant(
+        if not _call_succeeded(delete_assistant(
             item["access"],
             {
                 "assistantId": ast_data["assistantId"],
                 "removePermsForUsers": [],  # list(item['members'].keys())
             },
-        ):
+        )):
             logger.error("failed to delete assistant: %s", ast_data)
+
+    # Nobody keeps file access that came only from belonging to this group.
+    _revoke_member_grants(list((item.get("members") or {}).keys()), group_id)
     
     # Delete all files in the group
     file_deletion_result = delete_group_files(group_id, access_token)

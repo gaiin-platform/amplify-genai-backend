@@ -140,7 +140,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 // call the check-completion endpoint to ensure the embeddings are complete if not itll start
                 // doing it here buys us time for any missing embeddings to complete
                 // note: group data sources are always embedded and prechecked elsewhere
-                if (!isBedrockKb) {
+                // only global2 documents are ever started: a legacy global/ document is never (re)embedded
+                if (!isBedrockKb && key.startsWith("global2/")) {
                     checkEmbeddingCompletion(token, [key], params.requestId);
                 }
             }

@@ -10,6 +10,7 @@ import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBa
 import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { addModelSystemPrompt } from "../common/systemPrompts.js";
 
 const logger = getLogger("openai");
 
@@ -109,10 +110,11 @@ const isCompletionsEndpoint = (url) => {
     return url.includes("/completions");
 }
 
-export const chat = async (endpointProvider, chatBody, writable) => {
+export const chat = async (endpointProvider, chatBody, writable, abortSignal = chatBody.abortSignal) => {
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
+    delete body.abortSignal;
     const model = options.model;
     const modelId = (model && model.id) || "gpt-4-1106-Preview";
 
@@ -138,7 +140,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     // Removed debug logging for performance
 
     // Clean messages - remove fields that OpenAI doesn't accept
-    const cleanMessages = body.messages.map(msg => ({
+    const providerMessages = options.isOrdinaryChatRequest === true
+        ? body.messages
+        : addModelSystemPrompt(body.messages, model.systemPrompt);
+    const cleanMessages = providerMessages.map(msg => ({
         role: msg.role,
         content: msg.content,
         ...(msg.name && { name: msg.name }),
@@ -159,15 +164,22 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data.max_tokens = model.outputTokenLimit
     }
 
-    // append additional system prompt
-    if (model.systemPrompt) {
-        data.messages[0].content += `\n${model.systemPrompt}`
-    }
-
     if (!model.supportsSystemPrompts) {
-        data.messages = data.messages.map(m => { 
-            return (m.role === 'system') ? {...m, role: 'user'} : m}
-        );
+        const systemText = data.messages.filter(m => m.role === 'system').map(m => typeof m.content === 'string' ? m.content : '').filter(Boolean).join('\n\n');
+        const conversationMessages = data.messages.filter(m => m.role !== 'system');
+        const firstUserIndex = conversationMessages.findIndex(m => m.role === 'user');
+        if (systemText && firstUserIndex >= 0) {
+            const firstUser = conversationMessages[firstUserIndex];
+            conversationMessages[firstUserIndex] = {
+                ...firstUser,
+                content: typeof firstUser.content === 'string'
+                    ? `${systemText}\n\n${firstUser.content}`
+                    : [{ type: 'text', text: systemText }, ...firstUser.content]
+            };
+        } else if (systemText) {
+            conversationMessages.unshift({ role: 'user', content: systemText });
+        }
+        data.messages = conversationMessages;
     }
 
     if (tools) data.tools = tools;
@@ -178,6 +190,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (data.hasOwnProperty('dataSources')) delete data.dataSources;
     if (data.hasOwnProperty('mcpClientSide')) delete data.mcpClientSide;
     if (data.hasOwnProperty('webSearchEnabled')) delete data.webSearchEnabled;
+    if (data.hasOwnProperty('abortSignal')) delete data.abortSignal;
     
     const config = await endpointProvider(modelId, model.provider);
 
@@ -278,7 +291,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         // For OpenAI provider only: add native web_search_preview tool when search intent detected
         // Azure provider uses custom web_search function tool from toolLoop instead (controlled by webSearchEnabled)
         // Note: web_search_preview works directly with Responses API - no need to convert to chat/completions
-        if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
+        if (isOpenAiEndpoint && options.deploymentFeatures?.webSearch !== false && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
     }
@@ -325,7 +338,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 headers: headers,
                 method: 'post',
                 url: url,
-                responseType: 'stream'
+                responseType: 'stream',
+                ...(abortSignal ? { signal: abortSignal } : {})
             })
                 .then(response => {
 
@@ -402,8 +416,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 .catch(async (e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
 
+                    // Never retry a canceled request; retries are only for provider failures.
+                    if (abortSignal?.aborted) {
+                        reject(abortSignal.reason || e);
+                        return;
+                    }
                     // If we have tools and haven't already retried, try again without tools
-                    if (!retryWithoutTools && data.tools && data.tools.length > 0) {
+                    if (!retryWithoutTools && data.tools && data.tools.length > 0 && !abortSignal?.aborted) {
                         // Request failed with tools, retrying without tools
                         streamAxiosResponseToWritable(url, writableStream, statusTimer, true)
                             .then(resolve)

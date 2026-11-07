@@ -18,7 +18,7 @@ rm -rf python/joblib* || true
 echo "Downloading pycommon source code..."
 # Clone to a local temporary directory instead of inside Docker
 rm -rf ./tmp_pycommon
-git clone --depth 1 --branch v0.1.1 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
+git clone --depth 1 --branch v0.1.2 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
 
 # Create pycommon package structure in python directory
 echo "Extracting minimal pycommon modules..."
@@ -27,6 +27,7 @@ mkdir -p python/pycommon/llm
 mkdir -p python/pycommon/metrics
 mkdir -p python/pycommon/dal
 mkdir -p python/pycommon/tools
+mkdir -p python/pycommon/rag
 
 # Copy all API modules
 if [ -d "./tmp_pycommon/pycommon/api" ]; then
@@ -76,6 +77,14 @@ if [ -d "./tmp_pycommon/pycommon/tools" ]; then
     # Ensure __init__.py exists
     touch python/pycommon/tools/__init__.py
     echo "Tools modules copied (needed by api/tools_ops.py)"
+fi
+
+if [ -d "./tmp_pycommon/pycommon/rag" ]; then
+    echo "Copying RAG modules..."
+    # Shared RAG building blocks (contracts, timing) used by rag/core.py
+    cp -r ./tmp_pycommon/pycommon/rag/* python/pycommon/rag/ 2>/dev/null || echo "rag folder not found"
+    touch python/pycommon/rag/__init__.py
+    echo "RAG modules copied (needed by rag/core.py)"
 fi
 
 # Copy encoders.py as a single file
@@ -136,6 +145,7 @@ from . import decorators
 from . import exceptions
 from . import lzw
 from . import tools
+from . import rag
 
 __all__ = [
     "api",
@@ -149,6 +159,7 @@ __all__ = [
     "exceptions",
     "lzw",
     "tools",
+    "rag",
 ]
 EOF
 

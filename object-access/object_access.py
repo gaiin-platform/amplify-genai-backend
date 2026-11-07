@@ -13,6 +13,7 @@ from pycommon.authz import validated, setup_validated
 from pycommon.api.amplify_users import are_valid_amplify_users
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from group_grants import grant_is_valid, grant_read_via_group_membership
 
 setup_validated(rules, get_permission_checker)
 
@@ -38,6 +39,10 @@ def is_sufficient_privilege(object_id, permission_level, policy, requested_acces
         return False
 
 
+def _groups_table():
+    return dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
+
+
 def add_access_response(access_responses, object_id, access_type, response):
     logger.debug("Add access response")
     if object_id not in access_responses:
@@ -47,7 +52,8 @@ def add_access_response(access_responses, object_id, access_type, response):
 
 
 @required_env_vars({
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("simulate_access_to_objects")
 def simulate_access_to_objects(event, context, current_user, name, data):
@@ -73,6 +79,10 @@ def simulate_access_to_objects(event, context, current_user, name, data):
                     Key={"object_id": object_id, "principal_id": current_user}
                 )
                 item = query_response.get("Item")
+
+                # Agree with can_access_objects: a group-derived record whose user left the group is void.
+                if item and not grant_is_valid(table, _groups_table(), item, current_user):
+                    item = None
 
                 if not item:
                     logger.warning(
@@ -108,7 +118,8 @@ def simulate_access_to_objects(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("can_access_objects")
 def can_access_objects(event, context, current_user, name, data):
@@ -133,6 +144,15 @@ def can_access_objects(event, context, current_user, name, data):
                 Key={"object_id": object_id, "principal_id": current_user}
             )
             item = query_response.get("Item")
+
+            # A record that exists only because of group membership stops counting (and is deleted)
+            # once the user has left that group.
+            if item and not grant_is_valid(table, _groups_table(), item, current_user):
+                item = None
+
+            if not item:
+                # Group members may read group-owned files (e.g. copying a group assistant).
+                item = grant_read_via_group_membership(table, _groups_table(), object_id, access_type, current_user)
 
             if not item:
                 # EARLY RETURN: Return what we checked so far + this denied one

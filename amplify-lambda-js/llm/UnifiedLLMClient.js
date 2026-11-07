@@ -24,7 +24,7 @@ import { chat as geminiChat } from '../gemini/gemini.js';
 import { openAiTransform, openaiUsageTransform } from '../common/chat/events/openai.js';
 import { bedrockConverseTransform, bedrockTokenUsageTransform } from '../common/chat/events/bedrock.js';
 import { geminiTransform, geminiUsageTransform } from '../common/chat/events/gemini.js';
-import { ARTIFACTS_PROMPT } from "../common/conversations.js";
+import { getFeaturePrompt, addModelSystemPrompt, addAssistantFeaturePrompts, composeOrdinaryChatMessages, normalizeSystemMessagesForProvider } from "../common/systemPrompts.js";
 
 // Import secrets management
 import { getLLMConfig } from '../common/secrets.js';
@@ -34,6 +34,8 @@ import { handleContextOverflow, detectContextOverflow, buildMessagesWithHistoric
 
 // Import cache for proactive overflow prevention
 import { CacheManager } from '../common/cache.js';
+import { parseJsonWithRepair } from './jsonRepair.js';
+import { buildBedrockOutputConfig } from './bedrockStructuredOutput.js';
 
 const logger = getLogger('UnifiedLLMClient');
 
@@ -268,6 +270,8 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
  */
 export async function callUnifiedLLM(params, messages, responseStream = null, options = {}) {
     const requestId = params.requestId || `unified-${uuidv4()}`;
+    const abortSignal = params.signal || options.signal;
+    if (abortSignal?.aborted) throw abortSignal.reason || Object.assign(new Error('LLM call aborted'), { name: 'AbortError' });
     // 💰 BILLING-CRITICAL: a single user request can trigger MANY LLM calls (e.g. each
     // tool-loop iteration calls callUnifiedLLM again with the SAME parent requestId).
     // `llmCallId` uniquely identifies THIS one LLM call so that usage tracking, billing,
@@ -415,6 +419,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         requestId,
         llmCallId,
         cancelled: false,
+        abortController: new AbortController(),
         startTime: Date.now(),
         responseStream,
         statusTimer: null,
@@ -437,6 +442,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         }
     };
     activeRequests.set(requestId, requestState);
+    const abortFromSignal = () => requestState.abortController.abort(abortSignal?.reason);
+    if (abortSignal?.aborted) abortFromSignal();
+    else abortSignal?.addEventListener('abort', abortFromSignal, { once: true });
 
     try {
         // Starting UnifiedLLM call
@@ -464,19 +472,53 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             smartMessagesFiltered,  // Internal: cache safety flag
             conversationId,         // Internal: cache key
             disableReasoning,       // Internal: controls extended thinking (Bedrock only)
+            signal: _providerSignal,
             ...providerOptions
         } = options;
 
+        const deploymentConfig = params.options?.deploymentPromptSettings;
+        const isOrdinaryChatCall = params.options?.isOrdinaryChatRequest === true && options._isInternalCall !== true;
+        const toolNames = (options.tools || []).map(tool => tool.function?.name || tool.name);
+        const activeFeatures = {
+            webSearch: (options.webSearchEnabled === true || toolNames.includes('web_search')) && deploymentConfig?.availability?.webSearch !== false,
+            artifacts: params.options?.options?.artifacts === true && deploymentConfig?.availability?.artifacts !== false,
+            codeInterpreter: toolNames.includes('execute_code') && deploymentConfig?.availability?.codeInterpreter !== false
+        };
+        // Ordinary chat composes the model prompt alongside deployment/request prompts.
+        // Internal and specialized calls still need the historical model-level prompt,
+        // but should not inherit ordinary-chat instructions or duplicate that prompt.
+        const composedMessages = isOrdinaryChatCall
+            ? composeOrdinaryChatMessages(finalMessages, {
+                promptSettings: deploymentConfig,
+                modelSystemPrompt: model.systemPrompt,
+                requestPrompt: params.options?.prompt,
+                activeFeatures,
+                includeAmplifyHelper: params.options?.amplifyHelper === true
+            })
+            : (params.options?.assistantFeaturePrompts === true && options._isInternalCall !== true)
+                // Selected assistant: keep its instructions, add web search / artifacts guidance only.
+                ? addAssistantFeaturePrompts(addModelSystemPrompt(finalMessages, model.systemPrompt), deploymentConfig,
+                    { webSearch: activeFeatures.webSearch, artifacts: activeFeatures.artifacts })
+                : addModelSystemPrompt(finalMessages, model.systemPrompt);
+        const callOptions = {
+            ...params.options,
+            isOrdinaryChatRequest: isOrdinaryChatCall,
+            options: { ...(params.options?.options || {}) }
+        };
+        let canonicalMessages = normalizeSystemMessagesForProvider(composedMessages, model.supportsSystemPrompts !== false);
+
         const chatBody = {
-            messages: finalMessages,
+            ...(requestState.abortController.signal ? { abortSignal: requestState.abortController.signal } : {}),
+            messages: canonicalMessages,
             model: model.id || model,
             stream: !!responseStream,
             max_tokens: providerOptions.max_tokens || 2000,
             temperature: providerOptions.temperature || 1.0,
             ...providerOptions,
             options: {
-                ...params.options,
+                ...callOptions,
                 model,
+                abortSignal: requestState.abortController.signal,
                 requestId,
                 user: params?.account?.user || params.user || "unknown",
                 disableReasoning: disableReasoning ?? params.options?.disableReasoning
@@ -492,9 +534,15 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             chatBody.videoSources = options.videoSources;
         }
 
-        // Handle tools/functions
+        // Handle tools/functions, enforcing deployment policy before provider dispatch.
         if (options.tools) {
-            chatBody.tools = options.tools;
+            chatBody.tools = options.tools.filter(tool => {
+                const name = tool.function?.name || tool.name;
+                if (name === 'web_search' && deploymentConfig?.availability?.webSearch === false) return false;
+                if (name === 'execute_code' && deploymentConfig?.availability?.codeInterpreter === false) return false;
+                return true;
+            });
+            if (chatBody.tools.length === 0) delete chatBody.tools;
         }
         if (options.tool_choice) {
             chatBody.tool_choice = options.tool_choice;
@@ -506,23 +554,15 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             chatBody.function_call = options.function_call;
         }
 
-        // Handle artifact instructions - add as system message at the front
-        if (params.options?.options?.artifacts) {
-            // Insert system message at the beginning (after any existing system messages)
-            const firstNonSystemIndex = chatBody.messages.findIndex(m => m.role !== 'system');
-            const insertIndex = firstNonSystemIndex === -1 ? chatBody.messages.length : firstNonSystemIndex;
-
-            chatBody.messages = [
-                ...chatBody.messages.slice(0, insertIndex),
-                {
-                    role: 'system',
-                    content: ARTIFACTS_PROMPT
-                },
-                ...chatBody.messages.slice(insertIndex)
-            ];
-
-            logger.info("✅ [Artifacts] Instructions added as system message");
+        if (isOrdinaryChatCall && activeFeatures.artifacts && !canonicalMessages.some(message => message.role === 'system' && message.content === getFeaturePrompt(deploymentConfig, 'artifacts'))) {
+            canonicalMessages = composeOrdinaryChatMessages(canonicalMessages, {
+                promptSettings: deploymentConfig,
+                modelSystemPrompt: '',
+                activeFeatures: { artifacts: true },
+                includeBase: false
+            });
         }
+        chatBody.messages = canonicalMessages;
 
         let result;
 
@@ -550,10 +590,10 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             // Call provider with appropriate arguments
             if (providerConfig.needsEndpointProvider) {
                 // OpenAI needs getLLMConfig as first argument
-                result = await providerConfig.chatFn(getLLMConfig, chatBody, interceptor);
+                result = await providerConfig.chatFn(getLLMConfig, chatBody, interceptor, requestState.abortController.signal);
             } else {
                 // Bedrock and Gemini just need chatBody and stream
-                result = await providerConfig.chatFn(chatBody, interceptor);
+                result = await providerConfig.chatFn(chatBody, interceptor, requestState.abortController.signal);
             }
 
             // Clear keep-alive interval
@@ -667,9 +707,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
 
             // Call provider
             if (providerConfig.needsEndpointProvider) {
-                result = await providerConfig.chatFn(getLLMConfig, chatBody, bufferStream);
+                result = await providerConfig.chatFn(getLLMConfig, chatBody, bufferStream, requestState.abortController.signal);
             } else {
-                result = await providerConfig.chatFn(chatBody, bufferStream);
+                result = await providerConfig.chatFn(chatBody, bufferStream, requestState.abortController.signal);
             }
 
             // Use the extracted content and tool_calls
@@ -688,6 +728,20 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         const inputWriteCachedTokens = requestState.totalUsage?.inputWriteCachedTokens || 0;
 
         if (promptTokens > 0 || completionTokens > 0 || inputCachedTokens > 0 || inputWriteCachedTokens > 0) {
+            // One structured line per LLM call so prompt-cache hit rates can be measured from logs.
+            // For Bedrock, promptTokens EXCLUDES cached tokens (hit rate = read / (prompt + read + write)).
+            logger.info(`[CACHE-USAGE] ${JSON.stringify({
+                requestId,
+                llmCallId,
+                modelId: model?.id,
+                provider: model?.provider,
+                promptTokens,
+                cacheRead: inputCachedTokens,
+                cacheWrite: inputWriteCachedTokens,
+                completionTokens,
+                hasTools: !!(options.tools && options.tools.length > 0),
+                isInternalCall: options._isInternalCall === true,
+            })}`);
             // recordUsage logs its own "📊 [ACCOUNTING] recordUsage invoked" + cost line, so no
             // duplicate billing log is needed here.
             await recordUsage(
@@ -826,6 +880,7 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         throw error;
     } finally {
         // Cleanup
+        abortSignal?.removeEventListener('abort', abortFromSignal);
         if (requestState.statusTimer) {
             clearTimeout(requestState.statusTimer);
         }
@@ -860,48 +915,14 @@ function addAdditionalPropertiesFalse(schema) {
 }
 
 /**
- * Deterministically repair the common STRUCTURAL JSON defects that Azure gpt-4.1-mini
- * occasionally emits even under a strict json_schema. These are punctuation defects, not
- * semantic ones, so they can be fixed without changing meaning:
- *   - double / empty commas:  [0,1,,3]  (model dropped an integer)  -> [0,1,3]
- *   - trailing commas:        [0,1,]                                -> [0,1]
- *   - leading commas:         [,0,1]                                -> [0,1]
- * Only meaningful to call after a real JSON.parse failure.
- */
-function repairMalformedJson(text) {
-    return text
-        .replace(/,(\s*,)+/g, ',')       // collapse ANY run of commas: [0,1,,,5] -> [0,1,5]
-        .replace(/,\s*([\]}])/g, '$1')   // strip trailing commas:      [0,1,]    -> [0,1]
-        .replace(/([\[{])\s*,/g, '$1');  // strip leading commas:       [,0,1]    -> [0,1]
-}
-
-/**
- * Parse JSON, attempting a single deterministic repair pass if the first parse fails.
- * This lets us salvage Azure's malformed structured output WITHOUT paying for a full LLM
- * retry. It never corrupts valid JSON because the repair only runs after a parse failure,
- * and if the repair doesn't change the string we rethrow the original error.
- *
- * @returns {{parsed: any, repaired: boolean}}
- * @throws  the original parse error if neither the raw nor repaired text is valid JSON
- */
-function parseJsonWithRepair(text) {
-    try {
-        return { parsed: JSON.parse(text), repaired: false };
-    } catch (firstErr) {
-        const repaired = repairMalformedJson(text);
-        if (repaired === text) throw firstErr; // nothing to fix — genuinely broken
-        return { parsed: JSON.parse(repaired), repaired: true };
-    }
-}
-
-/**
  * Prompt for structured data using function calling or JSON schema
  */
 export async function promptUnifiedLLMForData(
     params,
     messages,
     outputFormat,
-    _responseStream = null // Currently unused, kept for API compatibility
+    _responseStream = null, // Currently unused, kept for API compatibility
+    { signal } = {}
 ) {
     const model = params.options?.model || params.model;
 
@@ -933,6 +954,7 @@ RULES:
     // "respond in markdown" instructions fighting against our JSON requirement
     const dataParams = {
         ...params,
+        signal,
         options: {
             ...(params.options || {}),
             prompt: 'You are a data extraction assistant. Respond only with valid JSON.'
@@ -944,25 +966,12 @@ RULES:
     let structuredOutputOptions = {};
 
     if (provider === 'Bedrock') {
-        // Only Claude models support outputConfig on Bedrock.
-        // Nova, Titan, Llama, Mistral, and other non-Claude models will error if outputConfig is sent.
-        // Claude 4+ models also require additionalProperties: false on all object schemas.
-        const modelId = (model?.id || '').toLowerCase();
-        const isClaudeModel = modelId.includes('claude');
-        if (isClaudeModel) {
-            const schemaWithAdditionalProps = addAdditionalPropertiesFalse(outputFormat);
-            structuredOutputOptions.outputConfig = {
-                textFormat: {
-                    type: "json_schema",
-                    structure: {
-                        jsonSchema: {
-                            schema: JSON.stringify(schemaWithAdditionalProps)
-                        }
-                    }
-                }
-            };
-        }
-        // else: fall through to JSON-in-prompt only (no outputConfig)
+        // Native structured output (outputConfig) is only sent to model families verified to
+        // accept it - Claude and OpenAI GPT-5.6 (which additionally needs a schema `name`).
+        // Nova, Titan, Llama, Mistral, etc. error if outputConfig is sent, so they fall through
+        // to JSON-in-prompt only. Claude 4+ / GPT-5.6 require additionalProperties: false.
+        const outputConfig = buildBedrockOutputConfig(model?.id, addAdditionalPropertiesFalse(outputFormat));
+        if (outputConfig) structuredOutputOptions.outputConfig = outputConfig;
     } else if (provider === 'Azure' || provider === 'OpenAI' || provider === 'Gemini') {
         structuredOutputOptions.response_format = {
             type: "json_schema",
@@ -982,7 +991,7 @@ RULES:
     if (Object.keys(structuredOutputOptions).length > 0) {
         try {
             usedStructuredOutput = true;
-            result = await callUnifiedLLM(dataParams, finalMessages, null, structuredOutputOptions);
+            result = await callUnifiedLLM(dataParams, finalMessages, null, { ...structuredOutputOptions, signal });
 
             // Check if response is actually JSON (some models ignore structured output config)
             const content = result.content || '';
@@ -1002,33 +1011,60 @@ RULES:
                 logger.warn(`Structured output returned non-JSON for ${provider}, retrying without structured output flag. Preview: ${content.substring(0, 100)}...`);
                 usedStructuredOutput = false;
                 retried = true;
-                result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+                result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
             }
         } catch (structuredError) {
+            if (signal?.aborted || ['AbortError', 'CanceledError'].includes(structuredError?.name)) throw structuredError;
             logger.warn(`Structured output call failed for ${provider}, retrying without structured output flag:`, structuredError.message);
             usedStructuredOutput = false;
             retried = true;
             // Fallback: retry without structured output
-            result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+            result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
         }
     } else {
         // No structured output support, call directly
-        result = await callUnifiedLLM(dataParams, finalMessages, null, {});
+        result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
     }
 
     // Parse JSON response (with the same deterministic repair pass used during validation,
     // so a malformed-but-recoverable structured output is salvaged rather than thrown away).
-    const content = result.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const candidate = jsonMatch ? jsonMatch[0] : content;
+    const extractCandidate = (res) => {
+        const text = res?.content || '';
+        const match = text.match(/\{[\s\S]*\}/);
+        return match ? match[0] : text;
+    };
+    let candidate = extractCandidate(result);
 
     try {
-        const { parsed, repaired } = parseJsonWithRepair(candidate);
+        let parseResult;
+        try {
+            parseResult = parseJsonWithRepair(candidate);
+        } catch (firstParseError) {
+            // Models without native structured output (e.g. Bedrock gpt-5.6-*) occasionally emit
+            // JSON that even the repair pass can't fix. These calls are small and cheap, and the
+            // defect is non-deterministic, so one more attempt usually succeeds — far better than
+            // silently degrading (e.g. RAG returning zero sources). Skip if the caller aborted.
+            if (signal?.aborted) throw firstParseError;
+            logger.warn(`Unparseable JSON from ${provider || 'unknown'} model ${model?.id}; retrying once. Preview: ${candidate.substring(0, 120)}`);
+            retried = true;
+            try {
+                result = await callUnifiedLLM(dataParams, finalMessages, null, { signal });
+            } catch (retryCallError) {
+                if (signal?.aborted || ['AbortError', 'CanceledError'].includes(retryCallError?.name)) throw retryCallError;
+                logger.warn(`Parse-failure retry call failed (${retryCallError?.message}); falling back to the original parse error.`);
+                throw firstParseError;
+            }
+            candidate = extractCandidate(result);
+            parseResult = parseJsonWithRepair(candidate);
+        }
+        const { parsed, repaired } = parseResult;
         if (repaired) {
             logger.warn(`Salvaged malformed structured-output JSON after deterministic repair. Original preview: ${candidate.substring(0, 120)}`);
         }
         return parsed;
     } catch (parseError) {
+        // Never mask a cancellation as a parse failure.
+        if (signal?.aborted || ['AbortError', 'CanceledError'].includes(parseError?.name)) throw parseError;
         // Last-resort: the response has irreparable structural corruption (e.g. Azure gpt-4.1-mini
         // merging adjacent integers like "46,4750" instead of "46,47,50"). Standard JSON.parse
         // and our punctuation-repair pass both fail. However, we can still extract a best-effort
@@ -1084,8 +1120,15 @@ export function cancelRequest(requestId) {
     const state = activeRequests.get(requestId);
     if (state) {
         state.cancelled = true;
+        if (!state.abortController.signal.aborted) state.abortController.abort(Object.assign(new Error('Request cancelled'), { name: 'AbortError' }));
         if (state.statusTimer) {
             clearTimeout(state.statusTimer);
+        }
+        // Stop keepalive immediately so Lambda stops writing to the stream
+        // and the invocation can be GC'd rather than running to 900s.
+        if (state.keepAliveInterval) {
+            clearInterval(state.keepAliveInterval);
+            state.keepAliveInterval = null;
         }
         if (state.responseStream && !state.responseStream.writableEnded) {
             sendErrorMessage(state.responseStream, 'Request cancelled');

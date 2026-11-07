@@ -8,7 +8,7 @@ from pycommon.api.api_key import deactivate_key
 from pycommon.api.user_data import load_user_data, delete_user_data
 from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
 from delegation.api_keys import create_agent_event_api_key
-from scheduled_tasks_events.scheduled_tasks import send_tasks_to_queue
+from scheduled_tasks_events.scheduled_tasks import send_tasks_to_queue, decompress_log_if_needed
 from pycommon.logger import getLogger
 logger = getLogger("scheduled_task_registry")
 
@@ -520,15 +520,7 @@ def delete_scheduled_task(current_user, task_id, access_token):
                                 archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
                                 
                                 # Decompress data for storage in consolidation bucket
-                                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
-                                    # Already decompressed data
-                                    log_data = compressed_data
-                                else:
-                                    # Decompress LZW data
-                                    if is_lzw_compressed_format(compressed_data):
-                                        log_data = lzw_uncompress(compressed_data)
-                                    else:
-                                        log_data = compressed_data
+                                log_data = decompress_log_if_needed(compressed_data)
                                 
                                 # Store in consolidation bucket
                                 s3.put_object(
@@ -821,6 +813,9 @@ def get_task_execution_details(current_user, task_id, execution_id, access_token
                                 Key=archive_key
                             )
                             archived_details = json.loads(s3_response["Body"].read().decode("utf-8"))
+                            # Archives written before the archive-time fix hold the still-compressed
+                            # integer array; decompress so every client gets the same payload shape.
+                            archived_details = decompress_log_if_needed(archived_details)
                             execution_record["details"] = archived_details
                             execution_record["source"] = "archived"  # Indicate this came from archive
                             details_found = True

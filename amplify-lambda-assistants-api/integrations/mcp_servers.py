@@ -672,6 +672,9 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
     Internal helper function to test MCP connection by URL.
     Can be called directly without going through decorator validation.
     custom_headers: optional dict of HTTP headers to include (e.g. Authorization).
+
+    A server that issues an `Mcp-Session-Id` at `initialize` (streamable-HTTP, stateful servers)
+    requires it on every later request, so it is forwarded to the notification and `tools/list`.
     """
     import requests
 
@@ -778,6 +781,12 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
 
         server_info = init_result.get("result", {}).get("serverInfo", {})
 
+        # Stateful servers hand out a session id here and reject later calls that omit it.
+        follow_headers = dict(_base_headers)
+        session_id = (response.headers.get("Mcp-Session-Id") or "").strip()
+        if session_id and len(session_id) <= 1024 and "\r" not in session_id and "\n" not in session_id:
+            follow_headers["Mcp-Session-Id"] = session_id
+
         # Send initialized notification
         requests.post(
             server_url,
@@ -786,7 +795,7 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
                 "method": "notifications/initialized",
                 "params": {}
             },
-            headers=_base_headers,
+            headers=follow_headers,
             timeout=MCP_NOTIFICATION_TIMEOUT,
             allow_redirects=False,
         )
@@ -802,7 +811,7 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
         tools_response = requests.post(
             server_url,
             json=tools_request,
-            headers=_base_headers,
+            headers=follow_headers,
             timeout=MCP_CONNECTION_TIMEOUT,
             allow_redirects=False,
         )
@@ -831,6 +840,9 @@ def _test_mcp_connection_by_url(server_url, custom_headers=None):
     except requests.exceptions.Timeout:
         return {"success": False, "error": "Connection timed out"}
     except requests.exceptions.ConnectionError as e:
+        # `requests` reports a body read that exceeds the timeout as a ConnectionError, not a Timeout.
+        if "timed out" in str(e).lower():
+            return {"success": False, "error": "Connection timed out"}
         return {"success": False, "error": f"Connection failed: Could not connect to server"}
     except (requests.exceptions.JSONDecodeError, json.JSONDecodeError, ValueError) as e:
         logger.error(f"Invalid MCP response: {str(e)}")

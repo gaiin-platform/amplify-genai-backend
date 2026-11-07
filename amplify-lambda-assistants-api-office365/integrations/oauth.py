@@ -7,7 +7,7 @@ from .integrationsList import integrations_list
 from pycommon.api.secrets import get_secret_parameter
 from pycommon.api.auth_admin import verify_user_as_admin
 from auth.oauth_encryption import decrypt_oauth_data
-from auth.oauth import refresh_integration_token, get_user_integrations
+from auth.oauth import refresh_integration_token, get_user_integrations_with_status
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -30,6 +30,30 @@ class MissingCredentialsError(Exception):
     pass
 
 
+# Marker included in reconnect errors so callers (e.g. the agent loop) can recognize
+# a permanent auth failure and stop retrying / mark scheduled tasks as failed.
+RECONNECT_REQUIRED_MARKER = "INTEGRATION_RECONNECT_REQUIRED"
+
+
+class IntegrationDisconnectedError(MissingCredentialsError):
+    """The user's stored authorization for an integration is expired/revoked/unusable.
+
+    Subclasses MissingCredentialsError so it is reported as a user-credential problem
+    (no critical-error alert) rather than a server fault.
+    """
+
+    def __init__(self, integration, reason=None):
+        self.integration = integration
+        self.reason = reason
+        super().__init__(
+            f"[{RECONNECT_REQUIRED_MARKER}] The user's authorization for {integration} "
+            f"has expired or was revoked"
+            + (f" ({reason})" if reason else "")
+            + ". Retrying will not help. The user must reconnect this integration in "
+            "Amplify (Settings > Integrations) before this action can work."
+        )
+
+
 def get_user_credentials(
     current_user, integration, access_token, retry_num=0, available_integrations=None
 ):
@@ -44,8 +68,18 @@ def get_user_credentials(
         raise ValueError("OAUTH_USER_TABLE environment variable is not set")
 
     if not available_integrations:
-        available_integrations = get_user_integrations(access_token)
-        if not available_integrations:
+        available_integrations, disconnected = get_user_integrations_with_status(
+            access_token
+        )
+        if integration in disconnected:
+            logger.warning(
+                "Integration %s is disconnected for user %s: %s",
+                integration, current_user, disconnected[integration],
+            )
+            raise IntegrationDisconnectedError(integration, disconnected[integration])
+        if available_integrations is None or (
+            not available_integrations and not disconnected
+        ):
             logger.error("Failed to retrieve supported integrations for user %s", current_user)
             raise Exception(
                 f"Failed to retrieve supported integrations for user {current_user}"

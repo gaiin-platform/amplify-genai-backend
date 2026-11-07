@@ -2,7 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { getLogger } from "../common/logging.js";
 import { logCriticalError } from "../common/criticalLogger.js";
@@ -919,6 +919,35 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  * @param dataSources
  * @returns {Promise<Awaited<unknown>[]>}
  */
+// Remember when a document was last used, so unused chat attachments can expire (see rag/retention.py in the Python
+// backend). The time is `lastAccessedAt` on the document's content row in the hash-files table (id = sha256 of the file),
+// the same field the retrieval service stamps, whichever key the document was reached by: the user's upload or the
+// shared content key an assistant holds. Best effort: it moves forward at most once a day, and a failure - including the
+// normal "already recent" conditional check - never affects the chat.
+const ACCESS_PRECISION_MS = 24 * 60 * 60 * 1000;
+const recentlyStamped = new Map();      // content hash -> when this container last tried
+const contentHashOf = (id) => /^(?:s3:\/\/)?global2?\/([0-9a-f]{64})\.content\.json$/.exec(id || "")?.[1];
+const touchLastAccessed = (id) => {
+    try {
+        const hash = contentHashOf(id);
+        const now = Date.now();
+        if (!hash || now - (recentlyStamped.get(hash) ?? 0) < ACCESS_PRECISION_MS) return;
+        recentlyStamped.set(hash, now);
+        dynamodbClient.send(new UpdateItemCommand({
+            TableName: hashFilesTableName,
+            Key: { id: { S: hash } },
+            UpdateExpression: "SET lastAccessedAt = :now",
+            ConditionExpression: "attribute_exists(id) AND (attribute_not_exists(lastAccessedAt) OR lastAccessedAt < :cutoff)",
+            ExpressionAttributeValues: {
+                ":now": { S: new Date(now).toISOString() },
+                ":cutoff": { S: new Date(now - ACCESS_PRECISION_MS).toISOString() },
+            },
+        })).catch(() => {});
+    } catch (e) {
+        // never let bookkeeping break a request
+    }
+};
+
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
     const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
     if (toResolve.length === 0) return [];
@@ -942,6 +971,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
             const cacheKey = ds.metadata?.ragOnly ? `${key}:ragOnly` : key;
             const cached = hashDataSourcesCache.get(cacheKey);
             if (cached) {
+                touchLastAccessed(cached.id);
                 return cached;
             }
 
@@ -963,9 +993,11 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                     metadata: { ...ds.metadata, userDataSourceId: ds.id },
                     id: "s3://" + item.textLocationKey
                 };
+                touchLastAccessed(result.id);
                 hashDataSourcesCache.set(cacheKey, result);
                 return result;
             } else {
+                touchLastAccessed(key);      // already a content key (an assistant's document)
                 hashDataSourcesCache.set(cacheKey, ds);
                 return ds; // No item found with the given ID
             }
