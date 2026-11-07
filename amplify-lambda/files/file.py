@@ -284,7 +284,8 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 # due to lambda layer requirements in rag.core, we have to define this function here
 @required_env_vars({
     "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.GET_ITEM],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
     "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
@@ -391,6 +392,10 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
             "force_reprocess": True,
             "s3": {"bucket": {"name": bucket}, "object": {"key": key}},
         }
+        # A file uploaded with RAG off (library files, chat attachments) only has its text kept, unless an assistant uses it:
+        # then it is embedded. Files uploaded with RAG on keep following their upload.
+        if file_used_by_assistants(current_user, key):
+            record["rag_enabled"] = True
         
         queue_url = os.environ["RAG_PROCESS_DOCUMENT_QUEUE_URL"]
         message_body = json.dumps(record)
@@ -405,6 +410,50 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
     except Exception as e:
         logger.error("Error reprocessing document: %s", str(e))
         return {"success": False, "message": f"Error reprocessing document: {str(e)}"}
+
+
+def file_used_by_assistants(owner, upload_key):
+    """True when one of this user's (or this group's) assistants has the file as a data source.
+
+    Only the newest version of each assistant counts (the one chat uses). Assistants of other people are not searched. If the
+    check cannot be made the answer is False, which leaves the document as its upload set it up."""
+    try:
+        identifiers = [upload_key]
+        pointer = dynamodb.Table(os.environ["HASH_FILES_DYNAMO_TABLE"]).get_item(Key={"id": upload_key}).get("Item") or {}
+        if pointer.get("textLocationKey"):
+            identifiers += delete_policy.content_key_candidates(pointer["textLocationKey"])
+
+        table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+        kwargs = {
+            "IndexName": "UserIndex",
+            "KeyConditionExpression": Key("user").eq(owner),
+            "ProjectionExpression": "#a, #i, #v, #d",
+            "ExpressionAttributeNames": {"#a": "assistantId", "#i": "id", "#v": "version", "#d": "dataSources"},
+        }
+        newest = {}
+        while True:
+            response = table.query(**kwargs)
+            for item in response.get("Items", []):
+                public_id = item.get("assistantId") or item.get("id")
+                if public_id not in newest or float(item.get("version") or 0) > float(newest[public_id].get("version") or 0):
+                    newest[public_id] = item
+            if not response.get("LastEvaluatedKey"):
+                break
+            kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+        names = []
+        for item in newest.values():
+            sources = retention.collect_strings(item.get("dataSources") or [], set())
+            if retention.is_referenced(identifiers, sources):
+                names.append(str(item.get("name") or item.get("assistantId") or item.get("id")))
+        logger.info(
+            "Assistants checked for %s (%d newest versions of %s): %s",
+            upload_key, len(newest), owner, ("used by " + ", ".join(names[:5])) if names else "not used by any",
+        )
+        return bool(names)
+    except Exception as error:
+        logger.warning("Could not check whether assistants use %s: %s", upload_key, error)
+        return False
 
 
 def find_upload_for_content(content_key, owner):

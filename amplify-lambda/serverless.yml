@@ -541,6 +541,7 @@ functions:
   
   reprocess_document_for_rag:
     handler: files/file.reprocess_document_for_rag
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -835,6 +836,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.LAYERED_ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
