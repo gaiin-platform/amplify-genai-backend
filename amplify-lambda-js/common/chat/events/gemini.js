@@ -130,6 +130,7 @@ export const geminiUsageTransform = (event) => {
         // Use inputCachedTokens if already present, otherwise extract from prompt_tokens_details.cached_tokens
         usage.inputCachedTokens = event.usage.inputCachedTokens ?? 
                                  event.usage.prompt_tokens_details?.cached_tokens ?? 0;
+        usage.prompt_tokens = Math.max(0, usage.prompt_tokens - usage.inputCachedTokens); // cached tokens are billed separately
         return usage;
     }
     

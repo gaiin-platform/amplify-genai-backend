@@ -188,6 +188,12 @@ export const bedrockConverseTransform = (event, responseStream = null, capturedC
     return null;
 }
 
+// Converse `inputTokens` EXCLUDES cached tokens, so prompt_tokens stays = inputTokens.
+const extractCacheTokens = (usage) => ({
+    read: usage.cacheReadInputTokens || usage.cache_read_input_tokens || 0,
+    write: usage.cacheWriteInputTokens || usage.cache_creation_input_tokens || 0,
+});
+
 export const bedrockTokenUsageTransform = (event) => {
     // Bedrock ConverseStream sends metadata as: { metadata: { usage: {...} } }
     // Also handle legacy formats for backward compatibility
@@ -196,9 +202,11 @@ export const bedrockTokenUsageTransform = (event) => {
     if (event && event.metadata && event.metadata.usage) {
         const usage = { ...event.metadata.usage };
 
-        // Extract cached tokens from Claude/Anthropic format
-        usage.inputCachedTokens = usage.cache_read_input_tokens || 0;
-        usage.inputWriteCachedTokens = usage.cache_creation_input_tokens || 0;
+        // Converse reports cache usage as camelCase (cacheReadInputTokens / cacheWriteInputTokens);
+        // keep the snake_case Anthropic names as fallbacks.
+        const cache = extractCacheTokens(usage);
+        usage.inputCachedTokens = cache.read;
+        usage.inputWriteCachedTokens = cache.write;
 
         // Convert Bedrock camelCase to standard format
         usage.prompt_tokens = usage.inputTokens || usage.input_tokens || 0;
@@ -219,9 +227,10 @@ export const bedrockTokenUsageTransform = (event) => {
     if (event && event.usage) {
         const usage = event.usage;
 
-        // Extract cached tokens from Claude/Anthropic format
-        usage.inputCachedTokens = usage.cache_read_input_tokens || 0;
-        usage.inputWriteCachedTokens = usage.cache_creation_input_tokens || 0;
+        // Cached tokens: camelCase (Converse) with snake_case (Anthropic) fallbacks
+        const cache = extractCacheTokens(usage);
+        usage.inputCachedTokens = cache.read;
+        usage.inputWriteCachedTokens = cache.write;
 
         // Convert Bedrock snake_case to standard format
         usage.prompt_tokens = usage.inputTokens || usage.input_tokens || 0;

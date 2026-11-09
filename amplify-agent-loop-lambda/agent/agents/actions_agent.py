@@ -2,6 +2,7 @@ from agent.capabilities.common_capabilities import (
     PassResultsCapability,
     TimeAwareCapability,
     PlanFirstCapability,
+    ReconnectRequiredCapability,
 )
 from agent.components.common_goals import (
     BE_DIRECT,
@@ -52,6 +53,7 @@ def build_clean(
             TimeAwareCapability(),
             PassResultsCapability(),
             PlanFirstCapability(),
+            ReconnectRequiredCapability(),
         ],
     )
 
@@ -102,6 +104,7 @@ completely done with the task, you should tell the user the result and terminate
             TimeAwareCapability(),
             PassResultsCapability(),
             PlanFirstCapability(),
+            ReconnectRequiredCapability(),
         ],
     )
 

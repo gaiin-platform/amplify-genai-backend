@@ -15,7 +15,7 @@ from delegation.api_keys import get_api_key_directly_by_id
 from events.event_templates import get_assistant_by_alias
 from pycommon.api.user_data import load_user_data, save_user_data
 from pycommon.api.ses_email import send_email
-from pycommon.lzw import safe_compress
+from pycommon.lzw import safe_compress, is_lzw_compressed_format, lzw_uncompress
 from croniter import croniter
 from pycommon.logger import getLogger
 from pycommon.decorators import required_env_vars, track_execution
@@ -49,6 +49,68 @@ def safe_json_dumps(obj):
         str: JSON string representation of the object
     """
     return json.dumps(obj, cls=DecimalEncoder)
+
+
+def decompress_log_if_needed(data):
+    """
+    Return a stored execution log in its decompressed form.
+
+    Logs are stored LZW-compressed as a list of integers (see safe_compress), or as the raw
+    object when compression did not pay off. Both a compressed log and a message list are
+    "iterable", so callers must not use an __iter__ check to tell them apart: that archived
+    compressed logs untouched, and clients then received an integer array instead of details.
+
+    Anything that is not recognisably LZW (dicts, message lists, strings, bad codes) is
+    returned unchanged, so this is safe to call on already-decompressed data.
+    """
+    if not isinstance(data, (list, tuple)) or not data:
+        return data
+    try:
+        # DynamoDB hands numbers back as Decimal/float; LZW codes are integers.
+        codes = [
+            int(x)
+            for x in data
+            if isinstance(x, (int, float, Decimal)) and not isinstance(x, bool) and x == int(x)
+        ]
+        if len(codes) != len(data) or not is_lzw_compressed_format(codes):
+            return data
+        return lzw_uncompress(codes)
+    except (ValueError, TypeError, OverflowError) as e:
+        logger.warning("Could not decompress log data, leaving as-is: %s", e)
+        return data
+
+
+# Marker emitted by the integration lambdas when a user's authorization for an
+# integration (e.g. microsoft_outlook) is expired/revoked and must be reconnected.
+RECONNECT_REQUIRED_MARKER = "INTEGRATION_RECONNECT_REQUIRED"
+
+
+def find_reconnect_required_error(agent_result):
+    """
+    Returns a user-facing message if any tool result in the agent run reported that an
+    integration must be reconnected, otherwise None.  Only environment (tool result)
+    entries are inspected so prompt/goal text can never trigger a false positive.
+    """
+    if not isinstance(agent_result, list):
+        return None
+    for entry in agent_result:
+        if not isinstance(entry, dict) or entry.get("role") != "environment":
+            continue
+        try:
+            content = json.dumps(entry.get("content"), default=str)
+        except Exception:
+            continue
+        if RECONNECT_REQUIRED_MARKER not in content:
+            continue
+        match = re.search(r"authorization for ([A-Za-z0-9_]+)", content)
+        integration = match.group(1) if match else "an integration"
+        return (
+            f"Your Amplify connection to {integration} has expired or was revoked "
+            f"(for example after a password change or session reset), so this task could "
+            f"not access it. Please reconnect it in Amplify (Settings > Integrations), "
+            f"then run the task again."
+        )
+    return None
 
 
 class TasksMessageHandler(MessageHandler):
@@ -238,6 +300,18 @@ class TasksMessageHandler(MessageHandler):
             )
             return
 
+        reconnect_message = find_reconnect_required_error(agent_result)
+        if reconnect_message:
+            # The agent terminated cleanly, but only because an integration's authorization
+            # is dead.  Reporting this as "success" hides the problem from the user.
+            logger.warning(
+                f"Task {task_id} could not run: integration reconnect required"
+            )
+            task_failed(
+                user_id, task_id, reconnect_message, task_data, reconnect_required=True
+            )
+            return
+
         logger.info(f"Task success handler called for task {task_id}")
         task_completed(user_id, task_id, task_data, agent_result) 
 
@@ -389,7 +463,7 @@ def task_completed(user_id, task_id, task_data, result):
         logger.error(f"Error handling task completion: {e}")
 
 
-def task_failed(user_id, task_id, error, task_data):
+def task_failed(user_id, task_id, error, task_data, reconnect_required=False):
     """
     Callback function for when a task fails.
     This updates the task record to mark it as failed, allows it to be retried, and sends a
@@ -436,9 +510,17 @@ def task_failed(user_id, task_id, error, task_data):
                 ReturnValues="NONE",
             )
 
-        if task_data.get("notifyOnFailure", False) and task_data.get(
-            "notifyEmailAddresses", []
-        ):
+        notify_addresses = task_data.get("notifyEmailAddresses", [])
+        should_notify = task_data.get("notifyOnFailure", False) and notify_addresses
+        if reconnect_required and not should_notify:
+            # The user can't fix this unless they know about it, so notify them even if
+            # they didn't opt in to failure emails.  Fall back to the task owner's email.
+            notify_addresses = notify_addresses or (
+                [user_id] if isinstance(user_id, str) and "@" in user_id else []
+            )
+            should_notify = bool(notify_addresses)
+
+        if should_notify:
             # Prepare rich notification content
             task_name = task_data.get("taskName", "Unknown Task")
             failure_time_formatted = get_timestamp(False).strftime("%Y-%m-%d %H:%M:%S")
@@ -462,7 +544,7 @@ def task_failed(user_id, task_id, error, task_data):
                 api_key,
                 email_subject,
                 email_body,
-                task_data.get("notifyEmailAddresses"),
+                notify_addresses,
             )
 
     except Exception as e:
@@ -543,16 +625,7 @@ def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive,
                 archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
                 
                 # Decompress data before archiving to S3 (S3 stores uncompressed)
-                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
-                    # Already decompressed data
-                    log_data = compressed_data
-                else:
-                    # Decompress LZW data
-                    from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
-                    if is_lzw_compressed_format(compressed_data):
-                        log_data = lzw_uncompress(compressed_data)
-                    else:
-                        log_data = compressed_data
+                log_data = decompress_log_if_needed(compressed_data)
                 
                 # Store in consolidation bucket
                 s3.put_object(

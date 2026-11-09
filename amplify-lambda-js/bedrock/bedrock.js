@@ -4,9 +4,16 @@ import {logCriticalError} from "../common/criticalLogger.js";
 import { getBudgetTokens } from "../common/params.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {trace} from "../common/trace.js";
 import {extractKey} from "../datasource/datasources.js";
-import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { extractBedrockResponseDiagnostics, captureRawResponseMiddleware, captureRawResponseMiddlewareOptions } from "./responseDiagnostics.js";
+import { detectContextOverflow, parseGuardrailSizeError, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
+import { combineMessages } from "./combineMessages.js";
+import { addCachePoints, isCachePointRejection } from "./promptCache.js";
+
+// Re-exported for callers/tests that import it from here.
+export { combineMessages };
 
 
 const logger = getLogger("bedrock");
@@ -17,40 +24,57 @@ let cachedBedrockClient = null;
 const getBedrockClient = () => {
     if (!cachedBedrockClient) {
         const region = process.env.DEP_REGION ?? 'us-east-1';
-        cachedBedrockClient = new BedrockRuntimeClient({ region });
-        // Created and cached Bedrock client
+        cachedBedrockClient = new BedrockRuntimeClient({
+            region,
+            requestHandler: new NodeHttpHandler({
+                // Abort the HTTP socket if no bytes arrive for 4 minutes.
+                // This is the primary guard against stalled Bedrock streams that
+                // would otherwise keep Lambda alive for the full 900s hard timeout.
+                // 4 minutes is generous enough for models with extended thinking pauses
+                // (Claude Opus 5 reasoning) while still terminating truly stalled streams.
+                socketTimeout: 240000,
+                // Fail fast on initial connection — Bedrock endpoint should be reachable immediately.
+                connectionTimeout: 5000,
+            }),
+        });
+        // Keep the raw HTTP status/headers on errors (the SDK otherwise drops them for stream exceptions).
+        cachedBedrockClient.middlewareStack.add(captureRawResponseMiddleware, captureRawResponseMiddlewareOptions);
     }
     return cachedBedrockClient;
 };
 
-export const chatBedrock = async (chatBody, writable) => {
+export const chatBedrock = async (chatBody, writable, abortSignal = chatBody.abortSignal) => {
 
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
+    delete body.abortSignal;
     const currentModel = options.model;
 
     const prompt = typeof options.prompt === 'string' ? options.prompt : '';
-    const systemPrompts = [{"text": prompt.trim() || BLANK_MSG}];
-    if (currentModel.systemPrompt?.trim()) {
-        systemPrompts.push({ "text": currentModel.systemPrompt });
-    }
-
+    const systemPrompts = [];
     const withoutSystemMessages = [];
-    // options.prompt is a match for the first message in messages
+    const seenSystemPrompts = new Set();
+    const addSystemPrompt = text => {
+        if (typeof text !== 'string' || !text.trim() || seenSystemPrompts.has(text.trim())) return;
+        seenSystemPrompts.add(text.trim());
+        systemPrompts.push({ text: text.trim() });
+    };
+    addSystemPrompt(prompt);
     for (const msg of body.messages) {
-        if (msg.role === "system") {
-                                      // avoid duplicate system prompts
-            if (msg.content.trim() && msg.content !== prompt) systemPrompts.push({ "text": msg.content });
-        } else {
-            withoutSystemMessages.push(msg);
-        }
+        if (msg.role === "system") addSystemPrompt(typeof msg.content === 'string' ? msg.content : '');
+        else withoutSystemMessages.push(msg);
     }
-    const imageSources =  !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
+    const existingSystemText = systemPrompts.map(system => system.text).join('\n\n');
+    if (!currentModel.systemPrompt?.trim() || !existingSystemText.includes(currentModel.systemPrompt.trim())) {
+        addSystemPrompt(currentModel.systemPrompt);
+    }
+    if (systemPrompts.length === 0) systemPrompts.push({ text: BLANK_MSG });
+    const imageSources = !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
 
     // Parallelize ALL processing for faster execution
     const client = getBedrockClient();  // Get client immediately (already cached)
-    const combinedMessages = combineMessages(withoutSystemMessages, prompt || BLANK_MSG);
+    const combinedMessages = combineMessages(withoutSystemMessages, BLANK_MSG);
     const sanitizedMessages = await sanitizeMessages(combinedMessages, imageSources, currentModel, writable);
 
     // Declare input at function scope so it's available in catch block
@@ -76,7 +100,7 @@ export const chatBedrock = async (chatBody, writable) => {
         // https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
         const temperature = isReasoningEnabled ? 1.0 : options.temperature;
 
-        const isOpenAIGpt56 = /^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id);
+        const isOpenAIGpt56 = /^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id);
         const inferenceConfigs = {
             // GPT-5.6 rejects temperature entirely; other Bedrock models retain it.
             ...(isOpenAIGpt56 ? {} : { "temperature": temperature }),
@@ -105,15 +129,15 @@ export const chatBedrock = async (chatBody, writable) => {
         }
 
         if (isReasoningEnabled) {
-            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+            if (/^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id)) {
                 // OpenAI GPT-5.6 on Bedrock expects a string effort value.
                 const effort = options.reasoningLevel ?? "low";
                 input.additionalModelRequestFields = {
                     "reasoning": { "effort": effort }
                 };
                 logger.info(`GPT-5.6 reasoning enabled (effort=${effort}) with maxTokens=${maxTokens}`);
-            } else if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
-                // Opus 4.6+, Opus 5+, Sonnet 5+ — effort-based adaptive reasoning.
+            } else if (/claude.*opus-4-[6-9]|claude.*opus-4-[1-9][0-9]|claude.*opus-[5-9]|claude.*opus-[1-9][0-9](?!\d)|claude.*sonnet-[5-9]|claude.*sonnet-[1-9][0-9](?!\d)|claude.*haiku-[5-9]|claude.*haiku-[1-9][0-9](?!\d)/i.test(currentModel.id)) {
+                // Opus 4.6+, Opus 5+, Sonnet 5+, Haiku 5+ — effort-based adaptive reasoning.
                 // These models use thinking.type.adaptive + output_config.effort instead of
                 // the older thinking.type.enabled + budget_tokens API.
                 // This mirrors how azure/openai.js and litellmClient.js map
@@ -143,7 +167,7 @@ export const chatBedrock = async (chatBody, writable) => {
             // effort value must be a string, including when reasoning is disabled.
             // Other reasoning-capable Bedrock models retain the legacy shape.
             logger.info(`Extended thinking disabled by user (disableReasoning=true)`);
-            if (/^((us|global)\.)?openai\.gpt-5\.6-/i.test(currentModel.id)) {
+            if (/^((us|global)\.)?openai\.gpt-(5\.6|6(\.\d+)?)-/i.test(currentModel.id)) {
                 input.additionalModelRequestFields = {
                     "reasoning": { "effort": "none" }
                 };
@@ -159,15 +183,17 @@ export const chatBedrock = async (chatBody, writable) => {
         if (currentModel.supportsSystemPrompts) {
             input.system = systemPrompts;
         } else {
-            // Gather all text values from the system prompts list
+            // Some Bedrock models reject the system field. Preserve the canonical
+            // instructions by attaching them to the first user turn instead of dropping them.
             const systemPromptsText = systemPrompts.map(sp => sp.text).join("\n\n");
-            const sanitizedMessagesCopy = [...sanitizedMessages];
-
-            // May not need anymore, testing for a while
-            // sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
-            // `Recall your custom instructions are: ${systemPromptsText}`;
-
-            input.messages = sanitizedMessagesCopy;
+            input.messages = [...sanitizedMessages];
+            const firstUserIndex = input.messages.findIndex(message => message.role === 'user');
+            if (firstUserIndex >= 0 && Array.isArray(input.messages[firstUserIndex].content)) {
+                input.messages[firstUserIndex] = {
+                    ...input.messages[firstUserIndex],
+                    content: [{ text: systemPromptsText }, ...input.messages[firstUserIndex].content]
+                };
+            }
         }
 
         // Check if messages contain tool-related content (toolUse or toolResult)
@@ -251,6 +277,14 @@ export const chatBedrock = async (chatBody, writable) => {
             }
         }
 
+        // Prompt caching (Claude only). Keep the plain input so a rejected cache point can be retried without it.
+        const uncachedInput = input;
+        const cached = addCachePoints(input, { isInternalCall: options._isInternalCall === true });
+        input = cached.input;
+        if (cached.points.length > 0) {
+            logger.info(`[CACHE-POINTS] model=${currentModel.id} points=${cached.points.join(',')}`);
+        }
+
         trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})
 
         // Set up event listeners before streaming for better error handling
@@ -267,7 +301,21 @@ export const chatBedrock = async (chatBody, writable) => {
             }
         });
 
-        const response = await client.send( new ConverseStreamCommand(input) );
+        let response;
+        try {
+            response = await client.send(
+                new ConverseStreamCommand(input),
+                abortSignal ? { abortSignal } : undefined
+            );
+        } catch (sendError) {
+            if (input === uncachedInput || !isCachePointRejection(sendError)) throw sendError;
+            logger.warn(`Bedrock rejected a cache point for ${currentModel.id}; retrying without prompt caching: ${sendError.message}`);
+            input = uncachedInput;
+            response = await client.send(
+                new ConverseStreamCommand(input),
+                abortSignal ? { abortSignal } : undefined
+            );
+        }
 
         // Process stream events (SDK v3.1000+ returns parsed event objects directly)
         for await (const event of response.stream) {
@@ -294,19 +342,15 @@ export const chatBedrock = async (chatBody, writable) => {
         const shouldLog = !overflowInfo.isOverflow || shouldCriticalLogOverflow(requestId);
 
         if (shouldLog) {
-            // Capture raw response body for HTML error pages (502 Bad Gateway, etc.)
-            let rawResponsePreview = 'N/A';
-            if (error.$response?.body) {
-                try {
-                    // Try to read the body as text if it's an HTML error page
-                    const bodyText = typeof error.$response.body === 'string'
-                        ? error.$response.body
-                        : JSON.stringify(error.$response.body);
-                    rawResponsePreview = bodyText.substring(0, 500); // First 500 chars
-                } catch (e) {
-                    rawResponsePreview = 'Unable to read response body';
-                }
+            // Capture whatever the SDK kept of the raw HTTP response. For deserialization errors
+            // ("Deserialization error: to see the raw response, inspect the hidden field
+            // {error}.$response") the SDK hides it on a non-enumerable property, so it never shows
+            // up in logs unless we copy it out explicitly.
+            const responseDiagnostics = extractBedrockResponseDiagnostics(error);
+            if (responseDiagnostics.hasResponse) {
+                logger.error(`Bedrock raw response diagnostics for model ${currentModel?.id}: ${JSON.stringify(responseDiagnostics)}`);
             }
+            const rawResponsePreview = responseDiagnostics.bodyPreview;
 
             // CRITICAL: Bedrock API failure - user cannot get LLM response (capture AWS-specific error details)
             const sanitizedInput = input ? { ...input } : { modelId: currentModel?.id || 'unknown' };
@@ -324,6 +368,10 @@ export const chatBedrock = async (chatBody, writable) => {
                     requestId: requestId,
                     modelId: currentModel?.id || 'unknown',
                     httpStatusCode: error.$metadata?.httpStatusCode || 'N/A',
+                    responseStatusCode: responseDiagnostics.statusCode,
+                    responseHeaders: responseDiagnostics.headers,
+                    errorFault: error.$fault || 'N/A',
+                    errorRetryable: error.$retryable ?? 'N/A',
                     awsReason: error.$response?.reason || 'N/A',
                     awsMessage: error.$response?.message || 'N/A',
                     rawResponsePreview: rawResponsePreview,
@@ -353,7 +401,12 @@ export const chatBedrock = async (chatBody, writable) => {
         }
 
         // Only send error message if NOT recoverable overflow
-        if (!overflowInfo.isOverflow)  sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
+        if (!overflowInfo.isOverflow) {
+            // A guardrail size limit arrives as a throttling error; say what it really is instead of "too many requests"
+            const guardrailSize = parseGuardrailSizeError(error.message || error.$response?.message);
+            if (guardrailSize) logger.warn(`Bedrock guardrail input limit: ${guardrailSize.size} of ${guardrailSize.limit} text units allowed`);
+            sendErrorMessage(writable, error.$metadata?.httpStatusCode, guardrailSize ? 'guardrail_input_too_large' : error.$response?.reason);
+        }
 
         throw error;
     }
@@ -407,61 +460,6 @@ function sanitizeOutputConfig(outputConfig) {
         return outputConfig;
     }
 }
-
-function combineMessages(oldMessages, failSafeUserMessage) {
-    if (!oldMessages || oldMessages.length === 0) return oldMessages;
-
-    const delimiter = "\n_________________________\n";
-    const messages = [];
-    let currentMessage = null;
-
-    // Single pass optimization
-    for (let j = 0; j < oldMessages.length; j++) {
-        const msg = oldMessages[j];
-        const role = msg.role;
-
-        // Don't combine tool messages or assistant messages with tool_calls - preserve full structure
-        if (role === 'tool' || (role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)) {
-            // Push any pending message first
-            if (currentMessage) {
-                messages.push(currentMessage);
-                currentMessage = null;
-            }
-            // Push tool-related message as-is (preserves tool_call_id and tool_calls)
-            messages.push({ ...msg });
-            continue;
-        }
-
-        let content = msg.content || "NA Intentionally left empty, disregard and continue";
-
-        // Add delimiter to last user message
-        if (j === oldMessages.length - 1 && role === 'user') {
-            content = `${delimiter}${content}`;
-        }
-
-        content = typeof content === 'string' ? content.trimEnd() : content; // remove white space
-
-        if (!currentMessage || currentMessage.role !== role) {
-            // New role, push previous and start new
-            if (currentMessage) messages.push(currentMessage);
-            currentMessage = { role, content };
-        } else {
-            // Same role, combine content
-            currentMessage.content += delimiter + content;
-        }
-    }
-
-    // Push last message
-    if (currentMessage) messages.push(currentMessage);
-
-    // Ensure first message is user
-    if (messages.length === 0 || messages[0].role !== 'user') {
-        messages.unshift({ role: 'user', content: failSafeUserMessage });
-    }
-
-    return messages;
-}
-
 
 async function sanitizeMessages(messages, imageSources, model, responseStream) {
     if (!messages) return messages;

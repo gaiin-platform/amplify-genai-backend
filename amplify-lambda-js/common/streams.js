@@ -370,6 +370,11 @@ export const sendErrorMessage = (writable, statusCode, code=null) => {
 
     if (code === 'content_filter') {
         errorMessage = "Content Filter: The response was blocked due to the content of the request.";
+    } else if (code === 'guardrail_input_too_large') {
+        errorMessage = "Too Much Text For The Content Filter: your organization's content filter checks every request and this one is larger than it can check. Try a smaller document, split it, or ask an administrator to raise the filter's size limit.";
+    } else if (code === 'REQUEST_TIMEOUT') {
+        // Our own time limit, not the model provider: say so and don't suggest switching models.
+        errorMessage = "Request Timed Out: This response took longer than the time limit for a single request. Try a shorter or simpler request, or ask me to continue in a follow-up message.";
     } else if (code === 'insufficient_quota') {
         logger.warn('Insufficient quota error received. This may indicate that the model provider has temporarily blocked requests due to high traffic or other issues.');  
         errorMessage = "Error retrieving response from this model." + waitMessage;

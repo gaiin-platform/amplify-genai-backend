@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -490,6 +491,7 @@ def _share_token(current_user, target_integration, source_integration):
         # --- Step 1: Copy the encrypted credentials directly ---
         # This ensures the target integration is always "connected" regardless
         # of whether the scope-enhanced refresh succeeds.
+        previous_target_creds = integration_map.get(target_integration)
         integration_map[target_integration] = source_creds_encrypted
         timestamp = datetime.now(timezone.utc).isoformat()
         oauth_user_table.put_item(
@@ -541,6 +543,37 @@ def _share_token(current_user, target_integration, source_integration):
             token_response = requests.post(token_uri, data=refresh_data)
 
             if token_response.status_code != 200:
+                error_code = _extract_oauth_error_code(token_response)
+                if (
+                    error_code in REAUTH_REQUIRED_ERROR_CODES
+                    and not _is_scope_consent_failure(token_response)
+                ):
+                    # The source grant itself is dead (revoked/expired), so the copied
+                    # token is dead too.  Undo the copy and report failure instead of
+                    # pretending the target is connected.
+                    #
+                    # NOTE: invalid_grant is ALSO what Microsoft returns when the grant is
+                    # healthy but the *broader* target scopes (e.g. Mail.*.Shared) have not
+                    # been consented to (AADSTS65001).  That is a scope-upgrade problem, not
+                    # a dead source, so it is excluded above and falls through to the
+                    # "using copied token" fallback below.
+                    logger.warning(
+                        "Source integration %s grant is revoked/expired (%s); "
+                        "not sharing token to %s",
+                        source_integration, error_code, target_integration,
+                    )
+                    if previous_target_creds:
+                        integration_map[target_integration] = previous_target_creds
+                    else:
+                        integration_map.pop(target_integration, None)
+                    oauth_user_table.put_item(
+                        Item={
+                            "user_integration": item_key,
+                            "integrations": integration_map,
+                            "last_updated": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    return None
                 logger.warning(
                     "Scope-enhanced refresh failed (status %s): %s — using copied token",
                     token_response.status_code, token_response.text,
@@ -592,6 +625,55 @@ def _share_token(current_user, target_integration, source_integration):
     except Exception as e:
         logger.error("Error sharing token from %s to %s: %s", source_integration, target_integration, e)
         return None
+
+
+# OAuth error codes meaning the stored grant is permanently dead (revoked,
+# expired from inactivity, password reset, ...).  Retrying cannot help; the user
+# must re-authorize the integration.
+REAUTH_REQUIRED_ERROR_CODES = {"invalid_grant", "interaction_required"}
+
+# Reasons reported for integrations that are stored but not usable.
+DISCONNECT_REASON_REAUTH = "authorization_expired_or_revoked"
+DISCONNECT_REASON_REFRESH_FAILED = "token_refresh_failed"
+DISCONNECT_REASON_DECRYPT_FAILED = "credentials_unreadable"
+DISCONNECT_REASON_ERROR = "credentials_check_failed"
+
+
+def _extract_oauth_error_code(response):
+    """Best-effort extraction of the OAuth `error` field from a token endpoint response."""
+    try:
+        return (response.json() or {}).get("error")
+    except Exception:
+        return None
+
+
+# Microsoft (AADSTS) codes that mean "the requested *scopes* are not consented to /
+# not valid for this app", as opposed to "the grant is dead".  Microsoft reports these
+# with the generic OAuth error `invalid_grant`, so `REAUTH_REQUIRED_ERROR_CODES` alone
+# cannot tell them apart from a revoked/expired refresh token.  When a scope *upgrade*
+# (e.g. outlook -> exchange adding Mail.*.Shared) fails with one of these, the original
+# grant is still healthy and its token remains usable for the narrower scopes.
+#   65001 - user/admin has not consented to the application / requested scopes
+#   65004 - user declined to consent
+#   65005 - app requested scopes/resources not listed in its registration
+#   70011 - invalid_scope
+#   90094 - admin consent required
+SCOPE_CONSENT_AADSTS_CODES = ("AADSTS65001", "AADSTS65004", "AADSTS65005", "AADSTS70011", "AADSTS90094")
+
+
+def _is_scope_consent_failure(response):
+    """True if a token endpoint error is a scope/consent problem rather than a dead grant."""
+    try:
+        body = response.json() or {}
+    except Exception:
+        return False
+    if body.get("error") in ("consent_required", "invalid_scope"):
+        return True
+    description = body.get("error_description") or ""
+    # Match "AADSTS65001:" exactly so e.g. AADSTS650010 is not mistaken for 65001.
+    return any(
+        re.search(r"%s(?!\d)" % code, description) for code in SCOPE_CONSENT_AADSTS_CODES
+    )
 
 
 # Integrations that share credentials from another integration instead of
@@ -1020,6 +1102,10 @@ def return_html_failed_auth(message):
                 "items": {"type": "string"},
                 "description": "List of integration IDs that the user has connected to",
             },
+            "disconnected": {
+                "type": "object",
+                "description": "Map of integration ID to reason for integrations whose stored credentials are no longer usable (e.g. authorization expired or revoked) and need to be reconnected",
+            },
             "message": {
                 "type": "string",
                 "description": "Error message if operation failed",
@@ -1041,13 +1127,32 @@ def list_connected_integrations(event, context, current_user, name, data):
             "message": f"Error retrieving user integrations from Admin Table",
         }
 
-    connected = list_user_integrations(supported_integrations, current_user)
+    disconnected = {}
+    connected = list_user_integrations(
+        supported_integrations, current_user, disconnected=disconnected
+    )
     logger.debug("Connected status: %s", False if connected is None else True)
 
-    return {"success": False if connected is None else True, "data": connected}
+    # `disconnected` maps integration id -> reason for integrations the user has
+    # stored credentials for but that can no longer be used (e.g. the Microsoft
+    # grant was revoked).  Callers use it to give an actionable "reconnect" error.
+    return {
+        "success": False if connected is None else True,
+        "data": connected,
+        "disconnected": disconnected,
+    }
 
 
-def list_user_integrations(supported_integrations, current_user):
+def list_user_integrations(supported_integrations, current_user, disconnected=None):
+    """
+    Returns the list of integration ids the user is connected to.
+
+    If a `disconnected` dict is supplied it is filled with
+    {integration_id: reason} for integrations that have stored credentials that
+    are unusable (decrypt failure, failed/revoked refresh, ...).
+    """
+    if disconnected is None:
+        disconnected = {}
     oauth_user_table = get_oauth_user_table()
     integration_providers = supported_integrations.keys()
     connected_list = []
@@ -1069,6 +1174,9 @@ def list_user_integrations(supported_integrations, current_user):
                 filtered_ids = [
                     id for id in integration_ids if id in available_integrations
                 ]
+                # Process token-sharing integrations (e.g. microsoft_exchange) after
+                # their source (microsoft_outlook) so the source's health is known.
+                filtered_ids.sort(key=lambda i: i in TOKEN_SHARING_INTEGRATIONS)
 
                 # Check each integration for token expiry
                 current_timestamp = int(time.time())
@@ -1081,6 +1189,7 @@ def list_user_integrations(supported_integrations, current_user):
                         credentials = decrypt_oauth_data(encrypted_credentials)
                         if credentials is None:
                             logger.warning("Failed to decrypt credentials for %s", integration_id)
+                            disconnected[integration_id] = DISCONNECT_REASON_DECRYPT_FAILED
                             continue
 
                         expires_at = credentials.get("expires_at", 0)
@@ -1093,6 +1202,11 @@ def list_user_integrations(supported_integrations, current_user):
                             refresh_result = refresh_credentials(current_user, integration_id, credentials)
 
                             if not refresh_result.get("success"):
+                                reason = (
+                                    DISCONNECT_REASON_REAUTH
+                                    if refresh_result.get("reauth_required")
+                                    else DISCONNECT_REASON_REFRESH_FAILED
+                                )
                                 # For token-sharing integrations (e.g. microsoft_exchange shares
                                 # credentials from microsoft_outlook), a failed refresh can be
                                 # recovered by re-sharing from the source integration.  This handles
@@ -1100,7 +1214,15 @@ def list_user_integrations(supported_integrations, current_user):
                                 # integration is still active — rather than marking the integration
                                 # as disconnected, we transparently re-share and keep it connected.
                                 source_integration = TOKEN_SHARING_INTEGRATIONS.get(integration_id)
-                                if source_integration:
+                                if source_integration and source_integration in disconnected:
+                                    # The source is dead, so re-sharing would only copy a dead
+                                    # token and falsely report this integration as connected.
+                                    logger.warning(
+                                        "Source %s for %s is disconnected (%s); marking as disconnected",
+                                        source_integration, integration_id, disconnected[source_integration],
+                                    )
+                                    reason = disconnected[source_integration]
+                                elif source_integration:
                                     logger.info(
                                         "Refresh failed for token-sharing integration %s; "
                                         "attempting re-share from %s",
@@ -1121,6 +1243,7 @@ def list_user_integrations(supported_integrations, current_user):
                                     )
                                 else:
                                     logger.warning("Failed to refresh token for %s, marking as disconnected", integration_id)
+                                disconnected[integration_id] = reason
                                 continue  # Skip this integration (show as disconnected)
 
                             logger.info("Successfully refreshed token for %s", integration_id)
@@ -1130,6 +1253,7 @@ def list_user_integrations(supported_integrations, current_user):
 
                     except Exception as e:
                         logger.error("Error checking token expiry for %s: %s", integration_id, str(e))
+                        disconnected[integration_id] = DISCONNECT_REASON_ERROR
                         continue
 
         except Exception as e:
@@ -1533,9 +1657,12 @@ def refresh_credentials(current_user, integration, credentials):
     response = requests.post(token_uri, data=data)
     if response.status_code != 200:
         logger.error("Failed to refresh token: %s", response.text)
+        error_code = _extract_oauth_error_code(response)
         return {
             "success": False,
             "message": f"Failed to refresh token: {response.text}",
+            "error_code": error_code,
+            "reauth_required": error_code in REAUTH_REQUIRED_ERROR_CODES,
         }
 
     logger.debug("Extracting refresh token response")

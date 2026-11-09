@@ -1,5 +1,9 @@
 # amplify-genai-backend
 
+> ## :new: v0.9.5 (New UI release)
+>
+> Version 0.9.5 supports the Amplify New UI. **Deploy the backend before the frontend.** Before upgrading, read [RELEASE_NOTES_NEW_UI.md](./RELEASE_NOTES_NEW_UI.md). It covers the switch to `osls` (run `npm install` at the repo root and use `npx sls`), the per-stack Parameter Store populators, the new admin settings and feature flags, and the `pycommon` v0.1.2 pin.
+
 > ## :warning: v0.9.0 Breaking Change
 >
 > **Version 0.9.0 migrates all shared environment variables to AWS Parameter Store.** Existing deployments upgrading from v0.8.x **must** run `populate_parameter_store.py` before deploying.
@@ -33,15 +37,32 @@ Variables should be configured inside your `amplify-genai-backend/<environment>/
 
 To deploy a service directly from the root of the repository, use the command structure below, replacing `service-name` with your specific service name and `stage` with the appropriate deployment stage ('dev', 'staging', 'prod'):
 
-```serverless service-name:deploy --stage <stage>```
+```npx sls service-name:deploy --stage <stage>```
+
+`sls` comes from [osls](https://github.com/oss-serverless/osls), which `npm install` at the repo root installs (see [Install Serverless](#install-serverless) below). Run it with `npx sls` so you use the local copy and not a global one.
 
 ### Example Deploying a Specific Service
 
-```serverless amplify-lambda:deploy --stage dev```
+```npx sls amplify-lambda:deploy --stage dev```
+
+### Deploying All Compose Services
+
+```npx sls deploy --stage <stage>```
 
 ## Deploying from the Service Directory
 
-Because we are using serverless-compose to import variables across services, you have to deploy from the root of the repo or you could have issues resolving variables within the application
+Because we are using serverless-compose to import variables across services, you have to deploy the services listed in `serverless-compose.yml` from the root of the repo or you could have issues resolving variables within the application.
+
+### Standalone Services
+
+`amplify-agent-loop-lambda`, `amplify-lambda-assistants-api`, `amplify-lambda-assistants-api-office365` and `amplify-lambda-assistants-api-google` are not in `serverless-compose.yml`. Deploy each one from its own directory, for example:
+
+```bash
+cd amplify-lambda-assistants-api
+npx sls deploy --stage <stage>
+```
+
+(Not tested by us: these directories have no `package.json`, so `npx` has to find the root `node_modules`. If it cannot find `sls`, run `../node_modules/.bin/sls deploy --stage <stage>`.)
 
 ## Installing Dependencies
 
@@ -82,21 +103,13 @@ node amplify-lambda-js/local/localServer.js
 
 ### Install Serverless
 
-First, install Serverless globally:
+This repo uses [osls](https://github.com/oss-serverless/osls) (the open-source Serverless Framework v3 fork, v3 line) instead of the upstream `serverless` package. It is installed locally as an npm alias (`"serverless": "npm:osls@^3.79.0"`), so `npm i` at the repo root provides the `sls` command. Run it with `npx sls ...`, and if you previously installed the upstream framework globally, remove it so it does not shadow the local copy (osls does not auto-delegate to a local install):
 
 ```bash
-npm install -g serverless
+npm uninstall -g serverless
 ```
 
-Then, install the necessary Serverless plugins:
-
-```bash
-npm install --save-dev @serverless/compose
-
-npm install --save-dev serverless-offline
-
-sls plugin install -n serverless-python-requirements
-```
+The Serverless plugins this repo uses (`@osls/compose`, `serverless-offline`, `serverless-python-requirements` and others) are listed in the root `package.json`, so `npm install` at the repo root installs them. You do not need to install them separately. Use Node.js 20.19 or newer.
 
 After navigating to the `amplify-lambda` directory, install any additional dependencies:
 

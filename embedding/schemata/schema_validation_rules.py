@@ -4,6 +4,7 @@ from .terminate_embedding_schema import terminate_embedding_schema
 from .embedding_ids_schema import embedding_ids_schema
 from .tools_op_schema import tools_op_schema
 from .data_source_key_type_shema import data_source_key_type_schema
+from .legacy_cleanup_schema import legacy_cleanup_schema
 
 rules = {
     "validators": {
@@ -16,6 +17,7 @@ rules = {
         "/embedding/register_ops": {"register_ops": tools_op_schema},
         "/embedding/status": {"get_status": data_source_key_type_schema},
         "/bedrock-kb/download": {"bedrock-kb-download": {}},
+        "/embedding/legacy-cleanup": {"legacy_cleanup": legacy_cleanup_schema},     # admin only: the handler checks
     },
     "api_validators": {
         "/embedding-dual-retrieval": {"dual-retrieval": dual_retrieval_schema},

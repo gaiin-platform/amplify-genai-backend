@@ -665,7 +665,8 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             const tools = addWebSearchIfNeeded(
                 processedMessages,
                 model,
-                toolConversions.tools || []
+                toolConversions.tools || [],
+                { userDisabledWebSearch: options.disableWebSearch === true }
             );
             
             // 6. Set up status message timer for long-running requests

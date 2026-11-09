@@ -19,6 +19,11 @@ from shared_functions import (
 )
 import urllib
 from create_table import create_table
+from pycommon.rag.contracts import namespace_for_source, EmbeddingNamespace
+from rag.vector_store import VectorKind, VectorRecord
+from rag.dynamodb_vector_store import DynamoDBVectorStore
+from pycommon.rag import timing
+import page_images
 import datetime
 import time
 from rag.rag_secrets import get_rag_secrets_for_document
@@ -56,6 +61,50 @@ embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
 embedding_chunks_index_queue = os.environ["EMBEDDING_CHUNKS_INDEX_QUEUE"]
 table_name = "embeddings"
 pg_password = get_credentials(rag_pg_password)
+
+
+def _global2_store():
+    """Create the global2 store only when the namespace is actually used."""
+    return DynamoDBVectorStore()
+
+
+def _global2_vector_key(src, child_chunk, local_index, kind):
+    """Stable idempotency key for content and per-page QA vectors."""
+    return f"{src}:child:{child_chunk}:local:{local_index}:{kind.value}"
+
+
+_PAGE_MANIFEST_CACHE = {}
+
+
+def _embed_page_images(src, child_chunk, locations, account_data):
+    """Embed the rendered image of each page a global2 chunk touches, once.
+
+    Never raises: image vectors are a bonus signal and must not fail the chunk.
+    """
+    if not page_images.pages_in_locations(locations):
+        return
+    try:
+        s3_client = boto3.client("s3")
+        manifest = page_images.load_page_manifest(
+            src,
+            s3_client=s3_client,
+            bucket=os.environ["S3_FILE_TEXT_BUCKET_NAME"],
+            cache=_PAGE_MANIFEST_CACHE,
+        )
+        if not manifest:
+            return
+        page_images.embed_page_images(
+            src,
+            child_chunk,
+            locations,
+            manifest=manifest,
+            store=_global2_store(),
+            s3_client=s3_client,
+            embed=lambda **image: generate_embeddings(None, account_data, src, **image),
+        )
+    except Exception as error:
+        logger.warning("[PAGE_IMAGES] Page image embedding skipped for %s: %s", src, error)
+
 
 # Add this at the top of the file as documentation
 
@@ -765,7 +814,10 @@ def lambda_handler(event, context):
             logger.debug(f"[DIAGNOSTIC] Lambda ID: {context.aws_request_id if context else 'unknown'}")
             logger.debug(f"[DIAGNOSTIC] Message ID: {record.get('messageId', 'unknown')}")
             
-            # Get object_key and force_reprocess flag from S3 object metadata
+            # Get object_key, RAG enablement, and force_reprocess from metadata.
+            # RAG-off chunk files are caching artifacts only; acknowledge them
+            # without touching secrets, progress, providers, QA, or vectors.
+            is_rag_enabled = True
             is_force_reprocess = False
             try:
                 s3_client = boto3.client('s3')
@@ -774,7 +826,8 @@ def lambda_handler(event, context):
                 ds_key = s3_metadata.get('object_key')
                 ds_key = urllib.parse.unquote(ds_key)
                 is_force_reprocess = s3_metadata.get('force_reprocess', '').lower() == 'true'
-                logger.debug(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}")
+                is_rag_enabled = s3_metadata.get('rag_enabled', 'true').lower() == 'true'
+                logger.debug(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}, rag_enabled: {is_rag_enabled}")
             except Exception as e:
                 ds_key = trimmed_src # most likely coming from embeddings manual process
                 logger.warning(f"Could not get S3 metadata: {e}")
@@ -802,6 +855,11 @@ def lambda_handler(event, context):
                     logger.error(f"[RAG_SECRETS_ERROR] account_data value: {account_data}")
                     update_parent_chunk_status(trimmed_src, "failed", error_msg)
                     raise Exception(error_msg)
+
+            if not is_rag_enabled:
+                logger.info("[RAG_OFF] Acknowledging cache-only chunk without embedding side effects: %s", object_key)
+                sqs.delete_message(QueueUrl=embedding_chunks_index_queue, ReceiptHandle=record["receiptHandle"])
+                continue
 
             logger.info(
                 f"[MESSAGE_DETAILS] Bucket: {bucket_name}, Object: {object_key}"
@@ -983,12 +1041,32 @@ def lambda_handler(event, context):
     }
 
 
+QA_PARALLELISM = 4   # question-generation calls (LLM) in flight at once inside one chunk file; they are network waits
+
+
+def _clean_text_for_qa(content):
+    """The text embed_chunks will use for a chunk (same preprocessing and truncation), or None when there is nothing
+    to embed. Lets the slow question-generation calls start before the loop reaches each chunk."""
+    try:
+        cleaned = preprocess_text(content)
+        if not cleaned["success"]:
+            return None
+        text = truncate_content_for_model(cleaned["data"], embedding_model_name, 6000)
+        if len(text) > 21000:
+            text = text[:21000]
+        return text if text and text.strip() else None
+    except Exception:
+        return None
+
+
 def embed_chunks(data, childChunk, embedding_progress_table, db_connection, account_data):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(embedding_progress_table)
     src = None
     trimmed_src = None
     error_msg = None
+    stopwatch = timing.Stopwatch()   # per-stage timings for this chunk file, reported as one [TIMING] line
+    qa_pool = None
 
     try:
         local_chunks = data.get("chunks", [])
@@ -1024,7 +1102,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
             response = table.get_item(Key={"object_id": trimmed_src})
             item = response.get("Item")
             if item and "data" in item:
-                total_chunks = item["data"].get("totalChunks")
+                total_chunks = item["data"].get("totalChunks") or item.get("totalChunks")
                 logger.info(
                     f"[EMBED_CHUNKS_PROGRESS] Processing child chunk: {childChunk} of total parent chunks: {total_chunks}"
                 )
@@ -1051,6 +1129,16 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
             f"[EMBED_CHUNKS_PROCESSING] Processing child chunk {childChunk} of {total_chunks or 'unknown'} (fetched from DynamoDB)"
         )
         current_local_chunk_index = 0
+
+        # Question generation is the slow step (about two thirds of a chunk file's time, one LLM call per chunk, one
+        # after another). Start them together, a few at a time; the loop below picks each result up in order.
+        qa_futures = {}
+        if len(local_chunks) > 1:
+            qa_pool = ThreadPoolExecutor(max_workers=QA_PARALLELISM)
+            for position, local in enumerate(local_chunks, start=1):
+                prefetch_text = _clean_text_for_qa(local.get("content", ""))
+                if prefetch_text:
+                    qa_futures[position] = (prefetch_text, qa_pool.submit(generate_questions, prefetch_text, account_data, src))
 
         logger.debug(f"[DIAGNOSTIC] 🔄 Starting local chunk processing loop for child chunk {childChunk}")
         with db_connection.cursor() as cursor:
@@ -1105,7 +1193,10 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         continue  # Skip to next chunk
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating vector embedding for local chunk {local_chunk_index}")
-                    response_vector_embedding = generate_embeddings(clean_text, account_data, src)
+                    # Text only: Nova takes one modality per request. For global2
+                    # sources the rendered page image is embedded separately
+                    # (see _embed_page_images) and stored as its own vector.
+                    response_vector_embedding = stopwatch.call("embed_content", generate_embeddings, clean_text, account_data, src)
 
                     # Check if embedding failed due to NaN - if so, try sanitized retry immediately
                     if not response_vector_embedding["success"]:
@@ -1165,7 +1256,11 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
 
                     # DEFENSIVE: Wrap in try-catch to handle any unexpected errors from generate_questions
                     try:
-                        response_qa_summary = generate_questions(clean_text, account_data)
+                        prefetched = qa_futures.get(local_chunk_index)
+                        if prefetched is not None and prefetched[0] == clean_text:
+                            response_qa_summary = stopwatch.call("qa_generation", prefetched[1].result)
+                        else:      # the text changed on the way here (e.g. the NaN retry), so ask for it again
+                            response_qa_summary = stopwatch.call("qa_generation", generate_questions, clean_text, account_data, src)
                     except Exception as gen_error:
                         error_msg = f"generate_questions raised exception: {str(gen_error)}"
                         logger.error(f"[DIAGNOSTIC] ❌ {error_msg}")
@@ -1238,8 +1333,9 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                         qa_summary = f"Content from document chunk {local_chunk_index}: {clean_text[:500]}"
 
                     logger.debug(f"[DIAGNOSTIC] 🧠 Generating QA embedding for local chunk {local_chunk_index}")
-                    # NOTE: Don't pass account_data here - QA generation already recorded costs via chat service
-                    response_qa_embedding = generate_embeddings(qa_summary, None, src)
+                    # QA generation's chat cost is recorded by the chat service; embedding the summary is a separate
+                    # embedding-model cost, recorded here.
+                    response_qa_embedding = stopwatch.call("embed_qa", generate_embeddings, qa_summary, account_data, src)
 
                     # Check if QA embedding failed due to NaN - if so, try sanitized retry immediately
                     if not response_qa_embedding["success"]:
@@ -1255,7 +1351,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
 
                             if sanitized_qa and len(sanitized_qa.strip()) > 0:
                                 logger.info(f"[NaN_RETRY] Retrying QA with ASCII-only text (original: {len(qa_summary)} chars, sanitized: {len(sanitized_qa)} chars)")
-                                response_retry_qa = generate_embeddings(sanitized_qa, None, src)
+                                response_retry_qa = generate_embeddings(sanitized_qa, account_data, src)
 
                                 if response_retry_qa["success"]:
                                     logger.info(f"[NaN_RETRY] ✅ QA retry succeeded with sanitized text")
@@ -1304,19 +1400,68 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
                     logger.info(
                         f"Embedding local chunk index: {current_local_chunk_index}"
                     )
-                    insert_chunk_data_to_db(
-                        src,
-                        childChunk,
-                        locations,
-                        orig_indexes,
-                        char_index,
-                        total_vector_token_count,
-                        current_local_chunk_index,
-                        content,
-                        vector_embedding,
-                        qa_vector_embedding,
-                        cursor,
-                    )
+                    if namespace_for_source(src) is EmbeddingNamespace.GLOBAL2:
+                        # Global2 writes use the native vector adapter. QA stays
+                        # per local/page-preserving chunk and keeps the source
+                        # input pointer in metadata for audit/replay.
+                        page_number = int(locations[0].get("page_number", 1)) if locations else 1
+                        page_id_value = f"{src}:page:{page_number}"
+                        store = _global2_store()
+                        store.put([
+                            VectorRecord(
+                                key=_global2_vector_key(src, childChunk, current_local_chunk_index, VectorKind.CONTENT),
+                                source_id=src,
+                                vector=vector_embedding,
+                                kind=VectorKind.CONTENT,
+                                page_id=page_id_value,
+                                page_number=page_number,
+                                content_location=src,
+                                metadata={
+                                    "child_chunk": childChunk,
+                                    "embedding_index": current_local_chunk_index,
+                                    "content": content,
+                                    "locations": locations,
+                                    "orig_indexes": orig_indexes,
+                                    "char_index": char_index,
+                                    "token_count": total_vector_token_count,
+                                },
+                            ),
+                            VectorRecord(
+                                key=_global2_vector_key(src, childChunk, current_local_chunk_index, VectorKind.QA),
+                                source_id=src,
+                                vector=qa_vector_embedding,
+                                kind=VectorKind.QA,
+                                page_id=page_id_value,
+                                page_number=page_number,
+                                content_location=src,
+                                qa_input_location=src,
+                                metadata={
+                                    "child_chunk": childChunk,
+                                    "embedding_index": current_local_chunk_index,
+                                    "content": content,
+                                    "qa_input": clean_text,
+                                    "locations": locations,
+                                    "orig_indexes": orig_indexes,
+                                    "char_index": char_index,
+                                    "token_count": total_vector_token_count,
+                                },
+                            ),
+                        ])
+                        stopwatch.call("page_images", _embed_page_images, src, childChunk, locations, account_data)
+                    else:
+                        insert_chunk_data_to_db(
+                            src,
+                            childChunk,
+                            locations,
+                            orig_indexes,
+                            char_index,
+                            total_vector_token_count,
+                            current_local_chunk_index,
+                            content,
+                            vector_embedding,
+                            qa_vector_embedding,
+                            cursor,
+                        )
 
                     logger.info(f"Getting Account information for {trimmed_src}")
 
@@ -1379,7 +1524,8 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
         
         # Small delay to help with DynamoDB consistency before parent status check
         time.sleep(0.1)  # 100ms delay to reduce race conditions
-        
+
+        stopwatch.emit("embed_chunk_file", src=trimmed_src, child=childChunk, local_chunks=len(local_chunks))
         return True, src, None
 
     except Exception as e:
@@ -1409,6 +1555,9 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection, acco
         if db_connection and not db_connection.closed:
             db_connection.rollback()
         return False, src, error_msg
+    finally:
+        if qa_pool is not None:
+            qa_pool.shutdown(wait=False, cancel_futures=True)   # nothing is left running after an early exit
 
 
 def check_parent_terminal_status(trimmed_src, record):
@@ -1989,6 +2138,8 @@ async def _check_text_status_async(original_key, global_id, progress_table, exec
         # Add lastUpdated if available
         if "lastUpdated" in item:
             metadata["lastUpdated"] = item["lastUpdated"]
+        if item.get("data", {}).get("namespace"):
+            metadata["namespace"] = item["data"]["namespace"]
         
         # Add total chunks from parent level if available
         if item.get("data", {}).get("totalChunks"):

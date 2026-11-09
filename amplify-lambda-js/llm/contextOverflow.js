@@ -65,7 +65,38 @@ const RECOVERY_ATTEMPT_TTL = 5 * 60 * 1000; // 5 minutes
  * @param {Error} error - The error from the LLM provider
  * @returns {Object} { isOverflow, provider, requested, limit, overflow }
  */
+/** The size limit a Bedrock guardrail puts on its input: { size, limit } in text units (1 unit = 1,000 characters), or null. */
+export function parseGuardrailSizeError(message) {
+    const match = /Input text size \((\d+) text units\) exceeds the maximum allowed \((\d+) text units\)/i.exec(String(message || ''));
+    return match ? { size: parseInt(match[1]), limit: parseInt(match[2]) } : null;
+}
+
+export const isGuardrailSizeError = (message) => parseGuardrailSizeError(message) !== null;
+
+/**
+ * True when the provider rejected the request because of a rate/quota limit rather than its size.
+ * Bedrock phrases a tokens-per-minute throttle as "Too many tokens, please wait before trying again."
+ * which reads like (and used to match) a context overflow, but shrinking the conversation does not help:
+ * the request is fine, the account is just being throttled.
+ */
+export function isThrottlingError(error) {
+    if (!error) return false;
+    const message = error?.message || error?.response?.data?.error?.message || String(error) || '';
+    return error.name === 'ThrottlingException'
+        || error.__type === 'ThrottlingException'
+        || error.$metadata?.httpStatusCode === 429
+        || /ThrottlingException/i.test(message)
+        || /too many (tokens|requests)[^.]*please wait/i.test(message)
+        || /rate limit/i.test(message);
+}
+
 export function detectContextOverflow(error) {
+    // A throttle is never an overflow (see isThrottlingError). Real overflows are 400 ValidationExceptions
+    // or provider "too long" messages, which never carry throttling semantics.
+    if (isThrottlingError(error)) {
+        return { isOverflow: false };
+    }
+
     // Check multiple locations for the error message (different providers put it in different places)
     const axiosMessage = error?.message || '';
     const responseDataMessage = error?.response?.data?.error?.message || error?.response?.data?.message || '';
@@ -132,6 +163,13 @@ export function detectContextOverflow(error) {
             maxTokensReserved: maxTokens,
             totalContextLimit: contextLimit
         };
+    }
+
+    // A Bedrock guardrail has its own input size limit ("Input text size (474 text units) exceeds the maximum allowed
+    // (200 text units) for the denied topic policy"). Trimming the conversation cannot fix that and it is not the
+    // model's context window, so it is never treated as an overflow (the caller reports it as its own error).
+    if (isGuardrailSizeError(message)) {
+        return { isOverflow: false };
     }
 
     // Pattern 4: "request too large" or model-specific messages

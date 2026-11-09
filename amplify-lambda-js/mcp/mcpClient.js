@@ -6,6 +6,7 @@
  */
 
 import { getLogger } from '../common/logging.js';
+import { parseSseJsonRpc } from './sseJsonRpc.js';
 
 const logger = getLogger('mcpClient');
 
@@ -113,6 +114,8 @@ export class MCPClient {
         this.prompts = [];
         this.connected = false;
         this.serverInfo = null;
+        // Streamable-HTTP servers may hand out a session id on `initialize` and expect it on every later call.
+        this.sessionId = null;
     }
 
     /**
@@ -318,6 +321,7 @@ export class MCPClient {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json, text/event-stream',
+                    ...(this.sessionId ? { 'Mcp-Session-Id': this.sessionId } : {}),
                     ...this.headers
                 },
                 body: JSON.stringify(message),
@@ -325,15 +329,30 @@ export class MCPClient {
                 redirect: 'manual'
             });
 
-            clearTimeout(timeoutId);
-
+            // The timer stays armed until the body is read: an event stream that never closes must still time out.
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
+            const sessionId = response.headers?.get?.('mcp-session-id');
+            if (sessionId) this.sessionId = sessionId;
+
             if (expectResponse) {
-                return await response.json();
+                // A server may answer with plain JSON or with a Server-Sent Events stream.
+                const contentType = response.headers?.get?.('content-type') || '';
+                if (contentType.includes('text/event-stream')) {
+                    const parsed = parseSseJsonRpc(await response.text(), message.id);
+                    clearTimeout(timeoutId);
+                    if (!parsed) {
+                        throw new Error('MCP server sent an event stream with no JSON-RPC response');
+                    }
+                    return parsed;
+                }
+                const json = await response.json();
+                clearTimeout(timeoutId);
+                return json;
             }
+            clearTimeout(timeoutId);
             return null;
 
         } catch (error) {

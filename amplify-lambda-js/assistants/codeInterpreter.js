@@ -7,7 +7,9 @@ import { getLogger } from "../common/logging.js";
 import { isKilled } from "../requests/requestState.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
+import { getFeaturePrompt } from "../common/systemPrompts.js";
 import { v4 as uuidv4 } from "uuid";
+import { buildRunRecord, generatedFileName, isCodeFailure, stripCodeFailurePrefix } from "./codeInterpreterRun.js";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -18,18 +20,22 @@ export const CODE_INTERPRETER_TOOL_DEFINITION = {
         name: "execute_code",
         description:
             "Execute Python code in a secure sandbox environment. " +
-            "Use this tool whenever the user asks you to run code, perform calculations, " +
-            "generate files (CSV, TSV, XLSX, JSON, TXT, MD, PNG, JPG, GIF, SVG, HTML, PDF, DOCX, PPTX, " +
-            "PARQUET, YAML, GEOJSON, or PY source files), create charts or visualisations, or analyse data. " +
-            "Attached files are already loaded into the sandbox by their original filename — " +
-            "reference them directly in your code (e.g. pd.read_csv('data.csv')). " +
-            "The tool returns stdout/stderr output and any generated files.",
+            "Use for calculations, data analysis, charts, and generated files including CSV, XLSX, JSON, TXT, MD, images, SVG, HTML, PDF, DOCX, PPTX, YAML, GEOJSON, and PY. " +
+            "Attached files are loaded by their original filename; reference them directly. " +
+            "The tool returns stdout/stderr output and generated file metadata.",
         parameters: {
             type: "object",
             properties: {
                 code: {
                     type: "string",
                     description: "Valid Python code to execute in the sandbox."
+                },
+                description: {
+                    type: "string",
+                    description:
+                        "A short, plain-language summary of what this code does, shown to the user as the " +
+                        "step's title. 3-8 words, past tense, no punctuation. " +
+                        "Examples: 'Calculated monthly revenue', 'Charted sales by region', 'Cleaned the survey data'."
                 }
             },
             required: ["code"]
@@ -113,16 +119,11 @@ function buildToolResultContent(responseData) {
     const inner = responseData?.data?.data ?? {};
     const result = { output: inner.textContent || "" };
     if (inner.content && inner.content.length > 0) {
-        result.files = inner.content.map(f => {
-            const fileKey = f.values?.file_key || "";
-            const fnMatch = fileKey.match(/-FN-([^/]+)$/);
-            const fileName = fnMatch ? fnMatch[1] : fileKey.split("/").pop() || "generated_file";
-            return {
-                type: f.type,
-                file_name: fileName,
-                file_size: f.values?.file_size
-            };
-        });
+        result.files = inner.content.map(f => ({
+            type: f.type,
+            file_name: generatedFileName(f),
+            file_size: f.values?.file_size
+        }));
     }
     return JSON.stringify(result);
 }
@@ -143,6 +144,11 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             const messages = body.messages;
             const model = options.model || body.model;
 
+            if (params.options?.deploymentFeatures?.codeInterpreter === false || body.options?.deploymentFeatures?.codeInterpreter === false) {
+                logger.warn('Code interpreter request rejected by deployment policy');
+                return assistantBase.handler(params, body, ds, responseStream);
+            }
+
             // Heuristic: does this failure look like it's caused by a problem with the
             // attached file itself (missing, unreadable, unauthorized, not found in the
             // sandbox, etc.) rather than an infrastructure/session issue? If so, the
@@ -161,7 +167,13 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // On any code interpreter failure: show the error status, then let the LLM
             // answer the original question directly as a fallback.
             const fallbackToLLM = async (statusMsg) => {
-                let fallbackMessages = messages;
+                let fallbackMessages = [
+                    ...messages,
+                    {
+                        role: "system",
+                        content: "The Code Interpreter did not successfully complete this request. Do not claim that any code ran or file was generated, saved, attached, or is downloadable. If the user requested a downloadable file, briefly explain that file generation failed and provide any useful text-only help."
+                    }
+                ];
                 if (isFileRelatedError(statusMsg)) {
                     const reuploadInstruction = {
                         role: "system",
@@ -171,9 +183,12 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                             "Let the user know this in your response, and ask them to re-upload the file " +
                             "along with their question so it can be processed again."
                     };
-                    fallbackMessages = [...messages, reuploadInstruction];
+                    fallbackMessages = [...fallbackMessages, reuploadInstruction];
                 }
 
+                if (params.signal?.aborted || params.options?.signal?.aborted) {
+                    throw params.signal?.reason || params.options?.signal?.reason || Object.assign(new Error('Request canceled'), { code: 'REQUEST_CANCELLED' });
+                }
                 await assistantBase.handler(params, { ...body, messages: fallbackMessages, options: { ...options, maxTokens: options.maxTokens || 4000 } }, ds, responseStream);
             };
 
@@ -228,6 +243,12 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     // where useChatSendService reads it and persists it on the conversation.
                     sendStateEventToStream(responseStream, { codeInterpreter: { codeInterpreterRecordId } });
                 } else {
+                    if (params.signal?.aborted || params.options?.signal?.aborted) {
+                        throw params.signal?.reason || params.options?.signal?.reason || Object.assign(new Error('Request canceled'), { code: 'REQUEST_CANCELLED' });
+                    }
+                    if (params.signal?.aborted || params.options?.signal?.aborted) {
+                        throw params.signal?.reason || params.options?.signal?.reason || Object.assign(new Error('Request canceled'), { code: 'REQUEST_CANCELLED' });
+                    }
                     const errMsg = String(createResponse?.error || "Failed to create session");
                     logger.error("Failed to create code interpreter session: %s", errMsg);
                     logCriticalError({
@@ -253,16 +274,19 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 ? `\n\nFile(s) available in the sandbox for this request: ${availableFileNames.join(", ")}. Use these exact filenames in your code.`
                 : "";
 
-            // Inject system prompt so the LLM uses the tool rather than narrating code.
+            // The editable instruction retains a safe built-in sandbox contract.
+            const interpreterInstructions = getFeaturePrompt(params.options?.deploymentPromptSettings, 'codeInterpreter');
             let llmMessages;
             if (messages.length > 0 && messages[0].role === "system") {
                 llmMessages = [
-                    { ...messages[0], content: messages[0].content + "\n\n" + CODE_INTERPRETER_SYSTEM_PROMPT + fileNamesHint },
+                    { ...messages[0], content: `${messages[0].content}\n\n${interpreterInstructions}${fileNamesHint}` },
                     ...messages.slice(1)
                 ];
             } else {
-                llmMessages = [{ role: "system", content: CODE_INTERPRETER_SYSTEM_PROMPT + fileNamesHint }, ...messages];
+                llmMessages = [{ role: "system", content: interpreterInstructions + fileNamesHint }, ...messages];
             }
+            params.options = { ...(params.options || {}), isOrdinaryChatRequest: false };
+            params.options.options = { ...(params.options.options || {}), artifacts: false };
 
             const MAX_TOOL_ITERATIONS = 5;
             let conversationMessages = llmMessages;
@@ -295,6 +319,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     );
                 } catch (err) {
                     logger.error("Code interpreter LLM call failed: %s", err.message);
+                    if (params.signal?.aborted || params.options?.signal?.aborted || ['AbortError', 'CanceledError'].includes(err.name)) throw err;
                     await fallbackToLLM(err.message);
                     return;
                 }
@@ -344,6 +369,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     const ciStateData = {
                         ...messageData,
                         content: allGeneratedFiles,
+                        // What this execution did, for the UI's step row. The raw output is
+                        // truncated here and is not part of messageData, so it can't leak whole.
+                        runs: [buildRunRecord({ id: toolCall.id, args, stdout: textContent, files: content, ok: true })],
                         ...(executionResponse.sessionRenewed ? { sessionRenewed: true } : {})
                     };
                     sendStateEventToStream(responseStream, { codeInterpreter: ciStateData });
@@ -356,7 +384,14 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     const errMsg = String(executionResponse?.error || "Unknown execution error");
                     logger.error("Code execution failed: %s", errMsg);
                     sendStateEventToStream(responseStream, {
-                        codeInterpreter: { error: errMsg.includes("session_expired") ? "session" : errMsg }
+                        codeInterpreter: {
+                            error: errMsg.includes("session_expired") ? "session" : errMsg,
+                            // The user's code itself failed (not the session/infrastructure): record the
+                            // attempt so the UI can show what ran and why it failed.
+                            ...(isCodeFailure(errMsg)
+                                ? { runs: [buildRunRecord({ id: toolCall.id, args, error: stripCodeFailurePrefix(errMsg), ok: false })] }
+                                : {})
+                        }
                     });
                     logCriticalError({
                         functionName: "codeInterpreter_executionFailure",

@@ -327,13 +327,19 @@ def update_api_key(item_id, updates, user):
     expression_attribute_names = {}
     logger.info("Updates to perform on key: %s", key_name)
     for field, value in updates.items():
-        if field in updatable_fields:
-            logger.debug("updates: %s - %s", field, value)
+        if field not in updatable_fields:
+            # Never let a caller write other columns (owner, delegate, apiKey, active, ...)
+            logger.warning("Ignoring non-updatable field: %s", field)
+            continue
+        logger.debug("updates: %s - %s", field, value)
         if field == "account":
             if not is_valid_account(value["id"]):
                 warning = "Warning: Invalid COA string attached to account"
                 logger.warning(warning)
             # Continue with key creation despite the warning
+            # Same normalisation as key creation: DynamoDB rejects float rates (needs Decimal)
+            if value.get("rateLimit"):
+                value = {**value, "rateLimit": formatRateLimit(value["rateLimit"])}
         if field == "rateLimit":
             value = formatRateLimit(value)
         # Use attribute names to avoid conflicts with DynamoDB reserved keywords

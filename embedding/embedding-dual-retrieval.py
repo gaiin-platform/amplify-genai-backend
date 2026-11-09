@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import time
 import asyncio
 import math
@@ -16,7 +17,7 @@ from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SQSOperation, SecretsManagerOperation
 )
 from pycommon.api.credentials import get_credentials
-from shared_functions import generate_embeddings, truncate_content_for_model, embedding_model_name
+from shared_functions import generate_embeddings, generate_global2_query_embedding, truncate_content_for_model, embedding_model_name
 import boto3
 import asyncio
 from boto3.dynamodb.conditions import Key
@@ -32,6 +33,10 @@ from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
 from pycommon.logger import getLogger
 from pycommon.api.critical_logging import log_critical_error, SEVERITY_HIGH
+from rag.vector_store import VectorKind, legacy_rows, partition_source_ids
+from pycommon.rag.contracts import EmbeddingNamespace
+from rag.dynamodb_vector_store import DynamoDBVectorStore
+from migration_hook import alias_never_embedded, alias_sources, global2_twin, queue_for_migration
 import traceback
 
 add_api_access_types([APIAccessType.CHAT.value, APIAccessType.DUAL_EMBEDDING.value])
@@ -189,8 +194,127 @@ class EmbeddingPerformanceCache:
 performance_cache = EmbeddingPerformanceCache()
 
 
-def get_top_similar_qas(query_embedding, src_ids, limit=5):
-    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+def _normalize_embedding_source_id(source_id):
+    """Normalize a source ID before using it as a progress-table key."""
+    if not isinstance(source_id, str):
+        return None
+    normalized = source_id.strip()
+    if "://" in normalized:
+        normalized = normalized.split("://", 1)[1]
+    return normalized or None
+
+
+def _source_ids_from_results(results):
+    """Extract canonical source IDs from legacy tuple or object results."""
+    source_ids = set()
+    for result in results or []:
+        source_id = None
+        if isinstance(result, dict):
+            source_id = result.get("src") or result.get("file") or result.get("source")
+        elif isinstance(result, (list, tuple)) and len(result) > 1:
+            # Existing PostgreSQL rows place src at index 1.
+            source_id = result[1]
+        normalized = _normalize_embedding_source_id(source_id)
+        if normalized:
+            source_ids.add(normalized)
+    return source_ids
+
+
+def _report_under_original_ids(rows, original_ids):
+    """Rows served from a global2 copy carry the id the caller asked for (the chat service matches on it)."""
+    reported = []
+    for row in rows:
+        if isinstance(row, (tuple, list)) and len(row) > 1:
+            source = _normalize_embedding_source_id(row[1]) or row[1]
+            if source in original_ids:
+                row = type(row)([*row[:1], original_ids[source], *row[2:]])
+        reported.append(row)
+    return reported
+
+
+def _migration_table():
+    """The RAG migration state table, or None when migration is not deployed."""
+    name = os.environ.get("RAG_MIGRATION_TABLE", "")
+    if not name or name == "unset":
+        return None
+    try:
+        return boto3.resource("dynamodb").Table(name)
+    except Exception:
+        return None
+
+
+_recently_marked = {}               # content hash -> when this container last stamped it
+MARK_ACCESS_EVERY_SECONDS = 3600    # a hot document is not written on every question
+ACCESS_PRECISION_SECONDS = 86400    # the stored time only moves forward by a day or more
+CONTENT_KEY = re.compile(r"^global2?/([0-9a-f]{64})\.content\.json$")
+
+
+def mark_sources_accessed(source_ids, accessed_at=None):
+    """Record that documents were used by a retrieval: ``lastAccessedAt`` on the document's content row in the hash-files
+    table (id = sha256 of the file). The chat service stamps the same field, and the retention sweep and the migration read
+    it, so there is one record of when a document was last used whichever key reached it (global/ and global2/ share the
+    hash).
+
+    Every source that was searched counts as used: an assistant with 100 documents is using all 100 even when only a
+    few come back in the top results. Sources without a content row are ignored; this helper must never make retrieval
+    fail or create records. Writes are skipped for documents this container stamped within the last hour, and the
+    stored time only moves when it is more than a day old.
+    """
+    hashes = set()
+    for source_id in source_ids or []:
+        match = CONTENT_KEY.match(_normalize_embedding_source_id(source_id) or "")
+        if match:
+            hashes.add(match.group(1))
+    started = time.time()
+    hashes = {h for h in hashes if started - _recently_marked.get(h, 0) >= MARK_ACCESS_EVERY_SECONDS}
+    if not hashes:
+        return
+
+    timestamp = accessed_at or datetime.now(timezone.utc).isoformat()
+    cutoff = datetime.fromtimestamp(started - ACCESS_PRECISION_SECONDS, timezone.utc).isoformat()
+    try:
+        table = boto3.resource("dynamodb").Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
+    except Exception as error:
+        logger.warning("Unable to initialize document access tracking: %s", error)
+        return
+
+    def stamp(content_hash):
+        try:
+            table.update_item(
+                Key={"id": content_hash},
+                UpdateExpression="SET lastAccessedAt = :lastAccessedAt",
+                ConditionExpression="attribute_exists(id) AND (attribute_not_exists(lastAccessedAt) OR lastAccessedAt < :cutoff)",
+                ExpressionAttributeValues={":lastAccessedAt": timestamp, ":cutoff": cutoff},
+            )
+        except Exception as error:
+            # Access tracking is bookkeeping, never a retrieval gate. A stamp that is already recent
+            # (or a missing record) is the normal "no write needed" outcome.
+            if "ConditionalCheckFailed" not in str(error):
+                logger.warning("Could not update lastAccessedAt for %s: %s", content_hash, error)
+        _recently_marked[content_hash] = started
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        list(pool.map(stamp, hashes))
+
+
+def _search_global2(global2_query_embedding, global2_ids, kind, limit):
+    if not global2_ids:
+        return []
+    if not global2_query_embedding:
+        raise ValueError("global2 sources require a global2 query embedding")
+    return legacy_rows(
+        DynamoDBVectorStore().search(global2_query_embedding, global2_ids, kind=kind, limit=limit)
+    )
+
+
+def get_top_similar_qas(query_embedding, src_ids, limit=5, global2_query_embedding=None):
+    global2_ids = partition_source_ids(src_ids).get(EmbeddingNamespace.GLOBAL2, [])
+    legacy_ids = partition_source_ids(src_ids).get(EmbeddingNamespace.GLOBAL, [])
+    global2_results = _search_global2(global2_query_embedding, global2_ids, VectorKind.QA, limit)
+    if not legacy_ids:
+        return global2_results
+    src_ids = legacy_ids
+    # DEFENSIVE: Validate query_embedding for NaN before PostgreSQL query
     if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
         logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_qas - refusing to query PostgreSQL")
         log_critical_error(
@@ -275,11 +399,17 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
                 )
                 
                 raise
-    return top_docs
+    return global2_results + top_docs
 
 
-def get_top_similar_docs(query_embedding, src_ids, limit=5):
-    # DEFENSIVE: Validate query_embedding for NaN values before PostgreSQL query
+def get_top_similar_docs(query_embedding, src_ids, limit=5, global2_query_embedding=None):
+    global2_ids = partition_source_ids(src_ids).get(EmbeddingNamespace.GLOBAL2, [])
+    legacy_ids = partition_source_ids(src_ids).get(EmbeddingNamespace.GLOBAL, [])
+    global2_results = _search_global2(global2_query_embedding, global2_ids, VectorKind.CONTENT, limit)
+    if not legacy_ids:
+        return global2_results
+    src_ids = legacy_ids
+    # DEFENSIVE: Validate query_embedding for NaN before PostgreSQL query
     if not query_embedding or any(math.isnan(x) if isinstance(x, (int, float)) else False for x in query_embedding):
         logger.error("[DEFENSIVE] NaN or empty embedding detected in get_top_similar_docs - refusing to query PostgreSQL")
         log_critical_error(
@@ -358,7 +488,7 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
                 )
                 
                 raise
-    return top_docs
+    return global2_results + top_docs
 
 
 def classify_src_ids_by_access(raw_src_ids, current_user):
@@ -1124,8 +1254,22 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             "bedrock_kb_ids": bedrock_kb_ids,
         }
 
+    # Documents the migration has switched to global2 are answered from their new copy. This is after every access
+    # check on purpose: those keep using the id the caller sent. Results are reported under that original id.
+    migration_table = _migration_table()
+    src_ids, original_ids = alias_sources(src_ids, migration_table)
+    accessible_src_ids, _ = alias_sources(accessible_src_ids, migration_table)
+    # Same for a legacy document that was never embedded and got its embeddings later, as global2
+    src_ids, built_later = alias_never_embedded(src_ids, global2_copy_replaces_legacy)
+    accessible_src_ids, _ = alias_never_embedded(accessible_src_ids, global2_copy_replaces_legacy)
+    original_ids.update(built_later)
+    if original_ids:
+        logger.info("Serving migrated documents from global2: %s", original_ids)
+
     # Advanced polling strategy with exponential backoff and early termination
-    pending_ids = accessible_src_ids
+    # Only global2 documents are waited on / requeued. Legacy global/ documents are
+    # frozen: they are searched as they are in Postgres, never polled or re-embedded.
+    pending_ids = sources_to_wait_for(accessible_src_ids)
     is_complete = False
     iteration_count = 0
     requeue_failures = {}
@@ -1170,10 +1314,19 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         # Check embedding completion using optimized caching system
         completion_result = await check_embedding_completion(pending_ids, account_data, requeue_failures, max_requeue_failures)
         possible_pending_ids = completion_result["requires_embedding"]
-        is_complete = completion_result["all_complete"] and len(possible_pending_ids) == 0
-        
         pending_ids = completion_result["pending_ids"]
         failed_documents = completion_result.get("failed_documents", [])
+        partial_ready_ids = completion_result.get("partial_ready_ids", [])
+
+        # A document with at least 90% completed children is usable now. Keep
+        # retrying missing children in the background path, but do not block
+        # this chat request or remove the ready source from retrieval.
+        if partial_ready_ids:
+            ready_set = set(partial_ready_ids)
+            src_ids = [src_id for src_id in src_ids if src_id in ready_set or src_id not in pending_ids]
+        # Partial-ready sources are reported as neither pending nor failed, so
+        # all_complete already accounts for them; other pending sources still count.
+        is_complete = completion_result["all_complete"] and len(possible_pending_ids) == 0
         
         # Handle failed documents intelligently
         if failed_documents:
@@ -1271,7 +1424,34 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     if len(content) < original_length:
         logger.warning(f"[TOKEN_SAFETY] User input truncated from {original_length} to {len(content)} chars to fit embedding token limit")
 
-    response_embeddings = generate_embeddings(content)
+    # Legacy (PostgreSQL) and global2 (DynamoDB/Nova) live in different vector
+    # spaces, so each namespace needs a query vector from its own model.
+    namespaces = partition_source_ids(src_ids)
+    has_global2 = bool(namespaces[EmbeddingNamespace.GLOBAL2])
+    has_legacy = bool(namespaces[EmbeddingNamespace.GLOBAL])
+    global2_query_embedding = None
+    if has_global2:
+        global2_response = generate_global2_query_embedding(content, account_data)
+        if not global2_response["success"]:
+            error = global2_response["error"]
+            logger.error(f"Global2 query embedding failed: {error}")
+            log_critical_error(
+                function_name="_async_process_input_with_dual_retrieval_global2_embedding",
+                error_type="Global2QueryEmbeddingFailure",
+                error_message=f"Failed to generate global2 query embedding: {error}",
+                current_user=current_user,
+                severity=SEVERITY_HIGH,
+                stack_trace="",
+                context={"user_input_length": len(content) if content else 0, "src_ids_count": len(src_ids)},
+            )
+            return {"error": error}
+        global2_query_embedding = global2_response["data"]
+
+    if has_legacy or not has_global2:
+        response_embeddings = generate_embeddings(content)
+    else:
+        # Only global2 sources: skip the legacy model entirely.
+        response_embeddings = {"success": True, "data": [], "token_count": 0}
 
     # NaN RETRY: If embedding generation fails due to NaN, try with sanitized text
     if not response_embeddings["success"]:
@@ -1342,37 +1522,52 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         
         return {"error": error}
     
-    # DIAGNOSTIC: Check what src values exist in the database for these IDs
-    logger.info(f"[DIAGNOSTIC] Checking database for src values matching: {src_ids}")
-    try:
-        with psycopg2.connect(
-            host=pg_host,
-            database=pg_database,
-            user=pg_user,
-            password=pg_password,
-            port=pg_port,
-        ) as conn:
-            with conn.cursor() as cur:
-                # Query to check if any rows exist with these src values
-                src_ids_array = "{" + ",".join(map(str, src_ids)) + "}"
-                check_query = "SELECT DISTINCT src FROM embeddings WHERE src = ANY(%s) LIMIT 10"
-                cur.execute(check_query, (src_ids_array,))
-                existing_srcs = cur.fetchall()
-                logger.info(f"[DIAGNOSTIC] Found {len(existing_srcs)} matching src values in embeddings table: {existing_srcs}")
+    # Keep the legacy diagnostic query scoped to PostgreSQL. Global2 routing is
+    # intentionally isolated behind the vector-store adapter integration.
+    legacy_src_ids = [
+        src_id for src_id in src_ids
+        if (_normalize_embedding_source_id(src_id) or "").startswith("global/")
+    ]
+    global2_src_ids = [
+        src_id for src_id in src_ids
+        if (_normalize_embedding_source_id(src_id) or "").startswith("global2/")
+    ]
+    if global2_src_ids:
+        logger.info("Global2 sources await vector-store adapter routing: %s", global2_src_ids)
 
-                # Also check a sample of what src values DO exist
-                sample_query = "SELECT DISTINCT src FROM embeddings LIMIT 5"
-                cur.execute(sample_query)
-                sample_srcs = cur.fetchall()
-                logger.info(f"[DIAGNOSTIC] Sample of src values in embeddings table: {sample_srcs}")
-    except Exception as e:
-        logger.error(f"[DIAGNOSTIC] Failed to check database: {e}")
+    # DIAGNOSTIC: Check legacy src values in PostgreSQL only. Skipped when every source is global2
+    # (DynamoDB), which would otherwise open a PostgreSQL connection and run two queries for nothing.
+    if legacy_src_ids:
+        logger.info(f"[DIAGNOSTIC] Checking legacy database for src values matching: {legacy_src_ids}")
+        try:
+            with psycopg2.connect(
+                host=pg_host,
+                database=pg_database,
+                user=pg_user,
+                password=pg_password,
+                port=pg_port,
+            ) as conn:
+                with conn.cursor() as cur:
+                    # Query to check if any rows exist with these src values
+                    src_ids_array = "{" + ",".join(map(str, legacy_src_ids)) + "}"
+                    check_query = "SELECT DISTINCT src FROM embeddings WHERE src = ANY(%s) LIMIT 10"
+                    cur.execute(check_query, (src_ids_array,))
+                    existing_srcs = cur.fetchall()
+                    logger.info(f"[DIAGNOSTIC] Found {len(existing_srcs)} matching src values in embeddings table: {existing_srcs}")
+
+                    # Also check a sample of what src values DO exist
+                    sample_query = "SELECT DISTINCT src FROM embeddings LIMIT 5"
+                    cur.execute(sample_query)
+                    sample_srcs = cur.fetchall()
+                    logger.info(f"[DIAGNOSTIC] Sample of src values in embeddings table: {sample_srcs}")
+        except Exception as e:
+            logger.error(f"[DIAGNOSTIC] Failed to check database: {e}")
 
     def get_similar_docs():
-        return get_top_similar_docs(embeddings, src_ids, limit)
+        return get_top_similar_docs(embeddings, src_ids, limit, global2_query_embedding)
 
     def get_similar_qas():
-        return get_top_similar_qas(embeddings, src_ids, limit)
+        return get_top_similar_qas(embeddings, src_ids, limit, global2_query_embedding)
 
     # Execute retrieval operations in parallel (including Bedrock KB if present)
     retrieval_tasks = [
@@ -1432,6 +1627,16 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
             logger.info(f"[NO_MATCHES] Documents have embeddings but no content matched the query - this is normal")
 
     # Build response
+    accessed_sources = _source_ids_from_results(related_docs)
+    # every document that was searched is in use, whether or not it made the top results
+    mark_sources_accessed(set(accessed_sources) | set(src_ids) | set(original_ids.values()))
+    queue_for_migration(accessed_sources, migration_table)
+
+    if original_ids:
+        related_docs = _report_under_original_ids(related_docs, original_ids)
+        src_ids = [original_ids.get(src_id, src_id) for src_id in src_ids]
+        failed_documents = [original_ids.get(doc, doc) for doc in failed_documents]
+
     response = {
         "result": related_docs,
         "documents_processed": len(src_ids) + len(bedrock_kb_ids),
@@ -1465,6 +1670,7 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         DynamoDBOperation.UPDATE_ITEM,
     ],
     "RAG_CHUNK_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
+    "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
 })
 @validated("embeddings-check")
 def queue_missing_embeddings(event, context, current_user, name, data):
@@ -1474,11 +1680,29 @@ def queue_missing_embeddings(event, context, current_user, name, data):
     return asyncio.run(_async_queue_missing_embeddings(event, context, current_user, name, data))
 
 
+def ids_to_embed(data_sources):
+    """The global2 ids to check (and start when they have no embeddings) for the documents a caller sends.
+
+    Documents are only ever embedded as global2: a legacy global/ document that has embeddings (or has been migrated)
+    is left alone, since re-embedding it would write new Postgres rows. One that was never embedded (a library file
+    uploaded with RAG off before the new pipeline) is built as its global2 twin instead.
+    """
+    ids, _ = alias_sources([i for i in map(_normalize_embedding_source_id, data_sources) if i], _migration_table())
+    result = []
+    for src_id in ids:
+        twin = global2_twin(src_id)
+        if is_global2_source(src_id):
+            result.append(src_id)
+        elif twin and not has_progress_row(src_id):
+            result.append(twin)
+    return list(dict.fromkeys(result))
+
+
 async def _async_queue_missing_embeddings(event, context, current_user, name, data):
     """
     Async implementation of queue missing embeddings.
     """
-    src_ids = data["data"]["dataSources"]
+    src_ids = ids_to_embed(data["data"]["dataSources"])
     account_data = {
             "user": current_user,
             "account": data["account"],
@@ -1492,7 +1716,7 @@ async def _async_queue_missing_embeddings(event, context, current_user, name, da
     if embed_ids:
         logger.info(f"Queueing {len(embed_ids)} documents for embedding")
         for src_id in embed_ids:
-            queue_result = manually_queue_embedding(src_id, account_data)
+            queue_result = start_rag_from_file(src_id, account_data)
             if not queue_result["success"]:
                 failed_ids.append(src_id)
 
@@ -1507,7 +1731,7 @@ async def _async_queue_missing_embeddings(event, context, current_user, name, da
 async def check_embedding_completion(src_ids, account_data, requeue_failures=None, max_requeue_failures=3):
     """Cached embedding status with intelligent failure handling"""
     if not src_ids:
-        return {"all_complete": True, "pending_ids": [], "requires_embedding": [], "failed_documents": []}
+        return {"all_complete": True, "pending_ids": [], "requires_embedding": [], "failed_documents": [], "partial_ready_ids": []}
     
     embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
     logger.debug(f"Checking embedding completion for {src_ids}")
@@ -1549,8 +1773,19 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         """Check embedding status for a single source ID with caching"""
         pending_ids = []
         requires_embedding = []
-        
+        partial_ready = []
+
         def sync_check():
+            result = _sync_check_inner()
+            if partial_ready:
+                # >=90% of child chunks are embedded: the document is usable now.
+                # Any requeue (failed/stalled/terminated) already happened inside
+                # the check; do not make the request wait on, or fail because of,
+                # the remaining children.
+                return {"pending": [], "requires_embedding": [], "partial_ready": list(partial_ready)}
+            return result
+
+        def _sync_check_inner():
             try:
                 dynamodb = boto3.resource("dynamodb")
                 table = dynamodb.Table(embedding_progress_table)
@@ -1574,13 +1809,21 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                 parent_status = item.get("parentChunkStatus", "")
                 is_terminated = item.get("terminated", False)
                 last_updated = item.get("lastUpdated")
+                child_chunks = item.get("data", {}).get("childChunks", {})
+                completed_count = sum(1 for child in child_chunks.values() if child.get("status") == "completed")
+                total_count = len(child_chunks)
+                completion_ratio = completed_count / total_count if total_count else 0
+                if completion_ratio >= 0.9 and parent_status != "completed":
+                    logger.info("[PARTIAL_READY] %s is %.1f%% complete; allowing retrieval while retrying remainder", src_id, completion_ratio * 100)
+                    partial_ready.append(src_id)
+                    performance_cache.cache_embedding_status(src_id, "partial_ready")
 
                 # Handle completed status immediately
                 # Handle completed status immediately
                 if parent_status == "completed":
                     logger.info(f"[COMPLETED] Document {src_id} embedding is complete")
                     performance_cache.cache_embedding_status(src_id, "completed")
-                    return {"pending": [], "requires_embedding": []}
+                    return {"pending": [], "requires_embedding": [], "partial_ready": partial_ready}
 
                 # Check for stalled jobs
                 if parent_status in ["starting", "processing"] and last_updated:
@@ -1726,6 +1969,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
     all_pending_ids = []
     all_requires_embedding = []
     all_failed_documents = cached_failed.copy()  # Start with cached failed documents
+    all_partial_ready = []
     
     # Add results from database checks
     for result in results:
@@ -1736,6 +1980,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         
         all_pending_ids.extend(result.get("pending", []))
         all_requires_embedding.extend(result.get("requires_embedding", []))
+        all_partial_ready.extend(result.get("partial_ready", []))
         
         # Collect failed documents
         if "failed" in result:
@@ -1750,13 +1995,101 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         "pending_ids": all_pending_ids,
         "requires_embedding": all_requires_embedding,
         "failed_documents": all_failed_documents,
+        "partial_ready_ids": all_partial_ready,
     }
 
 
+def sources_to_wait_for(src_ids):
+    """The sources a chat request may wait on (and requeue) while embeddings finish: global2 only.
+
+    Legacy global/ documents are never re-embedded, so waiting on one only burns the retry budget and then
+    fails the whole request when its old progress row is stuck. They are searched as they are.
+    """
+    return [src_id for src_id in src_ids if is_global2_source(src_id)]
+
+
+def is_global2_source(source_id):
+    normalized = _normalize_embedding_source_id(source_id)
+    return bool(normalized) and normalized.startswith("global2/")
+
+
+_recently_started = {}          # content key -> time its file was sent for processing (this container only)
+RECENTLY_STARTED_SECONDS = 120
+
+
+def has_progress_row(src_id):
+    """True when the document has an embedding progress row, whatever its state."""
+    src_id = _normalize_embedding_source_id(src_id)
+    object_id = src_id.split(".json")[0] + ".json" if ".json" in src_id else src_id
+    table = boto3.resource("dynamodb").Table(os.environ["EMBEDDING_PROGRESS_TABLE"])
+    return "Item" in table.get_item(Key={"object_id": object_id})
+
+
+def global2_copy_replaces_legacy(legacy_key, twin_key):
+    """A legacy document with no embeddings of its own, whose global2 copy has been started: it is answered from that."""
+    return not has_progress_row(legacy_key) and has_progress_row(twin_key)
+
+
+def find_source_file_key(src_id, user):
+    """The upload (user file key) a global2 content key was built from; the caller's own upload when they have one.
+
+    An upload of a document that was never embedded still points at its legacy global/ text, so that key counts too.
+    """
+    table = boto3.resource("dynamodb").Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
+    uploads = []
+    for text_key in (src_id, "global/" + src_id[len("global2/"):]):
+        kwargs = {"IndexName": "TextLocationIndex", "KeyConditionExpression": Key("textLocationKey").eq(text_key)}
+        while True:
+            response = table.query(**kwargs)
+            uploads.extend(row for row in response.get("Items", []) if "hash" in row)      # upload pointers, not the content row
+            if not response.get("LastEvaluatedKey"):
+                break
+            kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    mine = [row for row in uploads if (row.get("originalCreator") or str(row["id"]).split("/")[0]) == user]
+    chosen = (mine or uploads)
+    return chosen[0]["id"] if chosen else None
+
+
+def start_rag_from_file(src_id, account_data):
+    """Start the embeddings of a global2 document that has none (uploaded with RAG off, e.g. a library file).
+
+    The document is run through process_document with RAG switched on for this run, not queued straight to the chunk
+    queue: that reuses the stored text, builds the page manifest and page images, and always lands in global2.
+    """
+    src_id = _normalize_embedding_source_id(src_id)
+    if not src_id or not is_global2_source(src_id):
+        logger.info("Not starting embeddings for non-global2 document %s", src_id)
+        return {"success": False, "message": "Only global2 documents are embedded"}
+    now = time.time()
+    if now - _recently_started.get(src_id, 0) < RECENTLY_STARTED_SECONDS:
+        return {"success": True}                    # sent a moment ago: processing has not produced a progress row yet
+    try:
+        source_key = find_source_file_key(src_id, account_data.get("user"))
+        if not source_key:
+            logger.error("No upload found for %s; cannot start its embeddings", src_id)
+            return {"success": False, "message": "No uploaded file found for this document"}
+        # process_document reads the per-document secrets under the uploaded file's key
+        if not store_ds_secrets_for_rag(source_key, account_data).get("success"):
+            return {"success": False, "message": "Failed to store RAG secrets"}
+        sqs.send_message(
+            QueueUrl=os.environ["RAG_PROCESS_DOCUMENT_QUEUE_URL"],
+            MessageBody=json.dumps({"rag_enabled": True, "s3": {"object": {"key": source_key}}}),
+        )
+        _recently_started[src_id] = now
+        logger.info("Started embeddings for %s from %s", src_id, source_key)
+        return {"success": True}
+    except Exception as error:
+        logger.error("Could not start embeddings for %s: %s", src_id, error, exc_info=True)
+        return {"success": False, "message": str(error)}
+
+
 def manually_queue_embedding(src_id, account_data):
-    if not "global/" in src_id:
-        logger.debug(f"Skipping non-global document {src_id}")
+    normalized_src_id = _normalize_embedding_source_id(src_id)
+    if not is_global2_source(normalized_src_id):
+        # A legacy global/ document is never re-embedded: that would write new Postgres rows.
+        logger.info(f"Not queueing non-global2 document {src_id}")
         return {"success": False}
+    src_id = normalized_src_id
     
     # Check if already marked as failed in cache to avoid unnecessary work
     is_failed, failure_reason, _ = performance_cache.is_document_failed(src_id)

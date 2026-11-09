@@ -5,6 +5,7 @@ from .file_upload_schema import file_upload_schema
 from .key_request_schema import key_request_schema
 from .file_delete_schema import file_delete_schema
 from .file_set_tags_schema import file_set_tags_schema
+from .file_rename_schema import file_rename_schema
 from .user_delete_tag_schema import user_delete_tag_schema
 from .create_tags_schema import create_tags_schema
 from .file_query_schema import file_query_schema
@@ -16,6 +17,10 @@ from .register_conversation_schema import register_conversation_schema
 from .conversation_ids_schema import conversation_ids_schema
 from .save_settings_schema import save_settings_schema
 from .tools_op_schema import tools_op_schema
+from .rag_migration_schema import (
+    rag_migration_settings_schema,
+    rag_migration_action_schema,
+)
 from .user_data_put_schema import user_data_put_schema
 from .user_data_get_schema import user_data_get_schema
 from .user_data_uuid_get_schema import user_data_uuid_get_schema
@@ -46,11 +51,13 @@ rules = {
     "validators": {
         "/state/share": {"append": share_schema, "read": {}},
         "/state/share/load": {"load": share_load_schema},
+        "/state/share/sent": {"read": {}},
         "/datasource/metadata/set": {"set": set_metadata_schema},
         "/files/upload": {"upload": file_upload_schema},
         "/files/download": {"download": key_request_schema},
         "/files/delete": {"delete": file_delete_schema},
         "/files/set_tags": {"set_tags": file_set_tags_schema},
+        "/files/rename": {"rename": file_rename_schema},
         "/files/tags/delete": {"delete": user_delete_tag_schema},
         "/files/tags/create": {"create": create_tags_schema},
         "/files/tags/list": {"list": {}},
@@ -78,23 +85,36 @@ rules = {
         },
         "/state/conversation/delete": {"delete": {}},
         "/chat": {"chat": chat_input_schema},
+        # OpenAI-compatible routes: the body is not wrapped in {"data": ...}, so the empty schema
+        # validates the whole body and chat/openai_compat.py does the real validation.
+        "/v1/chat/completions": {"chat": {}},
+        "/v1/models": {"list": {}},
         "/state/settings/save": {"save": save_settings_schema},
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/state/register_ops": {"register_ops": tools_op_schema},
         "/poll/status": {"get_poll_status": {}},
+        "/rag_migration/status": {"read": {}},
+        "/rag_migration/settings": {"update": rag_migration_settings_schema},
+        "/rag_migration/action": {"action": rag_migration_action_schema},
         **user_data_validators,
     },
     "api_validators": {
         "/state/share": {"read": {}},
         "/state/share/load": {"load": share_load_schema},
+        "/state/share/sent": {"read": {}},
         "/files/upload": {"upload": file_upload_schema},
         "/files/set_tags": {"set_tags": file_set_tags_schema},
+        "/files/rename": {"rename": file_rename_schema},
         "/files/tags/delete": {"delete": user_delete_tag_schema},
         "/files/tags/create": {"create": create_tags_schema},
         "/files/tags/list": {"list": {}},
         "/files/query": {"query": file_query_schema},
         "/chat": {"chat": chat_input_schema},
+        # OpenAI-compatible routes: the body is not wrapped in {"data": ...}, so the empty schema
+        # validates the whole body and chat/openai_compat.py does the real validation.
+        "/v1/chat/completions": {"chat": {}},
+        "/v1/models": {"list": {}},
         "/files/download": {"download": key_request_schema},
         "/state/conversation/register": {
             "conversation_upload": register_conversation_schema

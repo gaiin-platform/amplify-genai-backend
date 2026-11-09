@@ -1,5 +1,6 @@
 import requests
 from pycommon.llm.chat import chat
+from .system_prompts import compose_api_chat_messages, get_prompt_config
 import os
 from pycommon.api.get_endpoint import get_endpoint, EndpointType
 import json
@@ -19,6 +20,52 @@ add_api_access_types([APIAccessType.CHAT.value])
 
 from pycommon.logger import getLogger
 logger = getLogger("chat_endpoint")
+
+class ChatRequestError(Exception):
+    """A request-preparation failure whose message is safe to show to the caller."""
+
+
+def prepare_chat_payload(payload, access_token):
+    """Apply Amplify's API-facing request preparation to a chat payload (mutates and returns it).
+
+    Shared by ``/chat`` and the OpenAI-compatible ``/v1/chat/completions`` route so both get
+    the same assistant validation, data-source resolution, model alias resolution, system
+    prompt composition and deployment policy. ``payload`` must already have the Amplify shape
+    (``messages`` plus ``options.model.id``). Raises ChatRequestError for caller mistakes.
+    """
+    payload_options = payload["options"]
+    assistant_id = payload_options.get("assistantId")
+    if assistant_id:
+        verify_assistant_id = validate_assistant_id(assistant_id, access_token)
+        if not verify_assistant_id["success"]:
+            logger.error("Invalid assistant id: %s", assistant_id)
+            raise ChatRequestError("Invalid assistant id")
+
+    payload["dataSources"] = get_data_source_details(payload.get("dataSources") or [])
+    model_id = resolve_model_alias(payload_options["model"]["id"], access_token)
+    payload_options["model"]["id"] = model_id
+    payload["model"] = model_id
+    messages = payload["messages"]
+
+    prompt_config = get_prompt_config()
+    base_prompt = prompt_config.get("prompts", {}).get("ordinaryChat.base") or None
+    payload["messages"] = compose_api_chat_messages(
+        messages,
+        request_prompt=payload_options.get("prompt"),
+        base_prompt=base_prompt,
+    )
+    # Apply deployment policy to explicit API options before forwarding. The
+    # external CHAT_ENDPOINT remains responsible for its own provider conversion.
+    if not prompt_config.get("availability", {}).get("webSearch", False):
+        payload["enableWebSearch"] = False
+        payload_options["enableWebSearch"] = False
+    if not prompt_config.get("availability", {}).get("artifacts", False):
+        payload_options["artifacts"] = False
+        payload_options["artifactsMode"] = False
+    if not prompt_config.get("availability", {}).get("codeInterpreter", False):
+        payload_options["codeInterpreterOnly"] = False
+    return payload
+
 
 @api_tool(
     path="/chat",
@@ -149,27 +196,10 @@ def chat_endpoint(event, context, current_user, name, data):
             }
 
         payload = data["data"]
-        assistant_id = payload["options"].get("assistantId")
-        if assistant_id:
-            verify_assistant_id = validate_assistant_id(assistant_id, access_token)
-            if not verify_assistant_id["success"]:
-                logger.error("Invalid assistant id: %s", assistant_id)
-                return {"success": False, "message": "Invalid assistant id"}
-
-        payload["dataSources"] = get_data_source_details(payload["dataSources"])
-        payload_options = payload["options"]
-        model_id = resolve_model_alias(payload_options["model"]["id"], access_token)
-        payload_options["model"]["id"] = model_id
-        payload["model"] = model_id
-        messages = payload["messages"]
-
-        SYSTEM_ROLE = "system"
-        if messages[0]["role"] != SYSTEM_ROLE:
-            logger.debug("Adding system prompt message")
-            user_prompt = payload_options.get("prompt", "No Prompt Provided")
-            payload["messages"] = [
-                {"role": SYSTEM_ROLE, "content": user_prompt}
-            ] + messages
+        try:
+            prepare_chat_payload(payload, access_token)
+        except ChatRequestError as e:
+            return {"success": False, "message": str(e)}
 
         response, metadata = chat(chat_endpoint, access_token, payload)
         return {
@@ -178,7 +208,7 @@ def chat_endpoint(event, context, current_user, name, data):
             "data": response,
         }
     except Exception as e:
-        return {"success": False, "message": {f"Chat service error: {e}"}}
+        return {"success": False, "message": f"Chat service error: {e}"}
 
 
 def convert_decimal(obj):
@@ -191,6 +221,7 @@ def convert_decimal(obj):
         return [convert_decimal(item) for item in obj]
     return obj
 
+_BATCH_GET_LIMIT = 100  # DynamoDB BatchGetItem maximum keys per request
 MODEL_ALIAS_SIMPLE = "SIMPLE"
 MODEL_ALIAS_COMPLEX = "COMPLEX"
 _MODEL_ALIASES = {MODEL_ALIAS_SIMPLE, MODEL_ALIAS_COMPLEX}
@@ -218,13 +249,9 @@ def resolve_model_alias(model_id, access_token):
         )
         return model_id
 
-    if model_id == MODEL_ALIAS_SIMPLE:
-        resolved = models.get("cheapest_model") or model_id
-    elif model_id == MODEL_ALIAS_COMPLEX:
-        resolved = models.get("advanced_model") or model_id
-    else:
-        logger.error("Unknown model alias '%s'", model_id)
-        return {"success": False, "message": f"Unknown model alias '{model_id}'"}
+    # model_id is guaranteed to be one of _MODEL_ALIASES here.
+    key = "cheapest_model" if model_id == MODEL_ALIAS_SIMPLE else "advanced_model"
+    resolved = models.get(key) or model_id
 
     logger.debug("Resolved model alias '%s' -> '%s'", model_id, resolved)
     return resolved
@@ -257,41 +284,50 @@ def get_data_source_details(data_sources):
                 id = id.split("s3://")[1]
             data_source_ids.append(id)
 
-    # Properly format batch_get_item request
-    response = dynamodb.batch_get_item(
-        RequestItems={
-            table_name: {
-                "Keys": [{"id": collection_id} for collection_id in data_source_ids]
+    # Nothing to look up (e.g. only Bedrock KB sources): batch_get_item rejects an empty key list.
+    if not data_source_ids:
+        return bedrock_kb_sources
+
+    # batch_get_item rejects duplicate keys and more than 100 keys per call.
+    unique_ids = list(dict.fromkeys(data_source_ids))
+    items = []
+    for start in range(0, len(unique_ids), _BATCH_GET_LIMIT):
+        response = dynamodb.batch_get_item(
+            RequestItems={
+                table_name: {
+                    "Keys": [
+                        {"id": collection_id}
+                        for collection_id in unique_ids[start:start + _BATCH_GET_LIMIT]
+                    ]
+                }
             }
-        }
-    )
+        )
+        items.extend(response.get("Responses", {}).get(table_name, []))
 
     # Format the response items as required
     formatted_sources = []
     found_ids = set()
-    if "Responses" in response and table_name in response["Responses"]:
-        items = response["Responses"][table_name]
-        for item in items:
-            found_ids.add(item.get("id", ""))
-            # Create metadata object
-            metadata = {
-                "createdAt": item.get("createdAt", ""),
-                "tags": item.get("tags", []),
-                "totalTokens": item.get("totalTokens", 0),
-                "ragOnly": True,
-            }
-            id = item.get("id", "")
+    for item in items:
+        found_ids.add(item.get("id", ""))
+        # Create metadata object
+        metadata = {
+            "createdAt": item.get("createdAt", ""),
+            "tags": item.get("tags", []),
+            "totalTokens": item.get("totalTokens", 0),
+            "ragOnly": True,
+        }
+        id = item.get("id", "")
 
-            # Create formatted object
-            formatted_item = {
-                "id": "s3://" + id,
-                "name": item.get("name", ""),
-                "type": item.get("type", ""),
-                "data": item.get("data", ""),
-                "metadata": metadata,
-                "key": id,
-            }
-            formatted_sources.append(formatted_item)
+        # Create formatted object
+        formatted_item = {
+            "id": "s3://" + id,
+            "name": item.get("name", ""),
+            "type": item.get("type", ""),
+            "data": item.get("data", ""),
+            "metadata": metadata,
+            "key": id,
+        }
+        formatted_sources.append(formatted_item)
 
     # Optional: track missing items
     missing_ids = set(data_source_ids) - found_ids
@@ -300,8 +336,8 @@ def get_data_source_details(data_sources):
 
     # batch_get_item returns items in arbitrary order — re-sort to match the original
     # caller-supplied order so that image labels (#1, #2, ...) map to the correct files.
-    id_order = {ds_id: idx for idx, ds_id in enumerate(data_source_ids)}
-    formatted_sources.sort(key=lambda item: id_order.get(item["key"], len(data_source_ids)))
+    id_order = {ds_id: idx for idx, ds_id in enumerate(unique_ids)}
+    formatted_sources.sort(key=lambda item: id_order.get(item["key"], len(unique_ids)))
 
     # Convert any Decimal objects to regular Python types
     formatted_sources = convert_decimal(formatted_sources)
