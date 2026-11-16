@@ -332,7 +332,7 @@ def delete_assistant(event, context, current_user, name, data):
                 "instructions": "<instructions>",
                 "disclaimerHash": "348529340098580234959824580-pueiorupo4",
                 "coreHash": "eiouqent84832n8989pdeer",
-                "user": "yourEmail@vanderbilt.edu",
+                "user": "yourEmail@example.com",
                 "uri": null,
                 "createdAt": "2024-07-15T19:07:57",
                 "dataSources": [
@@ -593,7 +593,7 @@ def get_assistant(assistant_id):
             "tags": ["test"],
             "instructions": "Respond to user queries about general knowledge topics.",
             "disclaimer": "This assistant's responses are for informational purposes only.",
-            "dataSources": [{"id": "e48759073324384kjsf", "name": "api_paths_summary.csv", "type": "text/csv", "raw": "", "data": "", "key": "yourEmail@vanderbilt.edu/date/w3ou009we3.json", "metadata": {"name": "api_paths_summary.csv", "totalItems": 20, "locationProperties": ["row_number"], "contentKey": "yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json", "createdAt": "2024-07-15T18:58:24.912235", "totalTokens": 3750, "tags": [], "props": {}}}],
+            "dataSources": [{"id": "e48759073324384kjsf", "name": "api_paths_summary.csv", "type": "text/csv", "raw": "", "data": "", "key": "yourEmail@example.com/date/w3ou009we3.json", "metadata": {"name": "api_paths_summary.csv", "totalItems": 20, "locationProperties": ["row_number"], "contentKey": "yourEmail@example.com/date/w3ou009we3.json.content.json", "createdAt": "2024-07-15T18:58:24.912235", "totalTokens": 3750, "tags": [], "props": {}}}],
         }
     }
 

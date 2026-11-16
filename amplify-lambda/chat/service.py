@@ -78,7 +78,7 @@ def prepare_chat_payload(payload, access_token):
     "data":{
         "temperature": 0.7,
         "max_tokens": 4000,
-        "dataSources": ["yourEmail@vanderbilt.edu/2014-qwertyuio.json"],
+        "dataSources": ["yourEmail@example.com/2014-qwertyuio.json"],
         "messages": [
             {
             "role": "user",

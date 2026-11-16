@@ -30,11 +30,11 @@ logger = getLogger("code_interpreter")
     Example request:
     {
       "data": {
-          "codeInterpreterRecordId": "yourEmail@vanderbilt.edu/ast/43985037429849290398",
+          "codeInterpreterRecordId": "yourEmail@example.com/ast/43985037429849290398",
           "messages": [
               { "role": "user",
                 "content" : "Can you tell me something about the data analytics and what you are able to do?",
-                "dataSourceIds" : ["yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json"]
+                "dataSourceIds" : ["yourEmail@example.com/2024-05-08/0f20f0447b.json"]
               }
           ]
       }
@@ -45,14 +45,14 @@ logger = getLogger("code_interpreter")
       "success": true,
       "message": "Chat completed successfully",
       "data": {
-        "sessionId": "yourEmail@vanderbilt.edu/ast/43985037429849290398",
+        "sessionId": "yourEmail@example.com/ast/43985037429849290398",
         "role": "assistant",
         "textContent": "I've generated the pie chart as a PNG file.\\n",
         "content": [
           {
             "type": "image/png",
             "values": {
-              "file_key": "yourEmail@vanderbilt.edu/abc123-FN-generated_image.png",
+              "file_key": "yourEmail@example.com/abc123-FN-generated_image.png",
               "presigned_url": "https://...",
               "file_size": 149878
             }
@@ -67,7 +67,7 @@ logger = getLogger("code_interpreter")
         "properties": {
             "codeInterpreterRecordId": {
                 "type": "string",
-                "description": "Unique identifier of the Code Interpreter record. Example: 'yourEmail@vanderbilt.edu/ast/43985037429849290398'.",
+                "description": "Unique identifier of the Code Interpreter record. Example: 'yourEmail@example.com/ast/43985037429849290398'.",
             },
             "messages": {
                 "type": "array",
@@ -210,7 +210,7 @@ def generate_req_id():
     Example request:
     {
         "data": {
-            "dataSources": ["yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json"]
+            "dataSources": ["yourEmail@example.com/2024-05-08/0f20f0447b.json"]
         }
     }
 
@@ -219,7 +219,7 @@ def generate_req_id():
         "success": true,
         "message": "Code interpreter session created successfully.",
         "data": {
-            "codeInterpreterRecordId": "yourEmail@vanderbilt.edu/ast/373849029843"
+            "codeInterpreterRecordId": "yourEmail@example.com/ast/373849029843"
         }
     }
     """,
@@ -292,7 +292,7 @@ def create_code_interpreter_session(event, context, current_user, name, data):
     description="""Delete a Code Interpreter session, permanently removing the record from the platform and stopping its underlying AgentCore session.
 
     Example request (via query parameter):
-    DELETE /assistant/agentcore/session/delete?codeInterpreterRecordId=yourEmail@vanderbilt.edu/ast/38940562397049823
+    DELETE /assistant/agentcore/session/delete?codeInterpreterRecordId=yourEmail@example.com/ast/38940562397049823
 
     """,
     parameters={
@@ -300,7 +300,7 @@ def create_code_interpreter_session(event, context, current_user, name, data):
         "properties": {
             "codeInterpreterRecordId": {
                 "type": "string",
-                "description": "Unique identifier of the code interpreter record to delete. Example: 'yourEmail@vanderbilt.edu/ast/38940562397049823'.",
+                "description": "Unique identifier of the code interpreter record to delete. Example: 'yourEmail@example.com/ast/38940562397049823'.",
             }
         },
         "required": ["codeInterpreterRecordId"],
@@ -349,7 +349,7 @@ def delete_code_interpreter_session(event, context, current_user, name, data):
     Example request:
     {
         "data": {
-            "key": "yourEmail@vanderbilt.edu/msg_P0lpFUEY_pie_chart.png"
+            "key": "yourEmail@example.com/msg_P0lpFUEY_pie_chart.png"
         }
     }
 
@@ -364,7 +364,7 @@ def delete_code_interpreter_session(event, context, current_user, name, data):
         "properties": {
             "key": {
                 "type": "string",
-                "description": "Unique key identifying the file to download. Example: 'yourEmail@vanderbilt.edu/msg_P0lpFUEY_pie_chart.png'. These may be generated in the /assistant/chat/codeinterpreter endpoint responses.",
+                "description": "Unique key identifying the file to download. Example: 'yourEmail@example.com/msg_P0lpFUEY_pie_chart.png'. These may be generated in the /assistant/chat/codeinterpreter endpoint responses.",
             },
             "fileName": {
                 "type": "string",

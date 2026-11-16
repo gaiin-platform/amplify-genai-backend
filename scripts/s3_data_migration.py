@@ -171,7 +171,7 @@ def _create_hash_key(current_user, app_id):
         raise ValueError("Both current_user and app_id must be strings")
 
     # CRITICAL BUG PREVENTION: Detect if we're being called with old email-format user ID
-    # This prevents malformed entries like "allen-karns-vanderbilt-edu-amplify-workflows#workflow-templates"
+    # This prevents malformed entries like "jane-doe-example-com-amplify-workflows#workflow-templates"
     if "@" in current_user and any(char in current_user for char in [".", "+"]):
         print(f"[WARNING] _create_hash_key called with email-format user ID: {current_user}")
         print(f"[WARNING] This may indicate a migration bug - user IDs should be converted to new format first")
@@ -180,7 +180,7 @@ def _create_hash_key(current_user, app_id):
     
     # CRITICAL BUG PREVENTION: Detect if app_id contains old user ID format
     # Pattern: "old-user-id-sanitized-app-name" instead of just "app-name"
-    if any(email_pattern in app_id for email_pattern in ["-vanderbilt-edu", "-gmail-com", "-edu", "@"]):
+    if any(email_pattern in app_id for email_pattern in ["-gmail-com", "-edu", "@"]):
         print(f"[ERROR] _create_hash_key called with corrupted app_id containing user ID: {app_id}")
         print(f"[ERROR] current_user: {current_user}")
         print(f"[ERROR] This indicates a serious migration bug - app_id should only be the app name")

@@ -106,7 +106,7 @@ class S3EmailNotesMessageHandler(MessageHandler):
                 else:
                     destination_email = to_header.lower().strip()
 
-                if destination_email != self.NOTES_EMAIL.lower():
+                if not self.NOTES_EMAIL or destination_email != self.NOTES_EMAIL.lower():
                     logger.warning(f"Email not sent to {self.NOTES_EMAIL}, ignoring. Destination: {destination_email}")
                     return {"result": {"ignored": True, "reason": "wrong_destination", "destination": destination_email}}
 

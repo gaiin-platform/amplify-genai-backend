@@ -7,7 +7,7 @@ import json
 from typing import Dict, Any
 
 class SESNotesMessageHandler(MessageHandler):
-    """Handler for emails sent to notes@vanderbilt.ai"""
+    """Handler for emails sent to the configured notes address (NOTES_EMAIL)"""
 
     # Get notes email from registry (single source of truth)
     NOTES_EMAIL = SPECIALIZED_EMAILS["NOTES"]
@@ -30,11 +30,11 @@ class SESNotesMessageHandler(MessageHandler):
                 logger.info("Message is not a valid SES message")
                 return False
 
-            # Check if destination email is notes@vanderbilt.ai
+            # Check if destination email is the configured notes address
             destination_emails = extract_destination_emails(message)
             logger.info("Destination emails: %s", destination_emails)
 
-            if self.NOTES_EMAIL in destination_emails:
+            if self.NOTES_EMAIL and self.NOTES_EMAIL in destination_emails:
                 logger.info("Notes email detected: %s", self.NOTES_EMAIL)
                 return True
 

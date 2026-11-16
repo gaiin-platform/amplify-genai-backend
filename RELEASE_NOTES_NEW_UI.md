@@ -220,7 +220,7 @@ Stored under `config_id = documentRetention`: `{isActive: boolean, days: 1-3650}
 
 Versioned prompt overrides stored under `config_id = systemPrompts`. Keys: `ordinaryChat.base`, `webSearch.use`, `artifacts.generate`, `codeInterpreter.use`, `amplifyHelper.base`. Empty text means "use the built-in prompt". Each prompt is limited to 16 KiB. A save **replaces the whole record**.
 
-- The built-in `amplifyHelper.base` prompt (`amplify-lambda-js/common/systemPrompts.js`) names "Vanderbilt Amplify" and `amplify@vanderbilt.edu`. On a white-labeled deployment, set your own text in the Admin panel (System Prompts tab) before enabling the `amplifyHelper` flag. The Admin text box always shows the built-in Vanderbilt text as its starting point.
+- The built-in `amplifyHelper.base` prompt (`amplify-lambda-js/common/systemPrompts.js`) is neutral and names no organization or contact. To include your own organization name or support contact, set your own text in the Admin panel (System Prompts tab) before enabling the `amplifyHelper` flag. The Admin text box shows the built-in text as its starting point.
 - The System Prompts and Deployment tabs exist only in the New UI's admin panel, not in the Classic admin.
 
 ## 6. New API routes

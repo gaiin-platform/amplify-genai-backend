@@ -49,7 +49,7 @@ async def main():
     )
     result = await my_agent.run(
         context=agent_context,
-        initial_input="Write a long report on Vanderbilt with two sections and no subsections",
+        initial_input="Write a long report on the Roman Empire with two sections and no subsections",
     )
     logger.info("Sample result: %s", result)
 

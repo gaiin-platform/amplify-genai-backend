@@ -123,7 +123,7 @@ class Workflow(CustomBaseModel):
                 "description": "This workflow automates the process of scheduling an event by communicating with a user via email.",
                 "steps": [
                     {
-                        "instructions": "Draft an email to the user, jules.white@vanderbilt.edu, telling them that you are scheduling the event.",
+                        "instructions": "Draft an email to the user, user@example.com, telling them that you are scheduling the event.",
                         "tool": "draft_email",
                         "args": {
                             "message": "Provide information on the scheduling request for their awareness."

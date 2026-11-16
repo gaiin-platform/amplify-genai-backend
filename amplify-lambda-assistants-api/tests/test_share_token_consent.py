@@ -75,7 +75,7 @@ _stub("schemata.schema_validation_rules", rules={})
 
 from integrations import oauth as m  # noqa: E402
 
-USER = "christine.m.fogg@vanderbilt.edu"
+USER = "test.user@example.com"
 ITEM_KEY = f"{USER}/microsoft"
 
 # --- Verbatim token-endpoint bodies seen in prod (trace/correlation ids elided) ---

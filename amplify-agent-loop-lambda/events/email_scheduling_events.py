@@ -54,7 +54,7 @@ def _unwrap_dynamo_typed(obj):
     Some `signatures` records were historically written with a raw
     TypeSerializer applied on top of already-plain data, producing multiply
     nested descriptors like:
-        {"M": {"M": {"content": {"S": "XOXO, Karely"}, ...}}}
+        {"M": {"M": {"content": {"S": "Thanks, Jane"}, ...}}}
     A boto3 resource read does NOT auto-unwrap those inner descriptors, so
     `sig.get('content')` / `sig.get('signature_id')` return None and the draft
     generator logs "No signature to append" (Bug 4).
@@ -108,7 +108,7 @@ class SESSchedulingMessageHandler(MessageHandler):
 
             # Check if destination email is schedule email
             destination_emails = extract_destination_emails(message)
-            if self.SCHEDULER_EMAIL in destination_emails:
+            if self.SCHEDULER_EMAIL and self.SCHEDULER_EMAIL in destination_emails:
                 logger.info("Scheduling email detected: %s", self.SCHEDULER_EMAIL)
                 return True
 
@@ -302,9 +302,9 @@ class SESSchedulingMessageHandler(MessageHandler):
             stage = os.environ.get('STAGE', 'dev')
             amp_base_url = os.environ.get('API_BASE_URL')
 
-            # TARGET  #dev-scheduling.dev-amplify.vanderbilt.ai
+            # TARGET  #dev-scheduling.dev-amplify.example.com
             # Derive scheduling URL: replace -api. then strip trailing digits from subdomain
-            # e.g. prod2-api.vanderbilt.ai → prod2-scheduling.vanderbilt.ai → prod-scheduling.vanderbilt.ai
+            # e.g. prod2-api.example.com → prod2-scheduling.example.com → prod-scheduling.example.com
             api_base_url = amp_base_url.replace("-api.", "-scheduling.") if amp_base_url else None
             if api_base_url:
                 api_base_url = re.sub(r'(?<=[a-z])\d+(?=-scheduling\.)', '', api_base_url)

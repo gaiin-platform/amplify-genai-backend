@@ -575,7 +575,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
         "statusUrl": "<statusUrl>",
         "contentUrl": "<contentUrl>",
         "metadataUrl": "<metadataUrl>",
-        "key": "yourEmail@vanderbilt.edu/date/293088.json"
+        "key": "yourEmail@example.com/date/293088.json"
     }
 
     The user can use the presigned url 'uploadUrl' to upload their file to Amplify.
@@ -1243,7 +1243,7 @@ def add_tags_to_user(current_user, tags_to_add):
     Example request:
     {
         "data": {
-            "id": "yourEmail@vanderbilt.edu/date/23094023573924890-208.json",
+            "id": "yourEmail@example.com/date/23094023573924890-208.json",
             "tags": ["NewTag", "Important"]
         }
     }
@@ -1253,7 +1253,7 @@ def add_tags_to_user(current_user, tags_to_add):
         "properties": {
             "id": {
                 "type": "string",
-                "description": "String. Required. Unique identifier of the file. Example: 'yourEmail@vanderbilt.edu/date/23094023573924890-208.json'.",
+                "description": "String. Required. Unique identifier of the file. Example: 'yourEmail@example.com/date/23094023573924890-208.json'.",
             },
             "tags": {
                 "type": "array",

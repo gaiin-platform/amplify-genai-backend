@@ -73,7 +73,8 @@ class AmplifyLLM(VannaBase):
         return f"Here's the SQL query to answer your question:\n{sql}"
 
     def submit_prompt(self, prompt, **kwargs) -> str:
-        url = "https://prod-api.vanderbilt.ai/chat"
+        base_url = os.environ.get("API_BASE_URL", "").rstrip("/")
+        url = f"{base_url}/chat"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
