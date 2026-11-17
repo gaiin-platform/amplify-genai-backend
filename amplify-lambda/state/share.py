@@ -96,7 +96,7 @@ def get_data_from_dynamodb(user, name):
     Example request:
     {
         "data": {
-            "key": "yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932934805-24382.json"
+            "key": "yourEmail@example.com/sharedByEmail@example.com/932934805-24382.json"
         }
     }
     """,
@@ -335,8 +335,8 @@ def get_source_name(data):
       {
         "note": "testing share with a doc",
         "sharedAt": 1720714099836,
-        "key": "yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/9324805-24382.json",
-        "sharedBy": "sharedByEmail@vanderbilt.edu"
+        "key": "yourEmail@example.com/sharedByEmail@example.com/9324805-24382.json",
+        "sharedBy": "sharedByEmail@example.com"
       }
     ]
     """,

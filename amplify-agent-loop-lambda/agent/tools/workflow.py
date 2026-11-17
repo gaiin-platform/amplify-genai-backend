@@ -82,7 +82,7 @@ def execute_workflow(
         "stepName": "writeJokeAboutWebPage",
         "tool": "exec_code",
         "args": {
-            "code": "page_content = get_web_page_text('https://vanderbilt.edu')\nresult = prompt_llm('Please provide a joke about:'+page_content)",
+            "code": "page_content = get_web_page_text('https://example.com')\nresult = prompt_llm('Please provide a joke about:'+page_content)",
         }
     }
 

@@ -9,7 +9,7 @@ and "do_b".
     "stepName": "doXYZ",
     "tool": "exec_code",
     "args": {
-        "code": "page_content = do_a('https://vanderbilt.edu')\nresult = do_b('Please provide a joke about:'+page_content)",
+        "code": "page_content = do_a('https://example.com')\nresult = do_b('Please provide a joke about:'+page_content)",
     }
 }
 

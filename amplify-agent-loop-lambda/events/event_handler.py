@@ -95,7 +95,7 @@ Example:
 
 # Registry of specialized email addresses
 # Driven by environment variables so dev and prod can use different addresses
-# without code changes. Defaults fall back to dev addresses.
+# without code changes. No address is built in: an empty value disables that handler.
 #
 # NOTES_ENABLED controls whether the notes@ email handler is active.
 # Automatically true when all required Notes env vars are populated.
@@ -106,8 +106,10 @@ NOTES_ENABLED = all([
 ])
 
 SPECIALIZED_EMAILS = {
-    "SCHEDULER": os.getenv("SCHEDULER_EMAIL", "schedule@dev.vanderbilt.ai"),
-    "NOTES": os.getenv("NOTES_EMAIL", "notes@dev.vanderbilt.ai"),
+    # No default address is built in; set SCHEDULER_EMAIL / NOTES_EMAIL (SSM, see serverless.yml).
+    # An empty value disables the corresponding handler.
+    "SCHEDULER": os.getenv("SCHEDULER_EMAIL", ""),
+    "NOTES": os.getenv("NOTES_EMAIL", ""),
 }
 
 
@@ -118,7 +120,7 @@ def get_specialized_emails():
     Returns:
         list: List of email addresses (lowercase)
     """
-    return list(SPECIALIZED_EMAILS.values())
+    return [e for e in SPECIALIZED_EMAILS.values() if e]
 
 
 def is_specialized_email(email):
@@ -131,4 +133,4 @@ def is_specialized_email(email):
     Returns:
         bool: True if handled by specialized handler
     """
-    return email.lower() in [e.lower() for e in SPECIALIZED_EMAILS.values()]
+    return bool(email) and email.lower() in [e.lower() for e in SPECIALIZED_EMAILS.values() if e]

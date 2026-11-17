@@ -122,10 +122,10 @@ def lookup_username_from_cognito_table(email_address):
     2. User has no email field → check if user_id itself matches the email
     
     Args:
-        email_address (str): Full email like "karely.rodriguez@vanderbilt.edu"
+        email_address (str): Full email like "jane.doe@example.com"
         
     Returns:
-        str: Username like "rodrikm1" or None if not found
+        str: Username like "jdoe1" or None if not found
     """
     if not email_address:
         return None
@@ -190,10 +190,10 @@ def lookup_username_from_email(email_address):
     Look up username from email address using direct Cognito table lookup.
     
     Args:
-        email_address (str): Full email like "karely.rodriguez@vanderbilt.edu"
+        email_address (str): Full email like "jane.doe@example.com"
         
     Returns:
-        str: Username like "rodrikm1" or fallback to email prefix if not found
+        str: Username like "jdoe1" or fallback to email prefix if not found
     """
     if not email_address:
         return None
