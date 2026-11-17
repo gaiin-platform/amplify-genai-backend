@@ -427,7 +427,7 @@ sls remove --stage dev
 ## 🔗 Related Documentation
 
 For comprehensive implementation details, see:
-**Implementation Guidelines:** `/Users/rodrikm1/Documents/Amplify Read Mes/Implementation_Guidelines.md`
+**Implementation Guidelines:** [Implementation_Guidelines.md](Implementation_Guidelines.md)
 
 This guide covers:
 - Three Lambda invocation patterns (REST API, Router/Proxy, Event-Driven)
