@@ -5,11 +5,12 @@
 
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
-// Use explicit path to Python interpreter from the layer
-const PY = "/opt/bin/python3.11";
+// Use explicit path to Python interpreter from the layer (3.12 preferred, 3.11 for an un-rebuilt layer)
+const PY = ["/opt/bin/python3.12", "/opt/bin/python3.11"].find((p) => existsSync(p)) ?? "/opt/bin/python3.12";
 
 /**
  * Execute Python code safely in Lambda environment

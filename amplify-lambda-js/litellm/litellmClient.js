@@ -11,6 +11,7 @@ import {getLogger} from '../common/logging.js';
 import {trace} from '../common/trace.js';
 import {isKilled} from '../requests/requestState.js';
 import {spawn} from 'child_process';
+import {existsSync} from 'fs';
 import {fileURLToPath} from 'url';
 import {dirname, join} from 'path';
 import {PassThrough} from 'stream';
@@ -111,10 +112,14 @@ export function initPythonProcess() {
     processStartTime = Date.now();
 
     // Determine Python path based on environment
-    // In Lambda: Use layer's bundled Python interpreter (/opt/bin/python3.11)
+    // In Lambda: Use layer's bundled Python interpreter. Prefer 3.12 (litellm 1.100.4 does not install on 3.11),
+    // fall back to 3.11 so the code still works against a layer that has not been rebuilt yet.
     // Locally: python3 (fallback for local development)
     const isLambda = !!process.env.LAMBDA_TASK_ROOT || !!process.env.AWS_EXECUTION_ENV;
-    const pythonPath = isLambda ? '/opt/bin/python3.11' : 'python3';
+    const lambdaPythonCandidates = ['/opt/bin/python3.12', '/opt/bin/python3.11'];
+    const pythonPath = isLambda
+        ? (lambdaPythonCandidates.find((candidate) => existsSync(candidate)) || lambdaPythonCandidates[0])
+        : 'python3';
 
     logger.info("[TIMING] Starting persistent Python LiteLLM server", {
         pythonPath,
