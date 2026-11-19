@@ -20,7 +20,7 @@ layers:
     name: ${self:service}-${sls:stage}-markitdown
     description: Markitdown layer
     compatibleRuntimes:
-      - python3.11
+      - python3.12
       
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
@@ -65,7 +65,7 @@ custom:
     
 provider:
   name: aws
-  runtime: python3.11
+  runtime: python3.12
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false

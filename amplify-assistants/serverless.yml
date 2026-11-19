@@ -44,7 +44,7 @@ custom:
     
 provider:
   name: aws
-  runtime: python3.11
+  runtime: python3.12
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
