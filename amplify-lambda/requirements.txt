@@ -23,11 +23,11 @@ lxml==6.1.0
     # via
     #   python-docx
     #   python-pptx
-nltk==3.10.3
+nltk==3.10.4
     # via -r requirements.in
 openpyxl==3.1.5
     # via -r requirements.in
-pillow==12.2.0
+pillow==13.0.0
     # via
     #   -r requirements.in
     #   python-pptx
@@ -45,7 +45,7 @@ regex==2025.9.18
     # via
     #   nltk
     #   tiktoken
-soupsieve==2.9.0
+soupsieve==4.0.0
     # via beautifulsoup4
 tiktoken==0.11.0
     # via -r requirements.in
