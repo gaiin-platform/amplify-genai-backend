@@ -1,13 +1,52 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# Dependabot: opens PRs into dev for vulnerable/outdated dependencies.
+# Those PRs run the same required checks (trivy-fs) as any other PR.
+# Security updates are separate (repo Settings > Code security) and ignore the PR limit.
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
+  - package-ecosystem: pip
+    directories:
+      - /amplify-agent-loop-lambda
+      - /amplify-assistants
+      - /amplify-lambda
+      - /amplify-lambda/markitdown
+      - /amplify-lambda-admin
+      - /amplify-lambda-api
+      - /amplify-lambda-artifacts
+      - /amplify-lambda-assistants-api
+      - /amplify-lambda-assistants-api-google
+      - /amplify-lambda-assistants-api-office365
+      - /amplify-lambda-js/litellm
+      - /amplify-lambda-ops
+      - /amplify-lambda-python-base
+      - /chat-billing
+      - /data-disclosure
+      - /embedding
+      - /object-access
+      - /scripts
+    target-branch: dev
     schedule:
-      interval: "weekly"
-    target-branch: "dev"  # Specify the branch to create pull requests against
-    open-pull-requests-limit: 20
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /amplify-lambda-js
+      - /npm-shims/decompress
+      - /npm-shims/simple-git
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly

@@ -1,0 +1,55 @@
+name: Trivy dependency scan
+
+# The backend is Serverless/Lambda with no container images, so we scan the repo
+# filesystem (npm lockfiles + pinned requirements*.txt) instead of an image.
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  schedule:
+    - cron: '0 9 * * 1'   # weekly: new CVEs appear without any code change
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-fs:
+    name: trivy-fs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Policy (exceptions go in .trivyignore):
+      #   - CRITICAL: always blocks, even when no fix exists.
+      #   - HIGH: blocks only when a fix has been released.
+      # Both passes run (!cancelled) so one failure report shows everything.
+      # Third-party actions are pinned to a commit SHA; update the SHA deliberately.
+      - name: Trivy fs scan - CRITICAL (blocking, includes unfixed)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+          format: table
+          trivyignores: .trivyignore
+          skip-dirs: node_modules,.serverless
+
+      - name: Trivy fs scan - HIGH (blocking only if a fix exists)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+          trivyignores: .trivyignore
+          skip-dirs: node_modules,.serverless

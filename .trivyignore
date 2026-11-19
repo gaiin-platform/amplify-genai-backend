@@ -1,0 +1,20 @@
+# Trivy exceptions for the dependency (trivy fs) scan (.github/workflows/trivy.yml).
+#
+# POLICY
+#   - CRITICAL: always blocks the build, even if no fix is released. Ignoring a
+#     CRITICAL here requires security-owner approval in the PR.
+#   - HIGH: blocks only when a fix exists (unfixed HIGH is already bypassed by the
+#     workflow, so it does NOT need an entry here).
+#   - Do not add an entry just to get a build green. Prefer upgrading the base
+#     dependency.
+#
+# EVERY ENTRY MUST HAVE
+#   1. A comment line above it: why it is safe/not exploitable, who approved it,
+#      and a link to the tracking issue.
+#   2. An expiry date (exp:YYYY-MM-DD, max ~90 days) so it is re-reviewed.
+#
+# FORMAT
+#   # <justification> | approved by @user | <issue link>
+#   CVE-YYYY-NNNNN exp:YYYY-MM-DD
+#
+# (no exceptions currently)
