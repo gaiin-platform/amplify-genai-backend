@@ -1,7 +1,10 @@
 #!/bin/bash
 set -e
 
-docker run --rm --entrypoint pip -v $(pwd):/var/task -w /var/task public.ecr.aws/lambda/python:3.11 install --no-cache-dir --upgrade -r requirements.txt -t ./python --platform manylinux2014_x86_64 --only-binary=:all:
+# Start clean: a previous build for another Python version leaves incompatible compiled files (e.g. *.cpython-311-*.so)
+rm -rf ./python
+
+docker run --rm --entrypoint pip -v $(pwd):/var/task -w /var/task public.ecr.aws/lambda/python:3.12 install --no-cache-dir --upgrade -r requirements.txt -t ./python --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 --only-binary=:all:
 
 
 

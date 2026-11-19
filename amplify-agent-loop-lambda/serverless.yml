@@ -38,7 +38,7 @@ provider:
   name: aws
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
-  runtime: python3.11
+  runtime: python3.12
   versionFunctions: false
   logRetentionInDays: 365
   tracing:
@@ -116,7 +116,7 @@ provider:
 functions:
   agentRouter:
     handler: service/core.route
-    runtime: python3.11
+    runtime: python3.12
     tracing: Active
     timeout: 900
     events:
@@ -126,7 +126,7 @@ functions:
 
   agentEventProcessor:
     handler: service/agent_queue.route_queue_event
-    runtime: python3.11
+    runtime: python3.12
     timeout: 900
     tracing: Active
     events:
@@ -136,7 +136,7 @@ functions:
 
   scheduledTasksProcessor:
     handler: scheduled_tasks_events/scheduled_tasks.execute_scheduled_tasks
-    runtime: python3.11
+    runtime: python3.12
     timeout: 300
     events:
       - schedule:
@@ -146,7 +146,7 @@ functions:
 
   toolsEndpointLambda:
     handler: service/core.get_builtin_tools
-    runtime: python3.11
+    runtime: python3.12
     timeout: 30
     memorySize: 4096
     events:
