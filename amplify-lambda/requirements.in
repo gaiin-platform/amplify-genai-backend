@@ -13,7 +13,7 @@ openpyxl
 beautifulsoup4>=4.13.4
 pypdfium2
 python-pptx
-nltk==3.9.2
+nltk==3.10.4
 python-docx
 tiktoken>=0.12.0
 psycopg2-binary
