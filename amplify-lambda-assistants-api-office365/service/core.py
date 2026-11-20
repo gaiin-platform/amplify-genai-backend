@@ -928,7 +928,10 @@ def update_range_handler(current_user, data):
                 "description": "Number of messages to skip",
                 "default": 0,
             },
-            "filter_query": {"type": "string", "description": "OData filter query"},
+            "filter_query": {
+                "type": "string",
+                "description": "OData filter query. If start_date, end_date, and/or focused_only are also provided, this is ANDed together with the clauses they generate (may be too complex for the Graph API if all are combined — see start_date/end_date/focused_only for a simpler alternative).",
+            },
             "include_body": {
                 "type": "boolean",
                 "description": "Whether to include message body and bodyPreview",
@@ -938,12 +941,34 @@ def update_range_handler(current_user, data):
                 "type": "string",
                 "description": "User's preferred timezone in Windows format (e.g., 'Central Standard Time', 'Eastern Standard Time') (optional, defaults to system-configured timezone)",
             },
+            "start_date": {
+                "type": "string",
+                "description": "Only include messages received on or after this date/time. ISO 8601 date or datetime (e.g. '2024-01-01' or '2024-01-01T00:00:00Z'). Combined with filter_query via AND if both are provided.",
+            },
+            "end_date": {
+                "type": "string",
+                "description": "Only include messages received on or before this date/time. ISO 8601 date or datetime (e.g. '2024-01-31' or '2024-01-31T23:59:59Z'). Combined with filter_query via AND if both are provided.",
+            },
+            "focused_only": {
+                "type": "boolean",
+                "description": "If true, only include messages Outlook classifies as 'Focused', excluding the 'Other' inbox (promotions, clutter, etc.).",
+                "default": False,
+            },
         },
     },
 )
 def list_messages_handler(current_user, data):
     return common_handler(
-        list_messages, folder_id="Inbox", top=10, skip=0, filter_query=None, include_body=False, user_timezone=None
+        list_messages,
+        folder_id="Inbox",
+        top=10,
+        skip=0,
+        filter_query=None,
+        include_body=False,
+        user_timezone=None,
+        start_date=None,
+        end_date=None,
+        focused_only=False,
     )(current_user, data)
 
 
