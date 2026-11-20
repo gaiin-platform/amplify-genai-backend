@@ -330,6 +330,7 @@ export const chat = async (endpointProvider, chatBody, writable, abortSignal = c
             // If retrying, remove tools
             if (retryWithoutTools && requestData.tools) {
                 delete requestData.tools;
+                delete requestData.tool_choice;
                 // Retrying request without tools
             }
 
