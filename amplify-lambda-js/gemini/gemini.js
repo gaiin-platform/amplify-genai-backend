@@ -5,7 +5,8 @@ import axios from 'axios';
 import { getLogger } from "../common/logging.js";
 import { logCriticalError } from "../common/criticalLogger.js";
 import { trace } from "../common/trace.js";
-import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content, getVideoBase64Content, isVideo, extractKey } from "../datasource/datasources.js";
+import { doesNotSupportImagesInstructions, getImageBase64Content, getVideoBase64Content, isVideo, extractKey } from "../datasource/datasources.js";
+import { buildImageInstruction } from "../datasource/imageInstructions.js";
 import { sendErrorMessage, sendStateEventToStream, sendStatusEventToStream } from "../common/streams.js";
 import { getSecretApiKey } from "../common/secrets.js";
 import { newStatus, getThinkingMessage } from "../common/status.js";
@@ -461,6 +462,8 @@ async function includeImageSources(imageSources, messages, model, responseStream
         // Process all images
         const imagePromises = imageSources.map(async (source) => {
             const base64Content = await getImageBase64Content(source);
+            // An image that could not be loaded must not be sent as `base64,null`.
+            if (!base64Content) return null;
             // Use source.type (e.g., "image/png") - mimeType doesn't exist on image data sources
             const mimeType = source.type || source.mimeType || 'image/png';
             return {
@@ -471,7 +474,11 @@ async function includeImageSources(imageSources, messages, model, responseStream
             };
         });
 
-        const imageContents = await Promise.all(imagePromises);
+        const imageResults = await Promise.all(imagePromises);
+        const imageContents = imageResults.filter(Boolean);
+        const loadedImageFilenames = imageFilenames.filter((_, idx) => imageResults[idx]);
+        const unavailableImageFilenames = imageFilenames.filter((_, idx) => !imageResults[idx]);
+        const loadedImageSources = imageSources.filter((_, idx) => imageResults[idx]);
 
         // Find the first user message to add images to
         const firstUserMsgIndex = messages.findIndex(m => m.role === 'user');
@@ -480,7 +487,7 @@ async function includeImageSources(imageSources, messages, model, responseStream
             const userMsg = messages[firstUserMsgIndex];
 
      
-            const imageReferenceInstruction = additionalImageInstruction(imageFilenames);
+            const imageReferenceInstruction = buildImageInstruction(loadedImageFilenames, unavailableImageFilenames);
             // Convert to the OpenAI format for multimodal content
             if (typeof userMsg.content === 'string') {
                 // Convert string content to array format
@@ -519,7 +526,7 @@ async function includeImageSources(imageSources, messages, model, responseStream
         }
 
         sendStateEventToStream(responseStream, {
-            sources: { images: { sources: imageSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
+            sources: { images: { sources: loadedImageSources.map(ds => ({ ...ds, contentKey: extractKey(ds.id) })) } }
         });
         return messages;
     } catch (error) {

@@ -6,7 +6,8 @@ import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {logCriticalError} from "../common/criticalLogger.js";
 import {trace} from "../common/trace.js";
-import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import {doesNotSupportImagesInstructions, getImageBase64Content} from "../datasource/datasources.js";
+import {buildImageInstruction} from "../datasource/imageInstructions.js";
 import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
 import { detectContextOverflow, shouldCriticalLogOverflow } from "../llm/contextOverflow.js";
@@ -674,11 +675,16 @@ async function includeImageSources(dataSources, messages, model, responseStream,
     });
 
     let imageMessageContent = [];
+    const loadedImageFilenames = [];
+    const unavailableImageFilenames = [];
 
     for (let i = 0; i < dataSources.length; i++) {
         const ds = dataSources[i];
         const encoded_image = await getImageBase64Content(ds);
-        if (encoded_image) {
+        if (!encoded_image) {
+            unavailableImageFilenames.push(imageFilenames[i]);
+        } else {
+            loadedImageFilenames.push(imageFilenames[i]);
             retrievedImages.push({...ds, contentKey: extractKey(ds.id)});
             if (isNonStandardOpenAI) {
                 imageMessageContent.push({
@@ -705,7 +711,7 @@ async function includeImageSources(dataSources, messages, model, responseStream,
     // message must be a user message
     const textType = isNonStandardOpenAI ? "input_text" : "text";
     messages[msgLen]['content'] = [{ "type": textType,
-                                     "text": additionalImageInstruction(imageFilenames)
+                                     "text": buildImageInstruction(loadedImageFilenames, unavailableImageFilenames)
                                     },
                                     ...imageMessageContent,
                                     { "type": textType,

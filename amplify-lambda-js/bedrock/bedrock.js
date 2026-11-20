@@ -2,7 +2,8 @@ import {sendStateEventToStream, sendErrorMessage} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 import {logCriticalError} from "../common/criticalLogger.js";
 import { getBudgetTokens } from "../common/params.js";
-import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
+import { doesNotSupportImagesInstructions, getImageBase64Content } from "../datasource/datasources.js";
+import { buildImageInstruction } from "../datasource/imageInstructions.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {trace} from "../common/trace.js";
@@ -570,11 +571,12 @@ async function includeImageSources(dataSources, messages, responseStream) {
     });
 
     // Process all images in parallel for faster execution
-    const imagePromises = dataSources.map(async (ds) => {
+    const imagePromises = dataSources.map(async (ds, idx) => {
         try {
             const encoded_image = await getImageBase64Content(ds);
             if (encoded_image) {
                 return {
+                    filename: imageFilenames[idx],
                     ds: {...ds, contentKey: extractKey(ds.id)},
                     imageData: {
                         "image": {
@@ -589,7 +591,7 @@ async function includeImageSources(dataSources, messages, responseStream) {
         } catch (err) {
             logger.info("Failed to get base64 encoded image: ", ds);
         }
-        return null;
+        return { filename: imageFilenames[idx], unavailable: true };
     });
 
     const results = await Promise.all(imagePromises);
@@ -597,9 +599,15 @@ async function includeImageSources(dataSources, messages, responseStream) {
     let imageMessageContent = [[]];
     let listIdx = 0;
 
+    const loadedImageFilenames = [];
+    const unavailableImageFilenames = [];
+
     // Process results
     for (const result of results) {
-        if (result) {
+        if (result.unavailable) {
+            unavailableImageFilenames.push(result.filename);
+        } else {
+            loadedImageFilenames.push(result.filename);
             retrievedImages.push(result.ds);
             // only 20 per content allowed
             if (imageMessageContent[listIdx].length > 19) {
@@ -620,7 +628,7 @@ async function includeImageSources(dataSources, messages, responseStream) {
     let content = messages[msgLen]['content'];
 
 
-    content.push({ "text": additionalImageInstruction(imageFilenames)});
+    content.push({ "text": buildImageInstruction(loadedImageFilenames, unavailableImageFilenames)});
     content = [...content, ...imageMessageContent[0]];
     messages[msgLen]['content'] = content;
     if (listIdx > 0) {

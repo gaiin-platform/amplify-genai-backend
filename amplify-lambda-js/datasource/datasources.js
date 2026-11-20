@@ -17,14 +17,7 @@ const logger = getLogger("datasources");
 const client = new S3Client();
 const dynamodbClient = new DynamoDBClient();
 
-export const additionalImageInstruction = (imageFileNames) => {
-    // Build image reference labels to help model map filenames to images
-    const imageReferenceLabels = imageFileNames
-        .map((filename, idx) => `- Image #${idx + 1}: ${filename}`)
-        .join('\n');
-
-    return `Image Reference Labels:\n${imageReferenceLabels}\n\nWhen describing or referencing images, use the image numbers (#1, #2, etc.) and filenames shown above.\n\n Additional Image Instructions:\n If given an encode image, describe the image in vivid detail, capturing every element, including the subjects, colors, textures, and emotions. Provide enough information so that someone can visualize the image perfectly without seeing it, using precise and rich language. This should be its own block of text.`
-}
+export { additionalImageInstruction } from "./imageInstructions.js";
 
 const dataSourcesQueryEndpoint = process.env.API_BASE_URL + "/files/query";
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
