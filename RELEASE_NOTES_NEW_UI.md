@@ -202,11 +202,12 @@ Stored in the admin table (`<service>-<stage>-admin-configs`) under `config_id =
 | `availability.webSearch` | true | |
 | `availability.codeInterpreter` | true | |
 | `allowClassicUiSwitch` | true | When false, users cannot choose or stay on the Classic UI. |
-| `routingEnabled` | false | Model routing for ordinary chat. |
+| `routingEnabled` | true | Automatic feature routing for ordinary chat. A saved `false` stays off. |
 | `routingModelId` | empty (max 200 chars) | Model the router uses. Empty means the built-in default. |
 | `announcement` | none | Site-wide banner: `enabled`, `message`, `id`, `expiresAt`. The schema allows 1000 characters; the Admin UI limits the message to 500. |
 
 **Must know**
+- **Automatic Ordinary-Chat Routing defaults to on.** Find it in **Admin panel → Deployment**, then scroll down. Deployments with a saved `false` keep routing off until an admin turns it on. While it is off, the New UI attach menu offers manual Web search, Artifacts, and Code interpreter options where available. API-key callers still have to opt in to automatic routing with `enableRouting: true`.
 - On an existing deployment with no `deploymentFeatures` record, **prompt highlighter and memory become unavailable** until an admin turns them on (Admin panel, Deployment tab).
 - The chat service enforces the availability switches for web search, artifacts and code interpreter on the server. We found no server-side check for prompt highlighter or memory, so those two are enforced by the frontend.
 - If the admin table cannot be read, the chat services turn optional features **off**. One code path in `get_user_feature_flags` (when reading `deploymentFeatures` raises an error) reports highlighter and memory as **on**; that is a known inconsistency.

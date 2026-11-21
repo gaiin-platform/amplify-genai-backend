@@ -12,6 +12,7 @@ class DeploymentDefaultsTests(unittest.TestCase):
         deployment_config = source.split('elif config_type == AdminConfigTypes.DEPLOYMENT_FEATURES:', 1)[1].split('\n    else:', 1)[0]
         self.assertIn('"promptHighlighter": False', deployment_config)
         self.assertIn('"memory": False', deployment_config)
+        self.assertIn('"routingEnabled": True', deployment_config)
 
 
 if __name__ == "__main__":

@@ -70,11 +70,8 @@ export function normalizeDeploymentConfig(promptRecord, featureRecord, { feature
         allowClassicUiSwitch: typeof featureRecord?.allowClassicUiSwitch === 'boolean'
             ? featureRecord.allowClassicUiSwitch
             : true,
-        // Routing is opt-in so installations that predate this record retain
-        // ordinary-chat behavior until an administrator enables it explicitly.
-        routingEnabled: typeof featureRecord?.routingEnabled === 'boolean'
-            ? featureRecord.routingEnabled
-            : false,
+        // Keep saved opt-outs and fail closed when deployment policy cannot be read.
+        routingEnabled: !featureReadFailed && featureRecord?.routingEnabled !== false,
         // Admin-chosen classifier model id from the model catalog. '' = use the built-in default.
         routingModelId: typeof featureRecord?.routingModelId === 'string' &&
             featureRecord.routingModelId.trim().length <= MAX_MODEL_ID_LENGTH
@@ -184,7 +181,7 @@ export function createDeploymentConfigLoader({
                 logger.warn('Deployment prompt configuration unavailable; using safe fallback policy', {
                     errorName: error?.name || 'Error'
                 });
-                if (lastKnownGood) return lastKnownGood;
+                if (lastKnownGood) return { ...lastKnownGood, routingEnabled: false };
                 const fallback = normalizeDeploymentConfig(null, null, { featureFlagsRecord: null, featureReadFailed: true });
                 cached = fallback;
                 expiresAt = now() + Math.min(ttlMs, 5_000);
