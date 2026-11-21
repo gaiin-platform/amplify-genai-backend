@@ -19,17 +19,23 @@ save_accounts_schema = {
                         "description": "Indicates if this is the default account.",
                     },
                     "rateLimit": {
-                        "type": "object",
+                        "type": ["object", "null"],
                         "properties": {
-                            "rate": {"type": ["number", "null"]},
+                            "rate": {
+                                "description": "A numeric limit or null, validated per account by the save handler.",
+                            },
                             "period": {"type": "string"},
                         },
                         "description": "Cost restriction using the API key",
                     },
                 },
-                "required": ["id", "name", "rateLimit"],
+                "required": ["id", "name"],
             },
-        }
+        },
+        "expectedVersion": {
+            "type": ["string", "null"],
+            "description": "The version returned when the account list was loaded.",
+        },
     },
     "required": ["accounts"],
 }
