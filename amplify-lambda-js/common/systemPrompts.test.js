@@ -13,6 +13,32 @@ test('normalizes missing prompts to safe runtime defaults and defaults highlight
     assert.equal(config.allowClassicUiSwitch, true);
 });
 
+test('automatic routing defaults on and preserves explicit deployment opt-outs', () => {
+    assert.equal(normalizeDeploymentConfig(null, null).routingEnabled, true);
+    assert.equal(normalizeDeploymentConfig(null, { schemaVersion: 1 }).routingEnabled, true);
+    assert.equal(normalizeDeploymentConfig(null, { routingEnabled: false }).routingEnabled, false);
+    assert.equal(normalizeDeploymentConfig(null, { routingEnabled: true }, { featureReadFailed: true }).routingEnabled, false);
+});
+
+test('a failed refresh disables automatic routing even after a successful config read', async () => {
+    let time = 0;
+    let offline = false;
+    const load = createDeploymentConfigLoader({
+        now: () => time,
+        ttlMs: 10,
+        getConfigItem: async (key) => {
+            if (offline) throw new Error('read failed');
+            return key === 'deploymentFeatures' ? { schemaVersion: 1, availability: { webSearch: false } } : null;
+        }
+    });
+    assert.equal((await load()).routingEnabled, true);
+    time = 11;
+    offline = true;
+    const fallback = await load();
+    assert.equal(fallback.routingEnabled, false);
+    assert.equal(fallback.availability.webSearch, false);
+});
+
 test('helper access follows the feature flag, including user exceptions', () => {
     const cfg = (flag) => normalizeDeploymentConfig(null, null, { featureFlagsRecord: { amplifyHelper: flag } });
     assert.equal(isAmplifyHelperAllowed(cfg({ enabled: false }), 'u1'), false);

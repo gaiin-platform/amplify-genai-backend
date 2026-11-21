@@ -102,6 +102,16 @@ test('non-API requests keep deployment-governed routing (enableRouting not requi
     assert.equal(policy.inferredRoutingAllowed, true);
 });
 
+test('routing off blocks the browser file heuristic and still recognizes explicit Web search', () => {
+    const body = { messages: [{ role: 'user', content: 'Create an Excel file' }], options: { enableWebSearch: true } };
+    const policy = resolveRequestRoutingPolicy(body.options, body, { routingEnabled: false, availability });
+    assert.equal(policy.automaticRouting, false);
+    assert.equal(policy.inferredRoutingAllowed, false);
+    assert.equal(policy.explicitWebSearch, true);
+    const off = { webSearch: false, artifacts: false, codeInterpreter: false };
+    assert.equal(resolveRoutingOptions(off, availability, { explicitWebSearch: policy.explicitWebSearch }).enableWebSearch, true);
+});
+
 test('a selected assistant is always respected: no inference, and API explicit modes cannot replace it', () => {
     for (const enableRouting of [false, true]) {
         const api = { messages: [{ role: 'user', content: 'x' }], options: { api_accessed: true, assistantId: 'astp/a', enableRouting, codeInterpreterOnly: true, artifactsMode: true } };
@@ -142,7 +152,10 @@ test('combination rules: disables beat enables and routing; availability beats e
     const locked = { webSearch: false, artifacts: false, codeInterpreter: false };
     const denied = r(all, locked, { explicitModes: { artifactsMode: true, codeInterpreterOnly: true }, explicitWebSearch: true });
     assert.deepEqual([denied.enableWebSearch, denied.artifacts, denied.codeInterpreterOnly], [false, false, false]);
-    // artifacts + CI together resolve to CI only
+    // An explicit Code Interpreter choice beats inferred Artifacts.
+    const explicitInterpreter = r(all, availability, { explicitModes: { codeInterpreterOnly: true } });
+    assert.deepEqual([explicitInterpreter.codeInterpreterOnly, explicitInterpreter.artifacts], [true, false]);
+    // Artifacts retains priority when both modes are explicit.
     const both = r(all, availability, { explicitModes: { artifactsMode: true, codeInterpreterOnly: true } });
     assert.deepEqual([both.codeInterpreterOnly, both.artifacts, both.artifactsMode], [false, true, true]);
     const routedBoth = r({ webSearch: false, artifacts: true, codeInterpreter: true }, availability);

@@ -188,8 +188,8 @@ export function resolveRequestRoutingPolicy(options = {}, body = {}, deploymentC
     const apiAccessed = options.api_accessed === true;
     const selectedAssistant = hasSelectedAssistant(options, body);
     const connectorActions = hasConfiguredToolsOnMessages(body.messages);
-    const routingRequested = !apiAccessed ||
-        ((options.enableRouting === true || body.enableRouting === true) && deploymentConfig?.routingEnabled === true);
+    const routingRequested = deploymentConfig?.routingEnabled === true &&
+        (!apiAccessed || options.enableRouting === true || body.enableRouting === true);
     const baseEligible = !options.workflowId && !options.workflow && !options.configuredTools &&
         !options.agentId && !options._isInternalCall;
     return {
@@ -239,7 +239,7 @@ export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availabil
         userDisabledCodeInterpreter !== true;
     const artifactsEnabled = availability.artifacts !== false && userDisabledArtifacts !== true;
     const explicitArtifacts = explicitModes.artifactsMode === true;
-    const explicitInterpreter = explicitModes.codeInterpreterOnly === true;
+    const explicitInterpreter = explicitModes.codeInterpreterOnly === true && codeInterpreterEnabled;
     // An inferred file request still beats a classifier artifacts guess (artifacts can't produce a real file);
     // an explicit artifactsMode beats everything.
     const routeArtifacts = (!explicitModes.notEligible || assistantFeatures === true) && !downloadableFileIntent && routingDecision.artifacts === true;
@@ -248,10 +248,9 @@ export function resolveRoutingOptions(routingDecision = SAFE_FEATURES, availabil
     // never a workflow/configured-tool/internal request (guarded by the caller).
     const routeInterpreter = downloadableFileIntent === true ||
         (!explicitModes.notEligible && connectorActions !== true && routingDecision.codeInterpreter === true);
-    // Artifacts and Code Interpreter are mutually exclusive assistants; Artifacts wins when both
-    // are requested/inferred (including over an inferred file request). If artifacts is
-    // unavailable or vetoed, Code Interpreter can still be used.
-    const artifacts = (explicitArtifacts || routeArtifacts) && artifactsEnabled;
+    // An available explicit mode beats an inferred mode. When both are explicitly
+    // requested, keep the existing Artifacts priority.
+    const artifacts = (explicitArtifacts || (routeArtifacts && !explicitInterpreter)) && artifactsEnabled;
     const codeInterpreterOnly = !artifacts && (explicitInterpreter || routeInterpreter) && codeInterpreterEnabled;
     return {
         enableWebSearch: (routingDecision.webSearch === true || explicitWebSearch === true) && availability.webSearch !== false && userDisabledWebSearch !== true,
