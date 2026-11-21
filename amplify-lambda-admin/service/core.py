@@ -1337,7 +1337,7 @@ def initialize_config(config_type):
                 "memory": False,
             },
             "allowClassicUiSwitch": True,
-            "routingEnabled": False,
+            "routingEnabled": True,
         }
     else:
         raise ValueError(f"Unknown config type: {config_type}")
@@ -1516,7 +1516,11 @@ def get_user_feature_flags(event, context, current_user, name, data):
             dep_data = dep_response["Item"].get("data", {})
         else:
             dep_data = initialize_config(AdminConfigTypes.DEPLOYMENT_FEATURES)
-        user_feature_flags["deploymentFeatures"] = dep_data
+        routing_enabled = dep_data.get("routingEnabled")
+        user_feature_flags["deploymentFeatures"] = {
+            **dep_data,
+            "routingEnabled": routing_enabled if isinstance(routing_enabled, bool) else True,
+        }
     except Exception as dep_err:
         logger.warning("Could not load deploymentFeatures config: %s", dep_err)
         user_feature_flags["deploymentFeatures"] = {
@@ -1529,7 +1533,8 @@ def get_user_feature_flags(event, context, current_user, name, data):
                 "memory": True,
             },
             "allowClassicUiSwitch": True,
-            "routingEnabled": False,
+            # The chat service disables routing on read failure. Omit the unverified
+            # switch here so clients do not mistake a failed read for an admin opt-out.
         }
 
     logger.debug("users: %s", user_feature_flags)
