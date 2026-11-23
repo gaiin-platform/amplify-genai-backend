@@ -1,20 +1,20 @@
 # =============================================================================
-# deploy-dev.yml  --  STARTER SKELETON (not yet run against our AWS account)
-#
-# Shape:  detect -> plan (matrix, per service) -> gate -> deploy (approval) -> execute
+# deploy-dev.yml  --  create CloudFormation change sets for the dev stage
 #
 #   detect  : which service folders changed? (JSON list, in dependency order)
-#   plan    : per service, create a NAMED CloudFormation change set (not executed),
-#             analyze it for deletes/replacements, write a job summary
-#   gate    : combine all plan results, decide which approval Environment is needed,
-#             alert if anything risky was found
-#   deploy  : waits for human approval (GitHub Environment), then executes the
-#             change sets one by one in dependency order
+#   plan    : one service at a time, in dependency order
+#               push / manual run : `sls deploy` creates a NAMED change set and stops.
+#                                   The change set is summarized with a link to it.
+#               pull request      : `sls package` only. No change set is created.
+#   summary : one table with every change set of the run, in execution order.
 #
-# Everything marked TODO is for you to finish or reconsider.
-# Action versions: pin to the current major (or a commit SHA) when you finalize.
+# This workflow never executes a change set. A person reviews each one and
+# executes it from the AWS Console (CloudFormation -> stack -> Change sets).
+#
+# Service list, shared paths and the deletion-warning ignore list live in
+# .github/scripts/deploy-config.json. See docs/deployment-pipeline.md.
 # =============================================================================
-name: Deploy Dev (change set + approval)
+name: Deploy Dev (create change sets)
 
 on:
   push:
@@ -24,142 +24,140 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: "Comma-separated service folders, or 'all'"
+        description: "Service folders, comma separated, or 'all'"
         required: true
-        default: "all"
-      execute:
-        description: "Execute after approval? (false = plan only / dry run)"
-        type: boolean
-        default: false
+        type: string
 
-# No paths-ignore on purpose: if a run is skipped entirely it can leave required
-# PR checks "pending". The detect job returns [] for docs-only changes instead.
+# No paths-ignore on purpose: a skipped run can leave required PR checks pending.
+# The detect job returns [] for docs-only and workflow-only changes instead.
 
 permissions:
   contents: read
-  id-token: write        # needed for AWS OIDC
-  pull-requests: write   # only needed if you add PR comments (stretch goal)
 
 concurrency:
-  # One deploy at a time. Never cancel a deploy that is running.
-  # TODO: a newer *pending* run replaces an older pending one, so a push's changes
-  #       can be skipped. Think about diffing against the last successfully
-  #       deployed commit instead of github.event.before.
-  group: deploy-dev-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'push' }}
+  # One run at a time on dev, and never cancel a run that is creating change sets.
+  # GitHub keeps only one pending run per group, so a queued run can be replaced
+  # by a newer one. That is safe here because the detect job diffs against the
+  # last SUCCESSFUL run, not against the previous push.
+  group: deploy-dev-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'dev' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   STAGE: dev
-  AWS_REGION: us-east-1
-  OSLS_VERSION: "3.79.0"
+  EXPECTED_OSLS_VERSION: "3.79.0"
+  DEPLOY_CONFIG: .github/scripts/deploy-config.json
 
 jobs:
   # ---------------------------------------------------------------------------
   # 1. Which services changed?
   # ---------------------------------------------------------------------------
   detect:
+    name: Detect changed services
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # look up the last successful run of this workflow
     outputs:
       services: ${{ steps.pick.outputs.services }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # full history, the diff needs older commits
 
-      - id: pick
+      - name: Self-test pipeline scripts
+        run: python3 -m unittest discover -s .github/scripts/tests
+
+      - name: Select services
+        id: pick
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_AFTER: ${{ github.sha }}
           INPUT_SERVICES: ${{ inputs.services }}
         run: |
           set -euo pipefail
+          detect() { python3 .github/scripts/detect_services.py --config "$DEPLOY_CONFIG" --repo-root . "$@"; }
+          usable() { [ -n "$1" ] && git cat-file -e "${1}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$1" HEAD; }
 
-          # Dependency order (mirrors serverless-compose.yml; the last four are not in compose).
-          # amplify-lambda-python-base is a template and is intentionally excluded.
-          # TODO: confirm this order with the team.
-          ORDERED=(
-            amplify-lambda
-            amplify-assistants
-            amplify-lambda-admin
-            amplify-lambda-api
-            amplify-lambda-artifacts
-            amplify-lambda-js
-            amplify-lambda-ops
-            chat-billing
-            data-disclosure
-            embedding
-            object-access
-            amplify-lambda-assistants-api
-            amplify-lambda-assistants-api-google
-            amplify-lambda-assistants-api-office365
-            amplify-agent-loop-lambda
-          )
-          # If any of these change, redeploy EVERYTHING.
-          SHARED_REGEX='^(lambda_layers/|npm-shims/|package(-lock)?\.json$|serverless-compose\.yml$)'
-
-          selected=()
-          select_all() { selected=("${ORDERED[@]}"); }
-
+          base_note=""
           if [ "$EVENT" = "workflow_dispatch" ]; then
-            if [ "$INPUT_SERVICES" = "all" ]; then
-              select_all
-            else
-              for s in "${ORDERED[@]}"; do
-                if [[ ",${INPUT_SERVICES// /}," == *",$s,"* ]]; then selected+=("$s"); fi
-              done
-            fi
+            json="$(detect --services "$INPUT_SERVICES")"
+            base_note="manual selection"
           else
-            RANGE=""
+            range=""
             if [ "$EVENT" = "pull_request" ]; then
-              RANGE="$PR_BASE...$PR_HEAD"
-            elif [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] \
-                 && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
-              RANGE="$PUSH_BEFORE..$PUSH_AFTER"
+              range="${PR_BASE}...${PR_HEAD}"
+              base_note="pull request base ${PR_BASE::7}"
+            else
+              # Diff against the last successful run of this workflow on this branch, so
+              # changes from failed or replaced runs are picked up again. Fall back to the
+              # previous push, then to every service.
+              workflow_file="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
+              last_ok="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_file}/runs?branch=${GITHUB_REF_NAME}&event=push&status=success&per_page=1" \
+                           --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)"
+              if usable "$last_ok"; then
+                range="${last_ok}..HEAD"
+                base_note="last successful run ${last_ok::7}"
+              elif usable "$PUSH_BEFORE"; then
+                range="${PUSH_BEFORE}..HEAD"
+                base_note="previous push ${PUSH_BEFORE::7} (no earlier successful run found)"
+              fi
             fi
 
-            if [ -z "$RANGE" ]; then
-              echo "No usable base commit (new branch / force push). Selecting all services to be safe."
-              select_all
+            if [ -z "$range" ]; then
+              echo "::warning::No usable base commit (first run or force push). Selecting every service."
+              json="$(detect --services all)"
+              base_note="no usable base commit, every service selected"
             else
-              changed="$(git diff --name-only "$RANGE")"
-              echo "Changed files:"; echo "$changed"
-              if grep -Eq "$SHARED_REGEX" <<< "$changed"; then
-                echo "Shared path changed -> all services"
-                select_all
-              else
-                for s in "${ORDERED[@]}"; do
-                  if grep -q "^$s/" <<< "$changed"; then selected+=("$s"); fi
-                done
-              fi
+              git -c core.quotepath=false diff --name-only --no-renames -z "$range" > "$RUNNER_TEMP/changed-files"
+              echo "::group::Changed files (${range})"
+              tr '\0' '\n' < "$RUNNER_TEMP/changed-files"
+              echo "::endgroup::"
+              json="$(detect --changed-files "$RUNNER_TEMP/changed-files")"
             fi
           fi
 
-          json="$(printf '%s\n' ${selected[@]+"${selected[@]}"} | jq -R . | jq -sc 'map(select(length>0))')"
           echo "services=$json" >> "$GITHUB_OUTPUT"
           {
             echo "### Services selected"
-            echo '```json'; echo "$json"; echo '```'
+            echo "Compared against: ${base_note}"
+            echo
+            if [ "$json" = "[]" ]; then
+              echo "None. Nothing will be packaged or deployed."
+            else
+              jq -r '.[] | "1. `\(.)`"' <<< "$json"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
-  # 2. Plan: create a named change set per service (NOT executed) and analyze it.
-  #    On pull requests we only run `sls package` (no change set is created).
+  # 2. Plan: one service at a time, in dependency order, stop at the first failure.
+  #      push / manual run : create a named change set. It is NOT executed.
+  #      pull request      : `sls package` only.
   # ---------------------------------------------------------------------------
   plan:
+    name: ${{ github.event_name == 'pull_request' && 'Validate' || 'Change set' }} (${{ matrix.service }})
     needs: detect
+    # Pull requests from forks are skipped: they cannot get AWS access.
     if: >-
       needs.detect.outputs.services != '[]' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    # An Environment with NO required reviewers. Holds the var-file secret and
-    # lets the AWS "plan" role trust only this environment (OIDC sub claim).
-    environment: dev-plan
+    timeout-minutes: 45
+    # Each Environment holds its own role ARN, region and var-file secret.
+    #   development    : restricted to the dev branch. Role may create, describe and
+    #                    delete change sets, and may NOT execute them.
+    #   development-pr : used by pull requests. Read-only role, enough for `sls package`.
+    environment: ${{ github.event_name == 'pull_request' && 'development-pr' || 'development' }}
+    permissions:
+      contents: read
+      id-token: write   # AWS OIDC
     strategy:
-      fail-fast: false
+      fail-fast: true
+      max-parallel: 1
       matrix:
         service: ${{ fromJSON(needs.detect.outputs.services) }}
     env:
@@ -171,245 +169,205 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            amplify-lambda-js/package-lock.json
+
+      # Services with `dockerizePip: non-linux` install Python packages directly on
+      # the runner, so the matching Python versions must be present.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.11
+            3.12
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           npm ci
           if [ -f "$SERVICE/package-lock.json" ]; then (cd "$SERVICE" && npm ci); fi
 
       - name: Verify osls version
         working-directory: ${{ matrix.service }}
         run: |
-          npx sls --version | tee /dev/stderr | grep -F "osls version: ${OSLS_VERSION}"
+          set -euo pipefail
+          version="$(npx --no-install sls --version)"
+          echo "$version"
+          if ! grep -qF "osls version: ${EXPECTED_OSLS_VERSION}" <<< "$version"; then
+            echo "::error::Expected osls ${EXPECTED_OSLS_VERSION}. Check package.json and package-lock.json."
+            exit 1
+          fi
 
       - name: Write var/dev-var.yml from secret
         env:
-          DEV_VAR_YML_B64: ${{ secrets.DEV_VAR_YML_B64 }}   # TODO: decide where this really lives
+          DEV_VAR_YML_B64: ${{ secrets.DEV_VAR_YML_B64 }}
         run: |
+          set -euo pipefail
+          if [ -z "$DEV_VAR_YML_B64" ]; then
+            echo "::error::Secret DEV_VAR_YML_B64 is not set for this Environment."
+            exit 1
+          fi
           umask 077
           mkdir -p var
-          printf '%s' "$DEV_VAR_YML_B64" | base64 -d > var/dev-var.yml
+          printf '%s' "$DEV_VAR_YML_B64" | base64 -d > "var/${STAGE}-var.yml"
+          # Sanity check only. Never print this file.
+          if ! grep -q '^DEP_NAME:' "var/${STAGE}-var.yml"; then
+            echo "::error::var/${STAGE}-var.yml has no DEP_NAME. Check the DEV_VAR_YML_B64 secret."
+            exit 1
+          fi
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-session-name: GitHubActions-deploy-dev-${{ github.run_id }}
 
       # ---- service-specific prep ----
       - name: Prep amplify-lambda (markitdown layer)
         if: matrix.service == 'amplify-lambda'
         working-directory: amplify-lambda/markitdown
-        run: ./markitdown.sh
-        # NOTE: this runs Docker with a bind mount, so output files may be owned by root.
+        run: |
+          set -euo pipefail
+          # The script runs pip inside Docker with a bind mount. On Linux the files it
+          # creates belong to root, so run it as root and hand the result back.
+          sudo ./markitdown.sh
+          sudo chown -R "$(id -u):$(id -g)" .
 
-      # ---- PRs: validate only ----
-      - name: sls package (PR validation only)
+      # ---- pull requests: validate only ----
+      - name: Package (pull request validation)
         if: github.event_name == 'pull_request'
         working-directory: ${{ matrix.service }}
-        run: npx sls package --stage "$STAGE"
+        run: |
+          set -euo pipefail
+          npx --no-install sls package --stage "$STAGE"
+          echo "### \`${SERVICE}\`: packaged successfully (validation only, no change set created)" >> "$GITHUB_STEP_SUMMARY"
 
-      # ---- push / dispatch: create the change set, do NOT execute ----
+      # ---- push / manual run: create the change set, do NOT execute ----
       - name: Create change set
         if: github.event_name != 'pull_request'
         id: cs
         working-directory: ${{ matrix.service }}
         run: |
           set -euo pipefail
-          CS="gha-${GITHUB_RUN_ID}-${GITHUB_SHA::7}"
-          # --param="changeset=NAME" makes the plugin create a change set and stop,
-          # regardless of CHANGE_SET_BOOLEAN in the var file.
-          npx sls deploy --stage "$STAGE" --param="changeset=${CS}"
+          CS="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA::7}"
 
-          # TODO: make this robust. `sls print` output shape / stack name rules should be verified.
-          #       Stack names look like amplify-<DEP_NAME>-<suffix>-dev, NOT the folder name.
-          SVC="$(npx sls print --stage "$STAGE" --format json 2>/dev/null \
-                  | jq -r '.service | if type=="object" then .name else . end')"
-          STACK="${SVC}-${STAGE}"
+          # --param="changeset=NAME" makes the plugin create a change set and stop,
+          #     whatever CHANGE_SET_BOOLEAN says in the var file.
+          # --force skips the "artifacts unchanged" shortcut. Without it the plugin can
+          #     ask for a change set from a template that was never uploaded.
+          # --conceal keeps API key values out of the log.
+          npx --no-install sls deploy --stage "$STAGE" --force --conceal --param="changeset=${CS}"
+
+          # The state file is written by the run that created the change set, so the
+          # stack name always matches it. It also holds resolved secrets: read the two
+          # fields below and never print or upload it.
+          STATE=".serverless/serverless-state.json"
+          STACK="$(jq -r '.service.provider.stackName // "\(.service.service)-\(.service.provider.stage)"' "$STATE")"
+          if [ -z "$STACK" ] || [ "$STACK" = "null-null" ]; then
+            echo "::error::Could not resolve the stack name for ${SERVICE}."
+            exit 1
+          fi
 
           echo "cs=$CS"       >> "$GITHUB_OUTPUT"
           echo "stack=$STACK" >> "$GITHUB_OUTPUT"
 
-      - name: Describe + analyze change set
+      - name: Describe and analyze change set
         if: github.event_name != 'pull_request'
+        id: analyze
         env:
           CS: ${{ steps.cs.outputs.cs }}
           STACK: ${{ steps.cs.outputs.stack }}
         run: |
           set -euo pipefail
           mkdir -p plan-out
-          OUT="plan-out/${SERVICE}"
+          RAW="$RUNNER_TEMP/changeset.json"
+          RESULT="plan-out/${SERVICE}.result.json"
 
+          # The plugin returns before CloudFormation has finished building the change
+          # set. The waiter also exits non-zero for "no changes", so ignore its exit
+          # code and decide from the described status.
+          aws cloudformation wait change-set-create-complete \
+            --stack-name "$STACK" --change-set-name "$CS" || true
           aws cloudformation describe-change-set \
-            --stack-name "$STACK" --change-set-name "$CS" --output json > "${OUT}.changeset.json"
+            --stack-name "$STACK" --change-set-name "$CS" --output json > "$RAW"
 
-          STATUS="$(jq -r .Status "${OUT}.changeset.json")"
-          REASON="$(jq -r '.StatusReason // ""' "${OUT}.changeset.json")"
+          python3 .github/scripts/analyze_changeset.py analyze \
+            --changeset "$RAW" --service "$SERVICE" --config "$DEPLOY_CONFIG" \
+            --result-out "$RESULT" --summary-out "$GITHUB_STEP_SUMMARY"
 
-          NOOP=false
-          if [ "$STATUS" = "FAILED" ] && grep -qi "didn't contain changes" <<< "$REASON"; then
-            NOOP=true
-          elif [ "$STATUS" != "CREATE_COMPLETE" ]; then
-            echo "::error::Change set $CS on $STACK is in status $STATUS ($REASON)"
-            exit 1
+          outcome="$(jq -r .outcome "$RESULT")"
+          flagged="$(jq -r '.destructive | length' "$RESULT")"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+          if [ "$flagged" -gt 0 ]; then
+            echo "::warning title=${SERVICE} deletes or replaces resources::${flagged} resource(s) in change set ${CS} on ${STACK} will be deleted or replaced. See the job summary before executing."
           fi
 
-          # --- DELETE / REPLACEMENT DETECTION -------------------------------------------
-          # Resource types we deliberately ignore (they churn on every deploy).
-          # TODO: confirm this list with the team; add anything else that is known noise.
-          IGNORE_TYPES='["AWS::ApiGateway::Deployment"]'
-
-          if [ "$NOOP" = true ]; then
-            echo '[]' > "${OUT}.risky.json"
-          else
-            jq --argjson ignore "$IGNORE_TYPES" '
-              [ (.Changes // [])[].ResourceChange
-                | select((.ResourceType as $t | $ignore | index($t)) | not)
-                | select(.Action == "Remove"
-                         or .Replacement == "True"
-                         or .Replacement == "Conditional") ]
-            ' "${OUT}.changeset.json" > "${OUT}.risky.json"
-          fi
-          RISKY="$(jq length "${OUT}.risky.json")"
-
-          jq -n --arg service "$SERVICE" --arg stack "$STACK" --arg cs "$CS" \
-                --argjson noop "$NOOP" --argjson risky "$RISKY" \
-                '{service:$service, stack:$stack, changeset:$cs, noop:$noop, risky:$risky}' \
-                > "${OUT}.result.json"
-
-          # --- JOB SUMMARY ---------------------------------------------------------------
-          {
-            echo "### \`${SERVICE}\` -> \`${STACK}\`"
-            echo "Change set: \`${CS}\` (status: ${STATUS})"
-            echo
-            if [ "$NOOP" = true ]; then
-              echo "No changes."
-            else
-              if [ "$RISKY" -gt 0 ]; then
-                echo "> [!CAUTION]"
-                echo "> **${RISKY} resource(s) will be DELETED or REPLACED:**"
-                jq -r '.[] | "> - `\(.LogicalResourceId)` (\(.ResourceType)): \(.Action), replacement=\(.Replacement // "n/a")"' "${OUT}.risky.json"
-                echo
-              fi
-              echo "| Action | Replacement | Resource type | Logical ID |"
-              echo "|---|---|---|---|"
-              jq -r '(.Changes // [])[].ResourceChange
-                     | "| \(.Action) | \(.Replacement // "-") | \(.ResourceType) | \(.LogicalResourceId) |"' \
-                  "${OUT}.changeset.json"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
+      # Keep at most one pipeline change set per stack, so nobody executes a stale one.
+      # Only change sets named gha-* are touched. Change sets made by people are left alone.
+      - name: Clean up stale change sets
         if: github.event_name != 'pull_request'
+        env:
+          CS: ${{ steps.cs.outputs.cs }}
+          STACK: ${{ steps.cs.outputs.stack }}
+          OUTCOME: ${{ steps.analyze.outputs.outcome }}
+        run: |
+          set -uo pipefail
+          delete() {
+            aws cloudformation delete-change-set --stack-name "$STACK" --change-set-name "$1" \
+              && echo "Deleted change set $1" \
+              || echo "::warning::Could not delete change set $1 on $STACK"
+          }
+          if [ "$OUTCOME" = "no_changes" ]; then delete "$CS"; fi
+          old="$(aws cloudformation list-change-sets --stack-name "$STACK" \
+                   --query "Summaries[?starts_with(ChangeSetName, 'gha-') && ChangeSetName != '${CS}'].ChangeSetName" \
+                   --output text)" || { echo "::warning::Could not list change sets on $STACK"; exit 0; }
+          for name in $old; do
+            if [ "$name" != "None" ]; then delete "$name"; fi
+          done
+
+      # Uploaded even when the analysis failed, so the summary can show the reason.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         with:
           name: plan-${{ matrix.service }}
           path: plan-out/
-          if-no-files-found: error
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
 
   # ---------------------------------------------------------------------------
-  # 3. Gate: combine all plan results; decide which approval is needed; alert.
-  #    If ANY plan job failed, this job is skipped and nothing is executed.
+  # 3. Summary: every change set of this run in one table, in execution order.
+  #    Runs even when a plan job failed, so partial results are still visible.
   # ---------------------------------------------------------------------------
-  gate:
+  summary:
+    name: Review summary
     needs: [detect, plan]
-    if: github.event_name != 'pull_request'
+    if: >-
+      !cancelled() &&
+      github.event_name != 'pull_request' &&
+      needs.detect.result == 'success' &&
+      needs.detect.outputs.services != '[]'
     runs-on: ubuntu-latest
-    outputs:
-      to_execute: ${{ steps.combine.outputs.to_execute }}
-      has_risky: ${{ steps.combine.outputs.has_risky }}
+    timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       - uses: actions/download-artifact@v4
+        continue-on-error: true   # no artifacts exist when the first plan job failed
         with:
           pattern: plan-*
           path: plan-out
           merge-multiple: true
 
-      - id: combine
+      - name: Write review summary
         env:
           SERVICES: ${{ needs.detect.outputs.services }}
         run: |
           set -euo pipefail
-          to_execute=()
-          risky_total=0
-          # iterate in the dependency order produced by `detect`
-          for s in $(jq -r '.[]' <<< "$SERVICES"); do
-            f="plan-out/${s}.result.json"
-            [ -f "$f" ] || { echo "::error::missing plan result for $s"; exit 1; }
-            if [ "$(jq -r .noop "$f")" = "false" ]; then to_execute+=("$s"); fi
-            risky_total=$(( risky_total + $(jq -r .risky "$f") ))
-          done
-          json="$(printf '%s\n' ${to_execute[@]+"${to_execute[@]}"} | jq -R . | jq -sc 'map(select(length>0))')"
-          echo "to_execute=$json" >> "$GITHUB_OUTPUT"
-          echo "has_risky=$([ "$risky_total" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          {
-            echo "## Deployment gate"
-            echo "- Services with changes: \`$json\`"
-            echo "- Risky (delete/replace) resources: **$risky_total**"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Alert on deletes / replacements
-        if: steps.combine.outputs.has_risky == 'true'
-        env:
-          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-        run: |
-          echo "::warning::Change sets contain DELETE or REPLACEMENT operations. Stricter approval required."
-          # TODO: post to Teams (Workflows webhook) or Slack. Include the run URL:
-          #   ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          # TODO (stretch): list the risky resources in the message.
-
-  # ---------------------------------------------------------------------------
-  # 4. Deploy: pauses here until a reviewer approves the Environment.
-  #    Risky changes use a different Environment (with its own, stricter reviewers).
-  # ---------------------------------------------------------------------------
-  deploy:
-    needs: [gate]
-    if: >-
-      needs.gate.outputs.to_execute != '[]' &&
-      (github.event_name == 'push' || inputs.execute)
-    runs-on: ubuntu-latest
-    environment: ${{ needs.gate.outputs.has_risky == 'true' && 'dev-deploy-destructive' || 'dev-deploy' }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: plan-*
-          path: plan-out
-          merge-multiple: true
-
-      # A *different* role from the plan role, trusted only by the deploy Environments.
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_EXECUTE_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Execute change sets in order
-        env:
-          TO_EXECUTE: ${{ needs.gate.outputs.to_execute }}
-        run: |
-          set -euo pipefail
-          for s in $(jq -r '.[]' <<< "$TO_EXECUTE"); do
-            STACK="$(jq -r .stack     "plan-out/${s}.result.json")"
-            CS="$(jq -r .changeset    "plan-out/${s}.result.json")"
-            echo "::group::${s} (${STACK}) <- ${CS}"
-            aws cloudformation execute-change-set --stack-name "$STACK" --change-set-name "$CS"
-            sleep 10
-            while :; do
-              st="$(aws cloudformation describe-stacks --stack-name "$STACK" \
-                      --query 'Stacks[0].StackStatus' --output text)"
-              case "$st" in
-                *_IN_PROGRESS)                 sleep 15 ;;
-                UPDATE_COMPLETE|CREATE_COMPLETE) echo "$s -> $st"; break ;;
-                *) echo "::error::${STACK} ended in ${st}"; exit 1 ;;
-              esac
-            done
-            echo "::endgroup::"
-            echo "- \`${s}\`: ${st}" >> "$GITHUB_STEP_SUMMARY"
-          done
-          # Stops at the first failure so dependents are not deployed on top of a broken service.
-
-  # ---------------------------------------------------------------------------
-  # 5. TODO: cleanup
-  #    If the approval is rejected / times out / a deploy fails, delete the change
-  #    sets that were created in this run (aws cloudformation delete-change-set).
-  #    Use the *plan* role + `dev-plan` environment and `if: always() && needs.deploy.result != 'success'`.
-  #    Also consider cleaning up no-op (FAILED) change sets.
-  # ---------------------------------------------------------------------------
+          mkdir -p plan-out
+          python3 .github/scripts/analyze_changeset.py overview \
+            --results-dir plan-out --order "$SERVICES" --summary-out "$GITHUB_STEP_SUMMARY"
