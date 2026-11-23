@@ -1,0 +1,32 @@
+{
+  "services": [
+    "amplify-lambda",
+    "amplify-assistants",
+    "amplify-lambda-admin",
+    "amplify-lambda-api",
+    "amplify-lambda-artifacts",
+    "amplify-lambda-js",
+    "amplify-lambda-ops",
+    "chat-billing",
+    "data-disclosure",
+    "embedding",
+    "object-access",
+    "amplify-lambda-assistants-api",
+    "amplify-lambda-assistants-api-google",
+    "amplify-lambda-assistants-api-office365",
+    "amplify-agent-loop-lambda"
+  ],
+  "excluded_folders": {
+    "amplify-lambda-python-base": "Template (service: example-service). Never deployed."
+  },
+  "shared_paths": [
+    "lambda_layers/",
+    "npm-shims/",
+    "package.json",
+    "package-lock.json",
+    "serverless-compose.yml"
+  ],
+  "ignored_suffixes": [".md"],
+  "ignored_dirs": ["docs"],
+  "ignored_resource_types": ["AWS::ApiGateway::Deployment"]
+}

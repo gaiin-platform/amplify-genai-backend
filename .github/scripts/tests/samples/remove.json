@@ -1,0 +1,92 @@
+{
+  "Changes": [
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "GetUserAppConfigsLambdaFunction",
+        "ResourceType": "AWS::Lambda::Function",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          }
+        ],
+        "PhysicalResourceId": "amplify-demo-admin-dev-get_user_app_configs",
+        "Replacement": "False"
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Remove",
+        "LogicalResourceId": "AdminConfigurationsTable",
+        "ResourceType": "AWS::DynamoDB::Table",
+        "Scope": [],
+        "Details": [],
+        "PhysicalResourceId": "amplify-demo-admin-dev-admin-configs"
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Remove",
+        "LogicalResourceId": "LegacySyncLambdaFunction",
+        "ResourceType": "AWS::Lambda::Function",
+        "Scope": [],
+        "Details": [],
+        "PhysicalResourceId": "amplify-demo-admin-dev-legacy_sync"
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Add",
+        "LogicalResourceId": "ApiGatewayDeployment1795449187372",
+        "ResourceType": "AWS::ApiGateway::Deployment",
+        "Scope": [],
+        "Details": []
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Remove",
+        "LogicalResourceId": "ApiGatewayDeployment1795300000000",
+        "ResourceType": "AWS::ApiGateway::Deployment",
+        "Scope": [],
+        "Details": [],
+        "PhysicalResourceId": "a1b2c3"
+      }
+    }
+  ],
+  "ChangeSetName": "gha-1003-1-ccccccc",
+  "ChangeSetId": "arn:aws:cloudformation:us-east-1:123456789012:changeSet/gha-1003-1-ccccccc/9f8e7d6c-aaaa-bbbb-cccc-ddddeeeeffff",
+  "StackId": "arn:aws:cloudformation:us-east-1:123456789012:stack/amplify-demo-admin-dev/0a1b2c3d-1111-2222-3333-444455556666",
+  "StackName": "amplify-demo-admin-dev",
+  "Parameters": [],
+  "CreationTime": "2026-11-23T16:00:00.000000+00:00",
+  "ExecutionStatus": "AVAILABLE",
+  "Status": "CREATE_COMPLETE",
+  "NotificationARNs": [],
+  "RollbackConfiguration": {},
+  "Capabilities": [
+    "CAPABILITY_IAM",
+    "CAPABILITY_NAMED_IAM"
+  ],
+  "Tags": [
+    {
+      "Key": "STAGE",
+      "Value": "dev"
+    }
+  ],
+  "IncludeNestedStacks": false
+}
