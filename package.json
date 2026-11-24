@@ -6,7 +6,7 @@
     "serverless": "npm:osls@^3.79.0",
     "serverless-cloudformation-changesets-v3": "^0.1.0",
     "serverless-deployment-bucket": "^1.6.0",
-    "serverless-domain-manager": "^7.3.8",
+    "serverless-domain-manager": "^11.0.2",
     "serverless-iam-roles-per-function": "^3.2.0",
     "serverless-offline": "^13.6.0",
     "serverless-prune-plugin": "^2.0.2",
